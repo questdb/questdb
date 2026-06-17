@@ -46,7 +46,7 @@ import org.junit.Test;
  * <p>
  * Coverage:
  * <ul>
- *   <li>{@code compression=zstd} at default level 3 round-trips correctly
+ *   <li>{@code compression=zstd} at default level 1 round-trips correctly
  *       across a highly compressible column (rotating symbols).</li>
  *   <li>Explicit {@code compression_level} values at the ends of the clamp
  *       range ({@code 1} and {@code 22}) still decode correctly. The server
@@ -59,7 +59,7 @@ import org.junit.Test;
  *   <li>Compression interoperates with artificial network fragmentation.</li>
  * </ul>
  */
-public class QwpEgressCompressionTest extends AbstractBootstrapTest {
+public class QwpEgressCompressionTest extends AbstractQwpBootstrapTest {
 
     @Before
     public void setUp() {
@@ -85,7 +85,7 @@ public class QwpEgressCompressionTest extends AbstractBootstrapTest {
                         "ws::addr=127.0.0.1:" + HTTP_PORT + ";compression=auto;")) {
                     client.connect();
                     Assert.assertEquals("negotiated QWP version",
-                            QwpConstants.MAX_SUPPORTED_VERSION, client.getNegotiatedQwpVersion());
+                            QwpConstants.VERSION, client.getNegotiatedQwpVersion());
                     assertSumMany(client);
                 }
             }
@@ -163,7 +163,7 @@ public class QwpEgressCompressionTest extends AbstractBootstrapTest {
                         "ws::addr=127.0.0.1:" + HTTP_PORT + ";compression=raw;")) {
                     client.connect();
                     Assert.assertEquals("negotiated QWP version",
-                            QwpConstants.MAX_SUPPORTED_VERSION, client.getNegotiatedQwpVersion());
+                            QwpConstants.VERSION, client.getNegotiatedQwpVersion());
                     assertLongSum(client, "SELECT * FROM r", 500, 500L * 501L / 2L);
                 }
             }
@@ -186,7 +186,7 @@ public class QwpEgressCompressionTest extends AbstractBootstrapTest {
                         "ws::addr=127.0.0.1:" + HTTP_PORT + ";compression=zstd;")) {
                     client.connect();
                     Assert.assertEquals("negotiated QWP version",
-                            QwpConstants.MAX_SUPPORTED_VERSION, client.getNegotiatedQwpVersion());
+                            QwpConstants.VERSION, client.getNegotiatedQwpVersion());
                     assertLongSum(client, "SELECT * FROM f", 4000, 4000L * 4001L / 2L);
                 }
             }
@@ -207,6 +207,67 @@ public class QwpEgressCompressionTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testForceLevelEnforcedOnWireAndHotReloadable() throws Exception {
+        // True end-to-end pin of qwp.egress.compression.force.level:
+        //   1. Set force=3 on disk, start the server, open a client requesting
+        //      level=1 -- the server must override to 3 on the wire, observable
+        //      via QwpQueryClient.getNegotiatedZstdLevel().
+        //   2. Rewrite the server.conf to force=9, call
+        //      engine.getConfigReloader().reload(), then open a NEW client.
+        //      The new connection must see level=9 -- proving the override is
+        //      reloadable without restart.
+        // Already-open connections explicitly do NOT mutate mid-stream; the
+        // ZSTD encoder context is built once on handshake and not safe to
+        // re-level later. The "fresh connection picks up the change" is the
+        // promise.
+        TestUtils.assertMemoryLeak(() -> {
+            createDummyConfiguration(
+                    PropertyKey.QWP_EGRESS_COMPRESSION_FORCE_LEVEL.getPropertyPath() + "=3");
+            try (final TestServerMain serverMain = startFragmented()) {
+                Assert.assertEquals(
+                        "force-level property must surface on the engine's configuration",
+                        3, serverMain.getEngine().getConfiguration().getQwpEgressForcedZstdLevel());
+                serverMain.execute("CREATE TABLE fl(id LONG, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute(
+                        "INSERT INTO fl SELECT x, x::TIMESTAMP FROM long_sequence(500)");
+                serverMain.awaitTable("fl");
+
+                try (QwpQueryClient client = QwpQueryClient.fromConfig(
+                        "ws::addr=127.0.0.1:" + HTTP_PORT
+                                + ";compression=zstd;compression_level=1;")) {
+                    client.connect();
+                    Assert.assertEquals(
+                            "server's forced level must beat the client's level=1 request",
+                            3, client.getNegotiatedZstdLevel());
+                    assertLongSum(client, "SELECT * FROM fl", 500, 500L * 501L / 2L);
+                }
+
+                // Hot reload: rewrite the server.conf with a different forced
+                // level and trigger reload synchronously. Direct reload API
+                // (vs. file-watch + assertReloadConfigEventually) is
+                // deterministic and avoids timing flake.
+                createDummyConfiguration(
+                        PropertyKey.QWP_EGRESS_COMPRESSION_FORCE_LEVEL.getPropertyPath() + "=9");
+                serverMain.getEngine().getConfigReloader().reload();
+                Assert.assertEquals(
+                        "config wrapper must surface the new value after reload",
+                        9, serverMain.getEngine().getConfiguration().getQwpEgressForcedZstdLevel());
+
+                try (QwpQueryClient client = QwpQueryClient.fromConfig(
+                        "ws::addr=127.0.0.1:" + HTTP_PORT
+                                + ";compression=zstd;compression_level=1;")) {
+                    client.connect();
+                    Assert.assertEquals(
+                            "hot-reloaded force level must win on the next new connection",
+                            9, client.getNegotiatedZstdLevel());
+                    assertLongSum(client, "SELECT * FROM fl", 500, 500L * 501L / 2L);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testZstdRoundTripsHighlyCompressibleSymbols() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startQuestDB()) {
@@ -220,15 +281,15 @@ public class QwpEgressCompressionTest extends AbstractBootstrapTest {
                         "ws::addr=127.0.0.1:" + HTTP_PORT + ";compression=zstd;")) {
                     client.connect();
                     Assert.assertEquals("negotiated QWP version",
-                            QwpConstants.MAX_SUPPORTED_VERSION, client.getNegotiatedQwpVersion());
+                            QwpConstants.VERSION, client.getNegotiatedQwpVersion());
                     assertLongSum(client, "SELECT * FROM z", 10000, 10_000L * 10_001L / 2L);
                 }
             }
         });
     }
 
-    private static TestServerMain startQuestDB() {
-        return AbstractBootstrapTest.startWithEnvVariables();
+    private TestServerMain startQuestDB() {
+        return startFragmented();
     }
 
     private void assertLongSum(QwpQueryClient client, String sql, int expectedRows, long expectedSum) {
@@ -276,7 +337,7 @@ public class QwpEgressCompressionTest extends AbstractBootstrapTest {
                                 + ";compression=zstd;compression_level=" + level + ";")) {
                     client.connect();
                     Assert.assertEquals("negotiated QWP version",
-                            QwpConstants.MAX_SUPPORTED_VERSION, client.getNegotiatedQwpVersion());
+                            QwpConstants.VERSION, client.getNegotiatedQwpVersion());
                     assertLongSum(client, "SELECT * FROM L", 2000, 2000L * 2001L / 2L);
                 }
             }

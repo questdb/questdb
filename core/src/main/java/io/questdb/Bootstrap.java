@@ -119,7 +119,7 @@ public class Bootstrap {
         }
 
         if (argsMap.get("-n") == null && Os.type != Os.WINDOWS) {
-            Signal.handle(new Signal("HUP"), signal -> { /* suppress HUP signal */ });
+            Signal.handle(new Signal("HUP"), _ -> { /* suppress HUP signal */ });
         }
 
         // before we set up the logger, we need to copy the conf file
@@ -202,7 +202,7 @@ public class Bootstrap {
                             buildInformation,
                             ffOverride,
                             MicrosecondClockImpl.INSTANCE,
-                            (configuration1, engine, freeOnExit) -> DefaultFactoryProvider.INSTANCE,
+                            (_, _, _) -> DefaultFactoryProvider.INSTANCE,
                             true
                     );
                 }
@@ -449,9 +449,7 @@ public class Bootstrap {
         int colWidth = 32;
         // Insert at least one space between columns
         sb.append("  ");
-        for (int i = headerWidth + 2; i < colWidth; i++) {
-            sb.append(' ');
-        }
+        sb.repeat(" ", Math.max(0, colWidth - (headerWidth + 2)));
     }
 
     private static void setPublicVersion(String publicDir, String version) throws IOException {

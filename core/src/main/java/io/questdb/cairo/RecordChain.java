@@ -50,6 +50,7 @@ import io.questdb.std.str.DirectString;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -68,14 +69,30 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
     private RecordChainRecord recordC;
     private SymbolTableSource symbolTableResolver;
 
+    /**
+     * Sink may be null when the caller does not need {@code put(Record)} - e.g. the
+     * Light window chain only allocates rows via {@link #beginRecord} and writes via
+     * {@link RecordSinkSPI} methods, never copying a full record. Calling
+     * {@code put(Record)} on a chain constructed without a sink throws NPE.
+     */
     public RecordChain(
             @Transient @NotNull ColumnTypes columnTypes,
-            @NotNull RecordSink recordSink,
+            @Nullable RecordSink recordSink,
             long pageSize,
             int maxPages
     ) {
+        this(columnTypes, recordSink, pageSize, maxPages, null);
+    }
+
+    public RecordChain(
+            @Transient @NotNull ColumnTypes columnTypes,
+            @Nullable RecordSink recordSink,
+            long pageSize,
+            int maxPages,
+            String maxPagesConfigKey
+    ) {
         try {
-            this.mem = Vm.getCARWInstance(pageSize, maxPages, MemoryTag.NATIVE_RECORD_CHAIN);
+            this.mem = Vm.getCARWInstance(pageSize, maxPages, MemoryTag.NATIVE_RECORD_CHAIN, maxPagesConfigKey);
             this.recordSink = recordSink;
             this.columnCount = columnTypes.getColumnCount();
             this.recordA = this.newChainRecord();

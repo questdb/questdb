@@ -16,8 +16,18 @@ You are a senior QuestDB engineer performing a blocking code review. QuestDB is 
 - **Flag every issue you find**, no matter how small. Do not soften language or hedge. Say "this is wrong" not "this might be an issue".
 - **Do not praise the code.** Skip "looks good", "nice work", "clever approach". Focus entirely on problems and risks.
 - **Think adversarially.** For each change, ask: what inputs break this? What happens under concurrent access? What if this runs on a 10-billion-row table? What if the column is NULL? What if the partition is empty?
+- **Demand optimal algorithms.** QuestDB is a performance-first database. "Works correctly" is necessary but not
+  sufficient — the implementation must use the best known algorithm and data structure for the job. If a hash lookup
+  gives O(1) but the code does a linear scan, that is a finding. If two passes over the data can be collapsed into one,
+  that is a finding. If a value is recomputed on every call but could be cached, that is a finding. Do not accept "good
+  enough" — ask "is there a faster way?" for every loop, every traversal, every data structure choice.
 - **Check what's missing**, not just what's there. Missing tests, missing error handling, missing edge cases, missing documentation for non-obvious behavior.
-- **Verify every claim.** If the PR title says "fix", verify the bug actually existed and the fix is correct. If it says "improve performance", look for benchmarks or reason about the algorithmic change — does it actually improve things, or could it regress in other cases? If it says "simplify", verify the new code is actually simpler and doesn't drop behavior. Treat the PR description as an unverified hypothesis, not a statement of fact.
+- **Verify every claim.** If the PR title says "fix", verify the bug actually existed and the fix is correct. If it
+  says "improve performance", look for benchmarks or reason about the algorithmic change — does it actually improve
+  things, or could it regress in other cases? Even if the PR doesn't claim to be about performance, evaluate whether the
+  chosen algorithms and data structures are optimal — sub-optimal code that "works" is still a finding. If it says "
+  simplify", verify the new code is actually simpler and doesn't drop behavior. Treat the PR description as an
+  unverified hypothesis, not a statement of fact.
 - **Read the full context of changed files** when the diff alone is ambiguous. Use Read/Grep/Glob to inspect the surrounding code, callers, and related tests.
 - **Assess reachability before reporting.** For every potential bug, trace the actual callers and inputs. If a problem
   requires physically impossible conditions (billions of columns, corrupted JNI inputs, values that no caller can
@@ -34,12 +44,12 @@ Parse `$ARGUMENTS` for a level token: `--level=N`, `-lN`, or a bare single digit
 
 The level controls how much of the review below actually runs. Lower levels keep the same review *spirit* — adversarial, blocking, no praise — but cut the breadth of the analysis. Higher levels have significantly higher token cost; reserve level 3 for high-stakes PRs (replication, JNI boundary changes, on-disk format, public API, security/ACL).
 
-| Level | What runs |
-|-------|-----------|
-| **0 (default)** | Steps 1, 2, 4. Skip Step 2.5. Skip Step 3 — no agent spawn; review the diff inline in the main loop, using Read/Grep on demand to resolve ambiguities. Skip Step 3b — verify each finding inline as you write it. Single-pass review covering correctness, NULL handling, tests, and QuestDB standards on the diff itself. |
-| **1** | Adds Step 2.5a (semantic delta only — skip 2.5b/2.5c/2.5d). In Step 3, launch only Agent 1 (correctness), Agent 5 (tests), and Agent 6 (code quality) in parallel. Skip all other agents. Skip Step 3b — verify findings inline as you draft the report. |
-| **2** | Full Step 2.5, but in 2.5b restrict the callsite inventory to `public`/`protected` symbols (skip package-private and `pub(crate)`). In Step 3, launch Agents 1-7, plus Agent 8 if `.rs` files are present. Skip Agent 9 (cross-context) and Agent 10 (adversarial fresh-context). Step 3b uses a single batched verification agent for all findings instead of one per finding. |
-| **3** | Every step below as written, all 10 agents, per-finding verification. The full mission-critical pass. |
+| Level           | What runs                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+|-----------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **0 (default)** | Steps 1, 2, 4. Skip Step 2.5. Skip Step 3 — no agent spawn; review the diff inline in the main loop, using Read/Grep on demand to resolve ambiguities. Skip Step 3b — verify each finding inline as you write it. Single-pass review covering correctness, NULL handling, **algorithmic optimality**, tests, and QuestDB standards on the diff itself. The performance checklist (including algorithm optimality) is mandatory at every level. |
+| **1**           | Adds Step 2.5a (semantic delta only — skip 2.5b/2.5c/2.5d). In Step 3, launch only Agent 1 (correctness), **Agent 3 (performance)**, Agent 5 (tests), and Agent 6 (code quality) in parallel. Skip all other agents. Skip Step 3b — verify findings inline as you draft the report.                                                                                                                                                            |
+| **2**           | Full Step 2.5, but in 2.5b restrict the callsite inventory to `public`/`protected` symbols (skip package-private and `pub(crate)`). In Step 3, launch Agents 1-8 (Agent 8 only if `.rs` files are present), plus **Agent 11 (adversarial performance)**. Skip Agent 9 (cross-context) and Agent 10 (adversarial fresh-context). Step 3b uses a single batched verification agent for all findings instead of one per finding.                  |
+| **3**           | Every step below as written, all 11 agents, per-finding verification. The full mission-critical pass.                                                                                                                                                                                                                                                                                                                                          |
 
 State the chosen level in one line at the start of the review so the user knows what they're getting (e.g., "Reviewing PR #1234 at level 2"). If the level was defaulted, mention that level 3 exists for full review.
 
@@ -140,11 +150,38 @@ Launch the following agents in parallel.
 
 **Agent 2 — Concurrency:** Race conditions, shared mutable state, missing volatile, lock ordering, thread-safety of data structures. Use the implicit contract list (lock order, thread-affinity) and check every callsite from 2.5b for violations of the new contract.
 
-**Agent 3 — Performance & allocations:** Regressions, zero-GC violations, `java.util.*` collections vs `io.questdb.std`, string creation/concatenation on hot paths, SIMD opportunities. Algorithmic complexity: for each new loop, traversal, or data structure, analyze how it scales with data size (row count, partition count, join fan-out). Flag any O(n^2) or worse patterns that could regress on large tables (1M+ rows, 1000+ partitions). Check whether new code paths are compile-time-only or data-path — compile-time allocations are acceptable, data-path allocations are not. For changed symbols now reachable from new contexts (per 2.5d), check whether any of those new contexts is a hot path.
+**Agent 3 — Performance & algorithmic optimality:** This agent enforces the principle that QuestDB code must use the
+best known algorithm for each task — not merely "avoid quadratic."
+
+For every new or changed loop, traversal, data structure, or computation:
+
+1. **Algorithm optimality:** State the time complexity. Then ask: does a better algorithm exist? O(n) where O(1) is
+   achievable (hash lookup vs linear scan, direct indexing vs search) is a finding. O(n log n) where O(n) suffices is a
+   finding. The bar is not "avoid quadratic" — the bar is "use the best known approach."
+2. **Multi-pass vs single-pass:** If the code makes multiple passes over the same data (parsing, validation,
+   transformation), determine whether they can be fused into a single pass. Multiple passes over the same input is a
+   finding unless each pass has a structural dependency on the output of the previous one.
+3. **Redundant computation:** Flag values that are recomputed on every call but could be computed once and cached. Flag
+   repeated lookups of the same key. Flag re-parsing of already-parsed data.
+4. **Data structure choice:** For each collection or map, ask whether the chosen data structure is optimal. Linear
+   search through a list where a hash set gives O(1) membership test. Sorted array where a heap gives better
+   insert/extract-min. ArrayList where a direct-indexed array suffices.
+5. **Unnecessary copies and conversions:** Copying data that could be referenced in place. Converting between
+   representations (String ↔ CharSequence, byte[] ↔ DirectByteCharSequence) when the original form would work.
+6. **Zero-GC violations:** `java.util.*` collections vs `io.questdb.std`, string creation/concatenation on hot paths,
+   capturing lambdas, autoboxing. Even a single GC allocation on a per-row data path is a finding.
+7. **SIMD and vectorization:** Where the code processes arrays or columns element-by-element, check whether a
+   SIMD/vectorized alternative exists in QuestDB's native layer or could be added.
+8. **Compile-time vs data-path:** GC allocations during SQL compilation are acceptable. But algorithmic inefficiency
+   during compilation is NOT acceptable — slow compilation means slow query latency. A multi-pass parse or O(n^2) plan
+   enumeration in the compiler is still a finding.
+
+For changed symbols now reachable from new contexts (per 2.5d), check whether any of those new contexts is a hot path
+that amplifies an otherwise-acceptable cost.
 
 **Agent 4 — Resource management:** Leaks on all code paths (especially errors), try-with-resources, native memory, pool management. Walk every callsite from 2.5b that constructs, owns, or transfers ownership of changed types and verify cleanup on all paths.
 
-**Agent 5 — Test review & coverage:** Coverage gaps, error path tests, NULL tests, boundary conditions, regression tests, test quality, `assertMemoryLeak()` usage. Cross-reference 2.5d: every cross-context exposure should have a test that exercises the changed symbol from that context. Missing tests for cross-context callsites is a high-priority finding.
+**Agent 5 — Test review & coverage:** Coverage gaps, error path tests, NULL tests, boundary conditions, regression tests, test quality, `assertMemoryLeak()` usage. Cross-reference 2.5d: every cross-context exposure should have a test that exercises the changed symbol from that context. Missing tests for cross-context callsites is a high-priority finding. **Enforce the "SQL test assertions (builder API — strict)" checklist on every added/modified test line: any new `assertSql(...)`/`assertPlanNoLeakCheck(...)`/`getPlan(...)`/`TestUtils.assertSql(...)` is Critical; any new `.returnsOnce(...)` on a deterministic (non-RNG, non-time-varying) query is Critical; a lone `assertQuery(...)` wrapped in `assertMemoryLeak(...)` is a finding.**
 
 **Agent 6 — Code quality & standards:** Code smell, member ordering, naming conventions, modern Java features, dead code, third-party dependencies.
 
@@ -181,6 +218,32 @@ The point of this agent is to surface bugs the structured agents cannot see beca
 
 Run this agent in parallel with agents 1-9. It is mandatory regardless of diff size.
 
+**Agent 11 — Adversarial performance:** Dispatched separately from Agent 3 to escape checklist anchoring. This agent
+operates under different rules:
+
+- It receives the PR diff plus the full source files that the diff touches (not just the changed lines). It does NOT
+  receive the performance checklist, the change surface map, or Agent 3's findings.
+- For every function or method the diff adds or modifies, read the full implementation and ask one question: **"What is
+  the theoretically fastest way to implement this, and does the code match it?"**
+- Work bottom-up from the code, not top-down from a checklist. Trace data flow through each function: what is read, how
+  many times, in what order. Look for:
+    - Passes over data that could be eliminated or fused
+    - Lookups that could be O(1) but aren't
+    - Allocations that could be avoided by reusing buffers
+    - Branching that could be replaced with branchless arithmetic
+    - Scalar loops over column data that could be vectorized
+    - Sorting or searching where the input has structure (sorted, partitioned, bounded) that the code ignores
+    - Work done unconditionally that is only needed conditionally
+    - Intermediate collections built and then iterated once (build + iterate = two passes; a single streaming pass may
+      suffice)
+- Use Read, Grep, and Glob freely. Read callers to understand actual input sizes and access patterns — an O(n) scan that
+  runs once at startup is different from one that runs per row.
+- Each finding states: what the code does now (with complexity), what the optimal approach is (with complexity), and why
+  it matters (call frequency, data scale, or hot-path placement).
+- Do not duplicate zero-GC or style findings — focus purely on algorithmic and computational efficiency.
+
+Run this agent in parallel with agents 1-10. It is mandatory regardless of diff size.
+
 Combine all agent findings into a single deduplicated **draft** report. Do NOT present this draft to the user yet — it goes straight into verification.
 
 ## Step 3b: Verify every finding against source code
@@ -202,9 +265,12 @@ For each finding in the draft report:
 7. **For Rust numeric overflow claims**: check whether the overflow is reachable at realistic scale. QuestDB handles
    billions to a few trillion rows, thousands of tables, and thousands of columns — not billions of columns or
    quintillions of rows. If overflow requires values beyond that scale, drop it.
-8. **For performance claims**: check whether the cost is measurable in a realistic scenario. Downgrade to a nit if the
-   saving is negligible relative to the surrounding work. Exception: GC allocations on a hot path are always worth
-   flagging, even a single one.
+8. **For performance claims**: verify the finding is technically accurate (correct complexity analysis, correct
+   identification of the hot/cold path). Do NOT downgrade a finding just because the current data size is small
+   or the saving seems negligible — algorithmic inefficiency compounds at scale and under concurrent load.
+   Sub-optimal algorithm choice (O(n) vs O(1), multi-pass vs single-pass, redundant traversals) is always
+   a valid finding regardless of measured cost. The only valid reason to downgrade is if the analysis is
+   technically wrong (e.g., the "linear scan" is actually bounded by a small constant like column count).
 9. **For cross-context findings (Agent 9)**: re-read the callsite in full, including its callers up two levels, and confirm the broken behavior is reachable from production code paths. Cross-context findings are high-value but also the easiest to overstate — verify carefully.
 10. **Classify each finding** as:
     - **CONFIRMED in-diff** — the bug is real and inside the diff
@@ -233,17 +299,49 @@ Review the diff for:
 - Thread-safety of data structures used across threads
 - For every changed symbol, check whether it is now called from a thread or context (per 2.5d) where the previous concurrency assumptions don't hold
 
-### Performance
-- Performance regressions: changes that make hot paths slower or increase complexity
-- Unnecessary allocations on data paths (zero-GC requirement)
+### Performance & algorithmic optimality
+
+QuestDB is a performance-first database. The standard is not "avoid regressions" — it is "use the best known algorithm."
+Every new loop, traversal, data structure choice, and computation must be justified as optimal or near-optimal.
+
+#### Algorithm optimality (highest priority)
+
+- For every new or changed loop/traversal, state the time complexity. Then ask: does a better algorithm exist? Flag:
+    - O(n) linear scan where O(1) hash lookup or direct indexing is possible
+    - O(n log n) sort where O(n) alternative exists
+    - O(n^2) nested iteration where O(n) or O(n log n) would work
+    - Any sub-optimal complexity where a better algorithm is known, at any scale
+- Multi-pass vs single-pass: if the code traverses the same data multiple times (parsing, validating, transforming,
+  collecting then iterating), determine whether the passes can be fused into one. Multiple passes is a finding unless
+  each pass structurally depends on the completed output of the previous one.
+- Redundant computation: values recomputed on every call that could be computed once and cached. Repeated map/list
+  lookups for the same key. Re-parsing of already-parsed data. Re-traversal of an already-visited structure.
+- Data structure fitness: is the chosen data structure optimal for the access pattern? Linear search in a list where a
+  hash set gives O(1). Sorted array where a heap gives better insert/extract-min. Linked traversal where an indexed
+  array gives O(1) random access. ArrayList where a pre-sized array suffices.
+- Unnecessary copies and conversions: copying data that could be referenced in place. String ↔ CharSequence, byte[] ↔
+  DirectByteCharSequence conversions when the original form works.
+
+#### Zero-GC and allocation discipline
+
+- Unnecessary allocations on data paths (zero-GC requirement) — even a single GC allocation on a per-row path is a
+  finding
 - Use of `java.util.*` collections (HashMap, ArrayList, etc.) instead of QuestDB's own zero-GC collections in `io.questdb.std`
 - String creation or concatenation on hot paths (use CharSink, StringSink, or direct char[] instead)
 - Capturing lambdas on hot paths — lambdas that capture local variables or instance fields allocate a new object on every invocation. Non-capturing lambdas (static method refs, no closed-over state) are safe as the JVM caches them. Flag any capturing lambda on a data path.
 - Autoboxing on hot paths — primitive-to-wrapper conversions (`int` → `Integer`, `long` → `Long`, etc.) allocate silently. Watch for primitives passed to generic methods, stored in `java.util.*` collections, or returned from methods with wrapper return types.
-- Missing SIMD or vectorization opportunities
+
+#### Vectorization and native acceleration
+
+- Missing SIMD or vectorization opportunities where QuestDB's native layer could process column data in bulk
 - Inefficient algorithms where QuestDB already provides optimized alternatives
-- Algorithmic complexity at scale: for each new loop or traversal, what is the time complexity as a function of row count, partition count, or join fan-out? Flag O(n^2) or worse patterns. Consider: what happens with 1M outer rows? 10K partitions? 100-way fan-out per row?
-- Compile-time vs data-path distinction: allocations and O(n) scans during SQL compilation/optimization are acceptable; the same on per-row data paths are not
+
+#### Compile-time paths
+
+- GC allocations during SQL compilation are acceptable
+- Algorithmic inefficiency during compilation is NOT acceptable — slow compilation means slow first-query latency. A
+  multi-pass parse, O(n^2) plan enumeration, or redundant AST traversals in the compiler are findings just as they would
+  be on a data path.
 
 ### Code quality
 - Code smell: overly complex methods, deep nesting, unclear intent, dead code
@@ -265,8 +363,21 @@ Review the diff for:
 - Underscores in numbers >= 5 digits (e.g., 1_000_000)
 - Multiline strings for complex queries
 - No DELETE statements (suggest DROP PARTITION or soft delete)
-- Tests use `assertMemoryLeak()`, `assertQueryNoLeakCheck()`, `execute()` for DDL
+- Tests use the `assertQuery(...)` builder for SQL assertions (see "SQL test assertions" below) and `execute()` for DDL
 - Single INSERT for multiple rows
+
+### SQL test assertions (builder API — strict, blocking)
+
+QuestDB has migrated SQL test assertions to the fluent `AbstractCairoTest.assertQuery(query)` builder. These rules are blocking — treat violations as **Critical** findings, not style nits. Apply them to every test line the diff **adds or modifies** (a residual pattern that the PR merely moves or reindents is not a finding; a newly written or edited one is).
+
+- **`assertSql(...)` has been REMOVED — there is no query-result `assertSql(...)`/`TestUtils.assertSql(...)` to fall back to.** Any new or changed test code that asserts query results with `assertSql(...)` / `TestUtils.assertSql(...)` is a Critical finding (it will not even compile against the current base class); the author must use the builder instead:
+    - data: `assertQuery(sql).returns(expected)` — chain `.timestamp(...)`, `.expectSize()`, `.noRandomAccess()`, `.sizeMayVary()`, `.ddl(...)`, `.mutateWith(...)`, `.withEngine(...)`, `.withContext(...)` as needed.
+    - plans: `assertQuery(sql).assertsPlan(plan)` / `.assertsPlanContaining(...)` / `.assertsPlanNotContaining(...)`, or fold the plan into a data assertion via `.withPlan(...)` / `.withPlanContaining(...)` / `.withPlanNotContaining(...)`.
+  Do **not** accept "the surrounding file already uses `assertSql`" — there is no such helper anymore, so the diff's lines must use the new API. Flag `assertPlanNoLeakCheck(...)`, `getPlan(...)`, `assertPlanDoesNotContain(...)`, and direct `TestUtils.assertSql(...)` in new/changed test code for the same reason. The one `assertSql` that legitimately survives is the live-`ServerMain` wrapper `TestServerMain.assertSql(sql, expected)` (and the enterprise `EntGriffinServerMain.assertSql(...)`): it is a convenience for the running-server context, internally drives the builder via `returnsOnce()` (single pass, because a live server's state mutates between reads), and is NOT the banned query-result helper — do not flag it.
+
+- **`.returnsOnce(...)` is a correctness smell — flag every newly added use.** `returnsOnce` runs the query through a SINGLE cursor pass and deliberately SKIPS the second read, the `calculateSize()` pass, the variable-column check, and the factory-property assertions (`supportsRandomAccess`, `expectSize`) that `.returns(...)` performs. Those skipped checks catch real bugs: cursors that don't reset correctly on `toTop()`, `size()` that disagrees between passes, random-access records that return wrong values via `recordAt()`. `returnsOnce` is **only** justified when the query's output is genuinely unstable across two reads with no underlying data change — e.g. an unseeded `rnd_*` in the projection, `now()`/`sysdate()`/`systimestamp()`-style time-varying output, or inherently non-deterministic row order. For a `.returnsOnce(...)` on a deterministic query this is a Critical finding: demand `.returns(...)`. Require the author to state *why* the query is unstable; "it was simpler" is not a reason — the shortcut leaves real bugs untested.
+
+- **Anti-pattern: a lone `assertQuery(...)` wrapped in `assertMemoryLeak(() -> { ... })`.** The builder runs its OWN memory-leak check by default (it wraps internally unless `.noLeakCheck()` is set). When an `assertMemoryLeak(...)` lambda's only meaningful statement is a single `assertQuery(...)` chain, the outer wrapper is redundant and almost always forces a `.noLeakCheck()` on the builder — which disables the builder's leak check and replaces it with a hand-rolled one, defeating the point. Flag it: drop the `assertMemoryLeak` wrapper and the `.noLeakCheck()`, letting the builder leak-check itself. The wrapper is only legitimate when the lambda genuinely holds multiple statements (DDL + inserts + several assertions) that must share one leak-check scope; a single builder call does not.
 
 ### Enterprise permissions & ACL (if PR introduces new SQL statements or ALTER operations)
 - New ALTER TABLE operations almost always require a new enterprise permission. If the PR adds a new ALTER statement (or any new SQL statement that modifies state), flag it if there is no corresponding `SecurityContext.authorize*()` call in the execution path.

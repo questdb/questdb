@@ -99,7 +99,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
         this.messageBus = engine.getMessageBus();
         this.microClock = configuration.getMicrosecondClock();
         this.ff = configuration.getFilesFacade();
-        this.metadata = new WalWriterMetadata(ff);
+        this.metadata = WalWriterMetadata.newSequencerMetadataSink(ff);
         this.tableNameRegistryStore = new GrowOnlyTableNameRegistryStore(ff);
         this.txReader = new TxReader(configuration.getFilesFacade());
     }
@@ -920,7 +920,13 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             } catch (Throwable e) {
                 LOG.error().$("error during checkpoint recovery, aborting async tasks [error=").$(e).I$();
                 recoveryAgent.abortParallelTasks();
-                recoveryAgent.finalizeParallelTasks();
+                try {
+                    recoveryAgent.finalizeParallelTasks();
+                } catch (Throwable drainError) {
+                    // surface the original recovery failure; finalizeParallelTasks
+                    // has already logged every task error
+                    LOG.error().$("error finalizing parallel tasks during recovery abort [error=").$(drainError).I$();
+                }
                 throw e;
             }
 

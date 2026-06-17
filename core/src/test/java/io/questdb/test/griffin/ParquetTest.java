@@ -26,15 +26,23 @@ package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.idx.IndexReader;
+import io.questdb.cairo.sql.ParquetDecodeHint;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
+
+import java.util.Objects;
 
 /**
  * Miscellaneous tests for tables with partitions in Parquet format.
@@ -183,6 +191,55 @@ public class ParquetTest extends AbstractCairoTest {
         testNdArray(5, ARRAY_5D, true);
     }
 
+    // Coverage for the filtered / late-materialization read of a column ABSENT from
+    // the parquet file (added with ALTER TABLE ADD COLUMN after conversion). A query
+    // that filters on a present column and groups by the absent column reads it
+    // through PageFrameFilteredMemoryRecord and ParquetBuffers.decodeRemainingColumns
+    // -- a different code path from the record-scan one covered by
+    // testSelectOnlyAddedColumnAbsentFromParquetPartition. The plan is an Async JIT
+    // Group By (filter null!=c1, keys [s]) over a PARQUET PageFrame; the result must
+    // match the native sibling, where s is a plain all-NULL column-top.
+    //
+    // Unlike the record-scan test, this one passes on master: the filter column c1 is
+    // present in parquet, so the filter pass's decode() already calls remapColumns()
+    // and sizes/zeroes the address lists, leaving the absent VARCHAR slot at address 0
+    // (NULL). It is therefore a guard, not a reproduction -- it pins the aux-vector
+    // zeroing on the late-mat route, so a future regression that zeroed only the data
+    // lists, or mishandled an absent VARCHAR in
+    // PageFrameFilteredMemoryRecord.getVarchar, would surface here as a
+    // native-vs-parquet divergence (or a stale aux read).
+    //
+    // Mirrors testLong256LateMaterializationOverParquet (same WAL single-partition,
+    // 10-row, filter-on-c1 shape) but projects an absent column instead of a present
+    // one. VARCHAR is chosen to exercise the aux-vector read on the filtered record.
+    @Test
+    public void testAbsentColumnLateMaterializationOverParquet() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (c1 TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x SELECT " +
+                    "case when x % 3 = 0 then null else 0::TIMESTAMP end AS c1, " +
+                    "(timestamp_sequence('2024-01-01', 60_000_000)) AS ts " +
+                    "FROM long_sequence(10)");
+            drainWalQueue();
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            // s is added AFTER conversion, so it is absent from the parquet file.
+            execute("ALTER TABLE x ADD COLUMN s VARCHAR");
+            drainWalQueue();
+
+            // Native sibling: s is a regular (all-NULL) column, never absent from storage.
+            execute("CREATE TABLE x_native (c1 TIMESTAMP, ts TIMESTAMP, s VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x_native (c1, ts) SELECT c1, ts FROM x");
+            drainWalQueue();
+
+            // Filter on present c1, late-materialize absent s.
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext,
+                    "SELECT s, count() FROM x_native WHERE c1 IS NOT NULL ORDER BY s",
+                    "SELECT s, count() FROM x WHERE c1 IS NOT NULL ORDER BY s",
+                    LOG);
+        });
+    }
+
     @Test
     public void testArrayColTops() throws Exception {
         testArrayColTops(false);
@@ -194,6 +251,27 @@ public class ParquetTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testArrayMidFrameOffsetAcrossRowGroups() throws Exception {
+        // ARRAY columns are var-size, so a mid-frame offset crossing row groups
+        // exercises the aux-shift rebase for the array type driver.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 8);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (a INT, arr DOUBLE[][], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x SELECT x::INT, ARRAY[[x::DOUBLE, x+0.5],[x*2.0, x*3.0]], timestamp_sequence('2024-01-01', 60_000_000) FROM long_sequence(40)");
+            execute("INSERT INTO x VALUES (0, ARRAY[[0.0,0.0],[0.0,0.0]], '2024-01-02T00:00:00.000000Z')");
+            execute("CREATE TABLE x_native AS (SELECT * FROM x) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts in '2024-01-01'");
+            TestUtils.assertSqlCursors(
+                    engine,
+                    sqlExecutionContext,
+                    "SELECT * FROM x_native LIMIT 13, 30",
+                    "SELECT * FROM x LIMIT 13, 30",
+                    LOG
+            );
+        });
+    }
+
+    @Test
     public void testArraySmallDataPages() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 1000);
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_DATA_PAGE_SIZE, 4096);
@@ -202,22 +280,47 @@ public class ParquetTest extends AbstractCairoTest {
                     """
                             create table x as (
                               select array[42] arr, timestamp_sequence(0,1000000) as ts
-                              from long_sequence(10000)
+                              from long_sequence(10_000)
                             ) timestamp(ts) partition by day;"""
             );
             // create new active partition
             execute("insert into x values (null, '2000-01-01')");
             execute("alter table x convert partition to parquet where ts >= 0");
 
-            assertQuery(
-                    """
+            assertQuery("select count() from x where arr[1] = 42")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             count
                             10000
-                            """,
-                    "select count() from x where arr[1] = 42",
-                    null,
-                    false,
-                    true
+                            """);
+        });
+    }
+
+    @Test
+    public void testBinaryVarLenMidFrameOffset() throws Exception {
+        // BinaryTypeDriver extends StringTypeDriver, so BINARY columns take the
+        // aux-shift rebase path on a mid-frame offset.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 16);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (b BINARY, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x SELECT rnd_bin(4, 32, 2), timestamp_sequence('2024-01-01', 60_000_000) FROM long_sequence(40)");
+            execute("INSERT INTO x VALUES (rnd_bin(4, 8, 0), '2024-01-02T00:00:00.000000Z')");
+            execute("CREATE TABLE x_native AS (SELECT * FROM x) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts in '2024-01-01'");
+            TestUtils.assertSqlCursors(
+                    engine,
+                    sqlExecutionContext,
+                    "SELECT * FROM x_native LIMIT 18, 24",
+                    "SELECT * FROM x LIMIT 18, 24",
+                    LOG
+            );
+            TestUtils.assertSqlCursors(
+                    engine,
+                    sqlExecutionContext,
+                    "SELECT * FROM x_native LIMIT 5, 35",
+                    "SELECT * FROM x LIMIT 5, 35",
+                    LOG
             );
         });
     }
@@ -237,8 +340,11 @@ public class ParquetTest extends AbstractCairoTest {
             execute("insert into x values(7, '2024-06-10T00:00:00.000000Z', 1);");
 
             execute("alter table x convert partition to parquet where ts >= 0");
-            assertSql(
-                    """
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             id\tts\ta
                             1\t2024-06-10T00:00:00.000000Z\tnull
                             7\t2024-06-10T00:00:00.000000Z\t1
@@ -247,9 +353,7 @@ public class ParquetTest extends AbstractCairoTest {
                             4\t2024-06-12T00:00:01.000000Z\tnull
                             6\t2024-06-12T00:00:02.000000Z\tnull
                             5\t2024-06-15T00:00:00.000000Z\tnull
-                            """,
-                    "x"
-            );
+                            """);
         });
     }
 
@@ -274,6 +378,113 @@ public class ParquetTest extends AbstractCairoTest {
             } finally {
                 Unsafe.setRssMemLimit(0);
             }
+        });
+    }
+
+    // Guards an AssertionError introduced by this PR's own hoist of remapColumns()
+    // when the query projects ZERO columns. This passes on master: there
+    // remapColumns() is never called for a zero-column projection, so master never
+    // trips the assert. The hoist makes remapColumns() always run, which is what
+    // exposes the zero-column case.
+    //
+    // PageFrameMemoryPool.ParquetBuffers.decode() now always calls remapColumns() to
+    // size and zero the per-column page-address lists. When the projection has no
+    // columns, addressCache.getColumnCount() is 0, so remapColumns() would size the
+    // lists to 0 and trip DirectLongList.setCapacity()'s assert capacity > 0 (or,
+    // with assertions off, call setCapacity(0)). remapColumns() must instead leave
+    // the already-cleared lists empty for a zero-column read.
+    //
+    // count(*) with a constant GROUP BY keeps a single constant key, routing
+    // through the keyed group-by reduce path (AsyncGroupByRecordCursor), which
+    // navigates every page frame -- decoding the parquet frame -- while projecting
+    // zero columns. The older partition is parquet; the active '2024-06-02' stays
+    // native (the active partition cannot be converted).
+    @Test
+    public void testCountStarOverParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (a int, ts timestamp) timestamp(ts) partition by day;");
+            execute("insert into x(a, ts) values " +
+                    "(1, '2024-06-01T00:00:00.000000Z'), (2, '2024-06-02T00:00:00.000000Z');");
+            execute("alter table x convert partition to parquet where ts in '2024-06-01';");
+
+            // Pin the plan: the regression only reproduces while this query takes the
+            // group-by reduce path that decodes the parquet frame. If the optimizer
+            // ever folded the constant GROUP BY into the metadata-only
+            // CountRecordCursorFactory (whose plan is just "Count"), no frame would
+            // decode and the test would pass trivially on broken code. The PageFrame
+            // node below is what guarantees the parquet frame is actually visited.
+            // assertQueryNoLeakCheck re-creates the cursor and re-reads the result,
+            // so it also exercises parquet decode re-entry (assertSql reads once).
+            assertQuery("select count(*) from x group by 1+2")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            VirtualRecord
+                              functions: [count]
+                                Async Group By workers: 1
+                                  keys: [column]
+                                  keyFunctions: [3]
+                                  values: [count(*)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: x
+                            """)
+                    .returns("""
+                            count
+                            2
+                            """);
+        });
+    }
+
+    @Test
+    public void testDecimal128LateMaterializationOverParquet() throws Exception {
+        // Sibling of testLong256LateMaterializationOverParquet that exercises the 16-byte
+        // late-materialization path through PageFrameFilteredMemoryRecord.getDecimal128.
+        // Keeps the LONG256 fix honest: any future regression that drops the getRowIndex
+        // routing for getDecimal128 (or the wider DECIMAL128 family) will surface here as
+        // a native-vs-parquet divergence on the GROUP BY key column.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (k DECIMAL(38, 5), c1 TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x SELECT " +
+                    "rnd_decimal(38, 5, 0) AS k, " +
+                    "case when x % 3 = 0 then null else 0::TIMESTAMP end AS c1, " +
+                    "(timestamp_sequence('2024-01-01', 60_000_000)) AS ts " +
+                    "FROM long_sequence(10)");
+            drainWalQueue();
+            execute("CREATE TABLE x_native (k DECIMAL(38, 5), c1 TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x_native SELECT * FROM x");
+            drainWalQueue();
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext,
+                    "SELECT k, count() FROM x_native WHERE c1 IS NOT NULL ORDER BY k",
+                    "SELECT k, count() FROM x WHERE c1 IS NOT NULL ORDER BY k",
+                    LOG);
+        });
+    }
+
+    @Test
+    public void testDecimal256LateMaterializationOverParquet() throws Exception {
+        // Sibling of testLong256LateMaterializationOverParquet for the 32-byte
+        // DECIMAL256 family (PageFrameFilteredMemoryRecord.getDecimal256).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (k DECIMAL(76, 10), c1 TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x SELECT " +
+                    "rnd_decimal(76, 10, 0) AS k, " +
+                    "case when x % 3 = 0 then null else 0::TIMESTAMP end AS c1, " +
+                    "(timestamp_sequence('2024-01-01', 60_000_000)) AS ts " +
+                    "FROM long_sequence(10)");
+            drainWalQueue();
+            execute("CREATE TABLE x_native (k DECIMAL(76, 10), c1 TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x_native SELECT * FROM x");
+            drainWalQueue();
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext,
+                    "SELECT k, count() FROM x_native WHERE c1 IS NOT NULL ORDER BY k",
+                    "SELECT k, count() FROM x WHERE c1 IS NOT NULL ORDER BY k",
+                    LOG);
         });
     }
 
@@ -323,15 +534,15 @@ public class ParquetTest extends AbstractCairoTest {
 
             execute("alter table x convert partition to parquet where ts >= 0");
 
-            assertSql(
-                    """
+            assertQuery("x order by id")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tts\tdec8\tdec16\tdec32\tdec64\tdec128\tdec256
                             1\t2024-06-10T00:00:00.000000Z\t1.2\t12.34\t12345.6789\t123456789012.345678\t1234567890123456789012345678.9012345678\t12345678901234567890123456789012345678901234567890123456.78901234567890123456
                             2\t2024-06-11T00:00:00.000000Z\t-1.2\t-12.34\t-12345.6789\t-123456789012.345678\t-1234567890123456789012345678.9012345678\t-12345678901234567890123456789012345678901234567890123456.78901234567890123456
                             3\t2024-06-12T00:00:00.000000Z\t0.0\t0.00\t0.0000\t0.000000\t0.0000000000\t0.00000000000000000000
-                            """,
-                    "x order by id"
-            );
+                            """);
         });
     }
 
@@ -393,42 +604,120 @@ public class ParquetTest extends AbstractCairoTest {
                 execute("alter table x convert partition to parquet where ts >= 0");
 
                 // Verify row count
-                assertSql(
-                        "cnt\n" + (initialRows + additionalRows) + "\n",
-                        "select count(*) as cnt from x"
-                );
+                assertQuery("select count(*) as cnt from x")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("cnt\n" + (initialRows + additionalRows) + "\n");
 
                 // Verify initial rows have null decimals (col-tops)
-                assertSql(
-                        "null_count\n" + initialRows + "\n",
-                        "select count(*) as null_count from x where dec8 is null and dec16 is null and dec32 is null and dec64 is null and dec128 is null and dec256 is null"
-                );
+                assertQuery("select count(*) as null_count from x where dec8 is null and dec16 is null and dec32 is null and dec64 is null and dec128 is null and dec256 is null")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("null_count\n" + initialRows + "\n");
 
                 // Verify data matches expected
-                assertSql(
-                        "diff_count\n0\n",
-                        "select count(*) as diff_count from (" +
-                                "select * from x " +
-                                "except " +
-                                "select * from expected" +
-                                ")"
-                );
+                assertQuery("select count(*) as diff_count from (" +
+                        "select * from x " +
+                        "except " +
+                        "select * from expected" +
+                        ")")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("diff_count\n0\n");
 
                 // Round-trip: convert back to native and verify again
                 execute("alter table x convert partition to native where ts >= 0");
-                assertSql(
-                        "diff_count\n0\n",
-                        "select count(*) as diff_count from (" +
-                                "select * from x " +
-                                "except " +
-                                "select * from expected" +
-                                ")"
-                );
+                assertQuery("select count(*) as diff_count from (" +
+                        "select * from x " +
+                        "except " +
+                        "select * from expected" +
+                        ")")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("diff_count\n0\n");
 
                 execute("drop table x");
                 execute("drop table expected");
             });
         }
+    }
+
+    @Test
+    public void testDecimalFilterMismatchedScaleOverParquet() throws Exception {
+        // Regression for two bugs the fuzzer surfaced together:
+        //   (1) PushdownFilterExtractor pushed the literal's raw value at the
+        //       literal's scale, so parquet row group statistics were compared
+        //       against a value at the wrong scale and pruned every group.
+        //   (2) CompareDecimal{64,128,256}Function did not short-circuit NULL,
+        //       so Decimal128/256.compareTo(NULL, x) = -1 made every NULL row
+        //       satisfy any "<", "<=" filter (and "!=" symmetrically).
+        // Either bug alone produced a primary-vs-shadow divergence in the fuzzer
+        // (native incorrectly matched NULLs while parquet correctly pruned the
+        // group). The test asserts that:
+        //   - `c1 <= literal` matches no NULL rows on either path,
+        //   - parquet matches the same non-null rows native does.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (c1 DECIMAL(18, 5), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x VALUES " +
+                    "(NULL, '2024-01-01'), " +
+                    "(0.00001::DECIMAL(18,5), '2024-01-02'), " +
+                    "(0.00002::DECIMAL(18,5), '2024-01-03'), " +
+                    "(NULL, '2024-01-04'), " +
+                    "(99999999999.00000::DECIMAL(18,5), '2024-01-05')");
+            drainWalQueue();
+            execute("CREATE TABLE x_native (c1 DECIMAL(18, 5), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x_native SELECT * FROM x");
+            drainWalQueue();
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+            drainWalQueue();
+            // Mismatched-scale literals across partitions split into many small row groups.
+            // Two non-null small rows match; NULLs must NOT match.
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext,
+                    "SELECT count() FROM x_native WHERE c1 <= 26945.4149::DECIMAL(18, 4)",
+                    "SELECT count() FROM x WHERE c1 <= 26945.4149::DECIMAL(18, 4)",
+                    LOG);
+            // Single tight bound that includes only the two small values
+            assertQuery("SELECT count() FROM x_native WHERE c1 <= 26945.4149::DECIMAL(18, 4)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n2\n");
+            assertQuery("SELECT count() FROM x WHERE c1 <= 26945.4149::DECIMAL(18, 4)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n2\n");
+            // <= an even tighter bound — only the smallest matches
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext,
+                    "SELECT count() FROM x_native WHERE c1 <= 0.000015::DECIMAL(18, 6)",
+                    "SELECT count() FROM x WHERE c1 <= 0.000015::DECIMAL(18, 6)",
+                    LOG);
+        });
+    }
+
+    @Test
+    public void testDecimalFilterWithBindVariableSkipsPushdown() throws Exception {
+        // Regression: PushdownFilterExtractor.rescaleDecimalForPushdown
+        // called DecimalUtil.load(... null) which evaluates the function. For
+        // a bind variable wrapped in a chained ::BYTE::DECIMAL cast, the
+        // unbound NamedParameterLinkFunction.getBase() asserted at compile
+        // time. Pushdown now skips runtime-constants - they aren't known at
+        // compile time, can't drive parquet row group statistics, and the
+        // regular row-time filter handles them correctly.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (c0 DECIMAL(38, 1), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('10.5'::DECIMAL(38, 1), '2024-01-01T00:00:00.000000Z')");
+            bindVariableService.clear();
+            bindVariableService.setStr("b0", "5");
+            assertQuery("SELECT c0, ts FROM t WHERE NOT ((:b0::BYTE)::DECIMAL(38, 1) >= c0)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("c0\tts\n10.5\t2024-01-01T00:00:00.000000Z\n");
+        });
     }
 
     @Test
@@ -483,31 +772,34 @@ public class ParquetTest extends AbstractCairoTest {
                 execute("alter table x convert partition to parquet where ts >= 0");
 
                 // Verify data matches after parquet conversion
-                assertSql(
-                        "cnt\n" + rowCount + "\n",
-                        "select count(*) as cnt from x"
-                );
+                assertQuery("select count(*) as cnt from x")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("cnt\n" + rowCount + "\n");
 
                 // Compare each row - join and check for differences
-                assertSql(
-                        "diff_count\n0\n",
-                        "select count(*) as diff_count from (" +
-                                "select * from x " +
-                                "except " +
-                                "select * from expected" +
-                                ")"
-                );
+                assertQuery("select count(*) as diff_count from (" +
+                        "select * from x " +
+                        "except " +
+                        "select * from expected" +
+                        ")")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("diff_count\n0\n");
 
                 // Convert back to native and verify again
                 execute("alter table x convert partition to native where ts >= 0");
-                assertSql(
-                        "diff_count\n0\n",
-                        "select count(*) as diff_count from (" +
-                                "select * from x " +
-                                "except " +
-                                "select * from expected" +
-                                ")"
-                );
+                assertQuery("select count(*) as diff_count from (" +
+                        "select * from x " +
+                        "except " +
+                        "select * from expected" +
+                        ")")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("diff_count\n0\n");
 
                 execute("drop table x");
                 execute("drop table expected");
@@ -560,27 +852,29 @@ public class ParquetTest extends AbstractCairoTest {
                 execute("alter table x convert partition to parquet where ts >= 0");
 
                 // Verify data matches
-                assertSql(
-                        "diff_count\n0\n",
-                        "select count(*) as diff_count from (" +
-                                "select * from x " +
-                                "except " +
-                                "select * from expected" +
-                                ")"
-                );
+                assertQuery("select count(*) as diff_count from (" +
+                        "select * from x " +
+                        "except " +
+                        "select * from expected" +
+                        ")")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("diff_count\n0\n");
 
                 // Round-trip test: convert back to native and then to parquet again
                 execute("alter table x convert partition to native where ts >= 0");
                 execute("alter table x convert partition to parquet where ts >= 0");
 
-                assertSql(
-                        "diff_count\n0\n",
-                        "select count(*) as diff_count from (" +
-                                "select * from x " +
-                                "except " +
-                                "select * from expected" +
-                                ")"
-                );
+                assertQuery("select count(*) as diff_count from (" +
+                        "select * from x " +
+                        "except " +
+                        "select * from expected" +
+                        ")")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("diff_count\n0\n");
 
                 execute("drop table x");
                 execute("drop table expected");
@@ -612,15 +906,24 @@ public class ParquetTest extends AbstractCairoTest {
 
             // Convert to parquet
             execute("alter table x convert partition to parquet where ts >= 0");
-            assertSql(expected, "x order by id");
+            assertQuery("x order by id")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
 
             // Convert back to native
             execute("alter table x convert partition to native where ts >= 0");
-            assertSql(expected, "x order by id");
+            assertQuery("x order by id")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
 
             // Convert to parquet again
             execute("alter table x convert partition to parquet where ts >= 0");
-            assertSql(expected, "x order by id");
+            assertQuery("x order by id")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -641,16 +944,16 @@ public class ParquetTest extends AbstractCairoTest {
 
             execute("alter table x convert partition to parquet where ts >= 0");
 
-            assertSql(
-                    """
+            assertQuery("x order by id")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tts\tdec32\tdec64
                             1\t2024-06-10T00:00:00.000000Z\t123.4567\t123456.789012
                             2\t2024-06-11T00:00:00.000000Z\t\t999.999999
                             3\t2024-06-12T00:00:00.000000Z\t987.6543\t
                             4\t2024-06-13T00:00:00.000000Z\t\t
-                            """,
-                    "x order by id"
-            );
+                            """);
         });
     }
 
@@ -665,22 +968,30 @@ public class ParquetTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            assertSql("""
-                    x\tts
-                    1\t2020-01-01T00:00:00.000000Z
-                    2\t2020-01-02T00:00:00.000000Z
-                    3\t2020-01-03T00:00:00.000000Z
-                    """, "x");
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            x\tts
+                            1\t2020-01-01T00:00:00.000000Z
+                            2\t2020-01-02T00:00:00.000000Z
+                            3\t2020-01-03T00:00:00.000000Z
+                            """);
 
             drainWalQueue();
 
             execute("alter table x convert partition to parquet list '2020-01-01', '2020-01-02';");
-            assertSql("""
-                    x\tts
-                    1\t2020-01-01T00:00:00.000000Z
-                    2\t2020-01-02T00:00:00.000000Z
-                    3\t2020-01-03T00:00:00.000000Z
-                    """, "x");
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            x\tts
+                            1\t2020-01-01T00:00:00.000000Z
+                            2\t2020-01-02T00:00:00.000000Z
+                            3\t2020-01-03T00:00:00.000000Z
+                            """);
 
             drainWalQueue();
 
@@ -692,15 +1003,19 @@ public class ParquetTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            assertSql("""
-                    x\tts
-                    1\t2020-01-01T00:00:00.000000Z
-                    11\t2020-01-01T00:00:00.000000Z
-                    2\t2020-01-02T00:00:00.000000Z
-                    22\t2020-01-02T00:00:00.000000Z
-                    3\t2020-01-03T00:00:00.000000Z
-                    33\t2020-01-03T00:00:00.000000Z
-                    """, "x");
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            x\tts
+                            1\t2020-01-01T00:00:00.000000Z
+                            11\t2020-01-01T00:00:00.000000Z
+                            2\t2020-01-02T00:00:00.000000Z
+                            22\t2020-01-02T00:00:00.000000Z
+                            3\t2020-01-03T00:00:00.000000Z
+                            33\t2020-01-03T00:00:00.000000Z
+                            """);
         });
     }
 
@@ -715,22 +1030,30 @@ public class ParquetTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            assertSql("""
-                    x\tts
-                    1\t2020-01-01T00:00:00.000000Z
-                    2\t2020-01-02T00:00:00.000000Z
-                    3\t2020-01-03T00:00:00.000000Z
-                    """, "x");
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            x\tts
+                            1\t2020-01-01T00:00:00.000000Z
+                            2\t2020-01-02T00:00:00.000000Z
+                            3\t2020-01-03T00:00:00.000000Z
+                            """);
 
             drainWalQueue();
 
             execute("alter table x convert partition to parquet list '2020-01-01', '2020-01-02';");
-            assertSql("""
-                    x\tts
-                    1\t2020-01-01T00:00:00.000000Z
-                    2\t2020-01-02T00:00:00.000000Z
-                    3\t2020-01-03T00:00:00.000000Z
-                    """, "x");
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            x\tts
+                            1\t2020-01-01T00:00:00.000000Z
+                            2\t2020-01-02T00:00:00.000000Z
+                            3\t2020-01-03T00:00:00.000000Z
+                            """);
 
             drainWalQueue();
 
@@ -740,12 +1063,16 @@ public class ParquetTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            assertSql("""
-                    x\tts
-                    11\t2020-01-01T00:00:00.000000Z
-                    22\t2020-01-02T00:00:00.000000Z
-                    33\t2020-01-03T00:00:00.000000Z
-                    """, "x");
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            x\tts
+                            11\t2020-01-01T00:00:00.000000Z
+                            22\t2020-01-02T00:00:00.000000Z
+                            33\t2020-01-03T00:00:00.000000Z
+                            """);
         });
     }
 
@@ -760,28 +1087,30 @@ public class ParquetTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            assertSql(
-                    """
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             x\tts
                             1\t2020-01-01T00:00:00.000000Z
                             2\t2020-01-02T00:00:00.000000Z
                             3\t2020-01-03T00:00:00.000000Z
-                            """,
-                    "x"
-            );
+                            """);
 
             drainWalQueue();
 
             execute("alter table x convert partition to parquet list '2020-01-01', '2020-01-02';");
-            assertSql(
-                    """
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             x\tts
                             1\t2020-01-01T00:00:00.000000Z
                             2\t2020-01-02T00:00:00.000000Z
                             3\t2020-01-03T00:00:00.000000Z
-                            """,
-                    "x"
-            );
+                            """);
 
             drainWalQueue();
 
@@ -793,8 +1122,11 @@ public class ParquetTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            assertSql(
-                    """
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             x\tts
                             1\t2020-01-01T00:00:00.000000Z
                             100000000001\t2020-01-01T00:00:00.000000Z
@@ -802,9 +1134,58 @@ public class ParquetTest extends AbstractCairoTest {
                             200000000002\t2020-01-02T00:00:00.000000Z
                             3\t2020-01-03T00:00:00.000000Z
                             33\t2020-01-03T00:00:00.000000Z
-                            """,
-                    "x"
+                            """);
+        });
+    }
+
+    @Test
+    public void testDuplicateColumnProjectionMidFrameOffset() throws Exception {
+        // openParquet dedups decode slots when the same parquet column is projected
+        // twice; remapColumns fans one decoded slot out to both query columns, so a
+        // mid-frame offset must rebase the shared addresses for each copy.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 16);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (i INT, v VARCHAR, s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x SELECT x::INT, 'v' || x, 's' || x, timestamp_sequence('2024-01-01', 60_000_000) FROM long_sequence(40)");
+            execute("INSERT INTO x VALUES (0, 'v0', 's0', '2024-01-02T00:00:00.000000Z')");
+            execute("CREATE TABLE x_native AS (SELECT * FROM x) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts in '2024-01-01'");
+            TestUtils.assertSqlCursors(
+                    engine,
+                    sqlExecutionContext,
+                    "SELECT i, i AS i2, v, v AS v2, s, s AS s2 FROM x_native LIMIT 18, 24",
+                    "SELECT i, i AS i2, v, v AS v2, s, s AS s2 FROM x LIMIT 18, 24",
+                    LOG
             );
+        });
+    }
+
+    @Test
+    public void testEdgeLimitsSingleRowAndBoundaries() throws Exception {
+        // Single-row parquet partitions with LIMIT shapes hitting the boundaries:
+        // empty result, beyond-table bounds, and an offset landing exactly on a
+        // partition boundary.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-02T00:00:00.000000Z'),
+                    (3, '2024-01-03T00:00:00.000000Z')""");
+            execute("CREATE TABLE x_native AS (SELECT * FROM x) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts in ('2024-01-01','2024-01-02')");
+            for (String lim : new String[]{
+                    "LIMIT 0", "LIMIT 100", "LIMIT 1", "LIMIT 1, 1", "LIMIT 1, 2",
+                    "LIMIT 2, 3", "LIMIT 3, 100", "LIMIT -1", "LIMIT -100", "LIMIT -2, -1"
+            }) {
+                TestUtils.assertSqlCursors(
+                        engine,
+                        sqlExecutionContext,
+                        "SELECT * FROM x_native " + lim,
+                        "SELECT * FROM x " + lim,
+                        LOG
+                );
+            }
         });
     }
 
@@ -820,15 +1201,14 @@ public class ParquetTest extends AbstractCairoTest {
             );
             execute("alter table x convert partition to parquet where ts >= 0");
 
-            assertSql(
-                    """
+            assertQuery("x where id < 4 order by id desc")
+                    .noLeakCheck()
+                    .returns("""
                             id\tts
                             3\t1970-01-01T00:33:20.000000Z
                             2\t1970-01-01T00:16:40.000000Z
                             1\t1970-01-01T00:00:00.000000Z
-                            """,
-                    "x where id < 4 order by id desc"
-            );
+                            """);
         });
     }
 
@@ -844,15 +1224,15 @@ public class ParquetTest extends AbstractCairoTest {
             );
             execute("alter table x convert partition to parquet where ts >= 0");
 
-            assertSql(
-                    """
+            assertQuery("x where id[1] < 4 order by ts desc")
+                    .noLeakCheck()
+                    .timestampDesc("ts")
+                    .returns("""
                             id\tts
                             [3.0]\t1970-01-01T00:33:20.000000Z
                             [2.0]\t1970-01-01T00:16:40.000000Z
                             [1.0]\t1970-01-01T00:00:00.000000Z
-                            """,
-                    "x where id[1] < 4 order by ts desc"
-            );
+                            """);
         });
     }
 
@@ -879,17 +1259,136 @@ public class ParquetTest extends AbstractCairoTest {
             final String query = "x where id = 'k1'";
 
             execute("alter table x convert partition to parquet where ts >= 0");
-            assertSql(expected, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
 
             execute("alter table x convert partition to native where ts >= 0");
-            assertSql(expected, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
 
             execute("alter table x convert partition to parquet where ts >= 0");
             execute("alter table x alter column id drop index;");
-            assertSql(expected, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
 
             execute("alter table x alter column id add index;");
-            assertSql(expected, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
+        });
+    }
+
+    // Red regression for the indexParquetPartition all-null-chunk bug.
+    // When a SYMBOL row group has null_count == num_values, the _pm decoder
+    // skips materialising the chunk buffer and reports size == 0 (see
+    // RowGroupBuffers javadoc). TableWriter.indexParquetPartition walks the
+    // returned buffer to add index entries but has no size == 0 branch, so
+    // no entries are emitted for the NULL key and "WHERE id = null" silently
+    // returns zero rows against an indexed historic Parquet partition.
+    @Test
+    public void testIndexAllNullSymbolChunkOnParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (id symbol, ts timestamp) timestamp(ts) partition by day;");
+            // All rows in the '2024-06-10' partition have NULL symbol: the
+            // parquet row group stats report null_count == num_values, which
+            // is the trigger for the _pm decoder size == 0 fast path.
+            execute("insert into x values(null, '2024-06-10T00:00:00.000000Z');");
+            execute("insert into x values(null, '2024-06-10T01:00:00.000000Z');");
+            execute("insert into x values(null, '2024-06-10T02:00:00.000000Z');");
+            // Trailing partition keeps '2024-06-10' as a historic (non-last)
+            // partition so ADD INDEX routes it through indexParquetPartition
+            // via indexHistoricPartitions.
+            execute("insert into x values('k1', '2024-06-15T00:00:00.000000Z');");
+
+            execute("alter table x convert partition to parquet where ts in '2024-06-10';");
+            execute("alter table x alter column id add index;");
+
+            // Pin the plan so a silently-degraded full scan cannot mask a
+            // broken index by returning the right answer for the wrong
+            // reason. The "id=0" filter is the NULL key for an indexed
+            // SYMBOL column (toIndexKey(SymbolTable.VALUE_IS_NULL) == 0).
+            // The bug manifests when this index path returns no rows.
+            assertQuery("x where id = null")
+                    .noLeakCheck()
+                    .withPlan("""
+                            DeferredSingleSymbolFilterPageFrame
+                                Index forward scan on: id
+                                  filter: id=0
+                                Frame forward scan on: x
+                            """)
+                    .timestamp("ts")
+                    .returns("""
+                            id\tts
+                            \t2024-06-10T00:00:00.000000Z
+                            \t2024-06-10T01:00:00.000000Z
+                            \t2024-06-10T02:00:00.000000Z
+                            """);
+        });
+    }
+
+    // Red regression for the O3PartitionJob.updateParquetIndexes all-null
+    // chunk bug fixed in commit f93a7c4395. The _pm decoder fast-paths a
+    // SYMBOL row group whose chunk stats report null_count == num_values
+    // and returns size == 0 (see RowGroupBuffers javadoc). The O3-rewrite
+    // path walked the empty chunk buffer and emitted no entries for the
+    // NULL key, so an indexed WHERE id = null against the rewritten
+    // partition silently returned zero rows.
+    //
+    // The existing fuzz seed in WalWriterFuzzTest depends on the shared
+    // worker pool schedule (to land an all-null SYMBOL chunk in a rewritten
+    // row group) and on FuzzRunner.checkIndexRandomValueScan picking a
+    // NULL row from that partition. This test removes both layers of luck
+    // by constructing the all-null chunk explicitly and asserting on the
+    // NULL filter directly.
+    @Test
+    public void testIndexAllNullSymbolChunkOnParquetPartitionAfterO3Rewrite() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (id symbol index, ts timestamp) timestamp(ts) partition by day;");
+            // Two NULL-id rows in '2024-06-10' produce a single all-NULL
+            // parquet row group after conversion.
+            execute("insert into x values(null, '2024-06-10T01:00:00.000000Z');");
+            execute("insert into x values(null, '2024-06-10T02:00:00.000000Z');");
+            // Trailing partition keeps '2024-06-10' a historic (non-last)
+            // partition so the O3 insert below routes through O3PartitionJob.
+            execute("insert into x values('k1', '2024-06-15T00:00:00.000000Z');");
+
+            execute("alter table x convert partition to parquet where ts in '2024-06-10';");
+
+            // O3-insert another NULL-id row into the parquet partition. The
+            // partition is rewritten through O3PartitionJob, which calls
+            // updateParquetIndexes against the new row group. That chunk is
+            // still all-NULL for id, so the _pm decoder returns size == 0
+            // and only the size == 0 branch produces index entries for the
+            // NULL key. The new row's earlier timestamp guarantees an O3
+            // (rather than append) path.
+            execute("insert into x values(null, '2024-06-10T00:30:00.000000Z');");
+
+            // Pin the plan so a silently-degraded full scan cannot mask a
+            // broken index by returning the right answer for the wrong
+            // reason. The "id=0" filter is the NULL key for an indexed
+            // SYMBOL column (toIndexKey(SymbolTable.VALUE_IS_NULL) == 0).
+            assertQuery("x where id = null")
+                    .noLeakCheck()
+                    .withPlan("""
+                            DeferredSingleSymbolFilterPageFrame
+                                Index forward scan on: id
+                                  filter: id=0
+                                Frame forward scan on: x
+                            """)
+                    .timestamp("ts")
+                    .returns("""
+                            id\tts
+                            \t2024-06-10T00:30:00.000000Z
+                            \t2024-06-10T01:00:00.000000Z
+                            \t2024-06-10T02:00:00.000000Z
+                            """);
         });
     }
 
@@ -928,10 +1427,14 @@ public class ParquetTest extends AbstractCairoTest {
                     """;
             final String query = "x";
 
-            assertSql(expected, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returns(expected);
 
             execute("alter table x convert partition to native where ts >= 0");
-            assertSql(expected, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
@@ -951,14 +1454,14 @@ public class ParquetTest extends AbstractCairoTest {
             execute("insert into x values('2024-06-10T00:00:00.000000Z', 'k1');");
 
             execute("alter table x convert partition to parquet where ts >= 0");
-            assertSql(
-                    """
+            assertQuery("x where id = 'k1'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tid
                             2024-06-10T00:00:00.000000Z\tk1
                             2024-06-11T00:00:00.000000Z\tk1
-                            """,
-                    "x where id = 'k1'"
-            );
+                            """);
         });
     }
 
@@ -990,10 +1493,16 @@ public class ParquetTest extends AbstractCairoTest {
                     """;
             final String query = "x where id = 'k1'";
 
-            assertSql(expected, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
 
             execute("alter table x convert partition to native where ts >= 0");
-            assertSql(expected, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
         });
     }
 
@@ -1030,10 +1539,16 @@ public class ParquetTest extends AbstractCairoTest {
                     """;
             final String query = "x where id = 'k1'";
 
-            assertSql(expected, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
 
             execute("alter table x convert partition to native where ts >= 0");
-            assertSql(expected, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
         });
     }
 
@@ -1076,7 +1591,110 @@ public class ParquetTest extends AbstractCairoTest {
                     k1\t2024-06-11T00:00:00.000000Z
                     k1\t2024-06-12T00:00:01.000000Z
                     """;
-            assertSql(expected, "x WHERE id = 'k1'");
+            assertQuery("x WHERE id = 'k1'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testIntOverflowConstantFilterOnByteColumn() throws Exception {
+        // Regression: ParquetRowGroupFilter prepared the filter value via
+        // (int) f.getLong(null) for BYTE/SHORT/INT columns, truncating any
+        // constant that FunctionParser had folded to LongConstant after
+        // detecting INT-arithmetic overflow. Native dispatch promotes
+        // BYTE > INT to <(LL) and reads the precise long, so the two stores
+        // diverged - here all rows pass on native, none on parquet.
+        // The filter now clamps long values into INT range while preserving
+        // null sentinels; out-of-range bounds still prune correctly.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (c BYTE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                      (10, '2024-01-01T00:00:00.000000Z'),
+                      (20, '2024-01-01T01:00:00.000000Z'),
+                      (30, '2024-01-01T02:00:00.000000Z')""");
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+            // (-286452 * (-952151 * -382988)) overflows INT (= 1_699_321_072) but
+            // is -104_458_275_863_816_976 in long, which is below every BYTE value.
+            assertQuery("SELECT * FROM t WHERE c > (-286452 * (-952151 * -382988))")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("c\tts\n10\t2024-01-01T00:00:00.000000Z\n20\t2024-01-01T01:00:00.000000Z\n30\t2024-01-01T02:00:00.000000Z\n");
+            // Symmetric upper-bound case: huge positive constant prunes every group.
+            assertQuery("SELECT * FROM t WHERE c > (286452 * (952151 * 382988))")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("c\tts\n");
+            // OP_LT with very-negative constant: c < -1e17 is false for every BYTE row.
+            assertQuery("SELECT * FROM t WHERE c < (-286452 * (-952151 * -382988))")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("c\tts\n");
+            // OP_LT with very-positive constant: c < +1e17 is true for every BYTE row.
+            assertQuery("SELECT * FROM t WHERE c < (286452 * (952151 * 382988))")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("c\tts\n10\t2024-01-01T00:00:00.000000Z\n20\t2024-01-01T01:00:00.000000Z\n30\t2024-01-01T02:00:00.000000Z\n");
+            // OP_EQ with out-of-INT-range constant: no BYTE row can equal it.
+            assertQuery("SELECT * FROM t WHERE c = (-286452 * (-952151 * -382988))")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("c\tts\n");
+        });
+    }
+
+    @Test
+    public void testIntOverflowConstantFilterOnIntColumn() throws Exception {
+        // INT column path: LongConstant value (post-overflow fold) flows
+        // through the INT-or-LONG branch and clampLongToInt so out-of-range
+        // bounds saturate cleanly instead of wrapping. Native > on INT and
+        // LONG promotes to <(LL); pushdown stats are stored as INT.
+        // Companion JIT-side fix in CompiledFilterIRSerializer.serialize
+        // bails out of JIT compilation for predicates whose constant
+        // arithmetic subtree overflows INT, falling back to the Java filter
+        // that honours FunctionParser's LongConstant fold; both stores agree
+        // here regardless of JIT mode.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (c INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                      (-1, '2024-01-01T00:00:00.000000Z'),
+                      (0, '2024-01-01T01:00:00.000000Z'),
+                      (1, '2024-01-01T02:00:00.000000Z')""");
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+            assertQuery("SELECT * FROM t WHERE c > (-286452 * (-952151 * -382988))")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("c\tts\n-1\t2024-01-01T00:00:00.000000Z\n0\t2024-01-01T01:00:00.000000Z\n1\t2024-01-01T02:00:00.000000Z\n");
+            assertQuery("SELECT * FROM t WHERE c > (286452 * (952151 * 382988))")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("c\tts\n");
+        });
+    }
+
+    @Test
+    public void testIntOverflowConstantFilterOnShortColumn() throws Exception {
+        // SHORT column path: same shape as the BYTE/INT companions, exercising
+        // the SHORT branch.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (c SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                      (-100, '2024-01-01T00:00:00.000000Z'),
+                      (0, '2024-01-01T01:00:00.000000Z'),
+                      (100, '2024-01-01T02:00:00.000000Z')""");
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+            assertQuery("SELECT * FROM t WHERE c > (-286452 * (-952151 * -382988))")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("c\tts\n-100\t2024-01-01T00:00:00.000000Z\n0\t2024-01-01T01:00:00.000000Z\n100\t2024-01-01T02:00:00.000000Z\n");
+            assertQuery("SELECT * FROM t WHERE c > (286452 * (952151 * 382988))")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("c\tts\n");
         });
     }
 
@@ -1094,14 +1712,541 @@ public class ParquetTest extends AbstractCairoTest {
             );
             execute("alter table x convert partition to parquet where ts >= 0");
 
-            assertSql(
-                    """
+            assertQuery("x where id < 4")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             id\tts
                             1\t1970-01-01T00:00:00.000000Z
                             2\t1970-01-01T00:16:40.000000Z
                             3\t1970-01-01T00:33:20.000000Z
-                            """,
-                    "x where id < 4"
+                            """);
+        });
+    }
+
+    @Test
+    public void testLimitOffsetLandsMidParquetFrame() throws Exception {
+        // the skip must land inside a parquet frame (skipTarget > 0 in the landing frame)
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (0, '2024-01-01T00:00:00.000000Z'),
+                    (1, '2024-01-02T00:00:00.000000Z'),
+                    (2, '2024-01-02T00:00:01.000000Z'),
+                    (3, '2024-01-02T00:00:02.000000Z'),
+                    (4, '2024-01-02T00:00:03.000000Z'),
+                    (5, '2024-01-02T00:00:04.000000Z'),
+                    (6, '2024-01-03T00:00:00.000000Z')""");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts in ('2024-01-01', '2024-01-02')");
+            // skip 2 lands at row 1 of the 2024-01-02 parquet frame
+            assertQuery("SELECT a FROM x LIMIT 2, 5")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a
+                            2
+                            3
+                            4
+                            """);
+            // skip 5 lands at row 4 of the parquet frame, then crosses into the native frame
+            assertQuery("SELECT a FROM x LIMIT -2")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a
+                            5
+                            6
+                            """);
+        });
+    }
+
+    @Test
+    public void testLimitOffsetLandsMidParquetFrameTail() throws Exception {
+        // negative limit landing inside a parquet frame that is the last partition
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x SELECT x, timestamp_sequence('2024-01-01', 60_000_000) FROM long_sequence(8)");
+            drainWalQueue();
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            assertQuery("SELECT ts FROM x ORDER BY ts LIMIT -1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts
+                            2024-01-01T00:07:00.000000Z
+                            """);
+            assertQuery("SELECT a FROM x ORDER BY ts LIMIT -3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a
+                            6
+                            7
+                            8
+                            """);
+        });
+    }
+
+    @Test
+    public void testLimitOffsetOverParquetAfterReaderEviction() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(0, '2024-01-01T00:00:00.000000Z'), " +
+                    "(1, '2024-01-02T00:00:00.000000Z'), " +
+                    "(2, '2024-01-02T00:00:01.000000Z'), " +
+                    "(3, '2024-01-02T00:00:02.000000Z'), " +
+                    "(4, '2024-01-02T00:00:03.000000Z'), " +
+                    "(5, '2024-01-02T00:00:04.000000Z'), " +
+                    "(6, '2024-01-03T00:00:00.000000Z')");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts in ('2024-01-01', '2024-01-02')");
+            try (RecordCursorFactory factory = select("SELECT a FROM x LIMIT 1, 4")) {
+                assertFactory(factory).withContext(sqlExecutionContext).noLeakCheck().expectSize().returns("""
+                        a
+                        1
+                        2
+                        3
+                        """);
+                engine.releaseAllReaders();
+                assertFactory(factory).withContext(sqlExecutionContext).noLeakCheck().expectSize().returns("""
+                        a
+                        1
+                        2
+                        3
+                        """);
+            }
+        });
+    }
+
+    @Test
+    public void testLimitOffsetOverParquetAsOfJoinMaster() throws Exception {
+        // The master side of an ASOF JOIN forwards the LIMIT cap through
+        // AbstractAsOfJoinFastRecordCursor.skipRows to the master cursor's skipRows.
+        // With a parquet master, that clamps the master's decode window; the join
+        // output must match an identical native master row-for-row.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 16);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE master (k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO master SELECT (x % 5)::INT, timestamp_sequence('2024-01-01', 60_000_000) FROM long_sequence(40)");
+            execute("INSERT INTO master VALUES (0, '2024-01-02T00:00:00.000000Z')");
+            execute("CREATE TABLE master_native AS (SELECT * FROM master) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("ALTER TABLE master CONVERT PARTITION TO PARQUET WHERE ts in '2024-01-01'");
+            execute("CREATE TABLE slave (k INT, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO slave SELECT (x % 5)::INT, x::DOUBLE, timestamp_sequence('2024-01-01', 30_000_000) FROM long_sequence(80)");
+            TestUtils.assertSqlCursors(
+                    engine,
+                    sqlExecutionContext,
+                    "SELECT m.ts, m.k, s.v FROM master_native m ASOF JOIN slave s ON (k) WHERE m.ts in '2024-01-01' LIMIT 18, 24",
+                    "SELECT m.ts, m.k, s.v FROM master m ASOF JOIN slave s ON (k) WHERE m.ts in '2024-01-01' LIMIT 18, 24",
+                    LOG
+            );
+        });
+    }
+
+    @Test
+    public void testLimitOffsetSkipsLandingFramePrefixDecode() throws Exception {
+        // The landing frame decodes only [skipTarget, skipTarget + take); published
+        // addresses are rebased so absolute frame-relative indexes stay valid.
+        // Verified for every column kind against an identical native table.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 16);
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE x AS (
+                      SELECT
+                        x::INT i,
+                        x::LONG l,
+                        x::DOUBLE d,
+                        (x % 5 = 0) b,
+                        ('s' || (x % 3))::SYMBOL sym,
+                        ('str' || x)::STRING str,
+                        ('vch_' || x)::VARCHAR vch,
+                        rnd_uuid4() u,
+                        rnd_long256() l256,
+                        ARRAY[[x::DOUBLE, x + 0.5], [x * 2.0, x * 3.0]] arr,
+                        timestamp_sequence('2024-01-01', 60_000_000) ts
+                      FROM long_sequence(40)
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+            execute("INSERT INTO x SELECT 0, 0, 0, false, 's0', 'str0', 'vch_0', rnd_uuid4(), rnd_long256(), " +
+                    "ARRAY[[0.0, 0.0], [0.0, 0.0]], '2024-01-02' FROM long_sequence(1)");
+            execute("CREATE TABLE x_native AS (SELECT * FROM x) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts in '2024-01-01'");
+            // skip lands mid row group; take stays within it
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext,
+                    "SELECT * FROM x_native LIMIT 18, 24",
+                    "SELECT * FROM x LIMIT 18, 24",
+                    LOG);
+            // skip lands mid row group; take crosses into the next row groups
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext,
+                    "SELECT * FROM x_native LIMIT 5, 35",
+                    "SELECT * FROM x LIMIT 5, 35",
+                    LOG);
+            // interval starts mid row group and the skip lands inside the interval frame
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext,
+                    "SELECT * FROM x_native WHERE ts >= '2024-01-01T00:10:00' LIMIT 3, 9",
+                    "SELECT * FROM x WHERE ts >= '2024-01-01T00:10:00' LIMIT 3, 9",
+                    LOG);
+            // descending scan must not clamp the decode window
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext,
+                    "SELECT * FROM x_native ORDER BY ts DESC LIMIT 7, 12",
+                    "SELECT * FROM x ORDER BY ts DESC LIMIT 7, 12",
+                    LOG);
+        });
+    }
+
+    @Test
+    public void testLimitOffsetThenToTopWidensDecodeWindow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (i INT, vch VARCHAR, arr DOUBLE[], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x SELECT x::INT, 'v' || x, ARRAY[x::DOUBLE], timestamp_sequence('2024-01-01', 60_000_000) FROM long_sequence(8)");
+            drainWalQueue();
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            try (
+                    RecordCursorFactory factory = select("SELECT i, vch, arr FROM x");
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                RecordCursor.Counter counter = new RecordCursor.Counter();
+                counter.set(5);
+                cursor.skipRows(counter, 2);
+                Assert.assertEquals(0, counter.get());
+                Record record = cursor.getRecord();
+                int arrayType = ColumnType.encodeArrayType(ColumnType.DOUBLE, 1);
+                for (int i = 6; i <= 7; i++) {
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(i, record.getInt(0));
+                    Assert.assertEquals("v" + i, Objects.requireNonNull(record.getVarcharA(1)).toString());
+                    Assert.assertEquals(i, record.getArray(2, arrayType).getDouble(0), 0.0);
+                }
+                // the cap guard must stop the scan here: frame row 7 is outside the
+                // decoded [5, 7) window
+                Assert.assertFalse(cursor.hasNext());
+                cursor.toTop();
+                for (int i = 1; i <= 8; i++) {
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(i, record.getInt(0));
+                    Assert.assertEquals("v" + i, Objects.requireNonNull(record.getVarcharA(1)).toString());
+                    Assert.assertEquals(i, record.getArray(2, arrayType).getDouble(0), 0.0);
+                }
+                Assert.assertFalse(cursor.hasNext());
+            }
+        });
+    }
+
+    @Test
+    public void testLimitOffsetWithColumnTopAndNullsOverParquet() throws Exception {
+        // The clamped-window rebase must leave NULL columns at address 0: a column
+        // added after parquet conversion (column top, absent from the file) and an
+        // all-NULL column (empty chunk) both hit the addr==0 guards in remapColumns,
+        // while the present columns are rebased by frameRowLo. Compared row-for-row
+        // against an identical native table.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (a INT, v VARCHAR, n VARCHAR, arr DOUBLE[], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x SELECT x::INT, 'v' || x, NULL, ARRAY[x::DOUBLE, x + 0.5], " +
+                    "timestamp_sequence('2024-01-01', 60_000_000) FROM long_sequence(20)");
+            // trailing active partition so 2024-01-01 is historic and convertible
+            execute("INSERT INTO x VALUES (999, 'last', NULL, ARRAY[0.0, 0.0], '2024-01-02T00:00:00.000000Z')");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts in '2024-01-01'");
+            execute("ALTER TABLE x ADD COLUMN c INT");
+            execute("ALTER TABLE x ADD COLUMN cv VARCHAR");
+            execute("CREATE TABLE x_native AS (SELECT * FROM x) TIMESTAMP(ts) PARTITION BY DAY");
+            // skip lands mid frame: a/v/arr rebase, n/c/cv stay NULL
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext,
+                    "SELECT * FROM x_native WHERE ts in '2024-01-01' LIMIT 12, 18",
+                    "SELECT * FROM x WHERE ts in '2024-01-01' LIMIT 12, 18",
+                    LOG);
+        });
+    }
+
+    @Test
+    public void testLimitOverParquetDescendingAfterReaderEviction() throws Exception {
+        // A backward scan that skips a whole partition returns a skip-only frame skeleton.
+        // The skeleton must not carry a stale parquetMetaDecoder from a prior frame, or the
+        // freed pointer reaches PageFrameAddressCache after the reader is evicted.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (0, '2024-01-01T00:00:00.000000Z'),
+                    (1, '2024-01-02T00:00:00.000000Z'),
+                    (2, '2024-01-02T00:00:01.000000Z'),
+                    (3, '2024-01-03T00:00:00.000000Z'),
+                    (4, '2024-01-03T00:00:01.000000Z')""");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts in ('2024-01-01', '2024-01-02')");
+            try (RecordCursorFactory factory = select("SELECT a FROM x ORDER BY ts DESC LIMIT 2, 4")) {
+                assertFactory(factory).withContext(sqlExecutionContext).noLeakCheck().expectSize().returns("""
+                        a
+                        2
+                        1
+                        """);
+                engine.releaseAllReaders();
+                assertFactory(factory).withContext(sqlExecutionContext).noLeakCheck().expectSize().returns("""
+                        a
+                        2
+                        1
+                        """);
+            }
+        });
+    }
+
+    @Test
+    public void testLimitOverParquetDescendingScan() throws Exception {
+        // A backward scan reads frame rows high-to-low, so the post-skip decode-window
+        // clamp must not apply: clamping decodes [0, n) while the cursor reads the high rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x SELECT x, timestamp_sequence('2024-01-01', 60_000_000) FROM long_sequence(8)");
+            drainWalQueue();
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            assertQuery("SELECT a FROM x ORDER BY ts DESC LIMIT 3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a
+                            8
+                            7
+                            6
+                            """);
+            assertQuery("SELECT a FROM x ORDER BY ts DESC LIMIT 2, 5")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a
+                            6
+                            5
+                            4
+                            """);
+        });
+    }
+
+    @Test
+    public void testLimitOverParquetForwardNoOffset() throws Exception {
+        // Headline case: SELECT ... LIMIT N over a parquet partition decodes only the first N rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x SELECT x, timestamp_sequence('2024-01-01', 60_000_000) FROM long_sequence(8)");
+            drainWalQueue();
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            // N < frame size
+            assertQuery("SELECT a FROM x LIMIT 3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a
+                            1
+                            2
+                            3
+                            """);
+            // N == full size
+            assertQuery("SELECT a FROM x LIMIT 8")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a
+                            1
+                            2
+                            3
+                            4
+                            5
+                            6
+                            7
+                            8
+                            """);
+        });
+    }
+
+    @Test
+    public void testLimitOverParquetIndexedSymbolOrderBy() throws Exception {
+        // Regression: the decode-window clamp must not apply to a symbol-index scan.
+        // SortedSymbolIndexRowCursorFactory yields rows in symbol order, scattered across the
+        // frame, so clamping the parquet decode to the leading rows would read undecoded memory
+        // for the high row indexes. 'aa' sorts first but lives at rows 5-7, past a 3-row window.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s SYMBOL, i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('zz', 0, '2024-01-01T00:00:00.000000Z'),
+                    ('zz', 1, '2024-01-01T00:00:01.000000Z'),
+                    ('zz', 2, '2024-01-01T00:00:02.000000Z'),
+                    ('zz', 3, '2024-01-01T00:00:03.000000Z'),
+                    ('zz', 4, '2024-01-01T00:00:04.000000Z'),
+                    ('aa', 5, '2024-01-01T00:00:05.000000Z'),
+                    ('aa', 6, '2024-01-01T00:00:06.000000Z'),
+                    ('aa', 7, '2024-01-01T00:00:07.000000Z'),
+                    ('mm', 8, '2024-01-02T00:00:00.000000Z')""");
+            // 2024-01-01 stays historic so ADD INDEX routes it through indexParquetPartition.
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts in '2024-01-01'");
+            execute("ALTER TABLE x ALTER COLUMN s ADD INDEX");
+            assertQuery("SELECT s, i FROM x WHERE ts in '2024-01-01' ORDER BY s LIMIT 3")
+                    .noLeakCheck()
+                    .withPlanContaining("Index forward scan on: s")
+                    .returns("""
+                            s	i
+                            aa	5
+                            aa	6
+                            aa	7
+                            """);
+        });
+    }
+
+    @Test
+    public void testLimitOverParquetSpansMultipleRowGroups() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x SELECT x, timestamp_sequence('2024-01-01', 60_000_000) FROM long_sequence(10)");
+            // trailing active partition so 2024-01-01 can convert
+            execute("INSERT INTO x VALUES (999, '2024-01-02T00:00:00.000000Z')");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts in '2024-01-01'");
+            // row group size 4 splits 2024-01-01 into row groups of 4, 4, 2; LIMIT 6 spans the
+            // first two, decoding 4 + 2 rows.
+            assertQuery("SELECT a FROM x WHERE ts in '2024-01-01' LIMIT 6")
+                    .noLeakCheck()
+                    .returns("""
+                            a
+                            1
+                            2
+                            3
+                            4
+                            5
+                            6
+                            """);
+            // skip lands in the second row group and the take spans into the third
+            assertQuery("SELECT a FROM x WHERE ts in '2024-01-01' LIMIT 5, 9")
+                    .noLeakCheck()
+                    .returns("""
+                            a
+                            6
+                            7
+                            8
+                            9
+                            """);
+        });
+    }
+
+    @Test
+    public void testLimitOverParquetUnionAll() throws Exception {
+        // The hint passes through UnionAllRecordCursor to both legs; the result must be exact.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x SELECT x, timestamp_sequence('2024-01-01', 60_000_000) FROM long_sequence(5)");
+            drainWalQueue();
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            execute("CREATE TABLE y (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO y SELECT x + 100, timestamp_sequence('2024-01-01', 60_000_000) FROM long_sequence(5)");
+            drainWalQueue();
+            execute("ALTER TABLE y CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            assertQuery("(SELECT a FROM x) UNION ALL (SELECT a FROM y) LIMIT 7")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            a
+                            1
+                            2
+                            3
+                            4
+                            5
+                            101
+                            102
+                            """);
+            // offset 6 exhausts leg A (5 rows) and crosses into B, so B's skipRows
+            // is called with a finite cap -- the clamped-leg-B path.
+            assertQuery("(SELECT a FROM x) UNION ALL (SELECT a FROM y) LIMIT 6, 9")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            a
+                            102
+                            103
+                            104
+                            """);
+            // the cap lands inside leg A (skip 1, take 2 of A's 5 rows), so A's
+            // clamped frame must hard-stop before leg B is consulted.
+            assertQuery("(SELECT a FROM x) UNION ALL (SELECT a FROM y) LIMIT 1, 3")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            a
+                            2
+                            3
+                            """);
+        });
+    }
+
+    @Test
+    public void testLimitOverParquetVarLenColumns() throws Exception {
+        // Partial row-group decode (LIMIT pushdown, interval scans) used to
+        // compute the var data offset from a partially consumed
+        // DELTA_LENGTH_BYTE_ARRAY lengths block and serve garbage strings. The
+        // row group must span multiple delta blocks (128 lengths each), hence
+        // 1000 rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s STRING, v VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x SELECT x::string, x::varchar, timestamp_sequence('2024-01-01', 60_000_000) FROM long_sequence(1_000)");
+            // trailing active partition so 2024-01-01 can convert
+            execute("INSERT INTO x VALUES ('next', 'next', '2024-01-02T00:00:00.000000Z')");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts in '2024-01-01'");
+
+            // LIMIT decodes a 2-row window of the 1000-row group
+            assertQuery("SELECT s, v FROM x LIMIT 2")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s\tv
+                            1\t1
+                            2\t2
+                            """);
+            // skip lands mid-group, take ends mid-group
+            assertQuery("SELECT s, v FROM x LIMIT 500, 503")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s\tv
+                            501\t501
+                            502\t502
+                            503\t503
+                            """);
+            // interval scan ending mid-group decodes a partial window without
+            // any LIMIT involved (rows 481..483 of the row group)
+            assertQuery("SELECT s, v FROM x WHERE ts BETWEEN '2024-01-01T08:00:00' AND '2024-01-01T08:02:00'")
+                    .noLeakCheck()
+                    .returns("""
+                            s\tv
+                            481\t481
+                            482\t482
+                            483\t483
+                            """);
+        });
+    }
+
+    @Test
+    public void testLimitOverParquetVirtualProjection() throws Exception {
+        // A virtual function projection reads the clamped frame through
+        // VirtualFunctionRecordCursor, which forwards the cap to the base. The
+        // function output must match an identical native table row-for-row, proving
+        // the rebased addresses are read correctly through the function layer.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 16);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (i INT, v VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x SELECT x::INT, 'v' || x, timestamp_sequence('2024-01-01', 60_000_000) FROM long_sequence(40)");
+            execute("INSERT INTO x VALUES (0, 'v0', '2024-01-02T00:00:00.000000Z')");
+            execute("CREATE TABLE x_native AS (SELECT * FROM x) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts in '2024-01-01'");
+            TestUtils.assertSqlCursors(
+                    engine,
+                    sqlExecutionContext,
+                    "SELECT i + 1 AS i1, v || '!' AS vbang FROM x_native WHERE ts in '2024-01-01' LIMIT 18, 24",
+                    "SELECT i + 1 AS i1, v || '!' AS vbang FROM x WHERE ts in '2024-01-01' LIMIT 18, 24",
+                    LOG
             );
         });
     }
@@ -1118,15 +2263,70 @@ public class ParquetTest extends AbstractCairoTest {
             );
             execute("alter table x convert partition to parquet where ts >= 0");
 
-            assertSql(
-                    """
+            assertQuery("x where ts <= '1970-01-01T01:40:00.000000' limit -3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             id	ts
                             5	1970-01-01T01:06:40.000000Z
                             6	1970-01-01T01:23:20.000000Z
                             7	1970-01-01T01:40:00.000000Z
-                            """,
-                    "x where ts <= '1970-01-01T01:40:00.000000' limit -3"
-            );
+                            """);
+        });
+    }
+
+    @Test
+    public void testLong128UuidLateMaterializationOverParquet() throws Exception {
+        // Sibling of testLong256LateMaterializationOverParquet for the 16-byte UUID
+        // family, which routes through PageFrameFilteredMemoryRecord.getLong128Lo /
+        // getLong128Hi at row time.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (k UUID, c1 TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x SELECT " +
+                    "rnd_uuid4() AS k, " +
+                    "case when x % 3 = 0 then null else 0::TIMESTAMP end AS c1, " +
+                    "(timestamp_sequence('2024-01-01', 60_000_000)) AS ts " +
+                    "FROM long_sequence(10)");
+            drainWalQueue();
+            execute("CREATE TABLE x_native (k UUID, c1 TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x_native SELECT * FROM x");
+            drainWalQueue();
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext,
+                    "SELECT k, count() FROM x_native WHERE c1 IS NOT NULL ORDER BY k",
+                    "SELECT k, count() FROM x WHERE c1 IS NOT NULL ORDER BY k",
+                    LOG);
+        });
+    }
+
+    @Test
+    public void testLong256LateMaterializationOverParquet() throws Exception {
+        // PageFrameFilteredMemoryRecord routes column reads through getRowIndex(columnIndex), which
+        // returns the absolute row index for filter columns and the compacted index for late-
+        // materialized columns. Most overrides are wired up correctly, but getLong256A / getLong256B
+        // fell through to a private parent helper that read with the absolute rowIndex. For a query
+        // that filters on a non-LONG256 column and groups by a LONG256, every late-materialized
+        // LONG256 read returned the wrong row's value, and reads beyond the compacted slice spilled
+        // into adjacent buffer memory.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (k LONG256, c1 TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x SELECT " +
+                    "rnd_long256() AS k, " +
+                    "case when x % 3 = 0 then null else 0::TIMESTAMP end AS c1, " +
+                    "(timestamp_sequence('2024-01-01', 60_000_000)) AS ts " +
+                    "FROM long_sequence(10)");
+            drainWalQueue();
+            execute("CREATE TABLE x_native (k LONG256, c1 TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x_native SELECT * FROM x");
+            drainWalQueue();
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext,
+                    "SELECT k, count() FROM x_native WHERE c1 IS NOT NULL ORDER BY k",
+                    "SELECT k, count() FROM x WHERE c1 IS NOT NULL ORDER BY k",
+                    LOG);
         });
     }
 
@@ -1142,8 +2342,11 @@ public class ParquetTest extends AbstractCairoTest {
             );
             execute("alter table x convert partition to parquet where ts = '1970-01-01T02'");
 
-            assertSql(
-                    """
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             id\tts
                             1\t1970-01-01T00:00:00.000000Z
                             2\t1970-01-01T00:16:40.000000Z
@@ -1155,9 +2358,7 @@ public class ParquetTest extends AbstractCairoTest {
                             8\t1970-01-01T01:56:40.000000Z
                             9\t1970-01-01T02:13:20.000000Z
                             10\t1970-01-01T02:30:00.000000Z
-                            """,
-                    "x"
-            );
+                            """);
         });
     }
 
@@ -1173,8 +2374,11 @@ public class ParquetTest extends AbstractCairoTest {
             );
             execute("alter table x convert partition to parquet where ts = '1970-01-01T01'");
 
-            assertSql(
-                    """
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             id\tts
                             1\t1970-01-01T00:00:00.000000Z
                             2\t1970-01-01T00:16:40.000000Z
@@ -1186,9 +2390,7 @@ public class ParquetTest extends AbstractCairoTest {
                             8\t1970-01-01T01:56:40.000000Z
                             9\t1970-01-01T02:13:20.000000Z
                             10\t1970-01-01T02:30:00.000000Z
-                            """,
-                    "x"
-            );
+                            """);
         });
     }
 
@@ -1204,8 +2406,11 @@ public class ParquetTest extends AbstractCairoTest {
             );
             execute("alter table x convert partition to parquet where ts >= 0");
 
-            assertSql(
-                    """
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             id\tts
                             1\t1970-01-01T00:00:00.000000Z
                             2\t1970-01-01T00:16:40.000000Z
@@ -1217,9 +2422,7 @@ public class ParquetTest extends AbstractCairoTest {
                             8\t1970-01-01T01:56:40.000000Z
                             9\t1970-01-01T02:13:20.000000Z
                             10\t1970-01-01T02:30:00.000000Z
-                            """,
-                    "x"
-            );
+                            """);
         });
     }
 
@@ -1237,15 +2440,15 @@ public class ParquetTest extends AbstractCairoTest {
             );
             execute("alter table x convert partition to parquet where ts >= 0");
 
-            assertSql(
-                    """
+            assertQuery("x where id < 4")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             id\tts
                             1\t1970-01-01T00:00:00.000000Z
                             2\t1970-01-01T00:16:40.000000Z
                             3\t1970-01-01T00:33:20.000000Z
-                            """,
-                    "x where id < 4"
-            );
+                            """);
         });
     }
 
@@ -1261,8 +2464,11 @@ public class ParquetTest extends AbstractCairoTest {
             );
             execute("alter table x convert partition to parquet where ts >= 0");
 
-            assertSql(
-                    """
+            assertQuery("select 1, ts, id, id as id2, ts as ts2 from x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts2")
+                    .returns("""
                             1\tts\tid\tid2\tts2
                             1\t1970-01-01T00:00:00.000000Z\t1\t1\t1970-01-01T00:00:00.000000Z
                             1\t1970-01-01T00:16:40.000000Z\t2\t2\t1970-01-01T00:16:40.000000Z
@@ -1274,9 +2480,7 @@ public class ParquetTest extends AbstractCairoTest {
                             1\t1970-01-01T01:56:40.000000Z\t8\t8\t1970-01-01T01:56:40.000000Z
                             1\t1970-01-01T02:13:20.000000Z\t9\t9\t1970-01-01T02:13:20.000000Z
                             1\t1970-01-01T02:30:00.000000Z\t10\t10\t1970-01-01T02:30:00.000000Z
-                            """,
-                    "select 1, ts, id, id as id2, ts as ts2 from x"
-            );
+                            """);
         });
     }
 
@@ -1292,8 +2496,11 @@ public class ParquetTest extends AbstractCairoTest {
             );
             execute("alter table x convert partition to parquet where ts >= 0");
 
-            assertSql(
-                    """
+            assertQuery("select ts from x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts
                             1970-01-01T00:00:00.000000Z
                             1970-01-01T00:16:40.000000Z
@@ -1305,9 +2512,7 @@ public class ParquetTest extends AbstractCairoTest {
                             1970-01-01T01:56:40.000000Z
                             1970-01-01T02:13:20.000000Z
                             1970-01-01T02:30:00.000000Z
-                            """,
-                    "select ts from x"
-            );
+                            """);
         });
     }
 
@@ -1321,22 +2526,26 @@ public class ParquetTest extends AbstractCairoTest {
             execute("insert into x(x,ts) values ('3', '2020-01-03T00:00:00.000Z');");
 
             execute("alter table x convert partition to parquet list '2020-01-02';");
-            assertSql(
-                    """
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             x\tts
                             1\t2020-01-01T00:00:00.000000Z
                             2\t2020-01-02T00:00:00.000000Z
                             3\t2020-01-03T00:00:00.000000Z
-                            """,
-                    "x"
-            );
+                            """);
 
             execute("insert into x(x,ts) values ('1', '2020-01-01T00:00:00.000Z');");
             execute("insert into x(x,ts) values ('2', '2020-01-02T00:00:00.000Z');");
             execute("insert into x(x,ts) values ('3', '2020-01-03T00:00:00.000Z');");
 
-            assertSql(
-                    """
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             x\tts
                             1\t2020-01-01T00:00:00.000000Z
                             1\t2020-01-01T00:00:00.000000Z
@@ -1344,9 +2553,7 @@ public class ParquetTest extends AbstractCairoTest {
                             2\t2020-01-02T00:00:00.000000Z
                             3\t2020-01-03T00:00:00.000000Z
                             3\t2020-01-03T00:00:00.000000Z
-                            """,
-                    "x"
-            );
+                            """);
         });
     }
 
@@ -1363,8 +2570,10 @@ public class ParquetTest extends AbstractCairoTest {
             execute("alter table x convert partition to parquet where ts >= 0");
 
             // Order by single long column uses only a single record
-            assertSql(
-                    """
+            assertQuery("x order by id desc")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tts
                             10\t1970-01-01T02:30:00.000000Z
                             9\t1970-01-01T02:13:20.000000Z
@@ -1376,9 +2585,7 @@ public class ParquetTest extends AbstractCairoTest {
                             3\t1970-01-01T00:33:20.000000Z
                             2\t1970-01-01T00:16:40.000000Z
                             1\t1970-01-01T00:00:00.000000Z
-                            """,
-                    "x order by id desc"
-            );
+                            """);
         });
     }
 
@@ -1395,8 +2602,10 @@ public class ParquetTest extends AbstractCairoTest {
             execute("alter table x convert partition to parquet where ts >= 0");
 
             // Order by single long column uses both records
-            assertSql(
-                    """
+            assertQuery("x order by id1 desc, id2 asc")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id1\tid2\tts
                             4\t4\t1970-01-01T00:50:00.000000Z
                             4\t9\t1970-01-01T02:13:20.000000Z
@@ -1408,10 +2617,310 @@ public class ParquetTest extends AbstractCairoTest {
                             1\t6\t1970-01-01T01:23:20.000000Z
                             0\t5\t1970-01-01T01:06:40.000000Z
                             0\t10\t1970-01-01T02:30:00.000000Z
-                            """,
-                    "x order by id1 desc, id2 asc"
+                            """);
+        });
+    }
+
+    @Test
+    public void testParquetAsyncLateMaterializationAcrossFramesStaysCorrect() throws Exception {
+        // The async filtered path decodes only the filter columns per frame, applies the filter,
+        // then late-materializes the remaining columns for the surviving rows via
+        // populateRemainingColumns -> decodeRemainingColumns -> accountDecode. That late-mat decode
+        // runs on the per-worker reduce slot's zero-budget pool, so every frame accounts its
+        // remaining-column bytes, trims, and releases the buffer before the next frame. Existing
+        // late-mat tests use a single small partition, so the per-frame account/trim/release/reuse
+        // cycle never repeats. This spreads the scan across many parquet partitions (one page frame
+        // each), filters on one column and late-materializes the others (a varchar group key plus an
+        // int aggregate), and compares against a native oracle to catch corruption from the
+        // cross-frame buffer reuse on the late-mat route.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 1_000);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_DATA_PAGE_SIZE, 4_096);
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE src AS (
+                      SELECT
+                        (x % 13)::int AS k,
+                        rnd_varchar(8, 48, 5) AS v,
+                        (x % 100)::double AS d,
+                        timestamp_sequence('2024-01-01', 100_000_000) AS ts
+                      FROM long_sequence(20_000)
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+            execute("ALTER TABLE src CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+            execute("CREATE TABLE nat AS (SELECT * FROM src) TIMESTAMP(ts) PARTITION BY DAY");
+
+            // Filter on d; k (group key) and v (varchar, via max) are late-materialized for the
+            // survivors. d cycles 0..99 per partition, so 'd < 10' keeps ~10% of every frame:
+            // selectivity stays under the late-mat threshold yet every frame has survivors, so
+            // decodeRemainingColumns runs on each one. A monotonic 'd > N' would instead give
+            // zero-survivor then high-selectivity frames and exercise barely one or two.
+            // ORDER BY k makes the output deterministic.
+            assertSqlCursors(
+                    "SELECT k, count(), max(v) FROM nat WHERE d < 10 ORDER BY k",
+                    "SELECT k, count(), max(v) FROM src WHERE d < 10 ORDER BY k"
             );
         });
+    }
+
+    @Test
+    public void testParquetCacheEvictionMonotonicAsOfStaysCorrect() throws Exception {
+        // The ASOF join's slave cursor declares MONOTONIC, so its effective budget is a
+        // quarter of the configured value. Small row groups plus a tiny budget force the
+        // slave's backward scan to evict and re-decode parquet frames; the native slave
+        // copy is the oracle. Guards the MONOTONIC tryHit/eviction path end to end.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 1_000);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_DATA_PAGE_SIZE, 4_096);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 256 * 1024);
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE slave AS (
+                      SELECT
+                        (x % 13)::int AS k,
+                        rnd_varchar(6, 30, 5) AS v,
+                        x::double AS d,
+                        timestamp_sequence('2024-01-01', 60_000_000) AS ts
+                      FROM long_sequence(20_000)
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+            execute("ALTER TABLE slave CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+            execute("CREATE TABLE slave_nat AS (SELECT * FROM slave) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    CREATE TABLE master AS (
+                      SELECT
+                        (x % 13)::int AS k,
+                        timestamp_sequence('2024-01-01T00:00:30', 120_000_000) AS ts
+                      FROM long_sequence(8_000)
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+
+            assertSqlCursors(
+                    "SELECT m.ts, m.k, s.v, s.d FROM master m ASOF JOIN slave_nat s ON (k)",
+                    "SELECT m.ts, m.k, s.v, s.d FROM master m ASOF JOIN slave s ON (k)"
+            );
+        });
+    }
+
+    @Test
+    public void testParquetCacheEvictionScatteredSortStaysCorrect() throws Exception {
+        // Small row groups make a partition span many page frames; a tiny byte budget
+        // forces the SCATTERED sort to evict and reuse decoded buffers in place across
+        // the LRU walk. Comparing against a native copy catches corruption from in-place
+        // victim reuse and from the VARCHAR_SLICE page-buffer re-decode path.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 1_000);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_DATA_PAGE_SIZE, 4_096);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 256 * 1024);
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE src AS (
+                      SELECT
+                        (x % 23)::int AS k,
+                        rnd_varchar(8, 48, 5) AS v1,
+                        rnd_varchar(1, 4, 5) AS v2,
+                        x::double AS d,
+                        timestamp_sequence('2024-01-01', 60_000_000) AS ts
+                      FROM long_sequence(20_000)
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+            execute("ALTER TABLE src CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+            execute("CREATE TABLE nat AS (SELECT * FROM src) TIMESTAMP(ts) PARTITION BY DAY");
+
+            // ORDER BY a non-timestamp column routes through a SCATTERED sort that
+            // random-accesses frames out of order. ts and d break ties so order is stable.
+            assertSqlCursors(
+                    "SELECT k, v1, v2, d, ts FROM nat ORDER BY v1, ts",
+                    "SELECT k, v1, v2, d, ts FROM src ORDER BY v1, ts"
+            );
+            assertSqlCursors(
+                    "SELECT k, v1, v2, d, ts FROM nat ORDER BY k, d DESC",
+                    "SELECT k, v1, v2, d, ts FROM src ORDER BY k, d DESC"
+            );
+        });
+    }
+
+    @Test
+    public void testParquetCacheZeroBudgetSinglePartitionStillCorrect() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 0);
+        assertMemoryLeak(() -> {
+            execute("""
+                    create table src (k int, v double, ts timestamp)
+                    timestamp(ts) partition by day wal""");
+            execute("""
+                    insert into src
+                    select (x % 17)::int, x::double, timestamp_sequence('2024-01-01', 60_000_000)
+                    from long_sequence(1_500)""");
+            drainWalQueue();
+            execute("alter table src convert partition to parquet where ts >= 0");
+            drainWalQueue();
+            execute("""
+                    create table src_native as (select * from src)
+                    timestamp(ts) partition by day wal""");
+            drainWalQueue();
+            assertSqlCursors(
+                    "select k, sum(v) from src_native order by k",
+                    "select k, sum(v) from src order by k"
+            );
+        });
+    }
+
+    @Test
+    public void testParquetDecodeHintApplyToBoundaries() {
+        Assert.assertEquals(Long.MAX_VALUE >>> 2, ParquetDecodeHint.MONOTONIC.applyTo(Long.MAX_VALUE));
+        Assert.assertEquals(Long.MAX_VALUE, ParquetDecodeHint.SCATTERED.applyTo(Long.MAX_VALUE));
+        Assert.assertEquals(0, ParquetDecodeHint.MONOTONIC.applyTo(1L));
+        Assert.assertEquals(1L, ParquetDecodeHint.SCATTERED.applyTo(1L));
+    }
+
+    @Test
+    public void testParquetDecodeHintMonotonicScalesToOneQuarter() {
+        Assert.assertEquals(64L * 1024 * 1024, ParquetDecodeHint.MONOTONIC.applyTo(256L * 1024 * 1024));
+        Assert.assertEquals(0, ParquetDecodeHint.MONOTONIC.applyTo(0));
+    }
+
+    @Test
+    public void testParquetDecodeHintScatteredKeepsFullBudget() {
+        Assert.assertEquals(256L * 1024 * 1024, ParquetDecodeHint.SCATTERED.applyTo(256L * 1024 * 1024));
+        Assert.assertEquals(0, ParquetDecodeHint.SCATTERED.applyTo(0));
+    }
+
+    @Test
+    public void testProjectionDropAggregateOverParquet() throws Exception {
+        // Projection pruning leaves a column in the underlying scan after the WHERE
+        // that referenced it has been constant-folded away. The projected metadata
+        // lists fewer columns than the cursor's column mapping, which broke the
+        // PageFrameMemoryPool.openParquet loop and caused an async reduce-job assertion.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (k DOUBLE, v VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x VALUES (1.0, 'a', '2024-01-01T00:00:00.000000Z'), (2.0, 'b', '2024-01-02T00:00:00.000000Z')");
+            drainWalQueue();
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            assertQuery("SELECT min(rv) FROM (SELECT k AS rk, v AS rv FROM x) WHERE NOT ('z' IS NULL AND 0.5::FLOAT < (rk - rk))")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("min\na\n");
+        });
+    }
+
+    @Test
+    public void testProjectionRepeatedColumnAggregateOverParquet() throws Exception {
+        // A SelectedRecord projection can list the same base column twice (e.g.
+        // referencing t0.c via a table alias places the column at two output
+        // slots). PageFrameMemoryPool keyed its decoded-buffer-to-query-column
+        // map by parquet column index, so the second slot's mapping overwrote
+        // the first; the first slot's pageAddress stayed at zero and the
+        // aggregator read NULL for every row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z'), (null, '2024-01-02T00:00:00.000000Z')");
+            drainWalQueue();
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            // The qualified column reference forces a SelectedRecord wrapper
+            // that lists k twice -- once for abs(t0.k), once for the * t0.k
+            // factor. Without the fix the first reference reads NULL and both
+            // non-null rows fall into the NULL group.
+            assertQuery("SELECT (abs(t0.k) * t0.k) AS key, count() AS n FROM x t0 ORDER BY key")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("key\tn\nnull\t1\n1\t1\n4\t1\n");
+        });
+    }
+
+    @Test
+    public void testProjectionTriplyRepeatedColumnAggregateOverParquet() throws Exception {
+        // Sibling of testProjectionRepeatedColumnAggregateOverParquet that exercises three
+        // (and the qualifying-aggregate case, four) references to the same parquet column from
+        // a single SelectedRecord projection. PageFrameMemoryPool must fan one decoded buffer
+        // out to every output slot whose writer index resolves to that parquet column - if any
+        // slot was missed, that slot's pageAddress would stay zero and the consumer would read
+        // NULL for every row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z'), (null, '2024-01-02T00:00:00.000000Z')");
+            drainWalQueue();
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            // Four references to t0.k in the projection: three forming the key
+            // (abs(k) * k * k), one feeding the aggregate (sum(k)). Without the
+            // fan-out fix, only one slot would be wired to the decoded buffer and
+            // both non-null rows would collapse into the NULL group with sum=null.
+            assertQuery("SELECT (abs(t0.k) * t0.k * t0.k) AS key, sum(t0.k) AS s, count() AS n FROM x t0 ORDER BY key")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("key\ts\tn\nnull\tnull\t1\n1\t1\t1\n8\t2\t1\n");
+        });
+    }
+
+    // Regression test (red on master) for a parquet column-top SIGSEGV (originally
+    // surfaced by BackupFuzzTest.testMatViewRefreshAfterBackup as a crash in
+    // PageFrameMemoryRecord.getSymA over a PARQUET frame). SYMBOL reads through the
+    // data vector only (getSymA gates on pageAddresses), so this variant exercises
+    // the data-vector zeroing. See the VARCHAR variant for the aux-vector path.
+    @Test
+    public void testRandomAccessDuringClampedScan() throws Exception {
+        // recordA stays bound to a partially decoded window while recordAt() reads a
+        // row past it via recordB: the record-bound navigateTo must re-decode the
+        // shared buffer to the full window in place without corrupting recordA, which
+        // holds the same buffer's address lists.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 64);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (i INT, v VARCHAR, s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x SELECT x::INT, 'v' || x, 's' || x, timestamp_sequence('2024-01-01', 60_000_000) FROM long_sequence(50)");
+            execute("INSERT INTO x VALUES (0, 'v0', 's0', '2024-01-02T00:00:00.000000Z')");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts in '2024-01-01'");
+            try (
+                    RecordCursorFactory factory = select("SELECT i, v, s FROM x WHERE ts in '2024-01-01'");
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                // skip 0 with a cap of 3 -> the landing frame decodes a 3-row window
+                RecordCursor.Counter counter = new RecordCursor.Counter();
+                counter.set(0);
+                cursor.skipRows(counter, 3);
+                Record recordA = cursor.getRecord();
+                Record recordB = cursor.getRecordB();
+
+                Assert.assertTrue(cursor.hasNext());
+                Assert.assertEquals(1, recordA.getInt(0));
+                long rowIdA0 = recordA.getRowId();
+
+                Assert.assertTrue(cursor.hasNext());
+                Assert.assertEquals(2, recordA.getInt(0));
+
+                // random access far past the clamped window forces a full re-decode
+                // of the same buffer
+                cursor.recordAt(recordB, rowIdA0 + 40);
+                Assert.assertEquals(41, recordB.getInt(0));
+                Assert.assertEquals("v41", Objects.requireNonNull(recordB.getVarcharA(1)).toString());
+                Assert.assertEquals("s41", Objects.requireNonNull(recordB.getStrA(2)).toString());
+
+                Assert.assertEquals(2, recordA.getInt(0));
+                Assert.assertEquals("v2", Objects.requireNonNull(recordA.getVarcharA(1)).toString());
+                Assert.assertEquals("s2", Objects.requireNonNull(recordA.getStrA(2)).toString());
+
+                Assert.assertTrue(cursor.hasNext());
+                Assert.assertEquals(3, recordA.getInt(0));
+                Assert.assertEquals("v3", Objects.requireNonNull(recordA.getVarcharA(1)).toString());
+
+                Assert.assertFalse(cursor.hasNext());
+            }
+        });
+    }
+
+    @Test
+    public void testSelectOnlyAddedColumnAbsentFromParquetPartition() throws Exception {
+        testSelectOnlyAddedColumnAbsentFromParquetPartition("symbol");
+    }
+
+    // VARCHAR variant of testSelectOnlyAddedColumnAbsentFromParquetPartition.
+    // SYMBOL reads through the data vector only (getSymA gates on pageAddresses),
+    // so the symbol test exercises only the data-vector zeroing. Variable-size
+    // types take a different read path that gates on the AUX vector
+    // (getVarcharSize / getVarchar gate on auxPageAddresses, not pageAddresses).
+    // remapColumns() zeroes all four page-address lists, including the aux pair,
+    // so the fix already covers this; this test guards against a regression that
+    // zeroes the data vector but not the aux vectors - that would pass the symbol
+    // test yet dereference a wild aux pointer-of-pointers for VARCHAR (a SIGSEGV
+    // strictly more dangerous than the data-vector one).
+    @Test
+    public void testSelectOnlyAddedVarcharColumnAbsentFromParquetPartition() throws Exception {
+        testSelectOnlyAddedColumnAbsentFromParquetPartition("varchar");
     }
 
     @Test
@@ -1426,8 +2935,11 @@ public class ParquetTest extends AbstractCairoTest {
             );
             execute("alter table x convert partition to parquet where ts >= 0");
 
-            assertSql(
-                    """
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             id\tts
                             1\t1970-01-01T00:00:00.000000Z
                             2\t1970-01-01T00:00:10.000000Z
@@ -1439,9 +2951,7 @@ public class ParquetTest extends AbstractCairoTest {
                             8\t1970-01-01T00:01:10.000000Z
                             9\t1970-01-01T00:01:20.000000Z
                             10\t1970-01-01T00:01:30.000000Z
-                            """,
-                    "x"
-            );
+                            """);
         });
     }
 
@@ -1466,7 +2976,10 @@ public class ParquetTest extends AbstractCairoTest {
                     """;
             final String query = "x where id in( 'k1', null)";
 
-            assertSql(expected, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
         });
     }
 
@@ -1489,7 +3002,11 @@ public class ParquetTest extends AbstractCairoTest {
                     """;
             final String query = "x";
 
-            assertSql(expected, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
         });
     }
 
@@ -1515,7 +3032,11 @@ public class ParquetTest extends AbstractCairoTest {
                     """;
             final String query = "x";
 
-            assertSql(expected, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
         });
     }
 
@@ -1564,8 +3085,11 @@ public class ParquetTest extends AbstractCairoTest {
             execute("insert into x values (25, 172850000000, 'SYM_E_junk9923')");
             execute("insert into x values (26, 172860000000, 'SYM_E_junk9923')");
 
-            TestUtils.LeakProneCode checkData = () -> assertQueryNoLeakCheck(
-                    """
+            TestUtils.LeakProneCode checkData = () -> assertQuery("x")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             id\tts\tname
                             0\t1970-01-01T00:00:00.000000Z\tSYM_A
                             1\t1970-01-01T00:00:10.000000Z\tSYM_A
@@ -1594,12 +3118,7 @@ public class ParquetTest extends AbstractCairoTest {
                             24\t1970-01-03T00:00:40.000000Z\tSYM_E_junk9923
                             25\t1970-01-03T00:00:50.000000Z\tSYM_E_junk9923
                             26\t1970-01-03T00:01:00.000000Z\tSYM_E_junk9923
-                            """,
-                    "x",
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
 
             checkData.run();
 
@@ -1617,6 +3136,137 @@ public class ParquetTest extends AbstractCairoTest {
     @Test
     public void testTimeFilterSingleRowGroupPerPartition() throws Exception {
         testTimeFilter(100);
+    }
+
+    @Test
+    public void testVarcharAsciiFlagAfterRewriteWithNonAsciiAppend() throws Exception {
+        // Regression test: VARCHAR column-level ascii flag must not stay stale
+        // across a parquet rewrite that adds non-ASCII bytes.
+        //
+        // When the partition is converted to parquet while the column is
+        // all-ASCII, to_parquet_schema records ascii=Some(true) in the
+        // parquet file's QDB metadata. A later O3 insert with non-ASCII data
+        // triggers processParquetPartition, which goes through
+        // ParquetUpdater::end. Without the fix, end() reuses the old
+        // qdb_meta and preserves the stale ascii=Some(true). The new parquet
+        // file then claims the column is ASCII, and on read every aux header
+        // gets HEADER_FLAG_ASCII set, so isAscii() returns true for bytes
+        // that are not ASCII. TestUtils.println calls assertAsciiCompliance
+        // per VARCHAR row, so the assertSql below fails on the non-ASCII row
+        // without the fix.
+        assertMemoryLeak(() -> {
+            execute("create table x (s varchar, ts timestamp) timestamp(ts) partition by day wal;");
+            execute("insert into x values ('hello', '2020-01-01T00:00:00.000Z');");
+            execute("insert into x values ('world', '2020-01-01T12:00:00.000Z');");
+            drainWalQueue();
+
+            execute("alter table x convert partition to parquet list '2020-01-01';");
+            drainWalQueue();
+
+            // Backdated insert forces an O3 rewrite through ParquetUpdater::end.
+            // 'héllo' has a non-ASCII codepoint (e-acute, U+00E9).
+            execute("insert into x values ('héllo', '2020-01-01T06:00:00.000Z');");
+            drainWalQueue();
+
+            assertQuery("x order by ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            s\tts
+                            hello\t2020-01-01T00:00:00.000000Z
+                            héllo\t2020-01-01T06:00:00.000000Z
+                            world\t2020-01-01T12:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testVarcharAsciiFlagOnAddColumnDowngrade() throws Exception {
+        // ADD COLUMN seeds the new VARCHAR column as `true` in the all-ASCII
+        // tracker (existing rows backfill with nulls, which is_column_ascii
+        // skips). track_new_data_ascii must still observe a non-ASCII byte
+        // in a later write and flip the tracker to `false`, so end() emits
+        // Some(false) and the read path does not falsely claim ASCII-ness.
+        // assertSql -> assertAsciiCompliance per VARCHAR row fails if the
+        // column-level flag wrongly forces isAscii() = true on non-ASCII bytes.
+        assertMemoryLeak(() -> {
+            execute("create table x (s varchar, ts timestamp) timestamp(ts) partition by day wal;");
+            execute("insert into x values ('hello', '2020-01-01T00:00:00.000Z');");
+            drainWalQueue();
+
+            execute("alter table x convert partition to parquet list '2020-01-01';");
+            drainWalQueue();
+
+            execute("alter table x add column s2 varchar;");
+            drainWalQueue();
+
+            // Backdated insert with non-ASCII in the new column forces an
+            // O3 rewrite through ParquetUpdater::end and must downgrade
+            // the seeded `true` to `false`. 'héllo' has U+00E9.
+            execute("insert into x (s, ts, s2) values ('aa', '2020-01-01T06:00:00.000Z', 'héllo');");
+            drainWalQueue();
+
+            assertQuery("x order by ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            s\tts\ts2
+                            hello\t2020-01-01T00:00:00.000000Z\t
+                            aa\t2020-01-01T06:00:00.000000Z\théllo
+                            """);
+        });
+    }
+
+    @Test
+    public void testVarcharAsciiFlagOnAddColumnFastPath() throws Exception {
+        // ADD COLUMN VARCHAR with only ASCII data written into the new
+        // column must keep the column-level ascii flag set to `true` so
+        // the read fast path stays active. Existing rows backfill with
+        // nulls (skipped by is_column_ascii), so the seed in
+        // ParquetUpdater::set_target_schema starts the tracker at `true`
+        // and no scan flips it. end() emits Some(true), and the parquet
+        // reader sets HEADER_FLAG_ASCII on every non-null aux header.
+        //
+        // Without the seed, the new column has no tracker entry, end()
+        // falls back to Some(false) via unwrap_or(false), and isAscii()
+        // returns false on every value.
+        assertMemoryLeak(() -> {
+            execute("create table x (s varchar, ts timestamp) timestamp(ts) partition by day wal;");
+            execute("insert into x values ('hello', '2020-01-01T00:00:00.000Z');");
+            drainWalQueue();
+
+            execute("alter table x convert partition to parquet list '2020-01-01';");
+            drainWalQueue();
+
+            execute("alter table x add column s2 varchar;");
+            drainWalQueue();
+
+            // Backdated inserts route through ParquetUpdater::end. All s2
+            // values are ASCII so the column-level flag should stay true.
+            execute("insert into x (s, ts, s2) values ('aa', '2020-01-01T03:00:00.000Z', 'first');");
+            execute("insert into x (s, ts, s2) values ('bb', '2020-01-01T06:00:00.000Z', 'second');");
+            drainWalQueue();
+
+            try (RecordCursorFactory factory = select("select s2 from x where s2 is not null order by ts")) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Record record = cursor.getRecord();
+                    int nonNullCount = 0;
+                    while (cursor.hasNext()) {
+                        Utf8Sequence v = record.getVarcharA(0);
+                        Assert.assertNotNull(v);
+                        Assert.assertTrue(
+                                "expected isAscii() = true on ASCII value '" + v
+                                        + "'; ADD COLUMN VARCHAR lost the column-level ascii fast path",
+                                v.isAscii()
+                        );
+                        nonNullCount++;
+                    }
+                    Assert.assertEquals(2, nonNullCount);
+                }
+            }
+        });
     }
 
     @Test
@@ -1664,15 +3314,17 @@ public class ParquetTest extends AbstractCairoTest {
             // The O3 insert must not be silently lost. The old DOUBLE values
             // are converted to SYMBOL strings during the type change (the fix
             // converts parquet back to native first, so the data is preserved).
-            assertSql("""
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             val\tsym\tts
                             1.0\tA\t2024-01-01T00:00:00.000000Z
                             new_val\tD\t2024-01-01T06:00:00.000000Z
                             2.0\tB\t2024-01-01T12:00:00.000000Z
                             3.0\tC\t2024-01-02T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM x"
-            );
+                            """);
         });
     }
 
@@ -1697,8 +3349,10 @@ public class ParquetTest extends AbstractCairoTest {
             execute("insert into x values(11, '2024-06-10T00:04:00.000000Z', 5, array[42]);");
 
             execute("alter table x convert partition to parquet where ts >= 0");
-            assertSql(
-                    """
+            assertQuery("x order by id")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             id\tts\ta\tarr
                             1\t2024-06-10T00:00:00.000000Z\tnull\tnull
                             2\t2024-06-11T00:00:00.000000Z\tnull\tnull
@@ -1711,9 +3365,7 @@ public class ParquetTest extends AbstractCairoTest {
                             9\t2024-06-10T00:02:00.000000Z\t3\t[]
                             10\t2024-06-10T00:03:00.000000Z\t4\t[1.0,null,3.0]
                             11\t2024-06-10T00:04:00.000000Z\t5\t[42.0]
-                            """,
-                    "x order by id"
-            );
+                            """);
         });
     }
 
@@ -1726,8 +3378,8 @@ public class ParquetTest extends AbstractCairoTest {
         final String singleNullArrayExpected = "[".repeat(dims) + "null" + "]".repeat(dims);
 
         final String arrExpr = arr
-                .replaceAll(" ", "")
-                .replaceAll("\n", "")
+                .replace(" ", "")
+                .replace("\n", "")
                 .replace("ARRAY", "");
 
         assertMemoryLeak(() -> {
@@ -1746,13 +3398,96 @@ public class ParquetTest extends AbstractCairoTest {
                     "[]\t2024-03-10T00:00:00.000000Z\n" +
                     singleNullArrayExpected + "\t2024-03-10T00:00:00.000000Z\n" +
                     "null\t2024-03-10T00:00:00.000000Z\n";
-            assertSql(expected, "x");
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
 
             execute("alter table x convert partition to parquet where ts >= 0");
-            assertSql(expected, "x");
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
 
             execute("alter table x convert partition to native where ts >= 0");
-            assertSql(expected, "x");
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
+        });
+    }
+
+    // Shared body for the absent-column regression tests, parameterized by the
+    // added column's type (symbol vs varchar exercise different read paths).
+    //
+    // When a query projects ONLY column(s) absent from a parquet file (added via
+    // ALTER TABLE ADD COLUMN after the partition was converted to parquet),
+    // PageFrameMemoryPool.ParquetBuffers.decode() sees an empty parquetColumns
+    // list and skips remapColumns() - the only place that sizes and zeroes the
+    // page-address lists. The lists keep stale/uninitialized native memory, so the
+    // record reads a wild page address for the absent column instead of 0 (NULL).
+    // (A native column-top reads NULL correctly - the bug is parquet-only.)
+    //
+    // The raw crash relied on malloc returning non-zero garbage in a freshly
+    // allocated buffer. To make the stale read deterministic, lay out enough
+    // column-PRESENT parquet partitions to drain the parquet frame cache free list,
+    // so the column-ABSENT parquet frame is forced to REUSE an already-decoded
+    // buffer whose slot still holds a valid 's' pointer:
+    //   - days 1..cacheCap: 's' present in parquet -> cacheCap frames that fill the
+    //     cache, each leaving a valid 's' pointer in its buffer's slot.
+    //   - day cacheCap+1: 's' ABSENT (converted before ADD COLUMN) -> the
+    //     (cacheCap+1)th frame, empty parquetColumns -> remapColumns() skipped ->
+    //     reuses an evicted buffer -> slot still points at that partition's 's'.
+    //   - day cacheCap+2: native (active), 's' is a column-top -> always NULL.
+    // With the bug, day cacheCap+1 reads a prior partition's 's' and returns 'AA'
+    // (symbol) or a stale aux read (varchar) instead of NULL. After the fix the
+    // absent column reads as NULL.
+    //
+    // The absent partition must be PARQUET and NON-ACTIVE: the active (newest)
+    // partition cannot be converted to parquet. The trailing native partition keeps
+    // it non-active so the conversion is allowed.
+    //
+    // Force buffer reuse: a 1-byte memory budget makes cachedBytes >= budget true
+    // on every miss after the first, so the column-absent decode must evict and
+    // reuse an earlier buffer. Without this the default 256 MiB budget swallows
+    // all tiny partitions, no eviction happens, and the stale-pointer bug never
+    // fires - broken code would silently pass.
+    private void testSelectOnlyAddedColumnAbsentFromParquetPartition(String columnType) throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 1);
+        assertMemoryLeak(() -> {
+            execute("create table x (a int, ts timestamp) timestamp(ts) partition by day;");
+            execute("insert into x(a, ts) values " +
+                    "(2, '2024-06-02T00:00:00.000000Z'), " +
+                    "(3, '2024-06-03T00:00:00.000000Z');");
+            execute("alter table x convert partition to parquet where ts in '2024-06-02';");
+
+            execute("alter table x add column s " + columnType + ";");
+
+            // One older single-row parquet partition with non-null 's'. The tight
+            // byte budget forces the next parquet decode (the absent partition)
+            // to reuse this partition's buffer.
+            execute("insert into x(a, ts, s) values (1, '2024-06-01T00:00:00.000000Z', 'AA');");
+            execute("alter table x convert partition to parquet where ts < '2024-06-02';");
+
+            // Project ONLY 's' so the absent-column frame decodes zero parquet
+            // columns. The constant '1 one' keeps the base scan reading just 's'
+            // while rendering the NULL rows as a non-blank '\t1'. Row 1 is 'AA';
+            // row 2 is the absent parquet partition (the bug returns 'AA' / a
+            // stale aux read there); row 3 is the native trailing partition.
+            // assertQueryNoLeakCheck re-creates the cursor and re-reads the result,
+            // so it also exercises parquet decode re-entry (assertSql reads once).
+            assertQuery("select s, 1 one from x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s\tone
+                            AA\t1
+                            \t1
+                            \t1
+                            """);
         });
     }
 
@@ -1769,26 +3504,28 @@ public class ParquetTest extends AbstractCairoTest {
             execute("alter table x convert partition to parquet where ts >= 0");
 
             // fwd
-            assertSql(
-                    """
+            assertQuery("x where ts in '1970-01-01T01'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             id\tts
                             5\t1970-01-01T01:06:40.000000Z
                             6\t1970-01-01T01:23:20.000000Z
                             7\t1970-01-01T01:40:00.000000Z
                             8\t1970-01-01T01:56:40.000000Z
-                            """,
-                    "x where ts in '1970-01-01T01'"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("x where ts in '1970-01-01T06:30:00.000Z;30m;1d;2'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             id\tts
                             25\t1970-01-01T06:40:00.000000Z
                             26\t1970-01-01T06:56:40.000000Z
-                            """,
-                    "x where ts in '1970-01-01T06:30:00.000Z;30m;1d;2'"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("x where ts in '1970-01-01T06:30:00.000Z;30m;1h;4'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             id\tts
                             25\t1970-01-01T06:40:00.000000Z
                             26\t1970-01-01T06:56:40.000000Z
@@ -1797,31 +3534,31 @@ public class ParquetTest extends AbstractCairoTest {
                             32\t1970-01-01T08:36:40.000000Z
                             33\t1970-01-01T08:53:20.000000Z
                             36\t1970-01-01T09:43:20.000000Z
-                            """,
-                    "x where ts in '1970-01-01T06:30:00.000Z;30m;1h;4'"
-            );
+                            """);
 
             // bwd
-            assertSql(
-                    """
+            assertQuery("x where ts in '1970-01-01T01' order by ts desc")
+                    .noLeakCheck()
+                    .timestampDesc("ts")
+                    .returns("""
                             id\tts
                             8\t1970-01-01T01:56:40.000000Z
                             7\t1970-01-01T01:40:00.000000Z
                             6\t1970-01-01T01:23:20.000000Z
                             5\t1970-01-01T01:06:40.000000Z
-                            """,
-                    "x where ts in '1970-01-01T01' order by ts desc"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("x where ts in '1970-01-01T06:30:00.000Z;30m;1d;2' order by ts desc")
+                    .noLeakCheck()
+                    .timestampDesc("ts")
+                    .returns("""
                             id\tts
                             26\t1970-01-01T06:56:40.000000Z
                             25\t1970-01-01T06:40:00.000000Z
-                            """,
-                    "x where ts in '1970-01-01T06:30:00.000Z;30m;1d;2' order by ts desc"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("x where ts in '1970-01-01T06:30:00.000Z;30m;1h;4' order by ts desc")
+                    .noLeakCheck()
+                    .timestampDesc("ts")
+                    .returns("""
                             id\tts
                             36\t1970-01-01T09:43:20.000000Z
                             33\t1970-01-01T08:53:20.000000Z
@@ -1830,9 +3567,7 @@ public class ParquetTest extends AbstractCairoTest {
                             28\t1970-01-01T07:30:00.000000Z
                             26\t1970-01-01T06:56:40.000000Z
                             25\t1970-01-01T06:40:00.000000Z
-                            """,
-                    "x where ts in '1970-01-01T06:30:00.000Z;30m;1h;4' order by ts desc"
-            );
+                            """);
         });
     }
 }

@@ -26,9 +26,11 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -39,10 +41,12 @@ import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
+import io.questdb.std.NumericException;
 import io.questdb.std.Os;
-import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 class AsyncFilteredRecordCursor implements RecordCursor {
     private static final Log LOG = LogFactory.getLog(AsyncFilteredRecordCursor.class);
@@ -70,10 +74,22 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     private long rowsRemaining;
 
     public AsyncFilteredRecordCursor(@NotNull CairoConfiguration configuration, Function filter, int scanDirection) {
+        // close() only frees these once isOpen (set in of()), so a ctor failure must free the
+        // already-allocated natives here; build them into locals so the catch can release them.
+        PageFrameMemoryRecord record = null;
+        PageFrameMemoryPool frameMemoryPool = null;
+        try {
+            record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
+            frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetCacheMemorySize());
+        } catch (Throwable th) {
+            Misc.free(record);
+            Misc.free(frameMemoryPool);
+            throw th;
+        }
         this.filter = filter;
         this.hasDescendingOrder = scanDirection == RecordCursorFactory.SCAN_DIRECTION_BACKWARD;
-        this.record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
-        this.frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetFrameCacheCapacity());
+        this.record = record;
+        this.frameMemoryPool = frameMemoryPool;
         this.defaultDispatchLimit = configuration.getSqlParallelFilterDispatchLimit();
     }
 
@@ -237,9 +253,22 @@ class AsyncFilteredRecordCursor implements RecordCursor {
 
     @Override
     public void recordAt(Record record, long atRowId) {
-        final PageFrameMemoryRecord frameMemoryRecord = (PageFrameMemoryRecord) record;
-        frameMemoryPool.navigateTo(Rows.toPartitionIndex(atRowId), frameMemoryRecord);
-        frameMemoryRecord.setRowIndex(Rows.toLocalRowID(atRowId));
+        frameMemoryPool.recordAt(record, atRowId);
+    }
+
+    @Override
+    public void setParentUsedColumns(@Nullable IntHashSet columnIndexes) {
+        ((AsyncFilterAtom) frameSequence.getAtom()).setParentUsedColumns(columnIndexes);
+    }
+
+    @Override
+    public void setParquetDecodeHint(ParquetDecodeHint hint) {
+        frameMemoryPool.setParquetDecodeHint(hint);
+    }
+
+    @Override
+    public void setRecordAtRows(@Nullable RowIdSource source) {
+        frameMemoryPool.setRecordAtRows(source);
     }
 
     @Override
@@ -248,7 +277,10 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     }
 
     @Override
-    public void skipRows(Counter rowCount) {
+    public void skipRows(Counter rowCount, long maxRowsAfterSkip) {
+        // hint is dropped here: filter discards rows, so the consumer's "max
+        // output rows" cannot translate to a per-frame decode clamp without
+        // knowing the filter selectivity.
         if (frameIndex == -1) {
             fetchNextFrame(dispatchLimit, false);
         }
@@ -348,12 +380,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                             .I$();
 
                     if (task.hasError()) {
-                        throw CairoException.nonCritical()
-                                .position(task.getErrorMessagePosition())
-                                .put(task.getErrorMsg())
-                                .setCancellation(task.isCancelled())
-                                .setInterruption(task.isCancelled())
-                                .setOutOfMemory(task.isOutOfMemory());
+                        throw task.buildError();
                     }
 
                     allFramesActive &= frameSequence.isActive();
@@ -391,6 +418,11 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                 }
             }
             LOG.error().$("filter error [ex=").$(th).I$();
+            // Preserve typed user-facing errors (ImplicitCastException / NumericException)
+            // raised via task.buildError() so the caller can recognise them.
+            if (th instanceof ImplicitCastException || th instanceof NumericException) {
+                throw (RuntimeException) th;
+            }
             throw CairoException.nonCritical().put(th.getMessage());
         }
     }
@@ -419,6 +451,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         this.frameRowIndex = -1;
         this.frameRowCount = -1;
         this.allFramesActive = true;
+        ((AsyncFilterAtom) frameSequence.getAtom()).setParentUsedColumns(null);
         frameMemoryPool.of(frameSequence.getPageFrameAddressCache());
         record.of(frameSequence.getSymbolTableSource());
         if (recordB != null) {

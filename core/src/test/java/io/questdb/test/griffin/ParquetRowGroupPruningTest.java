@@ -27,6 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.MetadataCacheReader;
+import io.questdb.cairo.MetadataCacheWriter;
 import io.questdb.cairo.TableToken;
 import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
 import io.questdb.test.AbstractCairoTest;
@@ -39,6 +40,56 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     public void setUp() {
         ParquetRowGroupFilter.resetRowGroupsSkipped();
         super.setUp();
+    }
+
+    @Test
+    public void testRowGroupPruningSurvivesEmptyMetadataCacheWindow() throws Exception {
+        // Regression for the parquet pruning probe
+        // (AbstractPartitionFrameCursorFactory#hasParquetFormatPartitions). The table
+        // token is resolved from the synchronously loaded registry, but the metadata
+        // cache hydrates lazily (async at startup, or after a clearCache()). The probe
+        // must hydrate the table on demand before reading the cache; otherwise it sees
+        // the table as missing, returns false, and row-group pruning is silently skipped
+        // during the hydration window. Pruning is an optimization, not a correctness
+        // feature, so the regression does NOT change query results - it can only be
+        // caught by asserting on the pruning signal (rowGroupsSkipped).
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x
+                    SELECT CAST(x AS INT), timestamp_sequence('2024-01-01', 100_000)
+                    FROM long_sequence(5000)
+                    """);
+            // Second partition makes 2024-01-01 a non-active partition so it converts.
+            execute("""
+                    INSERT INTO x VALUES
+                    (8000, '2024-01-02T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
+
+            // Reproduce the registered-but-not-yet-cached window: evict the table from
+            // the metadata cache so the query below is the first reader to need it.
+            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                metadataRW.clearCache();
+            }
+            // Precondition: the table really is absent from the cache. getTable() reads
+            // the map without hydrating, so it stays null until the pruning probe
+            // hydrates on demand.
+            final TableToken token = engine.getTableTokenIfExists("x");
+            try (MetadataCacheReader metadataRO = engine.getMetadataCache().readLock()) {
+                Assert.assertNull(metadataRO.getTable(token));
+            }
+
+            // The filtered query must still skip row groups: hasParquetFormatPartitions()
+            // hydrates the table on demand, so pruning is applied even though the cache
+            // started empty. Without the on-demand hydrate this assertion fails (0 skipped).
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT val FROM x WHERE val = -991 ORDER BY ts DESC")
+                    .noLeakCheck()
+                    .returns("val\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 1);
+        });
     }
 
     @Test
@@ -57,52 +108,48 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
 
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val = -991 ORDER BY ts DESC",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val = -991 ORDER BY ts DESC")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 1);
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = 42 ORDER BY ts DESC")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             42
-                            """,
-                    "SELECT val FROM x WHERE val = 42 ORDER BY ts DESC",
-                    null, true, false
-            );
+                            """);
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 1);
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val IN (-1, -2, -3) ORDER BY ts DESC",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val IN (-1, -2, -3) ORDER BY ts DESC")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 1);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val IN (1, 2001) ORDER BY ts DESC")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             2001
                             1
-                            """,
-                    "SELECT val FROM x WHERE val IN (1, 2001) ORDER BY ts DESC",
-                    null, true, false
-            );
+                            """);
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 1);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
             bindVariableService.clear();
             bindVariableService.setInt("v", -991);
-            assertQueryNoLeakCheck("val\n", "SELECT val FROM x WHERE val = :v ORDER BY ts DESC", null, true, false);
+            assertQuery("SELECT val FROM x WHERE val = :v ORDER BY ts DESC")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 1);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
             bindVariableService.clear();
             bindVariableService.setInt("v", 42);
-            assertQueryNoLeakCheck("val\n42\n", "SELECT val FROM x WHERE val = :v ORDER BY ts DESC", null, true, false);
+            assertQuery("SELECT val FROM x WHERE val = :v ORDER BY ts DESC")
+                    .noLeakCheck()
+                    .returns("val\n42\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 1);
         });
     }
@@ -119,36 +166,44 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     (101, '2024-01-02T02:00:00.000000Z')
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val = 50::byte",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val = 50::byte")
+                    .noLeakCheck()
+                    .returns("val\n");
 
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = 10::byte")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             10
-                            """,
-                    "SELECT val FROM x WHERE val = 10::byte",
-                    null, true, false
-            );
+                            """);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck("val\n", "SELECT val FROM x WHERE val = 50::SHORT", null, true, false);
+            assertQuery("SELECT val FROM x WHERE val = 50::SHORT")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
-            assertQueryNoLeakCheck("val\n10\n", "SELECT val FROM x WHERE val = 10::SHORT", null, true, false);
+            assertQuery("SELECT val FROM x WHERE val = 10::SHORT")
+                    .noLeakCheck()
+                    .returns("val\n10\n");
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck("val\n", "SELECT val FROM x WHERE val = 50", null, true, false);
+            assertQuery("SELECT val FROM x WHERE val = 50")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
-            assertQueryNoLeakCheck("val\n10\n", "SELECT val FROM x WHERE val = 10", null, true, false);
+            assertQuery("SELECT val FROM x WHERE val = 10")
+                    .noLeakCheck()
+                    .returns("val\n10\n");
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck("val\n", "SELECT val FROM x WHERE val = 50::LONG", null, true, false);
+            assertQuery("SELECT val FROM x WHERE val = 50::LONG")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
-            assertQueryNoLeakCheck("val\n10\n", "SELECT val FROM x WHERE val = 10::LONG", null, true, false);
+            assertQuery("SELECT val FROM x WHERE val = 10::LONG")
+                    .noLeakCheck()
+                    .returns("val\n10\n");
         });
     }
 
@@ -165,20 +220,16 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
 
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val = 'G'",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val = 'G'")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = 'M'")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             M
-                            """,
-                    "SELECT val FROM x WHERE val = 'M'",
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -195,28 +246,22 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
 
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val = '2020-03-15'::DATE",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val = '2020-03-15'::DATE")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = '2020-06-15'::DATE")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             2020-06-15T00:00:00.000Z
-                            """,
-                    "SELECT val FROM x WHERE val = '2020-06-15'::DATE",
-                    null, true, false
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("SELECT val FROM x WHERE val = '2020-06-15T00:00:00.000000001Z'")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             2020-06-15T00:00:00.000Z
-                            """,
-                    "SELECT val FROM x WHERE val = '2020-06-15T00:00:00.000000001Z'",
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -233,20 +278,16 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
 
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val = '2500000000000.25'::DECIMAL(30,2)",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val = '2500000000000.25'::DECIMAL(30,2)")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = '5000000000000.50'::DECIMAL(30,2)")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             5000000000000.50
-                            """,
-                    "SELECT val FROM x WHERE val = '5000000000000.50'::DECIMAL(30,2)",
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -263,20 +304,16 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
 
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val = '30.30'::DECIMAL(4,2)",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val = '30.30'::DECIMAL(4,2)")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = '50.50'::DECIMAL(4,2)")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             50.50
-                            """,
-                    "SELECT val FROM x WHERE val = '50.50'::DECIMAL(4,2)",
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -293,21 +330,17 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
 
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val = '250000000000000000000.25'::DECIMAL(50,2)",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val = '250000000000000000000.25'::DECIMAL(50,2)")
+                    .noLeakCheck()
+                    .returns("val\n");
 
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = '500000000000000000000.50'::DECIMAL(50,2)")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             500000000000000000000.50
-                            """,
-                    "SELECT val FROM x WHERE val = '500000000000000000000.50'::DECIMAL(50,2)",
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -324,21 +357,17 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
 
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val = '25000.25'::DECIMAL(8,2)",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val = '25000.25'::DECIMAL(8,2)")
+                    .noLeakCheck()
+                    .returns("val\n");
 
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = '50000.50'::DECIMAL(8,2)")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             50000.50
-                            """,
-                    "SELECT val FROM x WHERE val = '50000.50'::DECIMAL(8,2)",
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -355,21 +384,17 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
 
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val = '2500000.25'::DECIMAL(15,2)",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val = '2500000.25'::DECIMAL(15,2)")
+                    .noLeakCheck()
+                    .returns("val\n");
 
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = '5000000.50'::DECIMAL(15,2)")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             5000000.50
-                            """,
-                    "SELECT val FROM x WHERE val = '5000000.50'::DECIMAL(15,2)",
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -386,21 +411,17 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
 
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val = '3.3'::DECIMAL(2,1)",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val = '3.3'::DECIMAL(2,1)")
+                    .noLeakCheck()
+                    .returns("val\n");
 
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = '5.5'::DECIMAL(2,1)")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             5.5
-                            """,
-                    "SELECT val FROM x WHERE val = '5.5'::DECIMAL(2,1)",
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -417,21 +438,17 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
 
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val = 3.33",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val = 3.33")
+                    .noLeakCheck()
+                    .returns("val\n");
 
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = 5.55")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             5.55
-                            """,
-                    "SELECT val FROM x WHERE val = 5.55",
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -448,21 +465,17 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
 
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val = 3.0",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val = 3.0")
+                    .noLeakCheck()
+                    .returns("val\n");
 
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = 5.0::FLOAT")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             5.0
-                            """,
-                    "SELECT val FROM x WHERE val = 5.0::FLOAT",
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -481,32 +494,26 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val = '5.5.5.5'",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val = '5.5.5.5'")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = '10.0.0.1'")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             10.0.0.1
-                            """,
-                    "SELECT val FROM x WHERE val = '10.0.0.1'",
-                    null, true, false
-            );
+                            """);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val in (NULL)")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             
-                            """,
-                    "SELECT val FROM x WHERE val in (NULL)",
-                    null, true, false
-            );
+                            """);
             Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
         });
     }
@@ -524,26 +531,26 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
 
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val = 25_000",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val = 25_000")
+                    .noLeakCheck()
+                    .returns("val\n");
 
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = 50_000")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             50000
-                            """,
-                    "SELECT val FROM x WHERE val = 50_000",
-                    null, true, false
-            );
+                            """);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck("val\n", "SELECT val FROM x WHERE val = 25_000::LONG", null, true, false);
+            assertQuery("SELECT val FROM x WHERE val = 25_000::LONG")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
-            assertQueryNoLeakCheck("val\n50000\n", "SELECT val FROM x WHERE val = 50_000::LONG", null, true, false);
+            assertQuery("SELECT val FROM x WHERE val = 50_000::LONG")
+                    .noLeakCheck()
+                    .returns("val\n50000\n");
         });
     }
 
@@ -562,18 +569,24 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
 
             bindVariableService.clear();
             bindVariableService.setInt("v", 25_000);
-            assertQueryNoLeakCheck("val\n", "SELECT val FROM x WHERE val = :v", null, true, false);
+            assertQuery("SELECT val FROM x WHERE val = :v")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
             bindVariableService.clear();
             bindVariableService.setInt("v", 50_000);
-            assertQueryNoLeakCheck("val\n50000\n", "SELECT val FROM x WHERE val = :v", null, true, false);
+            assertQuery("SELECT val FROM x WHERE val = :v")
+                    .noLeakCheck()
+                    .returns("val\n50000\n");
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
             bindVariableService.clear();
             bindVariableService.setInt(0, 25_000);
-            assertQueryNoLeakCheck("val\n", "SELECT val FROM x WHERE val = $1", null, true, false);
+            assertQuery("SELECT val FROM x WHERE val = $1")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
         });
     }
@@ -591,21 +604,17 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
 
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val IN (2, 3, 4)",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val IN (2, 3, 4)")
+                    .noLeakCheck()
+                    .returns("val\n");
 
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val IN (1, 25_000)")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             1
-                            """,
-                    "SELECT val FROM x WHERE val IN (1, 25_000)",
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -622,21 +631,17 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
 
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val = 250_000",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val = 250_000")
+                    .noLeakCheck()
+                    .returns("val\n");
 
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = 500_000")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             500000
-                            """,
-                    "SELECT val FROM x WHERE val = 500_000",
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -653,22 +658,18 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
 
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val = to_long128(0, 25)",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val = to_long128(0, 25)")
+                    .noLeakCheck()
+                    .returns("val\n");
 
 
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = to_long128(0, 50)")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             00000000-0000-0032-0000-000000000000
-                            """,
-                    "SELECT val FROM x WHERE val = to_long128(0, 50)",
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -685,29 +686,23 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'a,b')");
 
-            assertQueryNoLeakCheck(
-                    "a\tb\n",
-                    "SELECT a, b FROM x WHERE a = 25 AND b = 'ggg'",
-                    null, true, false
-            );
+            assertQuery("SELECT a, b FROM x WHERE a = 25 AND b = 'ggg'")
+                    .noLeakCheck()
+                    .returns("a\tb\n");
 
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "a\tb\n",
-                    "SELECT a, b FROM x WHERE a = 1 AND b = 'ggg'",
-                    null, true, false
-            );
+            assertQuery("SELECT a, b FROM x WHERE a = 1 AND b = 'ggg'")
+                    .noLeakCheck()
+                    .returns("a\tb\n");
 
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT a, b FROM x WHERE a = 50 AND b = 'mmm'")
+                    .noLeakCheck()
+                    .returns("""
                             a\tb
                             50\tmmm
-                            """,
-                    "SELECT a, b FROM x WHERE a = 50 AND b = 'mmm'",
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -724,36 +719,44 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
 
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val = 501",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val = 501")
+                    .noLeakCheck()
+                    .returns("val\n");
 
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = 200")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             200
-                            """,
-                    "SELECT val FROM x WHERE val = 200",
-                    null, true, false
-            );
+                            """);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck("val\n", "SELECT val FROM x WHERE val = 501", null, true, false);
+            assertQuery("SELECT val FROM x WHERE val = 501")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
-            assertQueryNoLeakCheck("val\n200\n", "SELECT val FROM x WHERE val = 200", null, true, false);
+            assertQuery("SELECT val FROM x WHERE val = 200")
+                    .noLeakCheck()
+                    .returns("val\n200\n");
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck("val\n", "SELECT val FROM x WHERE val = 501::LONG", null, true, false);
+            assertQuery("SELECT val FROM x WHERE val = 501::LONG")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
-            assertQueryNoLeakCheck("val\n200\n", "SELECT val FROM x WHERE val = 200::LONG", null, true, false);
+            assertQuery("SELECT val FROM x WHERE val = 200::LONG")
+                    .noLeakCheck()
+                    .returns("val\n200\n");
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck("val\n", "SELECT val FROM x WHERE val = 501::SHORT", null, true, false);
+            assertQuery("SELECT val FROM x WHERE val = 501::SHORT")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
-            assertQueryNoLeakCheck("val\n200\n", "SELECT val FROM x WHERE val = 200::SHORT", null, true, false);
+            assertQuery("SELECT val FROM x WHERE val = 200::SHORT")
+                    .noLeakCheck()
+                    .returns("val\n200\n");
         });
     }
 
@@ -770,21 +773,17 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
 
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val = 'ggg'",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val = 'ggg'")
+                    .noLeakCheck()
+                    .returns("val\n");
 
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = 'mmm'")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             mmm
-                            """,
-                    "SELECT val FROM x WHERE val = 'mmm'",
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -801,21 +800,17 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
 
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val = 'delta'",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val = 'delta'")
+                    .noLeakCheck()
+                    .returns("val\n");
 
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = 'gamma'")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             gamma
-                            """,
-                    "SELECT val FROM x WHERE val = 'gamma'",
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -832,39 +827,31 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
 
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val = '2020-03-15T00:00:00.000000Z'::TIMESTAMP",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val = '2020-03-15T00:00:00.000000Z'::TIMESTAMP")
+                    .noLeakCheck()
+                    .returns("val\n");
 
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = '2020-06-15T12:00:00.000000Z'::TIMESTAMP")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             2020-06-15T12:00:00.000000Z
-                            """,
-                    "SELECT val FROM x WHERE val = '2020-06-15T12:00:00.000000Z'::TIMESTAMP",
-                    null, true, false
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = '2020-06-15T12:00:00.000000Z'::TIMESTAMP_NS")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             2020-06-15T12:00:00.000000Z
-                            """,
-                    "SELECT val FROM x WHERE val = '2020-06-15T12:00:00.000000Z'::TIMESTAMP_NS",
-                    null, true, false
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = '2020-01-01'::Date")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             2020-01-01T00:00:00.000000Z
-                            """,
-                    "SELECT val FROM x WHERE val = '2020-01-01'::Date",
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -881,64 +868,50 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
 
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val = '33333333-3333-3333-3333-333333333334'",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val = '33333333-3333-3333-3333-333333333334'")
+                    .noLeakCheck()
+                    .returns("val\n");
 
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = '55555555-5555-5555-5555-555555555555'")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             55555555-5555-5555-5555-555555555555
-                            """,
-                    "SELECT val FROM x WHERE val = '55555555-5555-5555-5555-555555555555'",
-                    null, true, false
-            );
+                            """);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val = '33333333-3333-3333-3333-333333333334'::UUID",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val = '33333333-3333-3333-3333-333333333334'::UUID")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = '55555555-5555-5555-5555-555555555555'::UUID")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             55555555-5555-5555-5555-555555555555
-                            """,
-                    "SELECT val FROM x WHERE val = '55555555-5555-5555-5555-555555555555'::UUID",
-                    null, true, false
-            );
+                            """);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val = NULL::UUID",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val = NULL::UUID")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val IN ('33333333-3333-3333-3333-333333333334', '44444444-4444-4444-4444-444444444444')",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val IN ('33333333-3333-3333-3333-333333333334', '44444444-4444-4444-4444-444444444444')")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val IN ('11111111-1111-1111-1111-111111111111', '99999999-9999-9999-9999-999999999999')")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             11111111-1111-1111-1111-111111111111
                             99999999-9999-9999-9999-999999999999
-                            """,
-                    "SELECT val FROM x WHERE val IN ('11111111-1111-1111-1111-111111111111', '99999999-9999-9999-9999-999999999999')",
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -955,21 +928,17 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
 
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val = 'ghi'",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val = 'ghi'")
+                    .noLeakCheck()
+                    .returns("val\n");
 
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = '❤️'")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             ❤️
-                            """,
-                    "SELECT val FROM x WHERE val = '❤️'",
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -988,13 +957,17 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
 
             bindVariableService.clear();
             bindVariableService.setStr("v", "ghi");
-            assertQueryNoLeakCheck("val\n", "SELECT val FROM x WHERE val = :v", null, true, false);
+            assertQuery("SELECT val FROM x WHERE val = :v")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
             bindVariableService.clear();
             bindVariableService.setStr("v", "❤️");
-            assertQueryNoLeakCheck("val\n❤️\n", "SELECT val FROM x WHERE val = :v", null, true, false);
+            assertQuery("SELECT val FROM x WHERE val = :v")
+                    .noLeakCheck()
+                    .returns("val\n❤️\n");
         });
     }
 
@@ -1017,30 +990,24 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
 
-            assertQueryNoLeakCheck(
-                    "id\tval\n",
-                    "SELECT id, val FROM x WHERE val = 50",
-                    null, true, false
-            );
+            assertQuery("SELECT id, val FROM x WHERE val = 50")
+                    .noLeakCheck()
+                    .returns("id\tval\n");
 
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT id, val FROM x WHERE val = 100")
+                    .noLeakCheck()
+                    .returns("""
                             id\tval
                             4\t100
-                            """,
-                    "SELECT id, val FROM x WHERE val = 100",
-                    null, true, false
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("SELECT id, val FROM x WHERE val = null")
+                    .noLeakCheck()
+                    .returns("""
                             id\tval
                             1\tnull
                             2\tnull
-                            """,
-                    "SELECT id, val FROM x WHERE val = null",
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -1062,32 +1029,26 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT id, val FROM x WHERE val = 1.0")
+                    .noLeakCheck()
+                    .returns("""
                             id\tval
-                            """,
-                    "SELECT id, val FROM x WHERE val = 1.0",
-                    null, true, false
-            );
+                            """);
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT id, val FROM x WHERE val = 1.11")
+                    .noLeakCheck()
+                    .returns("""
                             id\tval
                             3\t1.11
-                            """,
-                    "SELECT id, val FROM x WHERE val = 1.11",
-                    null, true, false
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("SELECT id, val FROM x WHERE val = null")
+                    .noLeakCheck()
+                    .returns("""
                             id\tval
                             1\tnull
                             2\tnull
-                            """,
-                    "SELECT id, val FROM x WHERE val = null",
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -1110,31 +1071,25 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT id, val FROM x WHERE val = 100")
+                    .noLeakCheck()
+                    .returns("""
                             id\tval
                             4\t100
-                            """,
-                    "SELECT id, val FROM x WHERE val = 100",
-                    null, true, false
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("SELECT id, val FROM x WHERE val = null")
+                    .noLeakCheck()
+                    .returns("""
                             id\tval
                             1\tnull
                             2\tnull
                             3\tnull
-                            """,
-                    "SELECT id, val FROM x WHERE val = null",
-                    null, true, false
-            );
+                            """);
 
             Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
-            assertQueryNoLeakCheck(
-                    "id\tval\n",
-                    "SELECT id, val FROM x WHERE val = 999",
-                    null, true, false
-            );
+            assertQuery("SELECT id, val FROM x WHERE val = 999")
+                    .noLeakCheck()
+                    .returns("id\tval\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
         });
@@ -1158,23 +1113,19 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT id, val FROM x WHERE val = 100_000")
+                    .noLeakCheck()
+                    .returns("""
                             id\tval
                             3\t100000
-                            """,
-                    "SELECT id, val FROM x WHERE val = 100_000",
-                    null, true, false
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("SELECT id, val FROM x WHERE val = null")
+                    .noLeakCheck()
+                    .returns("""
                             id\tval
                             1\tnull
                             2\tnull
-                            """,
-                    "SELECT id, val FROM x WHERE val = null",
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -1196,32 +1147,26 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     (6, '2024-01-02T01:00:00.000000Z', 'world1')
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT id, val FROM x WHERE val = 'aaa'")
+                    .noLeakCheck()
+                    .returns("""
                             id\tval
-                            """,
-                    "SELECT id, val FROM x WHERE val = 'aaa'",
-                    null, true, false
-            );
+                            """);
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT id, val FROM x WHERE val = 'hello'")
+                    .noLeakCheck()
+                    .returns("""
                             id\tval
                             4\thello
-                            """,
-                    "SELECT id, val FROM x WHERE val = 'hello'",
-                    null, true, false
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("SELECT id, val FROM x WHERE val = null")
+                    .noLeakCheck()
+                    .returns("""
                             id\tval
                             1\t
                             2\t
                             3\t
-                            """,
-                    "SELECT id, val FROM x WHERE val = null",
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -1242,32 +1187,26 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     (5, '2024-01-02T02:00:00.000000Z', 'def2')
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT id, val FROM x WHERE val = 'aaa'")
+                    .noLeakCheck()
+                    .returns("""
                             id\tval
-                            """,
-                    "SELECT id, val FROM x WHERE val = 'aaa'",
-                    null, true, false
-            );
+                            """);
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT id, val FROM x WHERE val = 'abc'")
+                    .noLeakCheck()
+                    .returns("""
                             id\tval
                             3\tabc
-                            """,
-                    "SELECT id, val FROM x WHERE val = 'abc'",
-                    null, true, false
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("SELECT id, val FROM x WHERE val = null")
+                    .noLeakCheck()
+                    .returns("""
                             id\tval
                             1\t
                             2\t
-                            """,
-                    "SELECT id, val FROM x WHERE val = null",
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -1284,19 +1223,17 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "cnt\n19\n",
-                    "SELECT count() AS cnt FROM x WHERE val > 100 AND val < 120",
-                    null, false, true
-            );
+            assertQuery("SELECT count() AS cnt FROM x WHERE val > 100 AND val < 120")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("cnt\n19\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val > 10_000 AND val IS NOT NULL",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val > 10_000 AND val IS NOT NULL")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
         });
     }
@@ -1413,14 +1350,12 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val IN (null, 3.34)")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             null
-                            """,
-                    "SELECT val FROM x WHERE val IN (null, 3.34)",
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -1438,31 +1373,25 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val IN (null, 3)")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             null
                             3
-                            """,
-                    "SELECT val FROM x WHERE val IN (null, 3)",
-                    null, true, false
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("SELECT val FROM x WHERE val IN (null)")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             null
-                            """,
-                    "SELECT val FROM x WHERE val IN (null)",
-                    null, true, false
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("SELECT val FROM x WHERE val IN (null, 99)")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             null
-                            """,
-                    "SELECT val FROM x WHERE val IN (null, 99)",
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -1479,15 +1408,13 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val IN (null, 300_000)")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             null
                             300000
-                            """,
-                    "SELECT val FROM x WHERE val IN (null, 300_000)",
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -1504,14 +1431,12 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val IN (null, 'cccd')")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             
-                            """,
-                    "SELECT val FROM x WHERE val IN (null, 'cccd')",
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -1527,15 +1452,91 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val IN (null, 'world')")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             
                             world
-                            """,
-                    "SELECT val FROM x WHERE val IN (null, 'world')",
-                    null, true, false
-            );
+                            """);
+        });
+    }
+
+    @Test
+    public void testIntervalScanStringMultiBlockPage() throws Exception {
+        // Force a large row-group size so all 300 rows land in one row group (one
+        // data page) regardless of execution order. The property is a static
+        // override that persists across test methods (reset only in @AfterClass),
+        // and many sibling tests lower it to 100; a value below 128 would split the
+        // rows into single-block row groups whose length stream never spans multiple
+        // blocks, silently bypassing the partial multi-block read path this guards.
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100_000);
+        // A STRING column read over a partial row-group range. 300 rows land in a
+        // single row group whose one data page holds a DELTA_LENGTH_BYTE_ARRAY
+        // length stream that spans several 128-value blocks. An interval ending
+        // inside the row group makes the column read stop before the later blocks
+        // (rowGroupHi < the page's value count). The data offset must still skip
+        // the whole length stream; it used to under-count the unread blocks and
+        // return shifted values (e.g. "v1" decoded as a string with leading NULs).
+        // Existing STRING tests miss this: they filter on the value column (a
+        // different, immune decode path) and use only a handful of rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x
+                    SELECT 'v' || x, timestamp_sequence('2024-01-01', 60_000_000)
+                    FROM long_sequence(300)
+                    """);
+            // A row in the next partition so 2024-01-01 is not the active partition
+            // and CONVERT actually rewrites it to parquet.
+            execute("INSERT INTO x VALUES ('tail', '2024-01-02T00:00:00.000000Z')");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQuery("SELECT val FROM x WHERE ts < '2024-01-01T00:05:00.000000Z'")
+                    .noLeakCheck()
+                    .returns("""
+                            val
+                            v1
+                            v2
+                            v3
+                            v4
+                            v5
+                            """);
+        });
+    }
+
+    @Test
+    public void testIntervalScanStringMultiBlockPageBackward() throws Exception {
+        // Force a large row-group size for the same reason as
+        // testIntervalScanStringMultiBlockPage: keep all 300 rows in one multi-block
+        // page so a sibling test's lowered override cannot mask the partial-read path.
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100_000);
+        // As testIntervalScanStringMultiBlockPage but with descending timestamp
+        // order, which drives the backward page-frame cursor. It computes the same
+        // partial (rowGroupHi < value count) frame and reads the STRING column over
+        // it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x
+                    SELECT 'v' || x, timestamp_sequence('2024-01-01', 60_000_000)
+                    FROM long_sequence(300)
+                    """);
+            // A row in the next partition so 2024-01-01 is not the active partition
+            // and CONVERT actually rewrites it to parquet.
+            execute("INSERT INTO x VALUES ('tail', '2024-01-02T00:00:00.000000Z')");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQuery("SELECT val FROM x WHERE ts < '2024-01-01T00:05:00.000000Z' ORDER BY ts DESC")
+                    .noLeakCheck()
+                    .returns("""
+                            val
+                            v5
+                            v4
+                            v3
+                            v2
+                            v1
+                            """);
         });
     }
 
@@ -1557,11 +1558,11 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "cnt\n50\n",
-                    "SELECT count() AS cnt FROM x WHERE val IS NOT NULL",
-                    null, false, true
-            );
+            assertQuery("SELECT count() AS cnt FROM x WHERE val IS NOT NULL")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("cnt\n50\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
         });
     }
@@ -1579,14 +1580,12 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val IS NOT NULL")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             42
-                            """,
-                    "SELECT val FROM x WHERE val IS NOT NULL",
-                    null, true, false
-            );
+                            """);
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
         });
     }
@@ -1604,11 +1603,9 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val IS NULL",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val IS NULL")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
         });
     }
@@ -1631,11 +1628,11 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "cnt\n50\n",
-                    "SELECT count() AS cnt FROM x WHERE val IS NULL",
-                    null, false, true
-            );
+            assertQuery("SELECT count() AS cnt FROM x WHERE val IS NULL")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("cnt\n50\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
         });
     }
@@ -1655,20 +1652,63 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = 2")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             2
-                            """,
-                    "SELECT val FROM x WHERE val = 2",
-                    null, true, false
-            );
+                            """);
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val = -1",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val = -1")
+                    .noLeakCheck()
+                    .returns("val\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
+    public void testMinMaxPruningByteNegative() throws Exception {
+        // BYTE is INT32-backed in parquet. Inline stats round-trip through a
+        // u64 slot at INT32 physical width, so a negative min value must read
+        // back as the correct i32 in the skip path. Without that, predicates
+        // like val = 0 against a row group whose true min is negative drop
+        // every row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val BYTE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (-100, '2024-01-01T00:00:00.000000Z'),
+                    (-50, '2024-01-01T01:00:00.000000Z'),
+                    (-1, '2024-01-01T02:00:00.000000Z'),
+                    (0, '2024-01-01T03:00:00.000000Z'),
+                    (10, '2024-01-01T04:00:00.000000Z'),
+                    (50, '2024-01-02T03:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            // val = 0 hits the row group whose true min is -100; before the
+            // round-trip fix the inline min read back as 156, dropping the
+            // row group. Must not skip.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT val FROM x WHERE val = 0")
+                    .noLeakCheck()
+                    .returns("""
+                            val
+                            0
+                            """);
+
+            // val = -42 falls inside [-100, 10] but not in the data: must not
+            // be skipped, must return empty.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT val FROM x WHERE val = -42")
+                    .noLeakCheck()
+                    .returns("val\n");
+
+            // val = -127 is outside both row groups; should skip.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT val FROM x WHERE val = -127")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
         });
     }
@@ -1688,22 +1728,18 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = 'C'")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             C
-                            """,
-                    "SELECT val FROM x WHERE val = 'C'",
-                    null, true, false
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = 'c'")
+                    .noLeakCheck()
+                    .returns("""
                             val
-                            """,
-                    "SELECT val FROM x WHERE val = 'c'",
-                    null, true, false
-            );
+                            """);
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
         });
     }
@@ -1721,19 +1757,15 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = '2020-06-01'::DATE")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             2020-06-01T00:00:00.000Z
-                            """,
-                    "SELECT val FROM x WHERE val = '2020-06-01'::DATE",
-                    null, true, false
-            );
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val = '2099-01-01'::DATE",
-                    null, true, false
-            );
+                            """);
+            assertQuery("SELECT val FROM x WHERE val = '2099-01-01'::DATE")
+                    .noLeakCheck()
+                    .returns("val\n");
 
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
         });
@@ -1752,19 +1784,15 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = '5000000000000.50'::DECIMAL(30,2)")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             5000000000000.50
-                            """,
-                    "SELECT val FROM x WHERE val = '5000000000000.50'::DECIMAL(30,2)",
-                    null, true, false
-            );
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val = '100.10'::DECIMAL(30,2)",
-                    null, true, false
-            );
+                            """);
+            assertQuery("SELECT val FROM x WHERE val = '100.10'::DECIMAL(30,2)")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
         });
     }
@@ -1782,19 +1810,15 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = '50.50'::DECIMAL(4,2)")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             50.50
-                            """,
-                    "SELECT val FROM x WHERE val = '50.50'::DECIMAL(4,2)",
-                    null, true, false
-            );
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val = '1.01'::DECIMAL(4,2)",
-                    null, true, false
-            );
+                            """);
+            assertQuery("SELECT val FROM x WHERE val = '1.01'::DECIMAL(4,2)")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
         });
     }
@@ -1812,19 +1836,15 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = '500000000000000000000.50'::DECIMAL(50,2)")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             500000000000000000000.50
-                            """,
-                    "SELECT val FROM x WHERE val = '500000000000000000000.50'::DECIMAL(50,2)",
-                    null, true, false
-            );
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val = '10.10'::DECIMAL(50,2)",
-                    null, true, false
-            );
+                            """);
+            assertQuery("SELECT val FROM x WHERE val = '10.10'::DECIMAL(50,2)")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
         });
     }
@@ -1842,19 +1862,15 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = '50000.50'::DECIMAL(8,2)")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             50000.50
-                            """,
-                    "SELECT val FROM x WHERE val = '50000.50'::DECIMAL(8,2)",
-                    null, true, false
-            );
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val = '100.10'::DECIMAL(8,2)",
-                    null, true, false
-            );
+                            """);
+            assertQuery("SELECT val FROM x WHERE val = '100.10'::DECIMAL(8,2)")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
         });
     }
@@ -1872,19 +1888,15 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = '5000000.50'::DECIMAL(15,2)")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             5000000.50
-                            """,
-                    "SELECT val FROM x WHERE val = '5000000.50'::DECIMAL(15,2)",
-                    null, true, false
-            );
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val = '100.10'::DECIMAL(15,2)",
-                    null, true, false
-            );
+                            """);
+            assertQuery("SELECT val FROM x WHERE val = '100.10'::DECIMAL(15,2)")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
         });
     }
@@ -1902,20 +1914,162 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = '5.5'::DECIMAL(2,1)")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             5.5
-                            """,
-                    "SELECT val FROM x WHERE val = '5.5'::DECIMAL(2,1)",
-                    null, true, false
-            );
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val = '0.1'::DECIMAL(2,1)",
-                    null, true, false
-            );
+                            """);
+            assertQuery("SELECT val FROM x WHERE val = '0.1'::DECIMAL(2,1)")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
+    public void testMinMaxPruningDecimalRescaleScaleUp() throws Exception {
+        // PushdownFilterExtractor#rescaleDecimalForPushdown rebuilds the literal at
+        // the column's scale when the literal scale is smaller. Pushdown still works
+        // because the rescaled raw value matches the column's row group statistics.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DECIMAL(15,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('1000000.10', '2024-01-01T00:00:00.000000Z'),
+                    ('5000000.50', '2024-01-01T01:00:00.000000Z'),
+                    ('9999999.99', '2024-01-01T02:00:00.000000Z'),
+                    ('9999999.98', '2024-01-02T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            // literal scale 1 < column scale 2, value rescales to 50000005 (scale 2)
+            assertQuery("SELECT val FROM x WHERE val = '5000000.5'::DECIMAL(15, 1)")
+                    .noLeakCheck()
+                    .returns("""
+                            val
+                            5000000.50
+                            """);
+            // out-of-range literal: rescale produces a value smaller than the row
+            // group min, so the second partition's row group is pruned.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT val FROM x WHERE val = '100.1'::DECIMAL(15, 1)")
+                    .noLeakCheck()
+                    .returns("val\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
+    public void testMinMaxPruningDecimalRescaleScaleDownLossless() throws Exception {
+        // Literal carries trailing zeros beyond the column's scale, so the rescale
+        // is lossless; pushdown keeps working with the rebuilt constant.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DECIMAL(15,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('1000000.10', '2024-01-01T00:00:00.000000Z'),
+                    ('5000000.50', '2024-01-01T01:00:00.000000Z'),
+                    ('9999999.99', '2024-01-01T02:00:00.000000Z'),
+                    ('9999999.98', '2024-01-02T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQuery("SELECT val FROM x WHERE val = '5000000.500'::DECIMAL(15, 3)")
+                    .noLeakCheck()
+                    .returns("""
+                            val
+                            5000000.50
+                            """);
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT val FROM x WHERE val = '100.100'::DECIMAL(15, 3)")
+                    .noLeakCheck()
+                    .returns("val\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
+    public void testMinMaxPruningDecimalRescaleScaleDownLossy() throws Exception {
+        // Literal has non-zero fractional digits beyond the column's scale, so
+        // rescaling would lose precision and pushdown is abandoned. The runtime
+        // filter still correctly returns no matching rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DECIMAL(15,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('1000000.10', '2024-01-01T00:00:00.000000Z'),
+                    ('5000000.50', '2024-01-01T01:00:00.000000Z'),
+                    ('9999999.99', '2024-01-01T02:00:00.000000Z'),
+                    ('9999999.98', '2024-01-02T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT val FROM x WHERE val = '5000000.501'::DECIMAL(15, 3)")
+                    .noLeakCheck()
+                    .returns("val\n");
+            Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
+        });
+    }
+
+    @Test
+    public void testMinMaxPruningDecimalRescaleWiderLiteralFits() throws Exception {
+        // Literal is DECIMAL128 but its value fits in the column's DECIMAL64
+        // storage. The helper rebuilds the constant at the narrower tag so
+        // pushdown's getDecimal64 dispatch produces the right value.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DECIMAL(15,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('1000000.10', '2024-01-01T00:00:00.000000Z'),
+                    ('5000000.50', '2024-01-01T01:00:00.000000Z'),
+                    ('9999999.99', '2024-01-01T02:00:00.000000Z'),
+                    ('9999999.98', '2024-01-02T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQuery("SELECT val FROM x WHERE val = '5000000.50'::DECIMAL(30, 2)")
+                    .noLeakCheck()
+                    .returns("""
+                            val
+                            5000000.50
+                            """);
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT val FROM x WHERE val = '100.10'::DECIMAL(30, 2)")
+                    .noLeakCheck()
+                    .returns("val\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
+    public void testMinMaxPruningDecimalRescaleWiderLiteralOverflows() throws Exception {
+        // Literal value is larger than the column's DECIMAL64 storage can hold,
+        // so the helper abandons pushdown. The runtime filter still produces the
+        // correct (full) result for `c <= huge_literal`.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DECIMAL(15,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('1000000.10', '2024-01-01T00:00:00.000000Z'),
+                    ('5000000.50', '2024-01-01T01:00:00.000000Z'),
+                    ('9999999.99', '2024-01-01T02:00:00.000000Z'),
+                    ('9999999.98', '2024-01-02T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT val FROM x WHERE val <= '99999999999999999999999999.99'::DECIMAL(30, 2) ORDER BY val")
+                    .noLeakCheck()
+                    .returns("""
+                            val
+                            1000000.10
+                            5000000.50
+                            9999999.98
+                            9999999.99
+                            """);
+            Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
         });
     }
 
@@ -1934,19 +2088,15 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = 3.33")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             3.33
-                            """,
-                    "SELECT val FROM x WHERE val = 3.33",
-                    null, true, false
-            );
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val = 99.99",
-                    null, true, false
-            );
+                            """);
+            assertQuery("SELECT val FROM x WHERE val = 99.99")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
         });
     }
@@ -1966,20 +2116,113 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = 3.5::FLOAT")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             3.5
-                            """,
-                    "SELECT val FROM x WHERE val = 3.5::FLOAT",
-                    null, true, false
-            );
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val = 99.9::FLOAT",
-                    null, true, false
-            );
+                            """);
+            assertQuery("SELECT val FROM x WHERE val = 99.9::FLOAT")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
+    public void testMinMaxPruningGeoByte() throws Exception {
+        // GeoByte rides the same INT32-physical inline path as BYTE: the _pm
+        // slot now holds parquet i32 stats verbatim instead of a 1-byte
+        // narrow encoding. The skip path doesn't currently push geohash
+        // equality through the row-group filter, but values must still
+        // round-trip correctly through the parquet conversion.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val GEOHASH(1c), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (#0, '2024-01-01T00:00:00.000000Z'),
+                    (#1, '2024-01-01T01:00:00.000000Z'),
+                    (#2, '2024-01-01T02:00:00.000000Z'),
+                    (#3, '2024-01-01T03:00:00.000000Z'),
+                    (#z, '2024-01-02T03:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQuery("SELECT val FROM x WHERE val = #2")
+                    .noLeakCheck()
+                    .returns("""
+                            val
+                            2
+                            """);
+
+            // #y matches no row in either partition; the query must return
+            // empty without misclassifying the row groups.
+            assertQuery("SELECT val FROM x WHERE val = #y")
+                    .noLeakCheck()
+                    .returns("val\n");
+
+            // Full scan with timestamp ordering still has to read every value
+            // through the parquet reader, regardless of whether the row group
+            // filter fires.
+            assertQuery("SELECT val, ts FROM x ORDER BY ts")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            val\tts
+                            0\t2024-01-01T00:00:00.000000Z
+                            1\t2024-01-01T01:00:00.000000Z
+                            2\t2024-01-01T02:00:00.000000Z
+                            3\t2024-01-01T03:00:00.000000Z
+                            z\t2024-01-02T03:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testMinMaxPruningGeoShort() throws Exception {
+        // GeoShort rides the same INT32-physical inline path as SHORT: the
+        // _pm slot now holds parquet i32 stats verbatim instead of a 2-byte
+        // narrow encoding. The skip path doesn't currently push geohash
+        // equality through the row-group filter, but values must still
+        // round-trip correctly through the parquet conversion.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val GEOHASH(3c), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (#000, '2024-01-01T00:00:00.000000Z'),
+                    (#001, '2024-01-01T01:00:00.000000Z'),
+                    (#002, '2024-01-01T02:00:00.000000Z'),
+                    (#003, '2024-01-01T03:00:00.000000Z'),
+                    (#zzz, '2024-01-02T03:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQuery("SELECT val FROM x WHERE val = #002")
+                    .noLeakCheck()
+                    .returns("""
+                            val
+                            002
+                            """);
+
+            // #yyy matches no row in either partition; the query must return
+            // empty without misclassifying the row groups.
+            assertQuery("SELECT val FROM x WHERE val = #yyy")
+                    .noLeakCheck()
+                    .returns("val\n");
+
+            assertQuery("SELECT val, ts FROM x ORDER BY ts")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            val\tts
+                            000\t2024-01-01T00:00:00.000000Z
+                            001\t2024-01-01T01:00:00.000000Z
+                            002\t2024-01-01T02:00:00.000000Z
+                            003\t2024-01-01T03:00:00.000000Z
+                            zzz\t2024-01-02T03:00:00.000000Z
+                            """);
         });
     }
 
@@ -1998,43 +2241,35 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = '10.0.0.1'")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             10.0.0.1
-                            """,
-                    "SELECT val FROM x WHERE val = '10.0.0.1'",
-                    null, true, false
-            );
+                            """);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val = '1.1.1.0'",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val = '1.1.1.0'")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val in (NULL)")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             
-                            """,
-                    "SELECT val FROM x WHERE val in (NULL)",
-                    null, true, false
-            );
+                            """);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val IN ('192.168.1.1', '192.168.1.2') ORDER BY val")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             192.168.1.1
                             192.168.1.2
-                            """,
-                    "SELECT val FROM x WHERE val IN ('192.168.1.1', '192.168.1.2') ORDER BY val",
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -2053,19 +2288,15 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = 30_000")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             30000
-                            """,
-                    "SELECT val FROM x WHERE val = 30_000",
-                    null, true, false
-            );
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val = 99_999",
-                    null, true, false
-            );
+                            """);
+            assertQuery("SELECT val FROM x WHERE val = 99_999")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
         });
     }
@@ -2087,18 +2318,24 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
 
             bindVariableService.clear();
             bindVariableService.setInt("v", 30_000);
-            assertQueryNoLeakCheck("val\n30000\n", "SELECT val FROM x WHERE val = :v", null, true, false);
+            assertQuery("SELECT val FROM x WHERE val = :v")
+                    .noLeakCheck()
+                    .returns("val\n30000\n");
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
             bindVariableService.clear();
             bindVariableService.setInt("v", 99_999);
-            assertQueryNoLeakCheck("val\n", "SELECT val FROM x WHERE val = :v", null, true, false);
+            assertQuery("SELECT val FROM x WHERE val = :v")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
             bindVariableService.clear();
             bindVariableService.setInt(0, 99_999);
-            assertQueryNoLeakCheck("val\n", "SELECT val FROM x WHERE val = $1", null, true, false);
+            assertQuery("SELECT val FROM x WHERE val = $1")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
         });
     }
@@ -2118,20 +2355,16 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val IN (10_000, 50_000)")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             10000
                             50000
-                            """,
-                    "SELECT val FROM x WHERE val IN (10_000, 50_000)",
-                    null, true, false
-            );
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val IN (99_998, 99_999)",
-                    null, true, false
-            );
+                            """);
+            assertQuery("SELECT val FROM x WHERE val IN (99_998, 99_999)")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
         });
     }
@@ -2151,19 +2384,15 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = 300_000")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             300000
-                            """,
-                    "SELECT val FROM x WHERE val = 300_000",
-                    null, true, false
-            );
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val = 999_999",
-                    null, true, false
-            );
+                            """);
+            assertQuery("SELECT val FROM x WHERE val = 999_999")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
         });
     }
@@ -2181,19 +2410,15 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = to_long128(0, 50)")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             00000000-0000-0032-0000-000000000000
-                            """,
-                    "SELECT val FROM x WHERE val = to_long128(0, 50)",
-                    null, true, false
-            );
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val = to_long128(0, 999)",
-                    null, true, false
-            );
+                            """);
+            assertQuery("SELECT val FROM x WHERE val = to_long128(0, 999)")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
         });
     }
@@ -2213,19 +2438,64 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = 300")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             300
-                            """,
-                    "SELECT val FROM x WHERE val = 300",
-                    null, true, false
-            );
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val = 999",
-                    null, true, false
-            );
+                            """);
+            assertQuery("SELECT val FROM x WHERE val = 999")
+                    .noLeakCheck()
+                    .returns("val\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
+    public void testMinMaxPruningShortNegative() throws Exception {
+        // SHORT is INT32-backed in parquet. The skip path reads inline stats
+        // at INT32 physical width, so a negative min must round-trip through
+        // the u64 slot as the correct i32. Surfaced by the query fuzzer:
+        // a SHORT column with min -74 was previously read back as 65462,
+        // dropping every row group whose true min was negative.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (-30000, '2024-01-01T00:00:00.000000Z'),
+                    (-200, '2024-01-01T01:00:00.000000Z'),
+                    (-74, '2024-01-01T02:00:00.000000Z'),
+                    (0, '2024-01-01T03:00:00.000000Z'),
+                    (300, '2024-01-01T04:00:00.000000Z'),
+                    (29_000, '2024-01-02T04:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            // val = 0 must not skip the row group whose min is -30000.
+            // Before the round-trip fix the inline min read back as 35536,
+            // which is greater than 0, dropping every match.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT val FROM x WHERE val = 0")
+                    .noLeakCheck()
+                    .returns("""
+                            val
+                            0
+                            """);
+
+            // val = -74 is the literal value from the fuzzer reproduction.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT val FROM x WHERE val = -74")
+                    .noLeakCheck()
+                    .returns("""
+                            val
+                            -74
+                            """);
+
+            // val = -32000 sits below the row group min (-30000); should skip.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT val FROM x WHERE val = -32000")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
         });
     }
@@ -2245,19 +2515,15 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = 'ccc'")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             ccc
-                            """,
-                    "SELECT val FROM x WHERE val = 'ccc'",
-                    null, true, false
-            );
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val = 'aaa'",
-                    null, true, false
-            );
+                            """);
+            assertQuery("SELECT val FROM x WHERE val = 'aaa'")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
         });
     }
@@ -2277,19 +2543,15 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = 'gamma'")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             gamma
-                            """,
-                    "SELECT val FROM x WHERE val = 'gamma'",
-                    null, true, false
-            );
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val = 'aa'",
-                    null, true, false
-            );
+                            """);
+            assertQuery("SELECT val FROM x WHERE val = 'aa'")
+                    .noLeakCheck()
+                    .returns("val\n");
 
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
         });
@@ -2308,19 +2570,15 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = '2020-06-01T00:00:00.000000Z'::TIMESTAMP")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             2020-06-01T00:00:00.000000Z
-                            """,
-                    "SELECT val FROM x WHERE val = '2020-06-01T00:00:00.000000Z'::TIMESTAMP",
-                    null, true, false
-            );
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val = '2099-01-01T00:00:00.000000Z'::TIMESTAMP",
-                    null, true, false
-            );
+                            """);
+            assertQuery("SELECT val FROM x WHERE val = '2099-01-01T00:00:00.000000Z'::TIMESTAMP")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
         });
     }
@@ -2338,19 +2596,15 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = '22222222-2222-2222-2222-222222222222'")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             22222222-2222-2222-2222-222222222222
-                            """,
-                    "SELECT val FROM x WHERE val = '22222222-2222-2222-2222-222222222222'",
-                    null, true, false
-            );
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val = 'ffffffff-ffff-ffff-ffff-ffffffffffff'",
-                    null, true, false
-            );
+                            """);
+            assertQuery("SELECT val FROM x WHERE val = 'ffffffff-ffff-ffff-ffff-ffffffffffff'")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
         });
     }
@@ -2370,19 +2624,15 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = 'foo'")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             foo
-                            """,
-                    "SELECT val FROM x WHERE val = 'foo'",
-                    null, true, false
-            );
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val = 'aaa'",
-                    null, true, false
-            );
+                            """);
+            assertQuery("SELECT val FROM x WHERE val = 'aaa'")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
         });
     }
@@ -2401,23 +2651,19 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = 2")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             2
-                            """,
-                    "SELECT val FROM x WHERE val = 2",
-                    null, true, false
-            );
+                            """);
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = 5")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             5
-                            """,
-                    "SELECT val FROM x WHERE val = 5",
-                    null, true, false
-            );
+                            """);
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
         });
     }
@@ -2437,19 +2683,15 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT a, b FROM x WHERE a = 1 AND b = 'bbb'")
+                    .noLeakCheck()
+                    .returns("""
                             a\tb
                             1\tbbb
-                            """,
-                    "SELECT a, b FROM x WHERE a = 1 AND b = 'bbb'",
-                    null, true, false
-            );
-            assertQueryNoLeakCheck(
-                    "a\tb\n",
-                    "SELECT a, b FROM x WHERE a = 99 AND b = 'zzz'",
-                    null, true, false
-            );
+                            """);
+            assertQuery("SELECT a, b FROM x WHERE a = 99 AND b = 'zzz'")
+                    .noLeakCheck()
+                    .returns("a\tb\n");
 
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
         });
@@ -2468,23 +2710,19 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
 
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val = 42",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val = 42")
+                    .noLeakCheck()
+                    .returns("val\n");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = null")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             null
                             null
                             null
                             null
-                            """,
-                    "SELECT val FROM x WHERE val = null",
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -2501,14 +2739,12 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = 0")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             0
-                            """,
-                    "SELECT val FROM x WHERE val = 0",
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -2525,14 +2761,12 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = null")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             null
-                            """,
-                    "SELECT val FROM x WHERE val = null",
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -2549,14 +2783,12 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = null")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             null
-                            """,
-                    "SELECT val FROM x WHERE val = null",
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -2573,14 +2805,12 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = null")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             null
-                            """,
-                    "SELECT val FROM x WHERE val = null",
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -2597,14 +2827,12 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = null")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             null
-                            """,
-                    "SELECT val FROM x WHERE val = null",
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -2621,14 +2849,12 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = 0")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             0
-                            """,
-                    "SELECT val FROM x WHERE val = 0",
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -2645,14 +2871,12 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = null")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             
-                            """,
-                    "SELECT val FROM x WHERE val = null",
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -2669,14 +2893,12 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = null")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             
-                            """,
-                    "SELECT val FROM x WHERE val = null",
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -2693,14 +2915,12 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = null")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             
-                            """,
-                    "SELECT val FROM x WHERE val = null",
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -2718,26 +2938,22 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'a,b')");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT a, b FROM x WHERE a = 1 OR b = 50")
+                    .noLeakCheck()
+                    .returns("""
                             a\tb
                             1\t10
                             5\t50
-                            """,
-                    "SELECT a, b FROM x WHERE a = 1 OR b = 50",
-                    null, true, false
-            );
+                            """);
             Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT a, b FROM x WHERE a = 1 AND (b = 10 OR b = 99)")
+                    .noLeakCheck()
+                    .returns("""
                             a\tb
                             1\t10
-                            """,
-                    "SELECT a, b FROM x WHERE a = 1 AND (b = 10 OR b = 99)",
-                    null, true, false
-            );
+                            """);
             Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
         });
     }
@@ -2755,85 +2971,69 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val = -1 OR val = -2",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val = -1 OR val = -2")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = 42 OR val = 43")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             42
                             43
-                            """,
-                    "SELECT val FROM x WHERE val = 42 OR val = 43",
-                    null, true, false
-            );
+                            """);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val = -1 OR val = -2 OR val = -3",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val = -1 OR val = -2 OR val = -3")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = -1 OR val = 100 OR val = -3")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             100
-                            """,
-                    "SELECT val FROM x WHERE val = -1 OR val = 100 OR val = -3",
-                    null, true, false
-            );
+                            """);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val = -1 OR ts = '2099-01-01T00:00:00.000000Z'",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val = -1 OR ts = '2099-01-01T00:00:00.000000Z'")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "cnt\n150\n",
-                    "SELECT count() AS cnt FROM x WHERE val = 1 OR val > 0",
-                    null, false, true
-            );
+            assertQuery("SELECT count() AS cnt FROM x WHERE val = 1 OR val > 0")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("cnt\n150\n");
             Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE (val = -1 OR val = -2) AND val > 0",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE (val = -1 OR val = -2) AND val > 0")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             // OR with IS NULL on non-nullable data → all absent, skip all
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val = -1 OR val IS NULL",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val = -1 OR val IS NULL")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             // OR: matching value + IS NULL on non-nullable data → returns matching rows
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = 42 OR val IS NULL")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             42
-                            """,
-                    "SELECT val FROM x WHERE val = 42 OR val IS NULL",
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -2851,41 +3051,33 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "name\n",
-                    "SELECT name FROM x WHERE name = 'xyz' OR name = 'unknown'",
-                    null, true, false
-            );
+            assertQuery("SELECT name FROM x WHERE name = 'xyz' OR name = 'unknown'")
+                    .noLeakCheck()
+                    .returns("name\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT name FROM x WHERE name = 'xyz' OR name = 'bob'")
+                    .noLeakCheck()
+                    .returns("""
                             name
                             bob
-                            """,
-                    "SELECT name FROM x WHERE name = 'xyz' OR name = 'bob'",
-                    null, true, false
-            );
+                            """);
             Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "name\n",
-                    "SELECT name FROM x WHERE name = 'xyz' OR name IS NULL",
-                    null, true, false
-            );
+            assertQuery("SELECT name FROM x WHERE name = 'xyz' OR name IS NULL")
+                    .noLeakCheck()
+                    .returns("name\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT name FROM x WHERE name = 'bob' OR name IS NULL")
+                    .noLeakCheck()
+                    .returns("""
                             name
                             bob
-                            """,
-                    "SELECT name FROM x WHERE name = 'bob' OR name IS NULL",
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -2904,40 +3096,34 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = -1 OR val IS NULL")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             null
                             null
-                            """,
-                    "SELECT val FROM x WHERE val = -1 OR val IS NULL",
-                    null, true, false
-            );
+                            """);
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = 42 OR val IS NULL")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             null
                             null
                             42
-                            """,
-                    "SELECT val FROM x WHERE val = 42 OR val IS NULL",
-                    null, true, false
-            );
+                            """);
             Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val = -999 OR val IS NULL")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             null
                             null
-                            """,
-                    "SELECT val FROM x WHERE val = -999 OR val IS NULL",
-                    null, true, false
-            );
+                            """);
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
         });
     }
@@ -2977,65 +3163,99 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
-            assertQueryNoLeakCheck("v_byte\n", "SELECT v_byte FROM x WHERE v_byte = 99::byte", null, true, false);
+            assertQuery("SELECT v_byte FROM x WHERE v_byte = 99::byte")
+                    .noLeakCheck()
+                    .returns("v_byte\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck("v_short\n", "SELECT v_short FROM x WHERE v_short = 999::short", null, true, false);
+            assertQuery("SELECT v_short FROM x WHERE v_short = 999::short")
+                    .noLeakCheck()
+                    .returns("v_short\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck("v_char\n", "SELECT v_char FROM x WHERE v_char = 'M'", null, true, false);
+            assertQuery("SELECT v_char FROM x WHERE v_char = 'M'")
+                    .noLeakCheck()
+                    .returns("v_char\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck("v_int\n", "SELECT v_int FROM x WHERE v_int = 99_999", null, true, false);
+            assertQuery("SELECT v_int FROM x WHERE v_int = 99_999")
+                    .noLeakCheck()
+                    .returns("v_int\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck("v_long\n", "SELECT v_long FROM x WHERE v_long = 999_999", null, true, false);
+            assertQuery("SELECT v_long FROM x WHERE v_long = 999_999")
+                    .noLeakCheck()
+                    .returns("v_long\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck("v_float\n", "SELECT v_float FROM x WHERE v_float = 99.9", null, true, false);
+            assertQuery("SELECT v_float FROM x WHERE v_float = 99.9")
+                    .noLeakCheck()
+                    .returns("v_float\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck("v_double\n", "SELECT v_double FROM x WHERE v_double = 99.99", null, true, false);
+            assertQuery("SELECT v_double FROM x WHERE v_double = 99.99")
+                    .noLeakCheck()
+                    .returns("v_double\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck("v_string\n", "SELECT v_string FROM x WHERE v_string = 'nnn'", null, true, false);
+            assertQuery("SELECT v_string FROM x WHERE v_string = 'nnn'")
+                    .noLeakCheck()
+                    .returns("v_string\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck("v_varchar\n", "SELECT v_varchar FROM x WHERE v_varchar = 'omega'", null, true, false);
+            assertQuery("SELECT v_varchar FROM x WHERE v_varchar = 'omega'")
+                    .noLeakCheck()
+                    .returns("v_varchar\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck("v_symbol\n", "SELECT v_symbol FROM x WHERE v_symbol = 'sym99'", null, true, false);
+            assertQuery("SELECT v_symbol FROM x WHERE v_symbol = 'sym99'")
+                    .noLeakCheck()
+                    .returns("v_symbol\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck("v_date\n", "SELECT v_date FROM x WHERE v_date = '2099-01-01'::DATE", null, true, false);
+            assertQuery("SELECT v_date FROM x WHERE v_date = '2099-01-01'::DATE")
+                    .noLeakCheck()
+                    .returns("v_date\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck("v_timestamp\n", "SELECT v_timestamp FROM x WHERE v_timestamp = '2099-01-01T00:00:00.000000Z'::TIMESTAMP", null, true, false);
+            assertQuery("SELECT v_timestamp FROM x WHERE v_timestamp = '2099-01-01T00:00:00.000000Z'::TIMESTAMP")
+                    .noLeakCheck()
+                    .returns("v_timestamp\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck("v_uuid\n", "SELECT v_uuid FROM x WHERE v_uuid = '99999999-9999-9999-9999-999999999999'::UUID", null, true, false);
+            assertQuery("SELECT v_uuid FROM x WHERE v_uuid = '99999999-9999-9999-9999-999999999999'::UUID")
+                    .noLeakCheck()
+                    .returns("v_uuid\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck("v_ipv4\n", "SELECT v_ipv4 FROM x WHERE v_ipv4 = '99.99.99.99'", null, true, false);
+            assertQuery("SELECT v_ipv4 FROM x WHERE v_ipv4 = '99.99.99.99'")
+                    .noLeakCheck()
+                    .returns("v_ipv4\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck("v_int\n3000\n", "SELECT v_int FROM x WHERE v_int = 3000", null, true, false);
-            assertQueryNoLeakCheck("v_string\nccc\n", "SELECT v_string FROM x WHERE v_string = 'ccc'", null, true, false);
-            assertQueryNoLeakCheck("v_uuid\n33333333-3333-3333-3333-333333333333\n", "SELECT v_uuid FROM x WHERE v_uuid = '33333333-3333-3333-3333-333333333333'::UUID", null, true, false);
+            assertQuery("SELECT v_int FROM x WHERE v_int = 3000")
+                    .noLeakCheck()
+                    .returns("v_int\n3000\n");
+            assertQuery("SELECT v_string FROM x WHERE v_string = 'ccc'")
+                    .noLeakCheck()
+                    .returns("v_string\nccc\n");
+            assertQuery("SELECT v_uuid FROM x WHERE v_uuid = '33333333-3333-3333-3333-333333333333'::UUID")
+                    .noLeakCheck()
+                    .returns("v_uuid\n33333333-3333-3333-3333-333333333333\n");
         });
     }
 
@@ -3054,11 +3274,9 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                         """);
                 execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
-                assertQueryNoLeakCheck(
-                        "val\n",
-                        "SELECT val FROM x WHERE val = 99",
-                        null, true, false
-                );
+                assertQuery("SELECT val FROM x WHERE val = 99")
+                        .noLeakCheck()
+                        .returns("val\n");
                 Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
 
             } finally {
@@ -3079,23 +3297,19 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT v_bool FROM x WHERE v_bool = true")
+                    .noLeakCheck()
+                    .returns("""
                             v_bool
                             true
                             true
-                            """,
-                    "SELECT v_bool FROM x WHERE v_bool = true",
-                    null, true, false
-            );
+                            """);
             Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "v_int\n",
-                    "SELECT v_int FROM x WHERE v_int = 99",
-                    null, true, false
-            );
+            assertQuery("SELECT v_int FROM x WHERE v_int = 99")
+                    .noLeakCheck()
+                    .returns("v_int\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
         });
     }
@@ -3113,26 +3327,24 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val BETWEEN 10_000 AND 20_000",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val BETWEEN 10_000 AND 20_000")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "cnt\n11\n",
-                    "SELECT count() AS cnt FROM x WHERE val BETWEEN 50 AND 60",
-                    null, false, true
-            );
+            assertQuery("SELECT count() AS cnt FROM x WHERE val BETWEEN 50 AND 60")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("cnt\n11\n");
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "cnt\n10\n",
-                    "SELECT count() AS cnt FROM x WHERE val BETWEEN 110 AND 101",
-                    null, false, true
-            );
+            assertQuery("SELECT count() AS cnt FROM x WHERE val BETWEEN 110 AND 101")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("cnt\n10\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
         });
     }
@@ -3153,53 +3365,45 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val >= 152",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val >= 152")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val > 150")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             151
-                            """,
-                    "SELECT val FROM x WHERE val > 150",
-                    null, true, false
-            );
+                            """);
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val <= 0",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val <= 0")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val < 1",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val < 1")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "cnt\n151\n",
-                    "SELECT count() AS cnt FROM x WHERE val >= 1",
-                    null, false, true
-            );
+            assertQuery("SELECT count() AS cnt FROM x WHERE val >= 1")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("cnt\n151\n");
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "cnt\n150\n",
-                    "SELECT count() AS cnt FROM x WHERE val <= 150",
-                    null, false, true
-            );
+            assertQuery("SELECT count() AS cnt FROM x WHERE val <= 150")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("cnt\n150\n");
         });
     }
 
@@ -3216,27 +3420,97 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val > 120",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val > 120")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val < 0",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val < 0")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "cnt\n50\n",
-                    "SELECT count() AS cnt FROM x WHERE val > 50",
-                    null, false, true
-            );
+            assertQuery("SELECT count() AS cnt FROM x WHERE val > 50")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("cnt\n50\n");
+        });
+    }
+
+    @Test
+    public void testRangeFilterByteNegative() throws Exception {
+        // Range pruning over a BYTE column whose data spans negative and
+        // positive values. Without correct sign-extension on the inline u64
+        // stat slot, a row group with min = -50 reads back as 206 in the
+        // skip path, and `val <= 0` skips every row group.
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 50);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val BYTE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // x = 1..100, val = -50..49 (50 negative + 50 non-negative).
+            execute("""
+                    INSERT INTO x
+                    SELECT CAST(x - 51 AS BYTE), timestamp_sequence('2024-01-01', 1200_000_000)
+                    FROM long_sequence(100)
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT count() AS cnt FROM x WHERE val <= 0")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("cnt\n51\n");
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT count() AS cnt FROM x WHERE val >= -10")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("cnt\n60\n");
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT count() AS cnt FROM x WHERE val >= -10 AND val <= 10")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("cnt\n21\n");
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT val FROM x WHERE val < -50")
+                    .noLeakCheck()
+                    .returns("val\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT val FROM x WHERE val > 100")
+                    .noLeakCheck()
+                    .returns("val\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
+    public void testRangeFilterByteNegativeStats() throws Exception {
+        // Same _pm sidecar inline-stat sign bug for BYTE: 1 narrow byte read back as 4
+        // bytes for the i32 skip comparison.
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val BYTE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x
+                    SELECT CAST(x - 75 AS BYTE), timestamp_sequence('2024-01-01', 600_000_000)
+                    FROM long_sequence(150)
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQuery("SELECT count() AS cnt FROM x WHERE val <= 0::BYTE")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("cnt\n75\n");
         });
     }
 
@@ -3257,37 +3531,33 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val > 'Y'")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             Z
-                            """,
-                    "SELECT val FROM x WHERE val > 'Y'",
-                    null, true, false
-            );
+                            """);
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val < 'A'",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val < 'A'")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "cnt\n3\n",
-                    "SELECT count() AS cnt FROM x WHERE val >= 'X'",
-                    null, false, true
-            );
+            assertQuery("SELECT count() AS cnt FROM x WHERE val >= 'X'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("cnt\n3\n");
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "cnt\n3\n",
-                    "SELECT count() AS cnt FROM x WHERE val <= 'C'",
-                    null, false, true
-            );
+            assertQuery("SELECT count() AS cnt FROM x WHERE val <= 'C'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("cnt\n3\n");
         });
     }
 
@@ -3304,27 +3574,23 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val > '2025-01-01'::DATE",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val > '2025-01-01'::DATE")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val < '2019-01-01'::DATE",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val < '2019-01-01'::DATE")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "cnt\n31\n",
-                    "SELECT count() AS cnt FROM x WHERE val >= '2020-02-01'::DATE AND val <= '2020-03-02'::DATE",
-                    null, false, true
-            );
+            assertQuery("SELECT count() AS cnt FROM x WHERE val >= '2020-02-01'::DATE AND val <= '2020-03-02'::DATE")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("cnt\n31\n");
         });
     }
 
@@ -3341,27 +3607,23 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val > 100.0",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val > 100.0")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val < 0.0",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val < 0.0")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "cnt\n50\n",
-                    "SELECT count() AS cnt FROM x WHERE val >= 5.0 AND val < 10.0",
-                    null, false, true
-            );
+            assertQuery("SELECT count() AS cnt FROM x WHERE val >= 5.0 AND val < 10.0")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("cnt\n50\n");
         });
     }
 
@@ -3378,27 +3640,23 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val > 100.0",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val > 100.0")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val < 0.0",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val < 0.0")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "cnt\n50\n",
-                    "SELECT count() AS cnt FROM x WHERE val >= 5.0 AND val < 10.0",
-                    null, false, true
-            );
+            assertQuery("SELECT count() AS cnt FROM x WHERE val >= 5.0 AND val < 10.0")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("cnt\n50\n");
         });
     }
 
@@ -3418,101 +3676,83 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val > '10.0.0.1' ORDER BY val")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             192.168.1.1
                             255.255.255.254
-                            """,
-                    "SELECT val FROM x WHERE val > '10.0.0.1' ORDER BY val",
-                    null, true, false
-            );
+                            """);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val < '192.168.1.1' ORDER BY val")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             1.1.1.1
                             10.0.0.1
-                            """,
-                    "SELECT val FROM x WHERE val < '192.168.1.1' ORDER BY val",
-                    null, true, false
-            );
+                            """);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val >= '192.168.1.1' ORDER BY val")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             192.168.1.1
                             255.255.255.254
-                            """,
-                    "SELECT val FROM x WHERE val >= '192.168.1.1' ORDER BY val",
-                    null, true, false
-            );
+                            """);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val <= '10.0.0.1' ORDER BY val")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             1.1.1.1
                             10.0.0.1
-                            """,
-                    "SELECT val FROM x WHERE val <= '10.0.0.1' ORDER BY val",
-                    null, true, false
-            );
+                            """);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val > '255.255.255.254'",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val > '255.255.255.254'")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val < '1.1.1.1'",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val < '1.1.1.1'")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val > '0.0.0.1' ORDER BY val")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             1.1.1.1
                             10.0.0.1
                             192.168.1.1
                             255.255.255.254
-                            """,
-                    "SELECT val FROM x WHERE val > '0.0.0.1' ORDER BY val",
-                    null, true, false
-            );
+                            """);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val IS NULL")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             
                             
-                            """,
-                    "SELECT val FROM x WHERE val IS NULL",
-                    null, true, false
-            );
+                            """);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT val FROM x WHERE val IS NOT NULL ORDER BY val")
+                    .noLeakCheck()
+                    .returns("""
                             val
                             1.1.1.1
                             10.0.0.1
                             192.168.1.1
                             255.255.255.254
-                            """,
-                    "SELECT val FROM x WHERE val IS NOT NULL ORDER BY val",
-                    null, true, false
-            );
+                            """);
         });
     }
 
@@ -3533,34 +3773,30 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "cnt\n6\n",
-                    "SELECT count() AS cnt FROM x WHERE val > '200.0.0.1'",
-                    null, false, true
-            );
+            assertQuery("SELECT count() AS cnt FROM x WHERE val > '200.0.0.1'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("cnt\n6\n");
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val > '250.0.0.1'",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val > '250.0.0.1'")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val < '200.0.0.1'",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val < '200.0.0.1'")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "cnt\n3\n",
-                    "SELECT count() AS cnt FROM x WHERE val >= '210.0.0.1' AND val <= '230.0.0.1'",
-                    null, false, true
-            );
+            assertQuery("SELECT count() AS cnt FROM x WHERE val >= '210.0.0.1' AND val <= '230.0.0.1'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("cnt\n3\n");
         });
     }
 
@@ -3577,45 +3813,37 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val > 10_000",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val > 10_000")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val < -1",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val < -1")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT count() AS cnt FROM x WHERE val > 50")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
                             cnt
                             100
-                            """,
-                    "SELECT count() AS cnt FROM x WHERE val > 50",
-                    null, false, true
-            );
+                            """);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val >= 151",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val >= 151")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val <= -1",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val <= -1")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
         });
     }
@@ -3633,34 +3861,30 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val > 10000",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val > 10000")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val < 0",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val < 0")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "cnt\n51\n",
-                    "SELECT count() AS cnt FROM x WHERE val >= 100",
-                    null, false, true
-            );
+            assertQuery("SELECT count() AS cnt FROM x WHERE val >= 100")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("cnt\n51\n");
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "cnt\n100\n",
-                    "SELECT count() AS cnt FROM x WHERE val <= 100",
-                    null, false, true
-            );
+            assertQuery("SELECT count() AS cnt FROM x WHERE val <= 100")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("cnt\n100\n");
         });
     }
 
@@ -3677,41 +3901,37 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "cnt\n149\n",
-                    "SELECT count() AS cnt FROM x WHERE val > 50",
-                    null, false, true
-            );
+            assertQuery("SELECT count() AS cnt FROM x WHERE val > 50")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("cnt\n149\n");
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "cnt\n50\n",
-                    "SELECT count() AS cnt FROM x WHERE val < -50",
-                    null, false, true
-            );
+            assertQuery("SELECT count() AS cnt FROM x WHERE val < -50")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("cnt\n50\n");
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val > 199",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val > 199")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val < -100",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val < -100")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "cnt\n21\n",
-                    "SELECT count() AS cnt FROM x WHERE val >= -10 AND val <= 10",
-                    null, false, true
-            );
+            assertQuery("SELECT count() AS cnt FROM x WHERE val >= -10 AND val <= 10")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("cnt\n21\n");
         });
     }
 
@@ -3728,27 +3948,121 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val > 10000",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val > 10000")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val < 0",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val < 0")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "cnt\n50\n",
-                    "SELECT count() AS cnt FROM x WHERE val > 100",
-                    null, false, true
-            );
+            assertQuery("SELECT count() AS cnt FROM x WHERE val > 100")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("cnt\n50\n");
+        });
+    }
+
+    @Test
+    public void testRangeFilterShortNegative() throws Exception {
+        // Direct reproduction of the fuzzer-surfaced bug. SHORT data spans
+        // negative and positive values across multiple row groups. Without
+        // a parquet-physical-width round trip on the inline u64 stat slot,
+        // a row group with min = -100 reads back as 65436 in the skip
+        // path, and predicates like `val <= 0` skip every row group whose
+        // true min was negative.
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // x = 1..300, val = -100..199 (100 negative + 200 non-negative).
+            execute("""
+                    INSERT INTO x
+                    SELECT CAST(x - 101 AS SHORT), timestamp_sequence('2024-01-01', 600_000_000)
+                    FROM long_sequence(300)
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT count() AS cnt FROM x WHERE val <= 0")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("cnt\n101\n");
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT count() AS cnt FROM x WHERE val > 50")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("cnt\n149\n");
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT count() AS cnt FROM x WHERE val < -50")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("cnt\n50\n");
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT count() AS cnt FROM x WHERE val >= -10 AND val <= 10")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("cnt\n21\n");
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT val FROM x WHERE val < -100")
+                    .noLeakCheck()
+                    .returns("val\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT val FROM x WHERE val > 199")
+                    .noLeakCheck()
+                    .returns("val\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
+    public void testRangeFilterShortNegativeStats() throws Exception {
+        // Regression for the _pm sidecar inline-stat sign bug: SHORT min/max stored as
+        // 2 narrow bytes, then read back as 4 bytes for the i32 skip comparison. Without
+        // sign extension a negative min like -74 reads as 65462 and the row group is
+        // wrongly skipped. See ParquetRowGroupFilter.prepareFilterList SHORT branch and
+        // the convert_stat_to_qdb narrow-INT32 path.
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x
+                    SELECT CAST(x - 75 AS SHORT), timestamp_sequence('2024-01-01', 600_000_000)
+                    FROM long_sequence(150)
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQuery("SELECT count() AS cnt FROM x WHERE val <= 0::SHORT")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("cnt\n75\n");
+
+            assertQuery("SELECT count() AS cnt FROM x WHERE 0::SHORT >= val")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("cnt\n75\n");
+
+            assertQuery("SELECT count() AS cnt FROM x WHERE 0.147451::FLOAT >= val")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("cnt\n75\n");
         });
     }
 
@@ -3766,19 +4080,15 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "name\n",
-                    "SELECT name FROM x WHERE name > 'zzz'",
-                    null, true, false
-            );
+            assertQuery("SELECT name FROM x WHERE name > 'zzz'")
+                    .noLeakCheck()
+                    .returns("name\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "name\n",
-                    "SELECT name FROM x WHERE name < 'A'",
-                    null, true, false
-            );
+            assertQuery("SELECT name FROM x WHERE name < 'A'")
+                    .noLeakCheck()
+                    .returns("name\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
         });
     }
@@ -3796,34 +4106,30 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val > '2025-01-01'::timestamp",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val > '2025-01-01'::timestamp")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val < '2019-01-01'::timestamp",
-                    null, true, false
-            );
+            assertQuery("SELECT val FROM x WHERE val < '2019-01-01'::timestamp")
+                    .noLeakCheck()
+                    .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "cnt\n6\n",
-                    "SELECT count() AS cnt FROM x WHERE val >= '2020-01-02'::timestamp",
-                    null, false, true
-            );
+            assertQuery("SELECT count() AS cnt FROM x WHERE val >= '2020-01-02'::timestamp")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("cnt\n6\n");
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "cnt\n145\n",
-                    "SELECT count() AS cnt FROM x WHERE val <= '2020-01-02'::timestamp",
-                    null, false, true
-            );
+            assertQuery("SELECT count() AS cnt FROM x WHERE val <= '2020-01-02'::timestamp")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("cnt\n145\n");
         });
     }
 

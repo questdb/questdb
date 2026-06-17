@@ -94,6 +94,7 @@ import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.SequencerMetadata;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
+import io.questdb.cutlass.qwp.codec.QwpServerInfoProvider;
 import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.cutlass.text.CopyImportContext;
 import io.questdb.griffin.CompiledQuery;
@@ -120,7 +121,10 @@ import io.questdb.mp.Queue;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.Sequence;
 import io.questdb.mp.SimpleWaitingLock;
+import io.questdb.mp.continuation.TimerShards;
+import io.questdb.mp.continuation.TxnWaiter;
 import io.questdb.preferences.SettingsStore;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Files;
@@ -133,7 +137,6 @@ import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
-import io.questdb.std.ThreadLocal;
 import io.questdb.std.Transient;
 import io.questdb.std.str.MutableCharSink;
 import io.questdb.std.str.Path;
@@ -160,8 +163,12 @@ public class CairoEngine implements Closeable, WriterSource {
     public static final String REASON_BUSY_TABLE_READER_METADATA_POOL = "busyTableReaderMetaPool";
     public static final String REASON_CHECKPOINT_IN_PROGRESS = "checkpointInProgress";
     private static final Log LOG = LogFactory.getLog(CairoEngine.class);
+    // Hard cap on TableReferenceOutOfDateException recompile retries in execute(). A
+    // healthy table converges in 1-2 retries; an unbounded loop here turns a permanent
+    // metadata/token mismatch into a silent infinite hang (see PR #7031 CI timeout).
+    private static final int MAX_EXECUTE_RETRIES = 1000;
     private static final int MAX_SLEEP_MILLIS = 250;
-    private static final ThreadLocal<MatViewRefreshTask> tlMatViewRefreshTask = new ThreadLocal<>(MatViewRefreshTask::new);
+    private static final CarrierLocal<MatViewRefreshTask> tlMatViewRefreshTask = new CarrierLocal<>(MatViewRefreshTask::new);
     protected final CairoConfiguration configuration;
     private final AtomicLong asyncCommandCorrelationId = new AtomicLong();
     private final BackupSeqPartLock backupSeqPartLock = new BackupSeqPartLock();
@@ -194,6 +201,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final Telemetry<TelemetryTask> telemetry;
     private final Telemetry<TelemetryMatViewTask> telemetryMatView;
     private final Telemetry<TelemetryWalTask> telemetryWal;
+    private final TimerShards timerShards;
     // initial value of unpublishedWalTxnCount is 1 because we want to scan for non-applied WAL transactions on startup
     private final AtomicLong unpublishedWalTxnCount = new AtomicLong(1);
     private final ViewGraph viewGraph;
@@ -241,6 +249,18 @@ public class CairoEngine implements Closeable, WriterSource {
             this.copyImportContext = new CopyImportContext(this, configuration);
             this.copyExportContext = new CopyExportContext(this);
             this.tableSequencerAPI = new TableSequencerAPI(this, configuration);
+            // Per-deadline blocking timer threads. Each parked TxnWaiter (or other
+            // DelayedFireable) sits in a shard and is woken at its precise deadline,
+            // bounding resource retention when a wait_wal_table call parks and the
+            // client disconnects or the table goes idle. Started eagerly here because
+            // the threads are independent of any worker pool. signalClose() drains,
+            // close() halts defensively.
+            this.timerShards = new TimerShards(
+                    configuration.getTimerShardCount(),
+                    "questdb-timer",
+                    LOG
+            );
+            this.timerShards.start();
             this.messageBus = new MessageBusImpl(configuration);
             this.metrics = configuration.getMetrics();
             // Message bus and metrics must be initialized before the pools.
@@ -601,15 +621,27 @@ public class CairoEngine implements Closeable, WriterSource {
         Misc.free(settingsStore);
         Misc.free(frameFactory);
         Misc.free(walLocker);
+        // Defensive: signalClose() already shutdown timerShards in the normal path.
+        // halt() is idempotent and ensures the daemon threads are joined even if
+        // close() runs without a prior signalClose(). Null guard covers the
+        // partial-construction path where the constructor's catch block calls
+        // close() before timerShards has been assigned.
+        if (timerShards != null) {
+            // close() must be reached through signalClose() whenever there are
+            // parked continuations: signalClose() drains them while the worker
+            // pools are still RUNNING, so the bodies remount and unwind. halt()
+            // only joins the daemon threads, so a parked cont reaching here with
+            // closing == false would be stranded (never resumed, native stack
+            // abandoned). A non-empty shard set at this point is that bug.
+            assert closing || timerShards.size() == 0
+                    : "close() reached with parked continuations but without a prior signalClose(); they will be stranded";
+            timerShards.halt();
+        }
     }
 
     @TestOnly
     public void closeNameRegistry() {
         tableNameRegistry.close();
-    }
-
-    public void configureThreadLocalReaderPoolSupervisor(@NotNull ResourcePoolSupervisor<ReaderPool.R> supervisor) {
-        readerPool.configureThreadLocalPoolSupervisor(supervisor);
     }
 
     public @NotNull MatViewDefinition createMatView(
@@ -733,7 +765,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     path.of(configuration.getDbRoot()).concat(tableToken).$();
                     if (!configuration.getFilesFacade().unlinkOrRemove(path, LOG)) {
                         throw CairoException.critical(configuration.getFilesFacade().errno())
-                                .put("could not remove table [table=").put(tableToken).put(", thread=").put(Thread.currentThread().getId()).put(']');
+                                .put("could not remove table [table=").put(tableToken).put(", thread=").put(Thread.currentThread().threadId()).put(']');
                     }
 
                     tableNameRegistry.dropTable(tableToken);
@@ -772,12 +804,28 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public void execute(CharSequence sqlText, SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) throws SqlException {
+        int retryCount = 0;
         while (true) {
             try (SqlCompiler compiler = getSqlCompiler()) {
                 execute(compiler, sqlText, sqlExecutionContext, eventSubSeq);
                 return;
             } catch (TableReferenceOutOfDateException e) {
                 // Retry on this exception, all interfaces like HTTP, Pg wire are supposed to retry too.
+                // The retry is bounded: a permanent mismatch (stale metadata/token vs writer) would
+                // otherwise spin here forever with no output, which is exactly the CI hang we are
+                // chasing. Surface the offending SQL and the exception detail and give up instead.
+                if (++retryCount >= MAX_EXECUTE_RETRIES) {
+                    LOG.error().$("giving up recompiling, table reference repeatedly out of date [retries=").$(retryCount)
+                            .$(", sql=").$(sqlText)
+                            .$(", ex=").$(e.getFlyweightMessage())
+                            .$(']').$();
+                    throw e;
+                }
+                if (retryCount == 1) {
+                    LOG.info().$("retrying execute after table reference out of date [sql=").$(sqlText)
+                            .$(", ex=").$(e.getFlyweightMessage())
+                            .$(']').$();
+                }
             }
         }
     }
@@ -834,6 +882,10 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public @NotNull DdlListener getDdlListener(String tableName) {
         return tableFlagResolver.isSystem(tableName) ? DefaultDdlListener.INSTANCE : ddlListener;
+    }
+
+    public @NotNull DurableAckRegistry getDurableAckRegistry() {
+        return durableAckRegistry;
     }
 
     public FrameFactory getFrameFactory() {
@@ -904,6 +956,10 @@ public class CairoEngine implements Closeable, WriterSource {
         return queryRegistry;
     }
 
+    public @NotNull QwpServerInfoProvider getQwpServerInfoProvider() {
+        return configuration.getQwpServerInfoProvider();
+    }
+
     public TableReader getReader(CharSequence tableName) {
         TableToken tableToken = verifyTableNameForRead(tableName);
         // Do not call getReader(TableToken tableToken), it will do unnecessary token verification
@@ -915,23 +971,14 @@ public class CairoEngine implements Closeable, WriterSource {
         return readerPool.get(tableToken);
     }
 
-    public TableReader getReader(TableToken tableToken, long metadataVersion) {
+    public TableReader getReader(TableToken tableToken, @Nullable ResourcePoolSupervisor<TableReader> readerPoolSupervisor) {
         verifyTableToken(tableToken);
-        final int tableId = tableToken.getTableId();
-        TableReader reader = readerPool.get(tableToken);
-        if ((metadataVersion > -1 && reader.getMetadataVersion() != metadataVersion)
-                || (tableId > -1 && reader.getMetadata().getTableId() != tableId)) {
-            TableReferenceOutOfDateException ex = TableReferenceOutOfDateException.of(
-                    tableToken,
-                    tableId,
-                    reader.getMetadata().getTableId(),
-                    metadataVersion,
-                    reader.getMetadataVersion()
-            );
-            reader.close();
-            throw ex;
-        }
-        return reader;
+        return readerPool.get(tableToken, readerPoolSupervisor);
+    }
+
+    public TableReader getReader(TableToken tableToken, long metadataVersion, @Nullable ResourcePoolSupervisor<TableReader> readerPoolSupervisor) {
+        verifyTableToken(tableToken);
+        return checkReaderVersion(tableToken, metadataVersion, readerPool.get(tableToken, readerPoolSupervisor));
     }
 
     /**
@@ -941,15 +988,16 @@ public class CairoEngine implements Closeable, WriterSource {
      * If the source reader is detached and not in use, returns the source reader.
      * The source reader must be used only through calling this method.
      */
-    public TableReader getReaderAtTxn(TableReader srcReader) {
+    public TableReader getReaderAtTxn(TableReader srcReader, SqlExecutionContext executionContext) {
         assert srcReader.isOpen() && srcReader.isActive();
-        // Fast path: go with the base reader if it's not in-use.
+        // Fast path: go with the base reader if it's not in-use. It was borrowed before the
+        // current query, so it is intentionally not attributed to the query's supervisor.
         if (readerPool.isDetached(srcReader) && readerPool.getDetachedRefCount(srcReader) == 0) {
             readerPool.incDetachedRefCount(srcReader);
             return srcReader;
         }
-        // Slow path: obtain a base reader copy from the pool.
-        return readerPool.getCopyOf(srcReader);
+        // Slow path: obtain a base reader copy from the pool, attributed to the query.
+        return readerPool.getCopyOf(srcReader, executionContext.getReaderPoolSupervisor());
     }
 
     public Map<CharSequence, AbstractMultiTenantPool.Entry<ReaderPool.R>> getReaderPoolEntries() {
@@ -1169,6 +1217,17 @@ public class CairoEngine implements Closeable, WriterSource {
         return telemetryWal;
     }
 
+    /**
+     * Returns the periodic sweep that cancels {@link TxnWaiter}
+     * instances whose deadline has elapsed. Without this job assigned, parked
+     * suspending-function calls (e.g. {@code wait_wal_table}) cannot be cleaned up
+     * after a client disconnect or on idle tables, so it MUST be assigned to a worker
+     * pool for the SQL-suspend feature to be safe in production.
+     */
+    public TimerShards getTimerShards() {
+        return timerShards;
+    }
+
     public TxnScoreboard getTxnScoreboard(@NotNull TableToken tableToken) {
         return scoreboardPool.getTxnScoreboard(tableToken);
     }
@@ -1209,10 +1268,6 @@ public class CairoEngine implements Closeable, WriterSource {
             }
             throw e;
         }
-    }
-
-    public @NotNull DurableAckRegistry getDurableAckRegistry() {
-        return durableAckRegistry;
     }
 
     public @NotNull WalDirectoryPolicy getWalDirectoryPolicy() {
@@ -1397,7 +1452,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     // not locked
                     if (readerPool.lock(tableToken)) {
                         LOG.info().$("locked [table=").$(tableToken)
-                                .$(", thread=").$(Thread.currentThread().getId())
+                                .$(", thread=").$(Thread.currentThread().threadId())
                                 .I$();
                         return null;
                     }
@@ -1612,7 +1667,7 @@ public class CairoEngine implements Closeable, WriterSource {
         if (listener != null) {
             listener.onEvent(
                     PoolListener.SRC_TABLE_REGISTRY,
-                    Thread.currentThread().getId(),
+                    Thread.currentThread().threadId(),
                     tableToken,
                     PoolListener.EV_REMOVE_TOKEN,
                     (short) 0,
@@ -1620,10 +1675,6 @@ public class CairoEngine implements Closeable, WriterSource {
             );
         }
         walLocker.clearTable(tableToken);
-    }
-
-    public void removeThreadLocalReaderPoolSupervisor() {
-        readerPool.removeThreadLocalPoolSupervisor();
     }
 
     public TableToken rename(
@@ -1764,6 +1815,10 @@ public class CairoEngine implements Closeable, WriterSource {
         this.ddlListener = ddlListener;
     }
 
+    public void setDurableAckRegistry(@NotNull DurableAckRegistry durableAckRegistry) {
+        this.durableAckRegistry = durableAckRegistry;
+    }
+
     @TestOnly
     public void setPoolListener(PoolListener poolListener) {
         this.tableMetadataPool.setPoolListener(poolListener);
@@ -1794,10 +1849,6 @@ public class CairoEngine implements Closeable, WriterSource {
     public void setUp() {
     }
 
-    public void setDurableAckRegistry(@NotNull DurableAckRegistry durableAckRegistry) {
-        this.durableAckRegistry = durableAckRegistry;
-    }
-
     public void setWalDirectoryPolicy(@NotNull WalDirectoryPolicy walDirectoryPolicy) {
         this.walDirectoryPolicy = walDirectoryPolicy;
     }
@@ -1813,6 +1864,14 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public void signalClose() {
         closing = true;
+
+        // Drain parked SQL waiters before worker pools halt: each waiter's continuation
+        // gets its shutdown flag set and a scheduleResume, so workers (still RUNNING at
+        // this point) remount them, the bodies observe isShuttingDown(), and unwind.
+        // Without this, WorkerPool.halt() blocks on conts that nothing else will fire,
+        // for at least getQueryContinuationWakeIntervalMillis() and potentially forever.
+        // Order matters: timerShards.shutdown() MUST run before any worker pool halts.
+        timerShards.shutdown();
     }
 
     public void snapshotCreate(SqlExecutionCircuitBreaker circuitBreaker) throws SqlException {
@@ -1963,6 +2022,23 @@ public class CairoEngine implements Closeable, WriterSource {
         if (vd.getSeqTxn() != expectedTxn) {
             throw TableReferenceOutOfDateException.ofOutdatedView(tableToken, expectedTxn, vd.getSeqTxn());
         }
+    }
+
+    private static TableReader checkReaderVersion(TableToken tableToken, long metadataVersion, TableReader reader) {
+        final int tableId = tableToken.getTableId();
+        if ((metadataVersion > -1 && reader.getMetadataVersion() != metadataVersion)
+                || (tableId > -1 && reader.getMetadata().getTableId() != tableId)) {
+            TableReferenceOutOfDateException ex = TableReferenceOutOfDateException.of(
+                    tableToken,
+                    tableId,
+                    reader.getMetadata().getTableId(),
+                    metadataVersion,
+                    reader.getMetadataVersion()
+            );
+            reader.close();
+            throw ex;
+        }
+        return reader;
     }
 
     private static void insert(

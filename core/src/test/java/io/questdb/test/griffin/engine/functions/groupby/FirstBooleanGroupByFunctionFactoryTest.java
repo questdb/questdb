@@ -59,31 +59,25 @@ public class FirstBooleanGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testFirstBoolean() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select first(a)a from tab")
+                .ddl("create table tab as (select false a union select true a union select true a)")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         a
                         false
-                        """,
-                "select first(a)a from tab",
-                "create table tab as (select false a union select true a union select true a)",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 
     @Test
     public void testFirstBoolean2() throws Exception {
-        assertQuery(
-                """
+        assertQuery("select first(a)a from tab")
+                .ddl("create table tab as (select true a union select false a union select false a)")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
                         a
                         true
-                        """,
-                "select first(a)a from tab",
-                "create table tab as (select true a union select false a union select false a)",
-                null,
-                false,
-                true
-        );
+                        """);
     }
 }

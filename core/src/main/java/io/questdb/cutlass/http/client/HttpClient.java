@@ -279,6 +279,7 @@ public abstract class HttpClient implements QuietCloseable {
         private static final int STATE_URL_DONE = 2;
         private BinarySequenceAdapter binarySequenceAdapter;
         private int contentLengthHeaderReserved = 0;
+        private int[] ryuE10;
         private int state;
         private boolean urlEncode = false;
 
@@ -492,6 +493,14 @@ public abstract class HttpClient implements QuietCloseable {
                 urlEncode = false;
             }
             return this;
+        }
+
+        @Override
+        public int[] ryuScratch() {
+            if (ryuE10 == null) {
+                ryuE10 = new int[1];
+            }
+            return ryuE10;
         }
 
         public ResponseHeaders send() {

@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.idx.IndexWriter;
 import io.questdb.cairo.idx.PostingIndexUtils;
@@ -45,6 +46,7 @@ import io.questdb.std.DirectIntList;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FindVisitor;
+import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
@@ -84,6 +86,9 @@ public class TableSnapshotRestore implements QuietCloseable {
     private final ExecutorService executor;
     private final FilesFacade ff;
     private final ObjList<Future<?>> futures = new ObjList<>();
+    // Serial-path reuse only (isParquetMetaResolvable); parallel rebuild
+    // tasks create their own instances.
+    private final ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
     private final Utf8StringSink utf8Sink = new Utf8StringSink();
     private ColumnVersionReader columnVersionReader;
     private MemoryCMARW memFile = Vm.getCMARWInstance();
@@ -131,8 +136,13 @@ public class TableSnapshotRestore implements QuietCloseable {
 
     @Override
     public void close() {
+        // Every restore path drains its tasks before returning, but freeing
+        // the native-backed objects below under a still-running task would be
+        // a use-after-free, so drain again as a backstop.
+        abortAndDrainParallelTasks();
         futures.clear();
         executor.shutdownNow();
+        parquetMetaReader.clear();
         tableMetadata = Misc.free(tableMetadata);
         txWriter = Misc.free(txWriter);
         columnVersionReader = Misc.free(columnVersionReader);
@@ -186,31 +196,76 @@ public class TableSnapshotRestore implements QuietCloseable {
         }
     }
 
+    /**
+     * Awaits every submitted parallel task and surfaces the first failure.
+     * Returns or throws only after all tasks have completed: the tasks read
+     * the shared native-backed {@code tableMetadata}, {@code columnVersionReader}
+     * and {@code txWriter} objects, which callers reload for the next table,
+     * so abandoning a running task on failure would put those reloads under
+     * concurrent readers. Resets the abort flag before returning so the next
+     * table's tasks run normally.
+     */
     public void finalizeParallelTasks() {
         if (futures.size() > 0) {
             LOG.info().$("awaiting ").$(futures.size()).$(" parallel tasks to complete").I$();
         }
 
+        boolean failed = false;
+        String firstErrorMessage = null;
+        boolean interrupted = false;
         for (int i = 0, n = futures.size(); i < n; i++) {
             try {
                 futures.getQuick(i).get();
             } catch (InterruptedException e) {
-                LOG.error().$("parallel task interrupted ").$(e).I$();
-                throw CairoException.critical(0).put("parallel task interrupted");
-            } catch (ExecutionException e) {
-                Throwable cause = e.getCause();
-                if (cause != null) {
-                    LOG.critical().$("error in parallel task").$(cause).I$();
-                } else {
-                    LOG.critical().$("error in parallel task: ").$(e.getMessage()).I$();
+                // Keep draining: abandoning a running task is a use-after-free
+                // risk for the shared native-backed readers. get() cleared the
+                // interrupt status, so the retry blocks until the task is done;
+                // the status is restored once the drain completes. The abort
+                // flag makes tasks that have not started yet return immediately,
+                // bounding the wait.
+                abortParallelTasks.set(true);
+                interrupted = true;
+                //noinspection AssignmentToForLoopParameter
+                i--;
+            } catch (Throwable e) {
+                abortParallelTasks.set(true);
+                Throwable cause = e instanceof ExecutionException ? e.getCause() : e;
+                if (cause == null) {
+                    cause = e;
                 }
-                final CairoException ex = CairoException.critical(0)
-                        .put("error in parallel task")
-                        .put(": ")
-                        .put(cause != null ? cause.getMessage() : e.getMessage());
-                ex.initCause(cause != null ? cause : e);
-                throw ex;
+                if (!failed) {
+                    failed = true;
+                    // submitParallelTask has logged the failure on the worker
+                    // thread and replaced thread-local-reused exceptions with
+                    // immutable carriers, so this read cannot race the worker.
+                    // Build the thrown exception only after the drain.
+                    firstErrorMessage = cause.getMessage() != null ? cause.getMessage() : cause.getClass().getName();
+                }
             }
+        }
+
+        // All tasks have completed; reset the abort flag so the tasks of the
+        // next table (enterprise backup restore continues after quarantining a
+        // failed table) do not silently skip their work.
+        abortParallelTasks.set(false);
+
+        if (interrupted) {
+            Thread.currentThread().interrupt();
+            if (!failed) {
+                LOG.error().$("parallel task await interrupted").I$();
+                throw CairoException.critical(0).put("parallel task interrupted");
+            }
+        }
+        if (failed) {
+            // Deliberately no initCause(): Throwable.initCause() on the
+            // thread-local-reused instance returned by critical() succeeds
+            // only once per thread (clear() cannot reset the cause field), so
+            // the next failed table would hit IllegalStateException. The
+            // workers have already logged every failure with its cause.
+            throw CairoException.critical(0)
+                    .put("error in parallel task")
+                    .put(": ")
+                    .put(firstErrorMessage);
         }
     }
 
@@ -322,7 +377,9 @@ public class TableSnapshotRestore implements QuietCloseable {
             columnVersionReader.readUnsafe();
 
             // Generate _pm sidecar files for parquet partitions restored from
-            // old backups that predate the _pm format. This must run before
+            // old backups that predate the _pm format, and regenerate sidecars
+            // that do not resolve at the committed parquet size (stale, torn,
+            // or partially written captures). This must run before
             // rebuildBitmapIndexes, which mmaps _pm to rebuild bitmap indexes.
             generateMissingParquetMetaFiles(tablePath.trimTo(pathTableLen));
 
@@ -336,15 +393,13 @@ public class TableSnapshotRestore implements QuietCloseable {
             }
 
             // Drain all parallel tasks (symbol rebuilds + bitmap index rebuilds)
-            // before returning, because tableMetadata and columnVersionReader are
-            // reused across tables. Without this, a parquet bitmap rebuild task
-            // from this table could still be running when the caller loads the
-            // next table's metadata into the same objects.
-            try {
-                finalizeParallelTasks();
-            } finally {
-                futures.clear();
-            }
+            // before going further, because tableMetadata, columnVersionReader
+            // and txWriter are reused across tables. Without this, a bitmap
+            // rebuild task from this table could still be running when the
+            // caller loads the next table's metadata into the same objects.
+            // finalizeParallelTasks returns or throws only after every
+            // submitted task has completed.
+            finalizeParallelTasks();
 
             if (tableMetadata.isWalEnabled() && txWriter.getLagRowCount() > 0) {
                 LOG.info().$("resetting WAL lag [table=").$(tablePath)
@@ -365,9 +420,44 @@ public class TableSnapshotRestore implements QuietCloseable {
                 );
                 ff.iterateDir(tablePath.$(), removePartitionDirsNotAttached);
             }
+        } catch (Throwable th) {
+            // Any step above can throw with tasks still in flight: task
+            // submission itself can fail part-way, and finalizeParallelTasks
+            // rethrows the first task failure. Reach quiescence before
+            // propagating, because the caller may quarantine-rename the table
+            // directory the tasks write into and reload the shared
+            // native-backed metadata objects the tasks read.
+            abortAndDrainParallelTasks();
+            throw th;
         } finally {
+            futures.clear();
             tablePath.trimTo(pathTableLen);
         }
+    }
+
+    /**
+     * Releases the handles the restore holds on the current table's files:
+     * the shared metadata, transaction and column-version readers and the
+     * small memory file (last targeted at {@code _todo_} or a txn log).
+     * They normally stay open until the next table reloads them or
+     * {@link #close()} frees them. Callers that quarantine a failed table by
+     * renaming its directory must call this first: Windows refuses to rename
+     * a directory while any file inside it is open or mapped. The released
+     * objects are reopened lazily, so the restore can continue with other
+     * tables.
+     */
+    public void releaseTableHandles() {
+        // Freeing the native-backed readers under a still-running task would
+        // be a use-after-free; every restore path drains its tasks before
+        // surfacing a failure, so this is a backstop, same as in close().
+        abortAndDrainParallelTasks();
+        futures.clear();
+        tableMetadata = Misc.free(tableMetadata);
+        txWriter = Misc.free(txWriter);
+        columnVersionReader = Misc.free(columnVersionReader);
+        // keep the object: resetTodoLog and openSmallFile re-target it via
+        // smallFile/of, which work on a closed instance; do not truncate
+        memFile.close(false);
     }
 
     /**
@@ -490,6 +580,37 @@ public class TableSnapshotRestore implements QuietCloseable {
     }
 
     /**
+     * Awaits every submitted parallel task without surfacing task failures;
+     * used on error paths that only need quiescence (the failure that gets
+     * reported is the one already in flight). Sets the abort flag for the
+     * duration of the drain so tasks that have not started yet return
+     * immediately, and resets it afterwards so the next table's tasks run
+     * normally. Restores the interrupt status if the draining thread is
+     * interrupted.
+     */
+    private void abortAndDrainParallelTasks() {
+        abortParallelTasks.set(true);
+        boolean interrupted = false;
+        for (int i = 0, n = futures.size(); i < n; i++) {
+            try {
+                futures.getQuick(i).get();
+            } catch (InterruptedException e) {
+                // get() cleared the interrupt status; retry so the drain still
+                // waits for the task, and restore the status after the loop
+                interrupted = true;
+                //noinspection AssignmentToForLoopParameter
+                i--;
+            } catch (Throwable ignore) {
+                // the task is done, which is all this path needs
+            }
+        }
+        abortParallelTasks.set(false);
+        if (interrupted) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    /**
      * Copies a file from source to destination, optionally ignoring if file doesn't exist.
      */
     private void copyFile(
@@ -539,36 +660,36 @@ public class TableSnapshotRestore implements QuietCloseable {
                 continue;
             }
             long partitionTs = txWriter.getPartitionTimestampByIndex(i);
-            long nameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTs);
+            long nameTxn = txWriter.getPartitionNameTxn(i);
 
             TableUtils.setPathForNativePartition(
                     tablePath.trimTo(plen), timestampType, partitionBy, partitionTs, nameTxn
             );
             int partitionDirLen = tablePath.size();
 
-            tablePath.concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
-            if (ff.exists(tablePath.$())) {
-                tablePath.trimTo(plen);
-                continue;
-            }
-
             // Use the committed parquet file size from _txn, not the on-disk size.
             // A snapshot may capture data.parquet mid-append; bytes past the committed
             // size are not part of the MVCC-visible state and must not be published.
             long parquetFileSize = txWriter.getPartitionParquetFileSize(i);
 
-            // Open data.parquet to generate _pm from it.
+            // Validate data.parquet against _txn by its size alone. This serial
+            // loop visits every parquet partition of every restored table, so it
+            // reads the size by path instead of opening an fd; only the
+            // regeneration branch below opens the file.
             tablePath.trimTo(partitionDirLen).concat(TableUtils.PARQUET_PARTITION_NAME).$();
-            long parquetFd = ff.openRO(tablePath.$());
-            if (parquetFd < 0) {
-                int errno = ff.errno();
-                tablePath.trimTo(plen);
-                throw CairoException.critical(errno).put("cannot open parquet file for _pm generation [path=").put(tablePath).put(']');
+            long onDiskSize = ff.length(tablePath.$());
+            if (onDiskSize < 0) {
+                // Keep the full data.parquet path in the message: the same restore
+                // can cover hundreds of parquet partitions, and the operator needs
+                // to know which one failed. rebuildTableFiles() restores tablePath
+                // to the table root in its finally block.
+                throw CairoException.critical(ff.errno()).put("cannot read size of restored parquet file [path=").put(tablePath).put(']');
             }
-            long onDiskSize = ff.length(parquetFd);
+            // This must run even when _pm was restored alongside the partition:
+            // an undersized data.parquet means the snapshot paired _txn with a
+            // stale or truncated parquet file, and reading the partition at the
+            // committed size would produce garbage.
             if (onDiskSize < parquetFileSize) {
-                ff.close(parquetFd);
-                tablePath.trimTo(plen);
                 throw CairoException.critical(0)
                         .put("restored parquet file is shorter than committed size [path=").put(tablePath)
                         .put(", committed=").put(parquetFileSize)
@@ -577,11 +698,50 @@ public class TableSnapshotRestore implements QuietCloseable {
             }
 
             tablePath.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
+            if (ff.exists(tablePath.$())) {
+                // Trust an existing _pm only when data.parquet is EXACTLY the
+                // committed size. When the file is longer (onDiskSize >
+                // parquetFileSize), the snapshot captured the partition mid in-place
+                // O3 rewrite: a later generation appended row groups and a new
+                // footer past the committed point and rewrote _pm to describe that
+                // later generation, while _txn still records the earlier committed
+                // size. resolveFooter() can still resolve a footer at the committed
+                // size, so the stale sidecar would be silently kept and then
+                // mis-read at the committed size -- a column chunk of the later
+                // generation lies past parquetFileSize, surfacing as
+                // "File out of specification" on the first merge/read and suspending
+                // a replica that replays over the restored partition. Regenerate
+                // from data.parquet at the committed size, which the size check
+                // above has already validated.
+                if (onDiskSize == parquetFileSize && isParquetMetaResolvable(tablePath, parquetFileSize)) {
+                    tablePath.trimTo(plen);
+                    continue;
+                }
+                // The sidecar does not resolve a footer at the committed parquet
+                // size, or data.parquet is longer than the committed size (a stale
+                // _pm paired with an in-place regenerated data.parquet, a torn
+                // copy, or a partial file left by a crashed restore). Trusting it
+                // would defer the failure to the first read of the partition, so
+                // remove it and regenerate from data.parquet, which the
+                // committed-size check above has already validated.
+                if (!ff.removeQuiet(tablePath.$())) {
+                    throw CairoException.critical(ff.errno()).put("cannot remove unresolvable _pm file [path=").put(tablePath).put(']');
+                }
+                LOG.info().$("removed stale/unresolvable _pm of restored parquet partition for regeneration [path=").$(tablePath)
+                        .$(", committed=").$(parquetFileSize).$(", onDisk=").$(onDiskSize).I$();
+            }
+
+            tablePath.trimTo(partitionDirLen).concat(TableUtils.PARQUET_PARTITION_NAME).$();
+            long parquetFd = ff.openRO(tablePath.$());
+            if (parquetFd < 0) {
+                throw CairoException.critical(ff.errno()).put("cannot open parquet file for _pm generation [path=").put(tablePath).put(']');
+            }
+
+            tablePath.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
             long parquetMetaFd = ff.openRW(tablePath.$(), CairoConfiguration.O_NONE);
             if (parquetMetaFd < 0) {
                 int errno = ff.errno();
                 ff.close(parquetFd);
-                tablePath.trimTo(plen);
                 throw CairoException.critical(errno).put("cannot create _pm file [path=").put(tablePath).put(']');
             }
 
@@ -614,6 +774,33 @@ public class TableSnapshotRestore implements QuietCloseable {
         tablePath.trimTo(plen);
     }
 
+    /**
+     * Reports whether the {@code _pm} sidecar at {@code parquetMetaPath} resolves a
+     * footer for the committed parquet file size from {@code _txn}. A corrupt file
+     * (bad CRC, partial write, header size exceeding the file length) surfaces as
+     * {@code false} rather than an exception: the caller has already validated
+     * {@code data.parquet} against the committed size and can regenerate the sidecar.
+     */
+    private boolean isParquetMetaResolvable(Path parquetMetaPath, long parquetFileSize) {
+        long parquetMetaAddr = 0;
+        long parquetMetaFileSize = 0;
+        try {
+            parquetMetaAddr = ParquetMetaFileReader.openAndMapRO(ff, parquetMetaPath.$(), parquetMetaReader);
+            parquetMetaFileSize = parquetMetaReader.getFileSize();
+            return parquetMetaAddr != 0 && parquetMetaReader.resolveFooter(parquetFileSize);
+        } catch (CairoException e) {
+            LOG.info().$("restored _pm failed validation [path=").$(parquetMetaPath)
+                    .$(", msg=").$safe(e.getFlyweightMessage())
+                    .I$();
+            return false;
+        } finally {
+            parquetMetaReader.clear();
+            if (parquetMetaAddr != 0) {
+                ff.munmap(parquetMetaAddr, parquetMetaFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            }
+        }
+    }
+
     private void rebuildBitmapIndexForNativePartition(int pathTableLen, int columnCount, long partitionTimestamp, long partitionRowCount, long partitionNameTxn, String tablePathStr, int partitionBy, int timestampType) {
         for (int colIdx = 0; colIdx < columnCount; colIdx++) {
             // Skip non-indexed columns and non-symbol columns (deleted columns may still have indexed flag set)
@@ -634,7 +821,7 @@ public class TableSnapshotRestore implements QuietCloseable {
             final int indexBlockCapacity = tableMetadata.getIndexBlockCapacity(colIdx);
             final byte indexType = tableMetadata.getColumnIndexType(colIdx);
 
-            futures.add(executor.submit(() -> rebuildBitmapIndexForNativePartitionColumn(
+            futures.add(submitParallelTask(() -> rebuildBitmapIndexForNativePartitionColumn(
                     tablePathStr,
                     pathTableLen,
                     columnName,
@@ -774,16 +961,19 @@ public class TableSnapshotRestore implements QuietCloseable {
             long parquetMetaFileSize = 0;
             try {
                 final long parquetSize;
-                final ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
-                parquetMetaAddr = ParquetMetaFileReader.openAndMapRO(ff, path.$(), parquetMetaReader);
-                parquetMetaFileSize = parquetMetaReader.getFileSize();
+                // Per-task instance: this method runs on parallel executor
+                // threads, so it must not share the serial-path
+                // parquetMetaReader field.
+                final ParquetMetaFileReader taskParquetMetaReader = new ParquetMetaFileReader();
+                parquetMetaAddr = ParquetMetaFileReader.openAndMapRO(ff, path.$(), taskParquetMetaReader);
+                parquetMetaFileSize = taskParquetMetaReader.getFileSize();
                 try {
-                    if (parquetMetaAddr == 0 || !parquetMetaReader.resolveFooter(parquetFileSize)) {
+                    if (parquetMetaAddr == 0 || !taskParquetMetaReader.resolveFooter(parquetFileSize)) {
                         throw CairoException.critical(0).put("missing or invalid _pm [path=").put(path).put(']');
                     }
-                    parquetSize = parquetMetaReader.getParquetFileSize();
+                    parquetSize = taskParquetMetaReader.getParquetFileSize();
                 } finally {
-                    parquetMetaReader.clear();
+                    taskParquetMetaReader.clear();
                 }
 
                 // mmap data.parquet
@@ -876,7 +1066,7 @@ public class TableSnapshotRestore implements QuietCloseable {
             if (isPartitioned && txWriter.isPartitionParquet(partitionIndex)) {
                 final long parquetFileSize = txWriter.getPartitionParquetFileSize(partitionIndex);
 
-                futures.add(executor.submit(() -> rebuildBitmapIndexForParquetPartition(
+                futures.add(submitParallelTask(() -> rebuildBitmapIndexForParquetPartition(
                         tablePathStr,
                         pathTableLen,
                         partitionTimestamp,
@@ -916,7 +1106,7 @@ public class TableSnapshotRestore implements QuietCloseable {
                 final int indexKeyBlockCapacity = tableMetadata.getIndexBlockCapacity(i);
                 final long columnNameTxn = columnVersionReader.getSymbolTableNameTxn(writerIndex);
 
-                futures.add(executor.submit(() -> {
+                futures.add(submitParallelTask(() -> {
                     if (abortParallelTasks.get()) {
                         return;
                     }
@@ -987,6 +1177,31 @@ public class TableSnapshotRestore implements QuietCloseable {
                 partitionCleanPath.trimTo(pathTableLen);
             }
         }
+    }
+
+    /**
+     * Submits a rebuild task; every parallel task must go through this method.
+     * Worker failures arrive as {@link CairoException} and friends, which
+     * reuse a per-thread instance with a mutable message, so only the owning
+     * thread may read it: the worker overwrites the instance on its next
+     * failure while the draining thread still holds the previous one. The
+     * wrapper therefore logs the failure on the throwing thread and hands the
+     * future an immutable {@link ParallelTaskException} carrying the
+     * materialized message instead of the thread-local original.
+     */
+    private Future<?> submitParallelTask(Runnable task) {
+        return executor.submit(() -> {
+            try {
+                task.run();
+            } catch (Throwable e) {
+                LOG.critical().$("error in parallel task").$(e).I$();
+                if (e instanceof FlyweightMessageContainer) {
+                    String message = e.getMessage();
+                    throw new ParallelTaskException(message != null ? message : e.getClass().getName());
+                }
+                throw e;
+            }
+        });
     }
 
     /**
@@ -1250,8 +1465,12 @@ public class TableSnapshotRestore implements QuietCloseable {
 
                     final long addr = rowGroupBuffers.getChunkDataPtr(i);
                     final long size = rowGroupBuffers.getChunkDataSize(i);
-                    for (long p = addr + startOffset * 4, lim = addr + size; p < lim; p += 4, rowId++) {
-                        indexWriter.add(TableUtils.toIndexKey(Unsafe.getInt(p)), rowId);
+                    if (size == 0) {
+                        BitmapIndexUtils.addNullEntries(indexWriter, rowId, rowCount + rowGroupSize);
+                    } else {
+                        for (long p = addr + startOffset * 4, lim = addr + size; p < lim; p += 4, rowId++) {
+                            indexWriter.add(TableUtils.toIndexKey(Unsafe.getInt(p)), rowId);
+                        }
                     }
                 }
 
@@ -1296,6 +1515,19 @@ public class TableSnapshotRestore implements QuietCloseable {
                 throw CairoException.critical(errno).put("could not remove file [path=").put(path).put(']');
             }
             // File didn't exist - proceed silently
+        }
+    }
+
+    /**
+     * Immutable carrier for a parallel task failure: submitParallelTask
+     * materializes the message of the worker's thread-local-reused exception
+     * into this carrier before it reaches the {@code Future}, so the draining
+     * thread never reads a mutable message cross-thread. Carries no stack
+     * trace and no cause: the worker has already logged the original failure.
+     */
+    private static class ParallelTaskException extends RuntimeException {
+        ParallelTaskException(String message) {
+            super(message, null, false, false);
         }
     }
 }

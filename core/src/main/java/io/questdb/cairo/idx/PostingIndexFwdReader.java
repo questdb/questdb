@@ -65,6 +65,22 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         of(configuration, path, name, columnNameTxn, partitionTxn, columnTop, metadata, columnVersionReader, partitionTimestamp);
     }
 
+    public PostingIndexFwdReader(
+            CairoConfiguration configuration,
+            Path path,
+            CharSequence name,
+            long columnNameTxn,
+            long partitionTxn,
+            long columnTop,
+            io.questdb.cairo.sql.RecordMetadata metadata,
+            io.questdb.cairo.ColumnVersionReader columnVersionReader,
+            long partitionTimestamp,
+            long pinnedTableTxn
+    ) {
+        setPinnedTableTxn(pinnedTableTxn);
+        of(configuration, path, name, columnNameTxn, partitionTxn, columnTop, metadata, columnVersionReader, partitionTimestamp);
+    }
+
     @Override
     public void close() {
         super.close();
@@ -85,7 +101,20 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
 
     @Override
     public RowCursor getCursor(int key, long minValue, long maxValue, int[] requiredCoverColumns) {
+        assert assertStampOperatingThread();
         reloadConditionally();
+
+        // Clamp the index-walked range to the picked chain entry's
+        // tracked maxValue. Writers can leave dirty (key, rowId) entries
+        // in .pv past the chain entry's coverage (e.g. an O3 split that
+        // shrinks the partition before the next reseal evicts them, or
+        // a stale generation a sparse-gen append later supersedes); the
+        // entry's MAX_VALUE field is the boundary between clean and
+        // dirty rows, and the reader is the only place that can skip
+        // them without a full reseal. Implicit nulls (rows before
+        // columnTop) are independent of the index and stay clamped by
+        // columnTop only.
+        long indexMaxValue = entryMaxValue >= 0 ? Math.min(maxValue, entryMaxValue) : maxValue;
 
         if (key == 0 && columnTop > 0 && minValue < columnTop) {
             NullCursor nc;
@@ -95,7 +124,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             } else {
                 nc = new NullCursor();
             }
-            nc.of(key, minValue, maxValue);
+            nc.of(key, minValue, indexMaxValue);
             nc.nullPos = minValue;
             final long hi = maxValue == Long.MAX_VALUE ? Long.MAX_VALUE : maxValue + 1;
             nc.nullCount = Math.min(columnTop, hi);
@@ -111,7 +140,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             } else {
                 c = new Cursor();
             }
-            c.of(key, minValue, maxValue);
+            c.of(key, minValue, indexMaxValue);
             return c;
         }
 
@@ -165,7 +194,15 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
 
         @Override
         public void close() {
-            if (!isPooled && freeCursors.size() < MAX_CACHED_FREE_CURSORS) {
+            assert assertSameOperatingThread() : "posting index cursor closed off the reader's owning thread";
+            // Never re-pool into a closed reader: the pool retains blockBufferAddr
+            // (NATIVE_INDEX_READER) for reuse and only the reader's close() drains it,
+            // so a cursor that re-pools after the reader closed would leak its block
+            // buffer. This isOpen() guard is a single-threaded leak mitigation, not a
+            // concurrency primitive; cross-thread safety comes from single reader
+            // ownership + CoveringCursor.close() ordering. See
+            // PostingIndexBwdReader.Cursor.close() for the full rationale.
+            if (!isPooled && isOpen() && freeCursors.size() < MAX_CACHED_FREE_CURSORS) {
                 isPooled = true;
                 closeCoveringResources();
                 resetCoveringState();
@@ -865,7 +902,10 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
 
         @Override
         public void close() {
-            if (!isPooled && freeNullCursors.size() < MAX_CACHED_FREE_CURSORS) {
+            assert assertSameOperatingThread() : "posting index null cursor closed off the reader's owning thread";
+            // See Cursor.close(): the isOpen() guard is a single-threaded leak
+            // mitigation, not a concurrency primitive.
+            if (!isPooled && isOpen() && freeNullCursors.size() < MAX_CACHED_FREE_CURSORS) {
                 isPooled = true;
                 closeCoveringResources();
                 resetCoveringState();
@@ -886,10 +926,12 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
 
         @Override
         public long size() {
-            long hi = maxValue == Long.MAX_VALUE ? Long.MAX_VALUE : maxValue + 1;
-            long nullLimit = Math.min(columnTop, hi);
-            long nulls = Math.max(0L, nullLimit - minValue);
-            return super.size() + nulls;
+            // nullCount is set in getCursor from the unclamped caller maxValue
+            // and never mutates during iteration; using it directly avoids the
+            // Cursor.maxValue field, which now holds the entryMaxValue-clamped
+            // bound and would under-count nulls when entryMaxValue < columnTop.
+            long indexSize = super.size();
+            return indexSize < 0 ? -1 : indexSize + Math.max(0L, nullCount - minValue);
         }
     }
 }

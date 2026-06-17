@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.EmptySymbolMapReader;
+import io.questdb.cairo.ReaderScanProfile;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.idx.IndexReader;
@@ -33,6 +34,7 @@ import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.PartitionFrameCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -300,6 +302,11 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         }
 
         @Override
+        public void setParquetDecodeHint(ParquetDecodeHint hint) {
+            delegate.setParquetDecodeHint(hint);
+        }
+
+        @Override
         public void toTop() {
             delegate.toTop();
         }
@@ -471,8 +478,8 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         }
 
         @Override
-        public void setStreamingMode(boolean enabled) {
-            baseCursor.setStreamingMode(enabled);
+        public void setScanProfile(ReaderScanProfile profile) {
+            baseCursor.setScanProfile(profile);
         }
 
         @Override
@@ -607,6 +614,11 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         @Override
         public void seekEstimate(long timestamp) {
             baseCursor.seekEstimate(timestamp);
+        }
+
+        @Override
+        public void setParquetDecodeHint(ParquetDecodeHint hint) {
+            baseCursor.setParquetDecodeHint(hint);
         }
 
         @Override

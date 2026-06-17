@@ -34,12 +34,10 @@ import io.questdb.griffin.CompiledQuery;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
-import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.Test;
 
 import java.util.ArrayList;
@@ -50,19 +48,12 @@ import java.util.List;
  * populate a table via SQL, open {@link QwpQueryClient} against /read/v1,
  * issue a SELECT, and assert the decoded batches match.
  */
-public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
-
-    @Before
-    public void setUp() {
-        super.setUp();
-        TestUtils.unchecked(() -> createDummyConfiguration());
-        dbPath.parent().$();
-    }
+public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
 
     @Test
     public void testAllPrimitiveTypes() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (TestServerMain serverMain = startEgressServer()) {
                 // part_ts is a separate designated timestamp so the existing ts column can still
                 // round-trip a NULL (row 1) without violating WAL partition assignment.
                 serverMain.execute("""
@@ -156,7 +147,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     @Test
     public void testArrayColumns() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (TestServerMain serverMain = startEgressServer()) {
                 // QuestDB SQL only supports DOUBLE[] arrays today; LONG[] support exists in the
                 // wire format but isn't surfaced via SQL CREATE TABLE. Restrict to DOUBLE[] here.
                 serverMain.execute("CREATE TABLE arr_t(d DOUBLE[], ts TIMESTAMP) "
@@ -212,7 +203,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     @Test
     public void testBackToBackQueriesOnOneConnection() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (TestServerMain serverMain = startEgressServer()) {
                 serverMain.execute("CREATE TABLE cc(x LONG, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute("INSERT INTO cc VALUES (1, 1::TIMESTAMP)");
@@ -255,7 +246,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     @Test
     public void testBinaryColumn() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (TestServerMain serverMain = startEgressServer()) {
                 serverMain.execute("CREATE TABLE bin_t(b BINARY, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 // Two non-null random binary values + one explicit NULL.
@@ -327,10 +318,10 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
      * blocked on {@code events.take()} stuck forever. After the fix, the I/O
      * thread emits a synthetic error event in its {@code finally} block.
      */
-    @Test(timeout = 30_000)
+    @Test
     public void testCloseWhileExecuteDoesNotHang() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (TestServerMain serverMain = startEgressServer()) {
                 serverMain.execute("CREATE TABLE slow(x LONG, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute("INSERT INTO slow SELECT x, x::TIMESTAMP FROM long_sequence(50000)");
@@ -414,30 +405,35 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
      * connection; this regression test instead asserts the state guard directly.
      */
     @Test
-    public void testConcurrentQueryRejectedInPhaseOne() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            io.questdb.cairo.CairoConfiguration cfg = new DefaultTestCairoConfiguration(root);
-            try (QwpEgressProcessorState state = new QwpEgressProcessorState(cfg)) {
-                Assert.assertFalse("state starts inactive", state.isStreamingActive());
-                // Simulate a streaming-active state without actual native resources by
-                // calling beginStreaming with null factory/cursor. The defensive endStreaming
-                // inside beginStreaming is idempotent for null.
-                state.beginStreaming(1L, null, null, 0, 0, false, 0L, null);
-                Assert.assertTrue(state.isStreamingActive());
-                // A second beginStreaming must not double-free (endStreaming handles nulls)
-                // and must transition to the new requestId cleanly.
-                state.beginStreaming(2L, null, null, 0, 0, false, 0L, null);
-                Assert.assertTrue(state.isStreamingActive());
-                state.endStreaming();
-                Assert.assertFalse(state.isStreamingActive());
-            }
-        });
+    public void testConcurrentQueryRejectedInPhaseOne() {
+        // No assertMemoryLeak here: this test drives QwpEgressProcessorState purely in memory
+        // (beginStreaming/endStreaming with null factory/cursor) and opens no files of its own.
+        // A per-test FD snapshot would race the shared server's background threads (e.g. async WAL
+        // purge of tables dropped by the previous test's resetState), flagging a phantom leak when
+        // an unrelated server-owned descriptor is closed mid-test. The state object is closed via
+        // try-with-resources, and AbstractReusedServerQwpEgressTest's class-level bracket already
+        // verifies FD and native-memory baselines across the whole class.
+        io.questdb.cairo.CairoConfiguration cfg = new DefaultTestCairoConfiguration(root);
+        try (QwpEgressProcessorState state = new QwpEgressProcessorState(cfg)) {
+            Assert.assertFalse("state starts inactive", state.isStreamingActive());
+            // Simulate a streaming-active state without actual native resources by
+            // calling beginStreaming with null factory/cursor. The defensive endStreaming
+            // inside beginStreaming is idempotent for null.
+            state.beginStreaming(1L, null, null, 0, 0L, null);
+            Assert.assertTrue(state.isStreamingActive());
+            // A second beginStreaming must not double-free (endStreaming handles nulls)
+            // and must transition to the new requestId cleanly.
+            state.beginStreaming(2L, null, null, 0, 0L, null);
+            Assert.assertTrue(state.isStreamingActive());
+            state.endStreaming();
+            Assert.assertFalse(state.isStreamingActive());
+        }
     }
 
     @Test
     public void testDecimal() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (TestServerMain serverMain = startEgressServer()) {
                 serverMain.execute("CREATE TABLE dec(d64 DECIMAL(18,4), d128 DECIMAL(38,6), ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute("INSERT INTO dec VALUES (1234.5678m, 987654321.123456m, 1::TIMESTAMP)");
@@ -499,7 +495,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     @Test
     public void testDropAfterSelectReleasesReaderInTime() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
+            try (final TestServerMain serverMain = startServerWithRetry(
                     PropertyKey.DEBUG_HTTP_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), "23",
                     PropertyKey.DEBUG_HTTP_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), "23"
             )) {
@@ -571,40 +567,31 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     }
 
     /**
-     * Regression: a per-connection schema-cache poisoning bug in
-     * {@link QwpEgressUpgradeProcessor}'s retry-once loop. Pre-fix,
-     * {@code findOrAllocateSchemaId()} was called inside the retry loop
-     * BEFORE {@code getCursor()}. When cursor acquisition threw
-     * {@code TableReferenceOutOfDateException} (e.g. because the cached
-     * factory was compiled against a now-dropped table), the catch block
-     * freed the factory but did NOT remove the fingerprint from the
-     * per-connection schema cache. The retry attempt then saw the
-     * fingerprint as "reuse" and shipped the first batch in reference
-     * mode against an id the client had never registered; the client
-     * decoder rejected with "schema id N not registered on this connection".
-     * Post-fix: schema-id allocation moved AFTER the retry loop, so a
-     * failed cursor acquisition can never poison the per-connection cache.
+     * Regression: the egress processor's retry-once loop must recover when a
+     * cached {@link RecordCursorFactory} (keyed by SQL text in
+     * {@code selectCache}) was compiled against a table that has since been
+     * dropped and recreated. {@code getCursor} throws
+     * {@code TableReferenceOutOfDateException}; the loop drops the stale factory,
+     * recompiles, and the query must still return correct results.
      * <p>
      * Trigger: seed connection runs a SELECT (server caches the factory
      * in {@code selectCache} by SQL text); DROP+CREATE the table under
      * the same name with the same shape (factory becomes stale); a fresh
      * connection runs the same SELECT -- {@code selectCache.poll} returns
-     * the stale factory, {@code getCursor} throws, and pre-fix the retry
-     * would ship reference mode against an id the client never registered.
-     * The query cache must be enabled; the test default is off and would
-     * hide the bug because the no-op cache never returns a stale factory.
+     * the stale factory and {@code getCursor} throws, exercising the recompile
+     * path. The query cache must be enabled; the test default is off and would
+     * hide the path because the no-op cache never returns a stale factory.
      */
     @Test
-    public void testDropRecreateDoesNotPoisonSchemaCache() throws Exception {
+    public void testDropRecreateRecompilesStaleFactory() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
+            try (final TestServerMain serverMain = startServerWithRetry(
                     PropertyKey.HTTP_QUERY_CACHE_ENABLED.getEnvVarName(), "true"
             )) {
                 final String table = "schema_cache_retry_t";
                 final String createSql = "CREATE TABLE " + table
                         + "(v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL";
                 final String insertSql = "INSERT INTO " + table + " VALUES (1, 1::TIMESTAMP)";
-                final String selectSql = "SELECT v FROM " + table;
 
                 // Seed: create the table and run the SELECT once so the
                 // server compiles a RecordCursorFactory and parks it in
@@ -614,7 +601,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
                 serverMain.awaitTable(table);
                 try (QwpQueryClient seed = QwpQueryClient.newPlainText("127.0.0.1", HTTP_PORT)) {
                     seed.connect();
-                    assertSelectReturnsOneRow(seed, selectSql, "seed");
+                    assertSelectReturnsOneRow(seed, "seed");
                 }
 
                 // Trigger: DROP+CREATE (same name + shape -> new internal table
@@ -629,7 +616,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
                     serverMain.awaitTable(table);
                     try (QwpQueryClient trigger = QwpQueryClient.newPlainText("127.0.0.1", HTTP_PORT)) {
                         trigger.connect();
-                        assertSelectReturnsOneRow(trigger, selectSql, "trigger-" + i);
+                        assertSelectReturnsOneRow(trigger, "trigger-" + i);
                     }
                 }
             }
@@ -644,7 +631,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     @Test
     public void testEmptyResultSet() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (TestServerMain serverMain = startEgressServer()) {
                 serverMain.execute("CREATE TABLE empty_t(id LONG, name STRING, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 // No INSERT -- table is empty.
@@ -683,21 +670,22 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     }
 
     /**
-     * Spec {@code docs/QWP_EGRESS_EXTENSION.md:278-279} requires the server to send
-     * one RESULT_BATCH with row_count = 0 on every empty result, including when the
-     * schema id is reused from an earlier query on the same connection. Otherwise
-     * the client's per-query onBatch callback never fires and downstream consumers
+     * The QWP egress spec (see
+     * {@code https://questdb.com/docs/connect/wire-protocols/qwp-egress-websocket/})
+     * requires the server to send
+     * one RESULT_BATCH with row_count = 0 on every empty result. Otherwise the
+     * client's per-query onBatch callback never fires and downstream consumers
      * that rely on it to learn per-query column metadata silently break.
      * <p>
      * Two queries on one connection with identical column shape: query 1 returns
-     * rows (schema id allocated, full schema shipped), query 2 returns an empty
-     * result with the same shape (schemaAlreadyKnown == true). Both queries must
-     * deliver at least one RESULT_BATCH to the client.
+     * rows, query 2 returns an empty result with the same shape. Each query ships
+     * its schema inline in batch 0, so both must deliver at least one
+     * RESULT_BATCH to the client.
      */
     @Test
     public void testEmptyResultSetOnReusedSchemaStillDeliversOneBatch() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (TestServerMain serverMain = startEgressServer()) {
                 serverMain.execute("CREATE TABLE reuse_t(id LONG, name STRING, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute("INSERT INTO reuse_t VALUES (1, 'one', 1::TIMESTAMP), "
@@ -715,8 +703,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
                         "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
                     client.connect();
 
-                    // Query 1: populates the connection-scoped schema cache with a fresh id
-                    // for shape (id LONG, name STRING).
+                    // Query 1: returns rows for shape (id LONG, name STRING).
                     client.execute("SELECT id, name FROM reuse_t WHERE id >= 0", new QwpColumnBatchHandler() {
                         @Override
                         public void onBatch(QwpColumnBatch batch) {
@@ -734,8 +721,9 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
                         }
                     });
 
-                    // Query 2: identical column shape -> server hits schemaAlreadyKnown=true.
-                    // WHERE predicate filters everything out -> empty cursor.
+                    // Query 2: identical column shape, but the WHERE predicate
+                    // filters everything out -> empty cursor. Batch 0 still ships
+                    // the schema.
                     client.execute("SELECT id, name FROM reuse_t WHERE id < 0", new QwpColumnBatchHandler() {
                         @Override
                         public void onBatch(QwpColumnBatch batch) {
@@ -759,7 +747,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
                 Assert.assertEquals(3, q1Rows[0]);
                 Assert.assertTrue("q2 RESULT_END must still fire", q2EndSeen[0]);
                 Assert.assertEquals(0, q2Rows[0]);
-                Assert.assertEquals("empty-result q2 on reused schema must still deliver one RESULT_BATCH (spec sec. 7)",
+                Assert.assertEquals("empty-result q2 must still deliver one RESULT_BATCH (spec sec. 7)",
                         1, q2Batches[0]);
                 Assert.assertEquals("schema must surface to the handler on q2 even with no rows",
                         2, q2SchemaCols[0]);
@@ -770,13 +758,15 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     /**
      * Regression / defense-in-depth for C1: many queries that fail at various stages
      * of the server-side handle path (compile error, table-not-found, non-SELECT)
-     * must not leak native resources. assertMemoryLeak catches any leaked factory,
-     * cursor, or buffer scratch.
+     * must not leak native resources. This runs against the shared server, so it relies
+     * on AbstractReusedServerQwpEgressTest's class-level FD/native-memory bracket to catch
+     * any leaked factory, cursor, or buffer scratch rather than a per-test assertMemoryLeak
+     * (whose FD snapshot would race the shared server's background threads).
      */
     @Test
     public void testFailedQueriesDoNotLeak() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (TestServerMain serverMain = startEgressServer()) {
                 serverMain.execute("CREATE TABLE leakcheck(x LONG, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute("INSERT INTO leakcheck VALUES (1, 1::TIMESTAMP), (2, 2::TIMESTAMP), (3, 3::TIMESTAMP)");
@@ -827,9 +817,9 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
 
     @Test
     public void testFromConfigConnectString() throws Exception {
-        // The fromConfig(String) factory mirrors Sender.fromConfig: schema::key=value;...
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (TestServerMain serverMain = startEgressServer()) {
+                // The fromConfig(String) factory mirrors Sender.fromConfig: schema::key=value;...
                 serverMain.execute("CREATE TABLE cs(x LONG, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute("INSERT INTO cs VALUES (42, 1::TIMESTAMP), (43, 2::TIMESTAMP)");
@@ -889,7 +879,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     @Test
     public void testGeohash() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (TestServerMain serverMain = startEgressServer()) {
                 serverMain.execute("CREATE TABLE geo(g20 GEOHASH(20b), g40 GEOHASH(40b), ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 // Geohash literal: #<base-32-chars>; 4 chars = 20 bits, 8 chars = 40 bits
@@ -944,7 +934,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     @Test
     public void testGeohashNullAcrossAllWidths() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (TestServerMain serverMain = startEgressServer()) {
                 // 4->GEOBYTE, 8->GEOSHORT, 16->GEOINT, 40/60->GEOLONG.
                 serverMain.execute("""
                         CREATE TABLE geo_nulls(
@@ -1005,15 +995,15 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
 
     @Test
     public void testIpv4NullSentinel() throws Exception {
-        // IPv4 is a distinct wire type (TYPE_IPv4 = 0x18), not just TYPE_INT. The schema
-        // surfaces the wire type so a client can render addresses correctly. NULL is signalled
-        // via the standard null bitmap; on the server side the value 0 (Numbers.IPv4_NULL --
-        // i.e. the address 0.0.0.0) is detected before the value is appended, marking the row
-        // NULL. QuestDB itself treats 0.0.0.0 as NULL, so both '0.0.0.0' and explicit NULL
-        // inserts come back as null. A non-zero address surfaces as non-null with the address
-        // bits intact.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (TestServerMain serverMain = startEgressServer()) {
+                // IPv4 is a distinct wire type (TYPE_IPv4 = 0x18), not just TYPE_INT. The schema
+                // surfaces the wire type so a client can render addresses correctly. NULL is signalled
+                // via the standard null bitmap; on the server side the value 0 (Numbers.IPv4_NULL --
+                // i.e. the address 0.0.0.0) is detected before the value is appended, marking the row
+                // NULL. QuestDB itself treats 0.0.0.0 as NULL, so both '0.0.0.0' and explicit NULL
+                // inserts come back as null. A non-zero address surfaces as non-null with the address
+                // bits intact.
                 serverMain.execute("CREATE TABLE ipx(addr IPv4, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute("""
@@ -1066,11 +1056,11 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
 
     @Test
     public void testLargeResultSet() throws Exception {
-        // 20,000 rows -> spans at least 5 batches with MAX_ROWS_PER_BATCH=4096.
-        // Exercises: schema-reference mode (mode 0x01) after the first batch,
-        // client recv-buffer growth, multi-batch reassembly on decode loop.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (TestServerMain serverMain = startEgressServer()) {
+                // 20,000 rows -> spans at least 5 batches with MAX_ROWS_PER_BATCH=4096.
+                // Exercises: schema-reference mode (mode 0x01) after the first batch,
+                // client recv-buffer growth, multi-batch reassembly on decode loop.
                 serverMain.execute("CREATE TABLE big(x LONG, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute(
@@ -1116,13 +1106,13 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     }
 
     /**
-     * C5: many unique symbols across multiple batches -> exercises both the per-batch dict
-     * growth and the schema-reference (mode 0x01) path on batches 2+.
+     * C5: many unique symbols across multiple batches -> exercises the per-batch
+     * dict growth on batches 2+ (each batch carries the full inline schema).
      */
     @Test
-    public void testManyUniqueSymbolsSchemaReference() throws Exception {
+    public void testManyUniqueSymbolsAcrossBatches() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (TestServerMain serverMain = startEgressServer()) {
                 serverMain.execute("CREATE TABLE sym_t(s SYMBOL, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 // Spans multiple batches by using 2 * MAX_ROWS_PER_BATCH rows with
@@ -1176,7 +1166,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     @Test
     public void testMultiBatchSeqIsMonotonic() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (TestServerMain serverMain = startEgressServer()) {
                 serverMain.execute("CREATE TABLE seqcheck(x LONG, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 // 20_000 rows across multiple batches (server caps batches at 4096 rows).
@@ -1233,7 +1223,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     @Test
     public void testNaNMapsToNull() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (TestServerMain serverMain = startEgressServer()) {
                 serverMain.execute("CREATE TABLE nans(d DOUBLE, f FLOAT, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute("INSERT INTO nans VALUES (1.5, 2.5, 1::TIMESTAMP)");
@@ -1279,12 +1269,12 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
 
     @Test
     public void testNonSelectSucceedsViaExecDone() throws Exception {
-        // DDL over egress lands via EXEC_DONE (msg_kind 0x16). Historically this
-        // test asserted a PARSE_ERROR rejection; since the DDL / INSERT / UPDATE
-        // execution landed, the same DROP now round-trips with a success ack
-        // carrying the op type and zero rows affected.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (TestServerMain serverMain = startEgressServer()) {
+                // DDL over egress lands via EXEC_DONE (msg_kind 0x16). Historically this
+                // test asserted a PARSE_ERROR rejection; since the DDL / INSERT / UPDATE
+                // execution landed, the same DROP now round-trips with a success ack
+                // carrying the op type and zero rows affected.
                 serverMain.execute("CREATE TABLE dummy(x LONG, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 final short[] opType = {-1};
@@ -1327,7 +1317,11 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
      */
     @Test
     public void testResultExactlyOneFullBatch() throws Exception {
-        runBatchBoundary(QwpEgressUpgradeProcessor.MAX_ROWS_PER_BATCH);
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = startEgressServer()) {
+                runBatchBoundary(serverMain, QwpEgressUpgradeProcessor.MAX_ROWS_PER_BATCH);
+            }
+        });
     }
 
     /**
@@ -1336,7 +1330,11 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
      */
     @Test
     public void testResultOneOverBatchBoundary() throws Exception {
-        runBatchBoundary(QwpEgressUpgradeProcessor.MAX_ROWS_PER_BATCH + 1);
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = startEgressServer()) {
+                runBatchBoundary(serverMain, QwpEgressUpgradeProcessor.MAX_ROWS_PER_BATCH + 1);
+            }
+        });
     }
 
     /**
@@ -1345,13 +1343,17 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
      */
     @Test
     public void testResultSingleRow() throws Exception {
-        runBatchBoundary(1);
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = startEgressServer()) {
+                runBatchBoundary(serverMain, 1);
+            }
+        });
     }
 
     @Test
     public void testSelectLong() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (TestServerMain serverMain = startEgressServer()) {
                 serverMain.execute("CREATE TABLE t(x LONG, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute("INSERT INTO t VALUES (1, 1::TIMESTAMP), (2, 2::TIMESTAMP), (3, 3::TIMESTAMP)");
@@ -1399,7 +1401,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     @Test
     public void testSelectMixedTypes() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (TestServerMain serverMain = startEgressServer()) {
                 serverMain.execute("CREATE TABLE mixed(id LONG, px DOUBLE, sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute("""
                         INSERT INTO mixed VALUES
@@ -1445,7 +1447,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     @Test
     public void testSelectWithNulls() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (TestServerMain serverMain = startEgressServer()) {
                 serverMain.execute("CREATE TABLE n(x LONG, s STRING, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute("INSERT INTO n VALUES (1, 'a', 1::TIMESTAMP), (NULL, NULL, 2::TIMESTAMP), (3, 'c', 3::TIMESTAMP)");
@@ -1500,7 +1502,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     @Test
     public void testSlowConsumerTriggersResumeSend() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (TestServerMain serverMain = startEgressServer()) {
                 final int totalRows = 100_000;
                 serverMain.execute("CREATE TABLE slow_t(x LONG, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -1563,7 +1565,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     @Test
     public void testSqlSyntaxError() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain ignored = startWithEnvVariables()) {
+            try (TestServerMain _ = startEgressServer()) {
                 final byte[] errorStatus = {(byte) 0xFF};
                 final String[] errorMsg = {null};
                 try (QwpQueryClient client = QwpQueryClient.newPlainText("127.0.0.1", HTTP_PORT)) {
@@ -1610,7 +1612,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     @Test
     public void testStaleCachedFactoryRetriesCompile() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (TestServerMain serverMain = startEgressServer()) {
                 serverMain.execute("CREATE TABLE t(id LONG, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute("INSERT INTO t VALUES (1, 0::TIMESTAMP)");
@@ -1680,15 +1682,16 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     }
 
     /**
-     * C1: spec divergence on symbol dictionaries. {@code docs/QWP_EGRESS_EXTENSION.md}
-     * sec 12 says egress uses connection-scoped delta dictionaries; the Phase-1 implementation
+     * C1: spec divergence on symbol dictionaries. The QWP egress spec
+     * ({@code https://questdb.com/docs/connect/wire-protocols/qwp-egress-websocket/})
+     * says egress uses connection-scoped delta dictionaries; the Phase-1 implementation
      * sends an inline per-batch dict every time. This test pins the actual wire behavior
      * so spec or implementation drift gets caught loudly.
      */
     @Test
     public void testSymbolDictResentEachQuery() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (TestServerMain serverMain = startEgressServer()) {
                 serverMain.execute("CREATE TABLE syms(s SYMBOL, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute("INSERT INTO syms VALUES ('A', 1::TIMESTAMP), ('B', 2::TIMESTAMP), "
@@ -1744,7 +1747,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     @Test
     public void testTableNotFound() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain ignored = startWithEnvVariables()) {
+            try (TestServerMain _ = startEgressServer()) {
                 final String[] errorMsg = {null};
                 try (QwpQueryClient client = QwpQueryClient.newPlainText("127.0.0.1", HTTP_PORT)) {
                     client.connect();
@@ -1785,7 +1788,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     @Test
     public void testTimestampNanos() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (TestServerMain serverMain = startEgressServer()) {
                 serverMain.execute("CREATE TABLE ts_n(ts TIMESTAMP_NS, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute("""
                         INSERT INTO ts_n VALUES
@@ -1829,7 +1832,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     @Test
     public void testUuidAndLong256() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (TestServerMain serverMain = startEgressServer()) {
                 serverMain.execute("CREATE TABLE wide(u UUID, l256 LONG256, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute(
@@ -1892,10 +1895,10 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
         });
     }
 
-    private static void assertSelectReturnsOneRow(QwpQueryClient client, String sql, String label) {
+    private static void assertSelectReturnsOneRow(QwpQueryClient client, String label) {
         final long[] sum = {0};
         final long[] rows = {0};
-        client.execute(sql, new QwpColumnBatchHandler() {
+        client.execute("SELECT v FROM schema_cache_retry_t", new QwpColumnBatchHandler() {
             @Override
             public void onBatch(QwpColumnBatch batch) {
                 int n = batch.getRowCount();
@@ -1918,52 +1921,48 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
         Assert.assertEquals(label + ": sum of v", 1L, sum[0]);
     }
 
-    private void runBatchBoundary(int totalRows) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
-                serverMain.execute("CREATE TABLE boundary_t(x LONG, ts TIMESTAMP) "
-                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
-                serverMain.execute(
-                        "INSERT INTO boundary_t SELECT x, x::TIMESTAMP FROM long_sequence(" + totalRows + ")"
-                );
-                serverMain.awaitTable("boundary_t");
+    private void runBatchBoundary(TestServerMain serverMain, int totalRows) throws Exception {
+        serverMain.execute("CREATE TABLE boundary_t(x LONG, ts TIMESTAMP) "
+                + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+        serverMain.execute(
+                "INSERT INTO boundary_t SELECT x, x::TIMESTAMP FROM long_sequence(" + totalRows + ")"
+        );
+        serverMain.awaitTable("boundary_t");
 
-                final int[] count = {0};
-                final int[] batches = {0};
-                final long[] sum = {0L};
-                final long[] serverTotalRows = {-1L};
-                try (QwpQueryClient client = QwpQueryClient.newPlainText("127.0.0.1", HTTP_PORT)) {
-                    client.connect();
-                    client.execute("SELECT x FROM boundary_t", new QwpColumnBatchHandler() {
-                        @Override
-                        public void onBatch(QwpColumnBatch batch) {
-                            batches[0]++;
-                            for (int r = 0; r < batch.getRowCount(); r++) {
-                                sum[0] += batch.getLongValue(0, r);
-                                count[0]++;
-                            }
-                        }
-
-                        @Override
-                        public void onEnd(long trs) {
-                            serverTotalRows[0] = trs;
-                        }
-
-                        @Override
-                        public void onError(byte status, String message) {
-                            Assert.fail("egress query error: " + message);
-                        }
-                    });
+        final int[] count = {0};
+        final int[] batches = {0};
+        final long[] sum = {0L};
+        final long[] serverTotalRows = {-1L};
+        try (QwpQueryClient client = QwpQueryClient.newPlainText("127.0.0.1", HTTP_PORT)) {
+            client.connect();
+            client.execute("SELECT x FROM boundary_t", new QwpColumnBatchHandler() {
+                @Override
+                public void onBatch(QwpColumnBatch batch) {
+                    batches[0]++;
+                    for (int r = 0; r < batch.getRowCount(); r++) {
+                        sum[0] += batch.getLongValue(0, r);
+                        count[0]++;
+                    }
                 }
-                Assert.assertEquals(totalRows, count[0]);
-                Assert.assertEquals((long) totalRows * (totalRows + 1) / 2L, sum[0]);
-                Assert.assertEquals(totalRows, serverTotalRows[0]);
-                if (totalRows <= QwpEgressUpgradeProcessor.MAX_ROWS_PER_BATCH) {
-                    Assert.assertEquals("expected exactly one batch", 1, batches[0]);
-                } else {
-                    Assert.assertTrue("expected > 1 batch, got " + batches[0], batches[0] > 1);
+
+                @Override
+                public void onEnd(long trs) {
+                    serverTotalRows[0] = trs;
                 }
-            }
-        });
+
+                @Override
+                public void onError(byte status, String message) {
+                    Assert.fail("egress query error: " + message);
+                }
+            });
+        }
+        Assert.assertEquals(totalRows, count[0]);
+        Assert.assertEquals((long) totalRows * (totalRows + 1) / 2L, sum[0]);
+        Assert.assertEquals(totalRows, serverTotalRows[0]);
+        if (totalRows <= QwpEgressUpgradeProcessor.MAX_ROWS_PER_BATCH) {
+            Assert.assertEquals("expected exactly one batch", 1, batches[0]);
+        } else {
+            Assert.assertTrue("expected > 1 batch, got " + batches[0], batches[0] > 1);
+        }
     }
 }

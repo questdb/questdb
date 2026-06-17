@@ -36,7 +36,7 @@ use parquet2::schema::types::ParquetType;
 use parquet2::schema::Repetition;
 use parquet2::write;
 use parquet2::write::footer_cache::FooterCache;
-use parquet2::write::{ParquetFile, Version};
+use parquet2::write::{ColumnOffsetsMetadata, ParquetFile, Version};
 use parquet_format_safe::thrift::protocol::TCompactOutputProtocol;
 use parquet_format_safe::{
     ColumnChunk, ColumnMetaData, CompressionCodec, DataPageHeader, DictionaryPageHeader,
@@ -123,6 +123,23 @@ pub struct ParquetUpdater {
     parquet_meta_file_size: u64,
     existing_parquet_meta_file_size: i64,
     result_parquet_meta_size: i64,
+    // Per-VARCHAR-column "still all-ASCII" tracker, keyed by parquet field_id.
+    // Seeded at construction from the old qdb_meta's ascii flag:
+    //   old.ascii == Some(true)  -> initial value `true`  (scan new aux to verify)
+    //   old.ascii == Some(false) -> initial value `false` (any copied old row
+    //                               group already carries non-ASCII bytes, so
+    //                               the final flag can only be `Some(false)`)
+    //   old.ascii == None        -> initial value `false` (unknown about old,
+    //                               so be conservative)
+    // set_target_schema() additionally seeds fresh VARCHAR columns from
+    // ADD COLUMN as `true`: existing rows backfill with nulls, which
+    // is_column_ascii skips, so a new column is trivially all-ASCII until
+    // a write proves otherwise. Each write call updates the tracker only
+    // for columns whose value is still `true`, so the scan is skipped in
+    // the common case where the column already contains a non-ASCII byte.
+    // Columns missing from the map at end() (no old entry and no
+    // set_target_schema seeding) resolve to `false` via unwrap_or(false).
+    varchar_all_ascii: RapidHashMap<i32, bool>,
 }
 
 impl ParquetUpdater {
@@ -185,7 +202,7 @@ impl ParquetUpdater {
                 .find(|kv| kv.key == QDB_META_KEY)
                 .and_then(|kv| kv.value.as_ref())
         });
-        match qdb_meta {
+        let source_qdb_meta = match qdb_meta {
             None => {
                 return Err(fmt_err!(
                     InvalidLayout,
@@ -203,8 +220,15 @@ impl ParquetUpdater {
                         num_parquet_cols
                     ));
                 }
+                meta
             }
-        }
+        };
+
+        // The caller's `sorting_columns` use the raw timestamp slot, stale after a
+        // DROP COLUMN; recompute from the dense designated position in the source
+        // qdb_meta, keeping a sort column only when both the caller and source have
+        // one. Schema-change rewrites recompute it again in set_target_schema.
+        let sorting_columns = sorting_columns.and(designated_ts_sorting_columns(&source_qdb_meta));
 
         // Detect which columns had bloom filters in the original file.
         let bloom_filter_columns = if let Some(first_rg) = metadata.row_groups.first() {
@@ -228,6 +252,40 @@ impl ParquetUpdater {
         let created_by = metadata.created_by.clone();
         let schema = metadata.schema_descr.clone();
         let options = write::WriteOptions { write_statistics, version, bloom_filter_fpp };
+
+        // Seed the per-column "still all-ASCII" tracker from the old qdb_meta.
+        // Columns whose old ascii was already Some(false) or None get `false`
+        // here, which lets track_new_data_ascii short-circuit their per-write
+        // aux scan: there is no path back to Some(true) once any old data has
+        // been seen as non-ASCII (or as unknown), because copied row groups
+        // carry that data through. Only columns starting at `true` are
+        // scanned, and the scan downgrades them to `false` on the first
+        // non-ASCII entry.
+        let mut varchar_all_ascii: RapidHashMap<i32, bool> = RapidHashMap::default();
+        if let Some(old_qdb) = metadata
+            .key_value_metadata
+            .as_ref()
+            .and_then(|kvs| {
+                kvs.iter()
+                    .find(|kv| kv.key == QDB_META_KEY)
+                    .and_then(|kv| kv.value.as_ref())
+            })
+            .map(|raw| QdbMeta::deserialize(raw))
+            .transpose()?
+        {
+            let schema_cols = metadata.schema_descr.columns();
+            for (i, col) in old_qdb.schema.iter().enumerate() {
+                if col.column_type.tag() != ColumnTypeTag::Varchar {
+                    continue;
+                }
+                if let Some(field_id) = schema_cols
+                    .get(i)
+                    .and_then(|c| c.base_type.get_field_info().id)
+                {
+                    varchar_all_ascii.insert(field_id, col.ascii == Some(true));
+                }
+            }
+        }
 
         let (parquet_file, accumulated_unused_bytes) = if is_rewrite {
             // Rewrite mode: write to a fresh file
@@ -299,7 +357,43 @@ impl ParquetUpdater {
             parquet_meta_file_size,
             existing_parquet_meta_file_size,
             result_parquet_meta_size: -1,
+            varchar_all_ascii,
         })
+    }
+
+    /// Inspect VARCHAR aux for any column whose flag is still `true` in
+    /// varchar_all_ascii and downgrade it to `false` if a non-ASCII entry is
+    /// found. Columns whose flag is already `false` are skipped entirely:
+    /// the result cannot return to `Some(true)` once any old or new data has
+    /// been seen as non-ASCII (or as unknown), so there is no reason to
+    /// re-scan their aux on every row-group write.
+    fn track_new_data_ascii(&mut self, partition: &Partition) {
+        use super::varchar::is_column_ascii;
+        for col in &partition.columns {
+            if col.data_type.tag() != ColumnTypeTag::Varchar {
+                continue;
+            }
+            // Only scan when there is still a chance of staying all-ASCII.
+            // Missing entries are treated as `false` (e.g. brand-new columns
+            // from ADD COLUMN that are not yet in the tracker).
+            if !self
+                .varchar_all_ascii
+                .get(&col.id)
+                .copied()
+                .unwrap_or(false)
+            {
+                continue;
+            }
+            if col.secondary_data.is_empty() {
+                continue;
+            }
+            // SAFETY: aux originates from JNI/Java memory-mapped column data and is
+            // page-aligned. Each entry is exactly 16 bytes.
+            let aux: &[[u8; 16]] = unsafe { super::util::transmute_slice(col.secondary_data) };
+            if !is_column_ascii(aux) {
+                self.varchar_all_ascii.insert(col.id, false);
+            }
+        }
     }
 
     pub fn replace_row_group(
@@ -308,6 +402,7 @@ impl ParquetUpdater {
         row_group_id: i32,
     ) -> ParquetResult<()> {
         self.ensure_schema_matches_columns(partition)?;
+        self.track_new_data_ascii(partition);
         let row_count = partition
             .columns
             .first()
@@ -375,6 +470,7 @@ impl ParquetUpdater {
 
     pub fn insert_row_group(&mut self, partition: &Partition, position: i32) -> ParquetResult<()> {
         self.ensure_schema_matches_columns(partition)?;
+        self.track_new_data_ascii(partition);
         let row_count = partition
             .columns
             .first()
@@ -479,7 +575,8 @@ impl ParquetUpdater {
             adjust_column_chunk_offsets(col, offset_delta);
         }
 
-        let thrift_rg = build_raw_row_group(columns, row_count);
+        let sorting_columns = self.parquet_file.sorting_columns().map(<[_]>::to_vec);
+        let thrift_rg = build_raw_row_group(columns, row_count, sorting_columns);
 
         self.parquet_file
             .write_raw_row_group_with_bloom(&self.copy_buffer, thrift_rg, bloom_bitsets)
@@ -524,6 +621,8 @@ impl ParquetUpdater {
 
         let mut qdb_meta = QdbMeta::new(partition.columns.len());
         for col in &partition.columns {
+            let is_existing_col = old_col_id_to_idx.contains_key(&col.id);
+
             // Preserve format hint from old schema for existing columns.
             let format = old_col_id_to_idx
                 .get(&col.id)
@@ -541,6 +640,16 @@ impl ParquetUpdater {
                         None
                     }
                 });
+
+            // Seed a fresh VARCHAR column added by ADD COLUMN as `true`:
+            // existing rows backfill with nulls (which is_column_ascii
+            // skips), so the column is trivially all-ASCII until a write
+            // proves otherwise. track_new_data_ascii will downgrade it on
+            // the first non-ASCII aux entry. Existing columns already have
+            // a tracker entry from new() and must not be overwritten here.
+            if !is_existing_col && col.data_type.tag() == ColumnTypeTag::Varchar {
+                self.varchar_all_ascii.insert(col.id, true);
+            }
 
             let column_type = if col.designated_timestamp {
                 col.data_type
@@ -566,6 +675,12 @@ impl ParquetUpdater {
                 .filter_map(|(i, f)| f.get_field_info().id.map(|id| (id, i)))
                 .collect(),
         );
+
+        // Re-stamp the sort order from the dense target schema: ADD/DROP COLUMN
+        // can shift the timestamp index. Must run before the copy/insert calls
+        // that follow, which read sorting_columns().
+        self.parquet_file
+            .set_sorting_columns(designated_ts_sorting_columns(&qdb_meta));
 
         self.target_qdb_meta = Some(qdb_meta);
         Ok(())
@@ -708,7 +823,8 @@ impl ParquetUpdater {
             })
             .collect::<ParquetResult<Vec<_>>>()?;
 
-        let thrift_rg = build_raw_row_group(columns, row_count);
+        let sorting_columns = self.parquet_file.sorting_columns().map(<[_]>::to_vec);
+        let thrift_rg = build_raw_row_group(columns, row_count, sorting_columns);
 
         // Concatenate existing + null bytes and write as one raw row group.
         self.copy_buffer.extend_from_slice(&null_bytes_buf);
@@ -762,6 +878,32 @@ impl ParquetUpdater {
             }
             meta
         };
+
+        // Emit the VARCHAR column-level ascii flag from the tracker built
+        // during writes. Each tracker entry started life as `true` for an
+        // old column whose old.ascii was Some(true) or for a fresh ADD
+        // COLUMN VARCHAR (existing rows backfill with nulls, which are
+        // ASCII-compatible), and as `false` otherwise. track_new_data_ascii
+        // flips it to `false` on the first non-ASCII aux entry. So the
+        // tracker encodes "old data was all-ASCII (or absent) AND every new
+        // write stayed all-ASCII". Columns missing from the tracker emit
+        // Some(false), matching the conservative default.
+        let schema_fields = self.parquet_file.schema().fields();
+        for (i, col) in qdb_meta.schema.iter_mut().enumerate() {
+            if col.column_type.tag() != ColumnTypeTag::Varchar {
+                continue;
+            }
+            let field_id = schema_fields
+                .get(i)
+                .and_then(|f| f.get_field_info().id)
+                .unwrap_or(-1);
+            col.ascii = Some(
+                self.varchar_all_ascii
+                    .get(&field_id)
+                    .copied()
+                    .unwrap_or(false),
+            );
+        }
 
         if self.is_rewrite {
             qdb_meta.unused_bytes = 0;
@@ -832,7 +974,6 @@ impl ParquetUpdater {
                 // Full create: rewrite or first-time generation.
                 let (parquet_meta_bytes, _) = crate::parquet_metadata::generate_parquet_metadata(
                     &col_infos,
-                    &schema_columns,
                     thrift_row_groups,
                     designated_ts,
                     &sorting_indices,
@@ -865,8 +1006,6 @@ impl ParquetUpdater {
                 let result = crate::parquet_metadata::update_parquet_metadata(
                     &existing_pm,
                     existing_size,
-                    &col_infos,
-                    &schema_columns,
                     thrift_row_groups,
                     footer_offset,
                     footer_length,
@@ -1047,10 +1186,33 @@ fn adjust_column_chunk_offsets(col: &mut ColumnChunk, offset_delta: i64) {
     col.offset_index_length = None;
 }
 
+/// File-level `sorting_columns` for a QuestDB parquet file: the designated
+/// timestamp at its dense `qdb_meta` position (not the raw timestamp slot, which
+/// goes stale after a DROP COLUMN), or `None` when there is none. The sort
+/// direction follows the designated timestamp's order, matching
+/// `designated_sorting_col` on the read path.
+fn designated_ts_sorting_columns(qdb_meta: &QdbMeta) -> Option<Vec<SortingColumn>> {
+    qdb_meta
+        .schema
+        .iter()
+        .position(|col| col.column_type.is_designated())
+        .map(|pos| {
+            let descending = !qdb_meta.schema[pos]
+                .column_type
+                .is_designated_timestamp_ascending();
+            vec![SortingColumn::new(pos as i32, descending, false)]
+        })
+}
+
 /// Builds a thrift `RowGroup` from a list of `ColumnChunk`s, computing
 /// `file_offset`, `total_byte_size`, and `total_compressed_size` from the
-/// column metadata.
-fn build_raw_row_group(columns: Vec<ColumnChunk>, num_rows: usize) -> RowGroup {
+/// column metadata. `sorting_columns` carries the file-level target sort order
+/// so copied row groups declare the same value as freshly written ones.
+fn build_raw_row_group(
+    columns: Vec<ColumnChunk>,
+    num_rows: usize,
+    sorting_columns: Option<Vec<SortingColumn>>,
+) -> RowGroup {
     let total_byte_size: i64 = columns
         .iter()
         .filter_map(|c| c.meta_data.as_ref())
@@ -1061,16 +1223,21 @@ fn build_raw_row_group(columns: Vec<ColumnChunk>, num_rows: usize) -> RowGroup {
         .filter_map(|c| c.meta_data.as_ref())
         .map(|m| m.total_compressed_size)
         .sum();
+    // RowGroup.file_offset points at the start of the row group, which is
+    // the offset of the first page of the first column chunk. When that
+    // column has a dictionary page, the dictionary precedes the data pages
+    // and is the actual start; reading data_page_offset alone overshoots by
+    // dict_bytes_written. Mirror parquet2's helper so the dict-or-data
+    // fallback stays in lockstep with write_row_group.
     let file_offset = columns
         .first()
-        .and_then(|c| c.meta_data.as_ref())
-        .map(|m| m.data_page_offset);
+        .and_then(|c| ColumnOffsetsMetadata::from_column_chunk(c).calc_row_group_file_offset());
 
     RowGroup {
         columns,
         total_byte_size,
         num_rows: num_rows as i64,
-        sorting_columns: None,
+        sorting_columns,
         file_offset,
         total_compressed_size: Some(total_compressed_size),
         ordinal: None,
@@ -1356,9 +1523,6 @@ fn build_column_infos_from_qdb_meta<'a>(
                     .map(|ct| ct.code())
                     .unwrap_or(-1)
             });
-            let col_type_tag = cm.map(|c| c.column_type.tag()).or_else(|| {
-                crate::parquet_read::meta::infer_column_type(col_desc).map(|ct| ct.tag())
-            });
             let mut flags = crate::parquet_metadata::types::ColumnFlags::new();
             let repetition =
                 crate::parquet_metadata::types::FieldRepetition::from(field_info.repetition);
@@ -1381,7 +1545,6 @@ fn build_column_infos_from_qdb_meta<'a>(
             crate::parquet_metadata::ParquetMetaColumnInfo {
                 name: &field_info.name,
                 col_type_code,
-                col_type_tag,
                 id: field_info.id.unwrap_or(-1),
                 flags,
                 fixed_byte_len: match phys_type {
@@ -1435,8 +1598,17 @@ mod tests {
     }
 
     fn make_column<T>(name: &'static str, col_type: ColumnType, values: &[T]) -> Column {
+        make_column_with_id(0, name, col_type, values)
+    }
+
+    fn make_column_with_id<T>(
+        id: i32,
+        name: &'static str,
+        col_type: ColumnType,
+        values: &[T],
+    ) -> Column {
         Column::from_raw_data(
-            0,
+            id,
             name,
             col_type.code(),
             0,
@@ -1449,6 +1621,30 @@ mod tests {
             0,
             false,
             false,
+            0,
+        )
+        .unwrap()
+    }
+
+    /// Builds a designated (ascending) TIMESTAMP column. The encoder records the
+    /// designated flag in `qdb_meta`, which is what the sorting-column derivation
+    /// keys off, so sorting-column tests must use this rather than a plain
+    /// TIMESTAMP column.
+    fn make_designated_ts_with_id(id: i32, name: &'static str, values: &[i64]) -> Column {
+        Column::from_raw_data(
+            id,
+            name,
+            ColumnTypeTag::Timestamp.into_type().code(),
+            0,
+            values.len(),
+            values.as_ptr() as *const u8,
+            std::mem::size_of_val(values),
+            null(),
+            0,
+            null(),
+            0,
+            true,
+            true,
             0,
         )
         .unwrap()
@@ -2016,6 +2212,559 @@ mod tests {
             );
         }
 
+        Ok(())
+    }
+
+    fn make_column_chunk(
+        data_page_offset: i64,
+        dictionary_page_offset: Option<i64>,
+    ) -> super::ColumnChunk {
+        super::ColumnChunk {
+            file_path: None,
+            file_offset: 0,
+            meta_data: Some(super::ColumnMetaData {
+                type_: super::Type::INT64,
+                encodings: vec![],
+                path_in_schema: vec!["c".to_string()],
+                codec: super::CompressionCodec::UNCOMPRESSED,
+                num_values: 0,
+                total_uncompressed_size: 500,
+                total_compressed_size: 250,
+                key_value_metadata: None,
+                data_page_offset,
+                index_page_offset: None,
+                dictionary_page_offset,
+                statistics: None,
+                encoding_stats: None,
+                bloom_filter_offset: None,
+                bloom_filter_length: None,
+            }),
+            offset_index_offset: None,
+            offset_index_length: None,
+            column_index_offset: None,
+            column_index_length: None,
+            crypto_metadata: None,
+            encrypted_column_metadata: None,
+        }
+    }
+
+    #[test]
+    fn build_raw_row_group_uses_dict_offset_when_first_column_has_dict() {
+        // Regression: build_raw_row_group used to read only data_page_offset
+        // for RowGroup.file_offset. With the new (spec-correct) page offsets,
+        // a dict-encoded first column has data_page_offset past the dict
+        // page; using it would overshoot the row group's start byte by
+        // dict_bytes_written.
+        let dict_offset: i64 = 1000;
+        let data_offset: i64 = 1090;
+        let columns = vec![
+            make_column_chunk(data_offset, Some(dict_offset)),
+            make_column_chunk(2000, None),
+        ];
+
+        let rg = super::build_raw_row_group(columns, 10, None);
+        assert_eq!(
+            rg.file_offset,
+            Some(dict_offset),
+            "row group file_offset must point at the dict page, not the data page"
+        );
+    }
+
+    #[test]
+    fn build_raw_row_group_uses_data_offset_when_first_column_has_no_dict() {
+        let data_offset: i64 = 1000;
+        let columns = vec![make_column_chunk(data_offset, None)];
+
+        let rg = super::build_raw_row_group(columns, 10, None);
+        assert_eq!(rg.file_offset, Some(data_offset));
+    }
+
+    #[test]
+    fn build_raw_row_group_falls_back_to_data_offset_when_dict_offset_is_zero() {
+        // calc_row_group_file_offset filters dict_offset > 0; a sentinel 0
+        // should be ignored and the data_page_offset used instead.
+        let data_offset: i64 = 1000;
+        let columns = vec![make_column_chunk(data_offset, Some(0))];
+
+        let rg = super::build_raw_row_group(columns, 10, None);
+        assert_eq!(rg.file_offset, Some(data_offset));
+    }
+
+    /// Regression for the no-sorting-columns case (a table with no designated
+    /// timestamp): when the file declares no sort order, copy_row_group must
+    /// leave the copied group without sorting columns and the freshly written
+    /// group must agree, so the footer stays internally consistent and
+    /// extract_sorting_columns returns an empty set rather than erroring. The
+    /// other copy_row_group tests only cover the WITH-sorting-column path.
+    #[test]
+    fn copy_row_group_preserves_absent_sorting_columns() -> Result<(), Box<dyn Error>> {
+        use crate::allocator::TestAllocatorState;
+        use crate::parquet_metadata::convert::extract_sorting_columns;
+
+        // 1. Initial single-row-group file WITHOUT sorting columns.
+        let k = [1i32, 2, 3, 4];
+        let val = [10i32, 20, 30, 40];
+        let partition = Partition {
+            table: "t".to_string(),
+            columns: vec![
+                make_column("k", ColumnTypeTag::Int.into_type(), &k),
+                make_column("val", ColumnTypeTag::Int.into_type(), &val),
+            ],
+        };
+        let src = NamedTempFile::new()?;
+        ParquetWriter::new(src.reopen()?)
+            .with_sorting_columns(None)
+            .finish(partition)?;
+        let src_len = src.as_file().metadata()?.len();
+
+        // 2. Rewrite-mode updater with NO target sorting columns.
+        let out = NamedTempFile::new()?;
+        let alloc = TestAllocatorState::new();
+        let mut updater = super::ParquetUpdater::new(
+            alloc.allocator(),
+            src.reopen()?,
+            src_len,
+            out.reopen()?,
+            0,    // write_file_size == 0 -> rewrite
+            None, // target sorting columns: none
+            true,
+            false,
+            CompressionOptions::Uncompressed,
+            None,
+            None,
+            DEFAULT_BLOOM_FILTER_FPP,
+            0.0,
+            None,
+            0,
+            -1,
+        )?;
+
+        // 3. Copy the existing row group, then append a fresh O3 row group.
+        let o3_k = [5i32, 6, 7];
+        let o3_val = [50i32, 60, 70];
+        let o3 = Partition {
+            table: "t".to_string(),
+            columns: vec![
+                make_column("k", ColumnTypeTag::Int.into_type(), &o3_k),
+                make_column("val", ColumnTypeTag::Int.into_type(), &o3_val),
+            ],
+        };
+        updater.copy_row_group(0)?; // copied group: must stay without sorting cols
+        updater.insert_row_group(&o3, 1)?; // fresh group: also without sorting cols
+        updater.end(None)?;
+
+        // 4. Neither row group declares sorting columns, and they agree.
+        let f = out.reopen()?;
+        let len = f.metadata()?.len();
+        let md = read_metadata_with_size(&mut &f, len)?;
+        assert_eq!(md.row_groups.len(), 2);
+        assert!(
+            md.row_groups[0].sorting_columns().is_none(),
+            "copied group of a no-sort file must declare no sorting columns",
+        );
+        assert_eq!(
+            md.row_groups[0].sorting_columns(),
+            md.row_groups[1].sorting_columns(),
+            "copied and appended row groups must agree (both: no sorting columns)",
+        );
+        // The native call Mig941 makes must accept it and return an empty set.
+        let cols = extract_sorting_columns(&md).expect("a file without sorting columns is valid");
+        assert!(
+            cols.is_empty(),
+            "no row group declares sorting columns -> empty result",
+        );
+        Ok(())
+    }
+
+    /// Regression for the O3-merge sorting-columns inconsistency: copy_row_group
+    /// must stamp the file-level target sorting columns onto the copied group
+    /// rather than leaving it None. The rewrite flow copies the unchanged row
+    /// group and then appends a fresh O3 group; before the fix the copied group
+    /// declared 0 sorting columns while the fresh group declared the timestamp
+    /// sort column, producing a footer the strict _pm validator (Mig941 path)
+    /// rejects with "rg 0 has 0 but rg 1 has 1". After the fix every row group
+    /// declares identical sorting columns.
+    #[test]
+    fn copy_row_group_preserves_sorting_columns() -> Result<(), Box<dyn Error>> {
+        use crate::allocator::TestAllocatorState;
+        use crate::parquet_metadata::convert::extract_sorting_columns;
+        use parquet2::metadata::SortingColumn;
+
+        // Designated timestamp at column 0, ascending.
+        let sorting = || Some(vec![SortingColumn::new(0, false, false)]);
+
+        // 1. Initial single-row-group file WITH sorting columns -> a freshly
+        //    converted parquet partition. The timestamp is designated, so the
+        //    encoder records the designated flag in qdb_meta at column 0.
+        let ts = [1i64, 2, 3, 4];
+        let val = [10i32, 20, 30, 40];
+        let partition = Partition {
+            table: "t".to_string(),
+            columns: vec![
+                make_designated_ts_with_id(0, "ts", &ts),
+                make_column("val", ColumnTypeTag::Int.into_type(), &val),
+            ],
+        };
+        let src = NamedTempFile::new()?;
+        ParquetWriter::new(src.reopen()?)
+            .with_sorting_columns(sorting())
+            .finish(partition)?;
+        let src_len = src.as_file().metadata()?.len();
+
+        // 2. Rewrite-mode updater (write_file_size == 0 -> fresh output file),
+        //    the same mode the O3 parquet merge uses.
+        let out = NamedTempFile::new()?;
+        let alloc = TestAllocatorState::new();
+        let mut updater = super::ParquetUpdater::new(
+            alloc.allocator(),
+            src.reopen()?, // reader: old file
+            src_len,
+            out.reopen()?, // writer: fresh file
+            0,             // write_file_size == 0 -> rewrite
+            sorting(),     // target sorting columns
+            true,
+            false,
+            CompressionOptions::Uncompressed,
+            None,
+            None,
+            DEFAULT_BLOOM_FILTER_FPP,
+            0.0,
+            None,
+            0,
+            -1,
+        )?;
+
+        // 3. Copy the existing row group, then append a fresh O3 row group.
+        let o3_ts = [5i64, 6, 7];
+        let o3_val = [50i32, 60, 70];
+        let o3 = Partition {
+            table: "t".to_string(),
+            columns: vec![
+                make_designated_ts_with_id(0, "ts", &o3_ts),
+                make_column("val", ColumnTypeTag::Int.into_type(), &o3_val),
+            ],
+        };
+        updater.copy_row_group(0)?; // copied group: must keep sorting cols
+        updater.insert_row_group(&o3, 1)?; // fresh group: written with sorting cols
+        updater.end(None)?;
+
+        // 4. Every row group must declare identical sorting columns, so Mig941 /
+        //    convert_from_parquet accepts the file, AND the declared index is the
+        //    dense designated-timestamp position (0).
+        let f = out.reopen()?;
+        let len = f.metadata()?.len();
+        let md = read_metadata_with_size(&mut &f, len)?;
+        assert_eq!(md.row_groups.len(), 2);
+        assert_eq!(
+            md.row_groups[0].sorting_columns(),
+            md.row_groups[1].sorting_columns(),
+            "copied and appended row groups must agree on sorting columns",
+        );
+        assert_eq!(
+            md.row_groups[0].sorting_columns(),
+            &sorting(),
+            "every row group must declare the dense designated-timestamp index (0)",
+        );
+        // Sanity check: the native call Mig941 makes still accepts the file.
+        extract_sorting_columns(&md).expect("sorting columns must be consistent across row groups");
+        Ok(())
+    }
+
+    /// The ADD/DROP COLUMN variant of copy_row_group_preserves_sorting_columns,
+    /// exercising a timestamp-index shift: old schema
+    /// `[drop_me(id=5), ts(id=0), val(id=1)]` (ts at index 1) becomes target
+    /// `[ts(id=0), val(id=1), added(id=2)]` (ts at index 0). set_target_schema
+    /// must re-stamp the dense target index (0), derived from the target schema's
+    /// designated flag, on every row group.
+    #[test]
+    fn copy_row_group_with_null_columns_preserves_sorting_columns() -> Result<(), Box<dyn Error>> {
+        use crate::allocator::TestAllocatorState;
+        use crate::parquet_metadata::convert::extract_sorting_columns;
+        use parquet2::metadata::SortingColumn;
+
+        // 1. Initial file with the OLD schema [drop_me(id=5), ts(id=0),
+        //    val(id=1)]. The designated timestamp sits at column index 1, so the
+        //    OLD footer's sort column points at index 1.
+        let old_sorting = || Some(vec![SortingColumn::new(1, false, false)]);
+        let drop_me = [100i32, 200, 300, 400];
+        let ts = [1i64, 2, 3, 4];
+        let val = [10i32, 20, 30, 40];
+        let partition = Partition {
+            table: "t".to_string(),
+            columns: vec![
+                make_column_with_id(5, "drop_me", ColumnTypeTag::Int.into_type(), &drop_me),
+                make_designated_ts_with_id(0, "ts", &ts),
+                make_column_with_id(1, "val", ColumnTypeTag::Int.into_type(), &val),
+            ],
+        };
+        let src = NamedTempFile::new()?;
+        ParquetWriter::new(src.reopen()?)
+            .with_sorting_columns(old_sorting())
+            .finish(partition)?;
+        let src_len = src.as_file().metadata()?.len();
+
+        // Rewrite-mode updater. The constructor already reduces the caller's index
+        // to the source's designated position (1) via designated_ts_sorting_columns;
+        // the test's job is to prove set_target_schema then recomputes it to the
+        // dense target position (0) rather than keeping the source's 1.
+        let target_sorting = || Some(vec![SortingColumn::new(0, false, false)]);
+        let out = NamedTempFile::new()?;
+        let alloc = TestAllocatorState::new();
+        let mut updater = super::ParquetUpdater::new(
+            alloc.allocator(),
+            src.reopen()?,
+            src_len,
+            out.reopen()?,
+            0, // rewrite
+            Some(vec![SortingColumn::new(7, false, false)]),
+            true,
+            false,
+            CompressionOptions::Uncompressed,
+            None,
+            None,
+            DEFAULT_BLOOM_FILTER_FPP,
+            0.0,
+            None,
+            0,
+            -1,
+        )?;
+
+        // 3. Target schema drops the leading column and adds a trailing one:
+        //    [ts(id=0), val(id=1), added(id=2)]. This shifts the timestamp from
+        //    old index 1 to target index 0.
+        let added = ColumnTypeTag::Int.into_type();
+        let target = Partition {
+            table: "t".to_string(),
+            columns: vec![
+                make_designated_ts_with_id(0, "ts", &ts),
+                make_column_with_id(1, "val", ColumnTypeTag::Int.into_type(), &val),
+                make_column_with_id(2, "added", added, &val),
+            ],
+        };
+        updater.set_target_schema(&target)?;
+
+        // 4. Copy the old row group: drop_me (id=5) is dropped, ts and val are
+        //    remapped, and added (target pos 2) is backfilled with nulls. Then
+        //    append a fresh O3 group in the new 3-column schema.
+        updater.copy_row_group_with_null_columns(0, &[(2, added)])?;
+        let o3_ts = [5i64, 6, 7];
+        let o3_val = [50i32, 60, 70];
+        let o3_added = [1i32, 2, 3];
+        let o3 = Partition {
+            table: "t".to_string(),
+            columns: vec![
+                make_designated_ts_with_id(0, "ts", &o3_ts),
+                make_column_with_id(1, "val", ColumnTypeTag::Int.into_type(), &o3_val),
+                make_column_with_id(2, "added", added, &o3_added),
+            ],
+        };
+        updater.insert_row_group(&o3, 1)?;
+        updater.end(None)?;
+
+        // Both row groups must declare the dense TARGET timestamp position (0),
+        // proving set_target_schema re-derived it rather than keeping the source's 1.
+        let f = out.reopen()?;
+        let len = f.metadata()?.len();
+        let md = read_metadata_with_size(&mut &f, len)?;
+        assert_eq!(md.row_groups.len(), 2);
+        assert_eq!(
+            md.row_groups[0].sorting_columns(),
+            md.row_groups[1].sorting_columns(),
+            "copied (with null column) and appended row groups must agree on sorting columns",
+        );
+        assert_eq!(
+            md.row_groups[0].sorting_columns(),
+            &target_sorting(),
+            "copied group must stamp the dense TARGET sort index (0), not the source's 1",
+        );
+        extract_sorting_columns(&md).expect("sorting columns must be consistent across row groups");
+        Ok(())
+    }
+
+    /// Regression for the stale raw-slot bug in the no-schema-change rewrite
+    /// path. A leading column was dropped BEFORE the partition was converted to
+    /// parquet, so the file is already dense `[ts(0), val(1)]` with its footer
+    /// correctly sorted on column 0. The table's raw timestamp slot, however, is
+    /// still 1 (the dropped column keeps a tombstone), and the caller passes
+    /// that stale slot into the updater. With no schema change set_target_schema
+    /// is never called, so the construction-time derivation is the only line of
+    /// defense: it must ignore the stale slot and re-derive the dense index (0)
+    /// from the source qdb_meta's designated flag. Before the fix every row
+    /// group would have been stamped with the out-of-range index 1.
+    #[test]
+    fn rewrite_ignores_stale_raw_timestamp_slot() -> Result<(), Box<dyn Error>> {
+        use crate::allocator::TestAllocatorState;
+        use crate::parquet_metadata::convert::extract_sorting_columns;
+        use parquet2::metadata::SortingColumn;
+
+        // 1. Already-dense file [ts(id=0), val(id=1)]: the designated timestamp
+        //    is at column 0, and the encoder writes the footer sort column at 0.
+        let ts = [1i64, 2, 3, 4];
+        let val = [10i32, 20, 30, 40];
+        let partition = Partition {
+            table: "t".to_string(),
+            columns: vec![
+                make_designated_ts_with_id(0, "ts", &ts),
+                make_column_with_id(1, "val", ColumnTypeTag::Int.into_type(), &val),
+            ],
+        };
+        let src = NamedTempFile::new()?;
+        ParquetWriter::new(src.reopen()?)
+            .with_sorting_columns(Some(vec![SortingColumn::new(0, false, false)]))
+            .finish(partition)?;
+        let src_len = src.as_file().metadata()?.len();
+
+        // 2. Rewrite-mode updater fed the STALE raw timestamp slot (1), as
+        //    O3PartitionJob would after a pre-conversion DROP COLUMN left a
+        //    tombstone in the raw layout. No set_target_schema call follows.
+        let out = NamedTempFile::new()?;
+        let alloc = TestAllocatorState::new();
+        let mut updater = super::ParquetUpdater::new(
+            alloc.allocator(),
+            src.reopen()?,
+            src_len,
+            out.reopen()?,
+            0, // rewrite
+            Some(vec![SortingColumn::new(1, false, false)]),
+            true,
+            false,
+            CompressionOptions::Uncompressed,
+            None,
+            None,
+            DEFAULT_BLOOM_FILTER_FPP,
+            0.0,
+            None,
+            0,
+            -1,
+        )?;
+
+        // 3. Copy the existing row group and append a fresh O3 group, same schema.
+        let o3_ts = [5i64, 6, 7];
+        let o3_val = [50i32, 60, 70];
+        let o3 = Partition {
+            table: "t".to_string(),
+            columns: vec![
+                make_designated_ts_with_id(0, "ts", &o3_ts),
+                make_column_with_id(1, "val", ColumnTypeTag::Int.into_type(), &o3_val),
+            ],
+        };
+        updater.copy_row_group(0)?;
+        updater.insert_row_group(&o3, 1)?;
+        updater.end(None)?;
+
+        // 4. Every row group must declare the dense designated-timestamp index
+        //    (0), NOT the stale raw slot (1) the caller passed in.
+        let f = out.reopen()?;
+        let len = f.metadata()?.len();
+        let md = read_metadata_with_size(&mut &f, len)?;
+        assert_eq!(md.row_groups.len(), 2);
+        assert_eq!(
+            md.row_groups[0].sorting_columns(),
+            md.row_groups[1].sorting_columns(),
+            "copied and appended row groups must agree on sorting columns",
+        );
+        assert_eq!(
+            md.row_groups[0].sorting_columns(),
+            &Some(vec![SortingColumn::new(0, false, false)]),
+            "rewrite must declare the dense designated-timestamp index (0), not the stale raw slot (1)",
+        );
+        extract_sorting_columns(&md).expect("sorting columns must be consistent across row groups");
+        Ok(())
+    }
+
+    /// regression through a real update-mode merge (the rewrite-mode tests
+    /// above don't cover it). The cached legacy group keeps its stale footer index
+    /// (1) while the appended group gets the corrected dense index (0), so the
+    /// footer conflicts -- yet the migration must tolerate it via qdb_meta.
+    #[test]
+    fn update_mode_append_tolerated_by_migration_via_qdb_meta() -> Result<(), Box<dyn Error>> {
+        use crate::allocator::TestAllocatorState;
+        use crate::parquet::qdb_metadata::{QdbMeta, QDB_META_KEY};
+        use crate::parquet_metadata::convert::{convert_from_parquet, extract_sorting_columns};
+        use crate::parquet_metadata::reader::ParquetMetaReader;
+        use parquet2::metadata::SortingColumn;
+
+        // Legacy file: qdb_meta designates ts at dense column 0, but the footer's
+        // row group carries the stale raw-slot index 1 (as a pre-fix binary wrote).
+        let ts = [1i64, 2, 3, 4];
+        let val = [10i32, 20, 30, 40];
+        let partition = Partition {
+            table: "t".to_string(),
+            columns: vec![
+                make_designated_ts_with_id(0, "ts", &ts),
+                make_column_with_id(1, "val", ColumnTypeTag::Int.into_type(), &val),
+            ],
+        };
+        let tmp = NamedTempFile::new()?;
+        ParquetWriter::new(tmp.reopen()?)
+            .with_sorting_columns(Some(vec![SortingColumn::new(1, false, false)]))
+            .finish(partition)?;
+        let file_len = tmp.as_file().metadata()?.len();
+
+        // In-place update mode (write_file_size == file_len). The caller passes the
+        // stale slot 1; the constructor re-derives the dense index 0 from qdb_meta.
+        let alloc = TestAllocatorState::new();
+        let mut updater = super::ParquetUpdater::new(
+            alloc.allocator(),
+            tmp.reopen()?,
+            file_len,
+            tmp.reopen()?,
+            file_len, // update (append) mode
+            Some(vec![SortingColumn::new(1, false, false)]),
+            true,
+            false,
+            CompressionOptions::Uncompressed,
+            None,
+            None,
+            DEFAULT_BLOOM_FILTER_FPP,
+            0.0,
+            None,
+            0,
+            -1,
+        )?;
+
+        // Append a fresh O3 row group, then finish.
+        let o3_ts = [5i64, 6, 7];
+        let o3_val = [50i32, 60, 70];
+        let o3 = Partition {
+            table: "t".to_string(),
+            columns: vec![
+                make_designated_ts_with_id(0, "ts", &o3_ts),
+                make_column_with_id(1, "val", ColumnTypeTag::Int.into_type(), &o3_val),
+            ],
+        };
+        updater.insert_row_group(&o3, 1)?;
+        updater.end(None)?;
+
+        // The footer now conflicts: cached group keeps 1, appended group carries 0.
+        let f = tmp.reopen()?;
+        let len = f.metadata()?.len();
+        let md = read_metadata_with_size(&mut &f, len)?;
+        assert_eq!(md.row_groups.len(), 2);
+        assert_eq!(
+            md.row_groups[0].sorting_columns(),
+            &Some(vec![SortingColumn::new(1, false, false)]),
+        );
+        assert_eq!(
+            md.row_groups[1].sorting_columns(),
+            &Some(vec![SortingColumn::new(0, false, false)]),
+        );
+        assert!(extract_sorting_columns(&md).is_err());
+
+        // The migration must still succeed via qdb_meta, recording dense position 0.
+        let qdb_raw = md
+            .key_value_metadata
+            .as_ref()
+            .and_then(|kvs| kvs.iter().find(|kv| kv.key == QDB_META_KEY))
+            .and_then(|kv| kv.value.as_ref())
+            .expect("updated file must carry qdb_meta");
+        let qdb_meta = QdbMeta::deserialize(qdb_raw)?;
+        let (pm_bytes, pm_size) = convert_from_parquet(&md, Some(&qdb_meta), 0, 0, None, None)
+            .expect("migration must tolerate the update-mode footer via qdb_meta");
+        let reader = ParquetMetaReader::from_file_size(&pm_bytes, pm_size).unwrap();
+        assert_eq!(reader.designated_timestamp(), Some(0));
+        assert_eq!(reader.sorting_column_count(), 1);
+        assert_eq!(reader.sorting_column(0).unwrap(), 0);
         Ok(())
     }
 }

@@ -34,6 +34,7 @@ import io.questdb.PropertyKey;
 import io.questdb.ServerConfigurationException;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cutlass.json.JsonException;
+import io.questdb.cutlass.qwp.codec.QwpServerInfoProvider;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
@@ -64,6 +65,7 @@ public class Overrides {
     private boolean isHiddenTelemetryTable = false;
     private boolean mangleTableDirNames = true;
     private CairoConfiguration propsConfig;
+    private QwpServerInfoProvider qwpServerInfoProvider = null;
     private RostiAllocFacade rostiAllocFacade = null;
     private long spinLockTimeout = AbstractCairoTest.DEFAULT_SPIN_LOCK_TIMEOUT;
 
@@ -111,6 +113,10 @@ public class Overrides {
         return null;
     }
 
+    public QwpServerInfoProvider getQwpServerInfoProvider() {
+        return qwpServerInfoProvider;
+    }
+
     public RostiAllocFacade getRostiAllocFacade() {
         return rostiAllocFacade;
     }
@@ -140,6 +146,7 @@ public class Overrides {
         factoryProvider = null;
         env = null;
         isHiddenTelemetryTable = false;
+        qwpServerInfoProvider = null;
         properties.clear();
         changed = true;
         spinLockTimeout = AbstractCairoTest.DEFAULT_SPIN_LOCK_TIMEOUT;
@@ -180,6 +187,10 @@ public class Overrides {
 
     public void setProperty(ConfigPropertyKey propertyKey, boolean value) {
         setProperty(propertyKey, value ? "true" : "false");
+    }
+
+    public void setQwpServerInfoProvider(QwpServerInfoProvider provider) {
+        this.qwpServerInfoProvider = provider;
     }
 
     public void setRostiAllocFacade(RostiAllocFacade rostiAllocFacade) {

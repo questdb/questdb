@@ -82,7 +82,9 @@ import static io.questdb.tasks.TableWriterTask.CMD_ALTER_TABLE;
 import static io.questdb.tasks.TableWriterTask.CMD_UPDATE_TABLE;
 
 public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificationTask> implements Closeable {
-    private static final Log LOG = LogFactory.getLog(ApplyWal2TableJob.class);
+    // this field is modified via reflection from tests, via LogFactory.enableGuaranteedLogging
+    @SuppressWarnings("FieldMayBeFinal")
+    private static Log LOG = LogFactory.getLog(ApplyWal2TableJob.class);
     private final BlockFileWriter blockFileWriter;
     private final CairoConfiguration config;
     private final CairoEngine engine;
@@ -90,6 +92,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private final MicrosecondClock microClock;
     private final MatViewRefreshTask mvRefreshTask = new MatViewRefreshTask();
     private final OperationExecutor operationExecutor;
+    private final int sharedQueryWorkerCount;
     private final long tableTimeQuotaMicros;
     private final Telemetry<TelemetryTask> telemetry;
     private final TelemetryFacade telemetryFacade;
@@ -102,6 +105,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     public ApplyWal2TableJob(CairoEngine engine, int sharedQueryWorkerCount) {
         super(engine.getMessageBus().getWalTxnNotificationQueue(), engine.getMessageBus().getWalTxnNotificationSubSequence());
         this.engine = engine;
+        this.sharedQueryWorkerCount = sharedQueryWorkerCount;
         walTelemetry = engine.getTelemetryWal();
         walTelemetryFacade = walTelemetry.isEnabled() ? this::doStoreWalTelemetry : this::storeWalTelemetryNoop;
         telemetry = engine.getTelemetry();
@@ -117,10 +121,30 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     }
 
     @Override
+    public Job cloneInstance() {
+        return new ApplyWal2TableJob(engine, sharedQueryWorkerCount);
+    }
+
+    @Override
     public void close() {
         Misc.free(operationExecutor);
         Misc.free(walEventReader);
         Misc.free(blockFileWriter);
+    }
+
+    @Override
+    public void closeInstance() {
+        // cloneInstance() mints a fresh job per generation, so the pool frees
+        // each instance's native resources through this hook at halt. Misc.free
+        // nulls the fields, keeping the call idempotent.
+        close();
+    }
+
+    @Override
+    public void recycleInstance() {
+        mvRefreshTask.clear();
+        lastAttemptSeqTxn = 0L;
+        lastCommittedRows = 0L;
     }
 
     private static long calculateSkipTransactionCount(long initialSeqTxn, WalTxnDetails walTxnDetails) {
@@ -142,37 +166,36 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 txnTsHi = walTxnDetails.getReplaceRangeTsHi(seqTxn);
             }
 
-            long firstNonSkippableTxn = Long.MAX_VALUE;
             boolean seqTxnCanBeSkipped = false;
 
             // Even though it's O(N^2) complexity, the number of transactions we can skip is expected to be small.
             // So the outer loop exits very early, it is expected to exit after 1st iteration.
-            // Unless TRUNCATE SQL found and many transactions can be skipped.
-            // TRUNCATE has special optimization to stop scanning early.
+            // The replacer search must not cross any non-data transaction. Operations such as column
+            // type conversion to SYMBOL derive persistent state (the symbol map) from the table
+            // content at apply time; allowing a skip to cross such a txn makes that state dependent
+            // on the apply lookahead window, causing silent divergence between appliers.
+            // TRUNCATE is special-cased below: it justifies the skip itself, but only when the
+            // whole window between seqTxn and the TRUNCATE consists of data transactions.
             for (long futureSeqTxn = seqTxn + 1; futureSeqTxn <= lastSeqTxn; futureSeqTxn++) {
                 int futureWalId = walTxnDetails.getWalId(futureSeqTxn);
                 if (futureWalId > 0) {
                     final byte walTxnType = walTxnDetails.getWalTxnType(futureSeqTxn);
                     if (walTxnType == TRUNCATE) {
-                        // Truncate fully removes any prior data, no point doing any data apply
-                        // We can skip straight to the truncate operation or the first non-skippable operation before it
-                        return Math.min(firstNonSkippableTxn, futureSeqTxn) - initialSeqTxn;
+                        // Truncate fully removes any prior data, no point doing any data apply.
+                        // Reaching here means every txn between seqTxn and futureSeqTxn is a data
+                        // txn (any non-data txn would have caused a break above), so it is safe
+                        // to skip straight to the truncate.
+                        return futureSeqTxn - initialSeqTxn;
                     }
 
-                    if (walTxnType == SQL) {
-                        // This is not a data transaction.
-                        // Potentially it can be an UPDATE SQL that uses existing data
-                        // so the transactions cannot be skipped even if the data is fully replaces after the update.
-                        // We can optimize partition drops to be recognized here in the future.
+                    if (!WalTxnType.isDataType(walTxnType)) {
+                        // Non-data txn (structural metadata change, SQL, etc.): stop scanning.
+                        // Skipping across this boundary would make the table state applier-dependent.
                         break;
                     }
-                    if (!WalTxnType.isDataType(walTxnType)) {
-                        firstNonSkippableTxn = Math.min(firstNonSkippableTxn, futureSeqTxn);
-                        continue;
-                    }
                 } else {
-                    firstNonSkippableTxn = Math.min(firstNonSkippableTxn, futureSeqTxn);
-                    continue;
+                    // walId <= 0 indicates a structural metadata txn; stop scanning.
+                    break;
                 }
 
                 // If the future transaction is a replace range operation
@@ -339,7 +362,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             CairoEngine engine,
             OperationExecutor operationExecutor,
             Path tempPath,
-            RunStatus runStatus,
+            WorkerContext runStatus,
             TableWriterPressureControl pressureControl
     ) {
         final TableSequencerAPI tableSequencerAPI = engine.getTableSequencerAPI();
@@ -362,12 +385,15 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
                 tempPath.of(engine.getConfiguration().getDbRoot()).concat(tableToken).slash();
 
+                final long timeLimit = microClock.getTicks() + tableTimeQuotaMicros;
+
                 // Populate transactionMeta with timestamps of future transactions
                 // to avoid O3 commits by pre-calculating safe to commit timestamp for every commit.
-                writer.readWalTxnDetails(transactionLogCursor);
+                // The lookahead pre-read is bounded by timeLimit so a huge backlog cannot
+                // monopolize the apply worker for arbitrarily long before any commit happens.
+                writer.readWalTxnDetails(transactionLogCursor, timeLimit);
                 transactionLogCursor.toTop();
                 isTerminating = runStatus.isTerminating();
-                final long timeLimit = microClock.getTicks() + tableTimeQuotaMicros;
                 boolean firstRun = true;
 
                 try {
@@ -471,7 +497,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                     // Last few transactions left to process from the list
                                     // of observed transactions built upfront in the beginning of the loop.
                                     // Read more transactions from the sequencer into readWalTxnDetails to continue
-                                    writer.readWalTxnDetails(transactionLogCursor);
+                                    writer.readWalTxnDetails(transactionLogCursor, timeLimit);
                                     transactionLogCursor.setPosition(seqTxn);
                                 }
 
@@ -512,6 +538,34 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
                     if (!finishedAll || isTerminating) {
                         writer.commitSeqTxn();
+                    }
+
+                    // The apply loop holds the writer across this batch of transactions and never
+                    // ticks the command queue itself. Once the batch is applied and its sequencer
+                    // txn finalized, drain async writer commands (e.g. storage policy parquet-commit
+                    // / drop-local / squash) published while the writer was busy, so they run here
+                    // rather than sitting unprocessed until the writer is returned to the pool.
+                    // The drain shares the per-table time quota with the apply loop: it gets at most
+                    // half of whatever quota is left, so a backlog of expensive commands (each squash
+                    // or parquet conversion can take seconds on a wide table) cannot monopolize an
+                    // apply worker shared with other WAL tables. Commands left undrained stay queued
+                    // for the next tick.
+                    // Draining is a side activity: the WAL transactions are already durably committed
+                    // above, so a drain failure must not fail WAL apply or suspend the table. Each
+                    // command's own failure is reported on its correlation channel inside
+                    // processAsyncWriterCommand; this catch only guards the rare infrastructure error
+                    // escaping the queue loop. Such an error leaves the writer in an unknown state, so
+                    // mark it distressed to force the pool to recreate it on the next acquisition. Only
+                    // Exceptions are swallowed here; Errors (OOM, StackOverflow, LinkageError) propagate
+                    // to the apply loop's existing failure handling.
+                    final long drainNow = microClock.getTicks();
+                    final long drainDeadline = drainNow + Math.max(0, (timeLimit - drainNow) / 2);
+                    try {
+                        writer.tick(false, drainDeadline);
+                    } catch (Exception ex) {
+                        LOG.error().$("error draining async command queue after WAL apply [table=")
+                                .$(writer.getTableToken()).$(", error=").$(ex).I$();
+                        writer.markDistressed();
                     }
                 } catch (EjectApplyWalException ex) {
                     finishedAll = false;
@@ -628,6 +682,10 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         WalTxnDetails txnDetails = writer.getWalTnxDetails();
         final byte walTxnType = txnDetails.getWalTxnType(seqTxn);
         final long start = microClock.getTicks();
+
+        // Reset per iteration: branches that don't internally reset (skip, no-op SQL, mat view
+        // invalidate, view def, truncate) would otherwise re-read the prior iter's count.
+        writer.resetWalApplyCounters();
 
         switch (walTxnType) {
             case DATA:
@@ -904,7 +962,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             @NotNull TableToken tableToken,
             CairoEngine engine,
             OperationExecutor operationExecutor,
-            Job.RunStatus runStatus
+            WorkerContext runStatus
     ) {
         final Path tempPath = Path.PATH.get();
         SeqTxnTracker txnTracker = null;
@@ -970,7 +1028,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     }
 
     @Override
-    protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
+    protected boolean doRun(long cursor, WorkerContext workerContext) {
         final TableToken tableToken;
         try {
             final WalTxnNotificationTask task = queue.get(cursor);
@@ -980,7 +1038,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             subSeq.done(cursor);
         }
 
-        applyWal(tableToken, engine, operationExecutor, runStatus);
+        applyWal(tableToken, engine, operationExecutor, workerContext);
         return true;
     }
 

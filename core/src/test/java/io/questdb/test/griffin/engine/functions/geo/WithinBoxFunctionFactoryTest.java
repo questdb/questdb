@@ -40,14 +40,13 @@ public class WithinBoxFunctionFactoryTest extends AbstractCairoTest {
             execute("insert into points values (5.0, 11.0)");
             execute("insert into points values (0.0, 0.0)");
 
-            assertSql(
-                    """
+            assertQuery("select x, y from points where within_box(x, y, 0.0, 0.0, 10.0, 10.0)")
+                    .noLeakCheck()
+                    .returns("""
                             x\ty
                             5.0\t5.0
                             0.0\t0.0
-                            """,
-                    "select x, y from points where within_box(x, y, 0.0, 0.0, 10.0, 10.0)"
-            );
+                            """);
         });
     }
 
@@ -55,56 +54,92 @@ public class WithinBoxFunctionFactoryTest extends AbstractCairoTest {
     public void testInfinity() throws Exception {
         // Note: QuestDB's division converts Infinity to NaN (see DivDoubleFunctionFactory),
         // so 1.0/0.0 produces NaN, not Infinity. These tests verify NaN handling.
-        assertSql("within_box\nfalse\n", "select within_box(1.0/0.0, 5.0, 0.0, 0.0, 10.0, 10.0)");
-        assertSql("within_box\nfalse\n", "select within_box(-1.0/0.0, 5.0, 0.0, 0.0, 10.0, 10.0)");
+        assertQuery("select within_box(1.0/0.0, 5.0, 0.0, 0.0, 10.0, 10.0)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("within_box\nfalse\n");
+        assertQuery("select within_box(-1.0/0.0, 5.0, 0.0, 0.0, 10.0, 10.0)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("within_box\nfalse\n");
     }
 
     @Test
     public void testInvertedBoxX() throws Exception {
         // min_x > max_x should return false
-        assertSql("within_box\nfalse\n", "select within_box(5.0, 5.0, 10.0, 0.0, 0.0, 10.0)");
+        assertQuery("select within_box(5.0, 5.0, 10.0, 0.0, 0.0, 10.0)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("within_box\nfalse\n");
     }
 
     @Test
     public void testInvertedBoxY() throws Exception {
         // min_y > max_y should return false
-        assertSql("within_box\nfalse\n", "select within_box(5.0, 5.0, 0.0, 10.0, 10.0, 0.0)");
+        assertQuery("select within_box(5.0, 5.0, 0.0, 10.0, 10.0, 0.0)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("within_box\nfalse\n");
     }
 
     @Test
     public void testNaNMaxX() throws Exception {
-        assertSql("within_box\nfalse\n", "select within_box(5.0, 5.0, 0.0, 0.0, NaN, 10.0)");
+        assertQuery("select within_box(5.0, 5.0, 0.0, 0.0, NaN, 10.0)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("within_box\nfalse\n");
     }
 
     @Test
     public void testNaNMaxY() throws Exception {
-        assertSql("within_box\nfalse\n", "select within_box(5.0, 5.0, 0.0, 0.0, 10.0, NaN)");
+        assertQuery("select within_box(5.0, 5.0, 0.0, 0.0, 10.0, NaN)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("within_box\nfalse\n");
     }
 
     @Test
     public void testNaNMinX() throws Exception {
-        assertSql("within_box\nfalse\n", "select within_box(5.0, 5.0, NaN, 0.0, 10.0, 10.0)");
+        assertQuery("select within_box(5.0, 5.0, NaN, 0.0, 10.0, 10.0)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("within_box\nfalse\n");
     }
 
     @Test
     public void testNaNMinY() throws Exception {
-        assertSql("within_box\nfalse\n", "select within_box(5.0, 5.0, 0.0, NaN, 10.0, 10.0)");
+        assertQuery("select within_box(5.0, 5.0, 0.0, NaN, 10.0, 10.0)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("within_box\nfalse\n");
     }
 
     @Test
     public void testNaNX() throws Exception {
-        assertSql("within_box\nfalse\n", "select within_box(NaN, 5.0, 0.0, 0.0, 10.0, 10.0)");
+        assertQuery("select within_box(NaN, 5.0, 0.0, 0.0, 10.0, 10.0)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("within_box\nfalse\n");
     }
 
     @Test
     public void testNaNY() throws Exception {
-        assertSql("within_box\nfalse\n", "select within_box(5.0, NaN, 0.0, 0.0, 10.0, 10.0)");
+        assertQuery("select within_box(5.0, NaN, 0.0, 0.0, 10.0, 10.0)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("within_box\nfalse\n");
     }
 
     @Test
     public void testNegativeCoordinates() throws Exception {
-        assertSql("within_box\ntrue\n", "select within_box(-5.0, -5.0, -10.0, -10.0, 0.0, 0.0)");
-        assertSql("within_box\nfalse\n", "select within_box(-15.0, -5.0, -10.0, -10.0, 0.0, 0.0)");
+        assertQuery("select within_box(-5.0, -5.0, -10.0, -10.0, 0.0, 0.0)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("within_box\ntrue\n");
+        assertQuery("select within_box(-15.0, -5.0, -10.0, -10.0, 0.0, 0.0)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("within_box\nfalse\n");
     }
 
     @Test
@@ -115,73 +150,116 @@ public class WithinBoxFunctionFactoryTest extends AbstractCairoTest {
             execute("insert into points values (5.0, 5.0)");
 
             // Query plan should show constant false (the function is optimized away)
-            assertSql(
-                    """
-                            QUERY PLAN
+            assertQuery("select * from points where within_box(x, y, 10.0, 0.0, 0.0, 10.0)")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Empty table
-                            """,
-                    "explain select * from points where within_box(x, y, 10.0, 0.0, 0.0, 10.0)"
-            );
+                            """);
         });
     }
 
     @Test
     public void testPointInsideBox() throws Exception {
-        assertSql("within_box\ntrue\n", "select within_box(5.0, 5.0, 0.0, 0.0, 10.0, 10.0)");
+        assertQuery("select within_box(5.0, 5.0, 0.0, 0.0, 10.0, 10.0)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("within_box\ntrue\n");
     }
 
     @Test
     public void testPointOnCorner() throws Exception {
-        assertSql("within_box\ntrue\n", "select within_box(0.0, 0.0, 0.0, 0.0, 10.0, 10.0)");
-        assertSql("within_box\ntrue\n", "select within_box(10.0, 10.0, 0.0, 0.0, 10.0, 10.0)");
-        assertSql("within_box\ntrue\n", "select within_box(0.0, 10.0, 0.0, 0.0, 10.0, 10.0)");
-        assertSql("within_box\ntrue\n", "select within_box(10.0, 0.0, 0.0, 0.0, 10.0, 10.0)");
+        assertQuery("select within_box(0.0, 0.0, 0.0, 0.0, 10.0, 10.0)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("within_box\ntrue\n");
+        assertQuery("select within_box(10.0, 10.0, 0.0, 0.0, 10.0, 10.0)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("within_box\ntrue\n");
+        assertQuery("select within_box(0.0, 10.0, 0.0, 0.0, 10.0, 10.0)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("within_box\ntrue\n");
+        assertQuery("select within_box(10.0, 0.0, 0.0, 0.0, 10.0, 10.0)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("within_box\ntrue\n");
     }
 
     @Test
     public void testPointOnMaxXBoundary() throws Exception {
-        assertSql("within_box\ntrue\n", "select within_box(10.0, 5.0, 0.0, 0.0, 10.0, 10.0)");
+        assertQuery("select within_box(10.0, 5.0, 0.0, 0.0, 10.0, 10.0)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("within_box\ntrue\n");
     }
 
     @Test
     public void testPointOnMaxYBoundary() throws Exception {
-        assertSql("within_box\ntrue\n", "select within_box(5.0, 10.0, 0.0, 0.0, 10.0, 10.0)");
+        assertQuery("select within_box(5.0, 10.0, 0.0, 0.0, 10.0, 10.0)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("within_box\ntrue\n");
     }
 
     @Test
     public void testPointOnMinXBoundary() throws Exception {
-        assertSql("within_box\ntrue\n", "select within_box(0.0, 5.0, 0.0, 0.0, 10.0, 10.0)");
+        assertQuery("select within_box(0.0, 5.0, 0.0, 0.0, 10.0, 10.0)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("within_box\ntrue\n");
     }
 
     @Test
     public void testPointOnMinYBoundary() throws Exception {
-        assertSql("within_box\ntrue\n", "select within_box(5.0, 0.0, 0.0, 0.0, 10.0, 10.0)");
+        assertQuery("select within_box(5.0, 0.0, 0.0, 0.0, 10.0, 10.0)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("within_box\ntrue\n");
     }
 
     @Test
     public void testPointOutsideBoxAbove() throws Exception {
-        assertSql("within_box\nfalse\n", "select within_box(5.0, 11.0, 0.0, 0.0, 10.0, 10.0)");
+        assertQuery("select within_box(5.0, 11.0, 0.0, 0.0, 10.0, 10.0)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("within_box\nfalse\n");
     }
 
     @Test
     public void testPointOutsideBoxBelow() throws Exception {
-        assertSql("within_box\nfalse\n", "select within_box(5.0, -1.0, 0.0, 0.0, 10.0, 10.0)");
+        assertQuery("select within_box(5.0, -1.0, 0.0, 0.0, 10.0, 10.0)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("within_box\nfalse\n");
     }
 
     @Test
     public void testPointOutsideBoxLeft() throws Exception {
-        assertSql("within_box\nfalse\n", "select within_box(-1.0, 5.0, 0.0, 0.0, 10.0, 10.0)");
+        assertQuery("select within_box(-1.0, 5.0, 0.0, 0.0, 10.0, 10.0)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("within_box\nfalse\n");
     }
 
     @Test
     public void testPointOutsideBoxRight() throws Exception {
-        assertSql("within_box\nfalse\n", "select within_box(11.0, 5.0, 0.0, 0.0, 10.0, 10.0)");
+        assertQuery("select within_box(11.0, 5.0, 0.0, 0.0, 10.0, 10.0)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("within_box\nfalse\n");
     }
 
     @Test
     public void testVerySmallDifferences() throws Exception {
-        assertSql("within_box\ntrue\n", "select within_box(1.0000000001, 1.0, 1.0, 1.0, 2.0, 2.0)");
-        assertSql("within_box\nfalse\n", "select within_box(0.9999999999, 1.0, 1.0, 1.0, 2.0, 2.0)");
+        assertQuery("select within_box(1.0000000001, 1.0, 1.0, 1.0, 2.0, 2.0)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("within_box\ntrue\n");
+        assertQuery("select within_box(0.9999999999, 1.0, 1.0, 1.0, 2.0, 2.0)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("within_box\nfalse\n");
     }
 
     @Test
@@ -192,15 +270,15 @@ public class WithinBoxFunctionFactoryTest extends AbstractCairoTest {
             execute("insert into points values (null, 5.0)");
             execute("insert into points values (5.0, null)");
 
-            assertSql(
-                    """
+            assertQuery("select x, y, within_box(x, y, 0.0, 0.0, 10.0, 10.0) as inside from points")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             x\ty\tinside
                             5.0\t5.0\ttrue
                             null\t5.0\tfalse
                             5.0\tnull\tfalse
-                            """,
-                    "select x, y, within_box(x, y, 0.0, 0.0, 10.0, 10.0) as inside from points"
-            );
+                            """);
         });
     }
 
@@ -213,25 +291,31 @@ public class WithinBoxFunctionFactoryTest extends AbstractCairoTest {
             execute("insert into points values (5.0, 11.0)");
             execute("insert into points values (0.0, 0.0)");
 
-            assertSql(
-                    """
+            assertQuery("select x, y, within_box(x, y, 0.0, 0.0, 10.0, 10.0) as inside from points")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             x\ty\tinside
                             5.0\t5.0\ttrue
                             -1.0\t5.0\tfalse
                             5.0\t11.0\tfalse
                             0.0\t0.0\ttrue
-                            """,
-                    "select x, y, within_box(x, y, 0.0, 0.0, 10.0, 10.0) as inside from points"
-            );
+                            """);
         });
     }
 
     @Test
     public void testZeroSizedBox() throws Exception {
         // Point exactly at zero-sized box location
-        assertSql("within_box\ntrue\n", "select within_box(5.0, 5.0, 5.0, 5.0, 5.0, 5.0)");
+        assertQuery("select within_box(5.0, 5.0, 5.0, 5.0, 5.0, 5.0)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("within_box\ntrue\n");
         // Point not at zero-sized box location
-        assertSql("within_box\nfalse\n", "select within_box(5.0, 5.0, 6.0, 6.0, 6.0, 6.0)");
+        assertQuery("select within_box(5.0, 5.0, 6.0, 6.0, 6.0, 6.0)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("within_box\nfalse\n");
     }
 
     @Test
@@ -242,21 +326,18 @@ public class WithinBoxFunctionFactoryTest extends AbstractCairoTest {
             execute("insert into points values (5.0, 5.0)");
 
             // Query plan should show constant false (the function is optimized away)
-            assertSql(
-                    """
-                            QUERY PLAN
+            assertQuery("select * from points where within_box(x, y, NaN, 0.0, 10.0, 10.0)")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Empty table
-                            """,
-                    "explain select * from points where within_box(x, y, NaN, 0.0, 10.0, 10.0)"
-            );
+                            """);
 
             // Should return no rows
-            assertSql(
-                    """
+            assertQuery("select * from points where within_box(x, y, NaN, 0.0, 10.0, 10.0)")
+                    .noLeakCheck()
+                    .returns("""
                             x\ty
-                            """,
-                    "select * from points where within_box(x, y, NaN, 0.0, 10.0, 10.0)"
-            );
+                            """);
         });
     }
 
@@ -267,17 +348,15 @@ public class WithinBoxFunctionFactoryTest extends AbstractCairoTest {
             execute("create table points (x double, y double)");
 
             // Plan should show constant box values, not function references
-            assertSql(
-                    """
-                            QUERY PLAN
+            assertQuery("select * from points where within_box(x, y, 0.0, 0.0, 10.0, 10.0)")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Async Filter workers: 1
                               filter: within_box(x,y,0.0,0.0,10.0,10.0)
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: points
-                            """,
-                    "explain select * from points where within_box(x, y, 0.0, 0.0, 10.0, 10.0)"
-            );
+                            """);
         });
     }
 
@@ -289,14 +368,14 @@ public class WithinBoxFunctionFactoryTest extends AbstractCairoTest {
             execute("insert into points values (5.0, 5.0, 0.0, 0.0, 10.0, 10.0)");
             execute("insert into points values (15.0, 5.0, 0.0, 0.0, 10.0, 10.0)");
 
-            assertSql(
-                    """
+            assertQuery("select *, within_box(x, y, minX, minY, maxX, maxY) as inside from points")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             x\ty\tminX\tminY\tmaxX\tmaxY\tinside
                             5.0\t5.0\t0.0\t0.0\t10.0\t10.0\ttrue
                             15.0\t5.0\t0.0\t0.0\t10.0\t10.0\tfalse
-                            """,
-                    "select *, within_box(x, y, minX, minY, maxX, maxY) as inside from points"
-            );
+                            """);
         });
     }
 
@@ -307,9 +386,15 @@ public class WithinBoxFunctionFactoryTest extends AbstractCairoTest {
         // Edge case: -0.0 on exact boundary returns false due to branchless bit comparison.
         // This is documented behavior - -0.0 has sign bit 1, making (x - minX) = -0.0 appear negative.
         // In practice, this edge case is extremely rare and acceptable for performance.
-        assertSql("within_box\nfalse\n", "select within_box(-0.0, 5.0, 0.0, 0.0, 10.0, 10.0)");
+        assertQuery("select within_box(-0.0, 5.0, 0.0, 0.0, 10.0, 10.0)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("within_box\nfalse\n");
         // -0.0 in box bounds works correctly when point is clearly inside
-        assertSql("within_box\ntrue\n", "select within_box(5.0, 5.0, -0.0, -0.0, 10.0, 10.0)");
+        assertQuery("select within_box(5.0, 5.0, -0.0, -0.0, 10.0, 10.0)")
+                .noLeakCheck()
+                .expectSize()
+                .returns("within_box\ntrue\n");
     }
 
     @Test
@@ -324,26 +409,23 @@ public class WithinBoxFunctionFactoryTest extends AbstractCairoTest {
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         // Query with within_box filter - box from (0,0) to (50,50)
                         String sql = "select count(*) from points where within_box(x, y, 0.0, 0.0, 50.0, 50.0)";
 
                         // Verify the query plan shows parallel execution
-                        TestUtils.assertSql(
-                                engine,
-                                sqlExecutionContext,
-                                "explain " + sql,
-                                sink,
-                                """
-                                        QUERY PLAN
+                        assertQuery(sql)
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .assertsPlan("""
                                         Count
                                             Async Filter workers: 4
                                               filter: within_box(x,y,0.0,0.0,50.0,50.0)
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: points
-                                        """
-                        );
+                                        """);
 
                         // Run query and verify results are consistent (run twice, compare)
                         TestUtils.assertSqlCursors(
@@ -372,7 +454,7 @@ public class WithinBoxFunctionFactoryTest extends AbstractCairoTest {
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         // Compare within_box result with equivalent manual bounds check
                         String geoWithinBoxQuery = "select count(*) from points where within_box(x, y, 0.0, 0.0, 50.0, 50.0)";
                         String manualBoundsQuery = "select count(*) from points where x >= 0.0 and x <= 50.0 and y >= 0.0 and y <= 50.0";
@@ -404,7 +486,7 @@ public class WithinBoxFunctionFactoryTest extends AbstractCairoTest {
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         String sql = "select count(*) from points where within_box(x, y, 0.0, 0.0, 50.0, 50.0)";
 
                         // Run query and verify results are consistent
@@ -440,19 +522,18 @@ public class WithinBoxFunctionFactoryTest extends AbstractCairoTest {
             execute("insert into points values ('p5', 0.0, 0.0)");     // on zone_a boundary
 
             // Join points with zones using within_box
-            assertSql(
-                    """
+            assertQuery("select p.point_id, p.x, p.y, z.zone_name " +
+                    "from points p " +
+                    "join zones z on within_box(p.x, p.y, z.min_x, z.min_y, z.max_x, z.max_y) " +
+                    "order by p.point_id")
+                    .noLeakCheck()
+                    .returns("""
                             point_id\tx\ty\tzone_name
                             p1\t5.0\t5.0\tzone_a
                             p2\t25.0\t25.0\tzone_b
                             p3\t-7.0\t-7.0\tzone_c
                             p5\t0.0\t0.0\tzone_a
-                            """,
-                    "select p.point_id, p.x, p.y, z.zone_name " +
-                            "from points p " +
-                            "join zones z on within_box(p.x, p.y, z.min_x, z.min_y, z.max_x, z.max_y) " +
-                            "order by p.point_id"
-            );
+                            """);
         });
     }
 
@@ -471,19 +552,18 @@ public class WithinBoxFunctionFactoryTest extends AbstractCairoTest {
             execute("insert into points values ('p3', 50.0, 50.0)");   // on boundary (in both due to inclusive)
 
             // Cross join with filter - point on boundary should appear in both zones
-            assertSql(
-                    """
+            assertQuery("select p.point_id, z.zone_name " +
+                    "from points p, zones z " +
+                    "where within_box(p.x, p.y, z.min_x, z.min_y, z.max_x, z.max_y) " +
+                    "order by p.point_id, z.zone_name")
+                    .noLeakCheck()
+                    .returns("""
                             point_id\tzone_name
                             p1\tnorth
                             p2\tsouth
                             p3\tnorth
                             p3\tsouth
-                            """,
-                    "select p.point_id, z.zone_name " +
-                            "from points p, zones z " +
-                            "where within_box(p.x, p.y, z.min_x, z.min_y, z.max_x, z.max_y) " +
-                            "order by p.point_id, z.zone_name"
-            );
+                            """);
         });
     }
 
@@ -500,17 +580,16 @@ public class WithinBoxFunctionFactoryTest extends AbstractCairoTest {
             execute("insert into points values ('outside', 50.0, 50.0)");
 
             // Left join to see which points have matching zones
-            assertSql(
-                    """
+            assertQuery("select p.point_id, z.zone_name " +
+                    "from points p " +
+                    "left join zones z on within_box(p.x, p.y, z.min_x, z.min_y, z.max_x, z.max_y) " +
+                    "order by p.point_id")
+                    .noLeakCheck()
+                    .returns("""
                             point_id\tzone_name
                             inside\tzone_a
                             outside\t
-                            """,
-                    "select p.point_id, z.zone_name " +
-                            "from points p " +
-                            "left join zones z on within_box(p.x, p.y, z.min_x, z.min_y, z.max_x, z.max_y) " +
-                            "order by p.point_id"
-            );
+                            """);
         });
     }
 }

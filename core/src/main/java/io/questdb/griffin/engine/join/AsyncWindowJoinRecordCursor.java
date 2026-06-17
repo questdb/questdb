@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
@@ -48,6 +49,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
+import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import org.jetbrains.annotations.NotNull;
@@ -301,6 +303,11 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
             collectCursor(true);
             masterFrameSequence.await();
         }
+        // calculateSize() must leave the cursor exhausted so that a following hasNext()
+        // returns false. The no-filter path counts frame row counts from metadata without
+        // dispatching every frame, so advance the cursor state past the last frame here.
+        frameIndex = frameLimit;
+        frameRowIndex = frameRowCount;
     }
 
     private void collectCursor(boolean forceCollect) {
@@ -337,12 +344,7 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
                             .I$();
 
                     if (task.hasError()) {
-                        throw CairoException.nonCritical()
-                                .position(task.getErrorMessagePosition())
-                                .put(task.getErrorMsg())
-                                .setCancellation(task.isCancelled())
-                                .setInterruption(task.isCancelled())
-                                .setOutOfMemory(task.isOutOfMemory());
+                        throw task.buildError();
                     }
 
                     allFramesActive &= masterFrameSequence.isActive();
@@ -377,6 +379,11 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
                 }
             }
             LOG.error().$("filter error [ex=").$(th).I$();
+            // Preserve typed user-facing errors (ImplicitCastException / NumericException)
+            // raised via task.buildError() so the caller can recognise them.
+            if (th instanceof ImplicitCastException || th instanceof NumericException) {
+                throw (RuntimeException) th;
+            }
             throw CairoException.nonCritical().put(th.getMessage());
         }
     }

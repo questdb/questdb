@@ -39,23 +39,23 @@ public class MaxFloatGroupByFunctionTest extends AbstractCairoTest {
             tm.timestamp("ts").col("ch", ColumnType.FLOAT);
             createPopulateTable(tm, 100, "2020-01-01", 2);
 
-            assertSql(
-                    """
+            assertQuery("select ts, min(ch), max(ch), first(ch), last(ch), count() from tab sample by 1m FILL(LINEAR) align to first observation LIMIT 2")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tmin\tmax\tfirst\tlast\tcount
                             2020-01-01T00:28:47.990000Z\t0.001\t0.001\t0.001\t0.001\t1
                             2020-01-01T00:29:47.990000Z\t0.0010357143\t0.0010357143\t0.0010357143\t0.0010357143\t1
-                            """,
-                    "select ts, min(ch), max(ch), first(ch), last(ch), count() from tab sample by 1m FILL(LINEAR) align to first observation LIMIT 2"
-            );
+                            """);
 
-            assertSql(
-                    """
+            assertQuery("select ts, min(ch), max(ch), first(ch), last(ch), count() from tab sample by 1m FILL(LINEAR) align to calendar LIMIT 2")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tmin\tmax\tfirst\tlast\tcount
                             2020-01-01T00:28:00.000000Z\t0.001\t0.001\t0.001\t0.001\t1
                             2020-01-01T00:29:00.000000Z\t0.0010344828\t0.0010344828\t0.0010344828\t0.0010344828\t1
-                            """,
-                    "select ts, min(ch), max(ch), first(ch), last(ch), count() from tab sample by 1m FILL(LINEAR) align to calendar LIMIT 2"
-            );
+                            """);
         });
     }
 }

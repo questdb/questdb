@@ -721,6 +721,16 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             throw msgKaput().put("received a Bind message without a matching Parse");
         }
 
+        if (pipelineCurrentEntry.isSuspended()) {
+            // Symmetric to the pre-lookup check above. The lookup may have re-introduced
+            // a named entry whose cursor was retained from a previous suspended Execute
+            // (e.g., a Close-S of an unrelated statement landed in between, intentionally
+            // preserving the suspended cursor; an intervening Sync then nulled
+            // pipelineCurrentEntry, so the pre-lookup guard could not see it). A new
+            // Bind always starts a fresh execution, so the prior cursor must be freed.
+            pipelineCurrentEntry.closeSuspendedCursor();
+        }
+
         pipelineCurrentEntry.setStateBind(true);
 
         // "bind" is asking us to create portal. We take the conservative approach and assume
@@ -1646,6 +1656,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     private class ResponseUtf8Sink implements PGResponseSink, Mutable {
         private long bookmarkPtr = -1;
+        private int[] ryuE10;
 
         public ResponseUtf8Sink() {
         }
@@ -1866,6 +1877,14 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         public void resetToBookmark(long address) {
             sendBufferPtr = address;
             bookmarkPtr = -1;
+        }
+
+        @Override
+        public int[] ryuScratch() {
+            if (ryuE10 == null) {
+                ryuE10 = new int[1];
+            }
+            return ryuE10;
         }
 
         @Override

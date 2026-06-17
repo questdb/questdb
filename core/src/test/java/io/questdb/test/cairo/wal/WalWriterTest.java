@@ -111,6 +111,7 @@ import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 
 import java.io.File;
@@ -161,12 +162,14 @@ public class WalWriterTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertSqlCursors("sm", "select * from sm order by id");
-            assertSql(
-                    """
+            assertQuery("select count(*), min(ts), max(ts) from sm")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
                             count\tmin\tmax
                             2\t2022-02-24T00:00:00.000000Z\t2022-02-24T00:00:00.000000Z
-                            """, "select count(*), min(ts), max(ts) from sm"
-            );
+                            """);
         });
     }
 
@@ -337,6 +340,9 @@ public class WalWriterTest extends AbstractCairoTest {
 
     @Test
     public void testAddColumnsRollLargeSegment() throws Exception {
+        // The bug this guards is a Java int overflow (platform-independent); writing >2GB is
+        // very slow on the hosted Mac and Windows runners, so run on Linux only.
+        Assume.assumeTrue(Os.isLinux());
         assertMemoryLeak(() -> {
             // This test reproduces a bug where rolling a large segment file sized over 2GB
             // resulted in int overflow and commit exception.
@@ -932,12 +938,14 @@ public class WalWriterTest extends AbstractCairoTest {
 
             drainWalQueue();
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
-            assertSql(
-                    """
+            assertQuery(tableToken.getTableName())
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             a\tb\tts\ti2
                             0\t\t2022-02-24T00:00:00.000000Z\t2
-                            """, tableToken.getTableName()
-            );
+                            """);
         });
     }
 
@@ -951,12 +959,14 @@ public class WalWriterTest extends AbstractCairoTest {
 
             drainWalQueue();
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
-            assertSql(
-                    """
+            assertQuery(tableToken.getTableName())
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             a\tb\tts\ti2
                             0\t\t2022-02-24T00:00:00.000000Z\t2
-                            """, tableToken.getTableName()
-            );
+                            """);
         });
     }
 
@@ -975,12 +985,14 @@ public class WalWriterTest extends AbstractCairoTest {
 
             drainWalQueue();
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
-            assertSql(
-                    """
+            assertQuery(tableToken.getTableName())
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             a\tb\tts\tsym2\ti2
                             0\t\t2022-02-24T00:00:00.000000Z\t\t2
-                            """, tableToken.getTableName()
-            );
+                            """);
         });
     }
 
@@ -1001,12 +1013,14 @@ public class WalWriterTest extends AbstractCairoTest {
             drainWalQueue();
 
 
-            assertSql(
-                    """
+            assertQuery(tableToken.getTableName())
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             a\tb\tts\tc
                             1\t\t1970-01-01T00:00:00.000000Z\tnull
-                            """, tableToken.getTableName()
-            );
+                            """);
         });
     }
 
@@ -1083,6 +1097,33 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testApplyMakesProgressWithZeroTimeQuota() throws Exception {
+        // With the apply time quota set to zero, every WAL apply pass enters with a
+        // deadline at "now": the lookahead's do-while exits after a single small batch,
+        // and the apply loop's main while-condition fails after the firstRun txn. Despite
+        // both budgets being immediately exhausted, the firstRun guard plus repeated
+        // job invocations must still drain the entire backlog correctly.
+        node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 0);
+        node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, 1);
+
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            execute("CREATE TABLE " + tableName + " (val INT, ts TIMESTAMP)" +
+                    " TIMESTAMP(ts) PARTITION BY DAY WAL");
+            for (int i = 0; i < 20; i++) {
+                execute("INSERT INTO " + tableName + " VALUES (" + i +
+                        ", '2024-01-01T00:00:" + String.format("%02d", i) + ".000000Z')");
+            }
+            drainWalQueue();
+            assertQuery("SELECT count(*) FROM " + tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n20\n");
+        });
+    }
+
+    @Test
     public void testApplyManySmallCommits2Writers() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table sm (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
@@ -1139,14 +1180,25 @@ public class WalWriterTest extends AbstractCairoTest {
 
                     drainWalQueue();
                     Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
-                    assertSql(
-                            "count\tmin\tmax\n" +
-                                    (c + 1) * totalRows + "\t2022-02-24T00:00:00.000000Z\t" + Micros.toUSecString(ts - tsIncrement) + "\n", "select count(*), min(ts), max(ts) from sm"
-                    );
+                    assertQuery("select count(*), min(ts), max(ts) from sm")
+                            .noLeakCheck()
+                            .expectSize()
+                            .noRandomAccess()
+                            .returns("count\tmin\tmax\n" +
+                                    (c + 1) * totalRows + "\t2022-02-24T00:00:00.000000Z\t" + Micros.toUSecString(ts - tsIncrement) + "\n");
                     assertSqlCursors("sm", "select * from sm order by id");
-                    assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id <> cast(s as int)");
-                    assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id <> cast(v as int)");
-                    assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id % " + symbolCount + " <> cast(m as int)");
+                    assertQuery("select * from sm WHERE id <> cast(s as int)")
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .returns("id\tts\ty\ts\tv\tm\n");
+                    assertQuery("select * from sm WHERE id <> cast(v as int)")
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .returns("id\tts\ty\ts\tv\tm\n");
+                    assertQuery("select * from sm WHERE id % " + symbolCount + " <> cast(m as int)")
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .returns("id\tts\ty\ts\tv\tm\n");
                 }
             }
         });
@@ -1250,10 +1302,11 @@ public class WalWriterTest extends AbstractCairoTest {
 
             // Verify total row count
             long expectedRows = (long) batches * batchSize + 1;
-            assertSql(
-                    "count\n" + expectedRows + "\n",
-                    "SELECT count() FROM " + tableName
-            );
+            assertQuery("SELECT count() FROM " + tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n" + expectedRows + "\n");
 
             // With the fix, each batch should need very few allocate calls
             // (page-sized extends). Without the fix, each batch would produce
@@ -1290,11 +1343,12 @@ public class WalWriterTest extends AbstractCairoTest {
                     " FROM long_sequence(10)");
             drainWalQueue();
 
-            assertSql(
-                    "count\n21\n",
-                    "SELECT count() FROM " + tableName
-            );
-            assertBitmapIndexMaxValue(tableName, "2022-01-01", "sym", 19);
+            assertQuery("SELECT count() FROM " + tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n21\n");
+            assertBitmapIndexMaxValue(tableName);
         });
     }
 
@@ -1832,9 +1886,11 @@ public class WalWriterTest extends AbstractCairoTest {
             public long getPageSize() {
                 RuntimeException e = new RuntimeException("Test failure");
                 e.fillInStackTrace();
-                final StackTraceElement[] stackTrace = e.getStackTrace();
-                if (stackTrace[4].getClassName().endsWith("TableSequencerImpl")) {
-                    throw e;
+                for (StackTraceElement frame : e.getStackTrace()) {
+                    if ("io.questdb.cairo.wal.seq.SequencerMetadata".equals(frame.getClassName())
+                            && "openTableSequencerMetadata".equals(frame.getMethodName())) {
+                        throw e;
+                    }
                 }
                 return Files.PAGE_SIZE;
             }
@@ -1914,7 +1970,10 @@ public class WalWriterTest extends AbstractCairoTest {
             drainWalQueue();
 
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
-            assertSql(expected, "select a,b from " + tableName);
+            assertQuery("select a,b from " + tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
 
             // mix with new format
             final String tableName1 = "testExtractNewWalEvents";
@@ -1925,7 +1984,10 @@ public class WalWriterTest extends AbstractCairoTest {
             drainWalQueue();
 
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken1));
-            assertSql(expected, "select a,b from " + tableName1);
+            assertQuery("select a,b from " + tableName1)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -1947,6 +2009,93 @@ public class WalWriterTest extends AbstractCairoTest {
                 Assert.assertFalse(e.isTableDropped());
                 TestUtils.assertContains(e.getFlyweightMessage(), "could not open read-write");
             }
+        });
+    }
+
+    @Test
+    public void testFormatParquetBornParquetPartitionKeepsColumnTopValues() throws Exception {
+        // On a FORMAT PARQUET table, an earlier partition created by a single batched
+        // WAL apply is born parquet in one commit. Columns added after table creation
+        // must keep their values; the bug read them back as NULL once decoded to
+        // native. The split-apply variant below is the control.
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            execute("CREATE TABLE " + tableName + " (x LONG, s SYMBOL, ts TIMESTAMP) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            execute("INSERT INTO " + tableName + " (x, s, ts) SELECT x, rnd_symbol('a','b'), " +
+                    "timestamp_sequence('2022-02-25T05:00:00.000000Z', 1_000_000L) FROM long_sequence(1000)");
+            drainWalQueue();
+
+            // new_i/new_s get a columnTop on the existing 2022-02-25 partition.
+            execute("ALTER TABLE " + tableName + " ADD COLUMN new_i INT");
+            execute("ALTER TABLE " + tableName + " ADD COLUMN new_s SYMBOL");
+
+            execute("ALTER TABLE " + tableName + " SET FORMAT PARQUET");
+            execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET WHERE ts >= '2022-02-25T00:00:00.000000Z'");
+            drainWalQueue();
+
+            // No drain between the inserts so they apply as one block: the earlier
+            // 2022-02-24 partition is born parquet in a single commit.
+            execute("INSERT INTO " + tableName + " (x, s, new_i, new_s, ts) SELECT 100+x, 'b', x::int, 'z2', " +
+                    "timestamp_sequence('2022-02-24T17:54:46.000000Z', 1_000_000L) FROM long_sequence(523)");
+            execute("INSERT INTO " + tableName + " (x, s, new_i, new_s, ts) VALUES " +
+                    "(1, 'a', -607368144, 'z1', '2022-02-24T16:58:10.458430Z')");
+            execute("INSERT INTO " + tableName + " (x, s, new_i, new_s, ts) SELECT 1000+x, 'a', x::int, 'z3', " +
+                    "timestamp_sequence('2022-02-24T18:30:00.000000Z', 1_000_000L) FROM long_sequence(500)");
+            drainWalQueue();
+
+            execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO NATIVE WHERE ts < '2022-02-25T00:00:00.000000Z'");
+            drainWalQueue();
+
+            assertQuery("SELECT * FROM " + tableName + " WHERE ts = '2022-02-24T16:58:10.458430Z'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("x\ts\tts\tnew_i\tnew_s\n" +
+                            "1\ta\t2022-02-24T16:58:10.458430Z\t-607368144\tz1\n");
+        });
+    }
+
+    @Test
+    public void testFormatParquetSplitApplyKeepsColumnTopValues() throws Exception {
+        // Same as testFormatParquetBornParquetPartitionKeepsColumnTopValues, but the
+        // inserts are drained one at a time, so 2022-02-24 is created then O3-merged
+        // rather than born parquet in one block. This path was always correct;
+        // it isolates the trigger to the batched apply.
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            execute("CREATE TABLE " + tableName + " (x LONG, s SYMBOL, ts TIMESTAMP) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            execute("INSERT INTO " + tableName + " (x, s, ts) SELECT x, rnd_symbol('a','b'), " +
+                    "timestamp_sequence('2022-02-25T05:00:00.000000Z', 1_000_000L) FROM long_sequence(1000)");
+            drainWalQueue();
+
+            execute("ALTER TABLE " + tableName + " ADD COLUMN new_i INT");
+            execute("ALTER TABLE " + tableName + " ADD COLUMN new_s SYMBOL");
+
+            execute("ALTER TABLE " + tableName + " SET FORMAT PARQUET");
+            execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET WHERE ts >= '2022-02-25T00:00:00.000000Z'");
+            drainWalQueue();
+
+            execute("INSERT INTO " + tableName + " (x, s, new_i, new_s, ts) SELECT 100+x, 'b', x::int, 'z2', " +
+                    "timestamp_sequence('2022-02-24T17:54:46.000000Z', 1_000_000L) FROM long_sequence(523)");
+            drainWalQueue();
+            execute("INSERT INTO " + tableName + " (x, s, new_i, new_s, ts) VALUES " +
+                    "(1, 'a', -607368144, 'z1', '2022-02-24T16:58:10.458430Z')");
+            drainWalQueue();
+            execute("INSERT INTO " + tableName + " (x, s, new_i, new_s, ts) SELECT 1000+x, 'a', x::int, 'z3', " +
+                    "timestamp_sequence('2022-02-24T18:30:00.000000Z', 1_000_000L) FROM long_sequence(500)");
+            drainWalQueue();
+
+            execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO NATIVE WHERE ts < '2022-02-25T00:00:00.000000Z'");
+            drainWalQueue();
+
+            assertQuery("SELECT * FROM " + tableName + " WHERE ts = '2022-02-24T16:58:10.458430Z'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("x\ts\tts\tnew_i\tnew_s\n" +
+                            "1\ta\t2022-02-24T16:58:10.458430Z\t-607368144\tz1\n");
         });
     }
 
@@ -2181,13 +2330,14 @@ public class WalWriterTest extends AbstractCairoTest {
             execute("insert into " + tableToken.getTableName() + "(ts) values ('2023-08-04T23:00:00.000000Z')");
             tickWalQueue(1);
 
-            assertSql(
-                    """
+            assertQuery(tableToken.getTableName())
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             a\tb\tts
                             0\t\t2023-08-04T23:00:00.000000Z
-                            """,
-                    tableToken.getTableName()
-            );
+                            """);
 
             execute("insert into " + tableToken.getTableName() + "(ts) values ('2023-08-04T22:00:00.000000Z')");
             execute("insert into " + tableToken.getTableName() + "(ts) values ('2023-08-04T21:00:00.000000Z')");
@@ -2203,28 +2353,30 @@ public class WalWriterTest extends AbstractCairoTest {
             tickWalQueue(2);
 
             // We expect all, but the last row to be visible.
-            assertSql(
-                    """
+            assertQuery(tableToken.getTableName())
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             a\tb\tts
                             0\t\t2023-08-04T21:00:00.000000Z
                             0\t\t2023-08-04T22:00:00.000000Z
                             0\t\t2023-08-04T23:00:00.000000Z
-                            """,
-                    tableToken.getTableName()
-            );
+                            """);
 
             drainWalQueue();
 
-            assertSql(
-                    """
+            assertQuery(tableToken.getTableName())
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             a\tb\tts
                             0\t\t2023-08-04T20:00:00.000000Z
                             0\t\t2023-08-04T21:00:00.000000Z
                             0\t\t2023-08-04T22:00:00.000000Z
                             0\t\t2023-08-04T23:00:00.000000Z
-                            """,
-                    tableToken.getTableName()
-            );
+                            """);
         });
     }
 
@@ -2402,7 +2554,7 @@ public class WalWriterTest extends AbstractCairoTest {
                             assertExceptionNoLeakCheck("Exception expected");
                         } catch (Exception e) {
                             // this exception will be handled in ILP/PG/HTTP
-                            assertEquals("[0] expected to read table structure changes but there is no saved in the sequencer [structureVersionLo=0]", e.getMessage());
+                            assertEquals("[0] expected to read table structure changes but there is none saved in the sequencer [structureVersionLo=0]", e.getMessage());
                         }
                     }
                 }
@@ -2770,6 +2922,52 @@ public class WalWriterTest extends AbstractCairoTest {
     @Test
     public void testReadMatViewStateV2() throws Exception {
         assertMemoryLeak(() -> testReadMatViewState(2));
+    }
+
+    @Test
+    public void testReadWalTxnDetailsBoundedByDeadline() throws Exception {
+        // The lookahead pre-read in WalTxnDetails.readObservableTxnMeta normally tries
+        // to fill the row budget by re-iterating loadTransactionDetails until it reaches
+        // maxLookaheadRows or runs out of sequencer transactions. For tables with very
+        // small commits this can spin for a long time on a large backlog, holding up
+        // the apply worker before any commit happens. The deadline parameter caps how
+        // much wall-clock time the lookahead loop is allowed to spend.
+        final int batchSize = 3;
+        final int totalTxns = 20;
+        node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, batchSize);
+
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            execute("CREATE TABLE " + tableName + " (val INT, ts TIMESTAMP)" +
+                    " TIMESTAMP(ts) PARTITION BY DAY WAL");
+            TableToken tableToken = engine.verifyTableName(tableName);
+
+            for (int i = 0; i < totalTxns; i++) {
+                execute("INSERT INTO " + tableName + " VALUES (" + i +
+                        ", '2024-01-01T00:00:" + String.format("%02d", i) + ".000000Z')");
+            }
+
+            // Freeze the test clock so the deadline check is fully deterministic.
+            setCurrentMicros(1_000_000L);
+            try (TableWriter writer = getWriter(tableToken)) {
+                long applied = writer.getAppliedSeqTxn();
+
+                // Deadline already at "now" so the do-while runs exactly one iteration of
+                // size CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT and then bails out.
+                try (TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(
+                        tableToken, applied)) {
+                    writer.readWalTxnDetails(cursor, currentMicros);
+                }
+                Assert.assertEquals(applied + batchSize, writer.getWalTnxDetails().getLastSeqTxn());
+
+                // No deadline. The remaining txns load on top of the already-loaded prefix.
+                try (TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(
+                        tableToken, applied)) {
+                    writer.readWalTxnDetails(cursor, Long.MAX_VALUE);
+                }
+                Assert.assertEquals(applied + totalTxns, writer.getWalTnxDetails().getLastSeqTxn());
+            }
+        });
     }
 
     @Test
@@ -3943,7 +4141,11 @@ public class WalWriterTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            assertSql("count\n10\n", "select count() from " + tableName);
+            assertQuery("select count() from " + tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n10\n");
             ff.close(fd);
 
             Assert.assertEquals(1, fdOpenCount.get());
@@ -4172,13 +4374,14 @@ public class WalWriterTest extends AbstractCairoTest {
             drainWalQueue();
 
             // Verify data
-            assertSql(
-                    """
+            assertQuery("select * from " + tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             s\tvalue\tts
                             reused_symbol\t200\t1970-01-01T00:00:02.000000Z
-                            """,
-                    "select * from " + tableName
-            );
+                            """);
 
             // Check symbol table - only one symbol should exist (reused from cache)
             try (TableReader reader = getReader(tableName)) {
@@ -4228,13 +4431,14 @@ public class WalWriterTest extends AbstractCairoTest {
             drainWalQueue();
 
             // Verify data
-            assertSql(
-                    """
+            assertQuery("select * from " + tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             s\tvalue\tts
                             real_symbol\t999\t1970-01-01T00:01:40.000000Z
-                            """,
-                    "select * from " + tableName
-            );
+                            """);
 
             // Check symbol table - all 11 symbols should exist (10 cancelled + 1 committed)
             try (TableReader reader = getReader(tableName)) {
@@ -4295,13 +4499,14 @@ public class WalWriterTest extends AbstractCairoTest {
             drainWalQueue();
 
             // Query the data - what do we get?
-            assertSql(
-                    """
+            assertQuery("select * from " + tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             s\tvalue\tts
                             sym_committed\t200\t1970-01-01T00:00:02.000000Z
-                            """,
-                    "select * from " + tableName
-            );
+                            """);
 
             // Check symbol table - both symbols should exist (cancelled + committed)
             try (TableReader reader = getReader(tableName)) {
@@ -4657,16 +4862,17 @@ public class WalWriterTest extends AbstractCairoTest {
 
             // Drain and verify data correctness.
             drainWalQueue();
-            assertSql(
-                    """
+            assertQuery(tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             val\tts
                             2\t2022-02-26T20:00:00.000000Z
                             3\t2022-02-26T21:00:00.000000Z
                             4\t2022-02-27T06:00:00.000000Z
                             5\t2022-02-27T07:00:00.000000Z
-                            """,
-                    tableName
-            );
+                            """);
         });
     }
 
@@ -4755,12 +4961,14 @@ public class WalWriterTest extends AbstractCairoTest {
 
                     drainWalQueue();
 
-                    assertSql(
-                            """
+                    assertQuery(tableName)
+                            .noLeakCheck()
+                            .expectSize()
+                            .timestamp("ts")
+                            .returns("""
                                     a\tb\tts
                                     1\t\t1970-01-01T00:00:00.000000Z
-                                    """, tableName
-                    );
+                                    """);
                 }
         );
     }
@@ -4854,12 +5062,14 @@ public class WalWriterTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            assertSql(
-                    """
+            assertQuery(tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             a\tb\tts
                             1\t\t1970-01-01T00:00:00.000000Z
-                            """, tableName
-            );
+                            """);
         });
     }
 
@@ -5177,15 +5387,15 @@ public class WalWriterTest extends AbstractCairoTest {
         }
     }
 
-    private void assertBitmapIndexMaxValue(String tableName, CharSequence partitionName, CharSequence columnName, long expectedMaxValue) {
+    private void assertBitmapIndexMaxValue(String tableName) {
         try (
                 Path path = new Path().of(configuration.getDbRoot())
                         .concat(engine.verifyTableName(tableName))
-                        .concat(partitionName);
+                        .concat("2022-01-01");
                 MemoryCMR keyMem = Vm.getCMRInstance()
         ) {
             final FilesFacade ff = configuration.getFilesFacade();
-            final LPSZ keyPath = path.concat(columnName).put(".k").$();
+            final LPSZ keyPath = path.concat("sym").put(".k").$();
             keyMem.of(
                     ff,
                     keyPath,
@@ -5197,7 +5407,7 @@ public class WalWriterTest extends AbstractCairoTest {
             );
             assertEquals(
                     "bitmap index max row must be inclusive",
-                    expectedMaxValue,
+                    19,
                     keyMem.getLong(BITMAP_INDEX_MAX_VALUE_OFFSET)
             );
         }
@@ -5384,14 +5594,25 @@ public class WalWriterTest extends AbstractCairoTest {
             }
 
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
-            assertSql(
-                    "count\tmin\tmax\n" +
-                            totalRows + "\t2022-02-24T00:00:00.000000Z\t" + Micros.toUSecString(ts - tsStep) + "\n", "select count(*), min(ts), max(ts) from sm"
-            );
+            assertQuery("select count(*), min(ts), max(ts) from sm")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\tmin\tmax\n" +
+                            totalRows + "\t2022-02-24T00:00:00.000000Z\t" + Micros.toUSecString(ts - tsStep) + "\n");
             assertSqlCursors("sm", "select * from sm order by id");
-            assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id <> cast(s as int)");
-            assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id <> cast(v as int)");
-            assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id % " + symbolCount + " <> cast(m as int)");
+            assertQuery("select * from sm WHERE id <> cast(s as int)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("id\tts\ty\ts\tv\tm\n");
+            assertQuery("select * from sm WHERE id <> cast(v as int)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("id\tts\ty\ts\tv\tm\n");
+            assertQuery("select * from sm WHERE id % " + symbolCount + " <> cast(m as int)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("id\tts\ty\ts\tv\tm\n");
 
             Assert.assertTrue(engine.getTableSequencerAPI().getTxnTracker(tableToken).getMemPressureControl().getMaxBlockRowCount() > 1000);
 

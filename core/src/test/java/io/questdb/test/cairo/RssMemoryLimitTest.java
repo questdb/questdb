@@ -24,11 +24,14 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.log.LogFactory;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Os;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
@@ -45,7 +48,7 @@ public class RssMemoryLimitTest extends AbstractCairoTest {
 
     @Override
     public void setUp() {
-        LogFactory.enableGuaranteedLogging(QueryProgress.class);
+        LogFactory.enableGuaranteedLogging(QueryProgress.class, ApplyWal2TableJob.class);
         super.setUp();
         capture.start();
     }
@@ -54,7 +57,7 @@ public class RssMemoryLimitTest extends AbstractCairoTest {
     public void tearDown() throws Exception {
         capture.stop();
         super.tearDown();
-        LogFactory.disableGuaranteedLogging(QueryProgress.class);
+        LogFactory.disableGuaranteedLogging(QueryProgress.class, ApplyWal2TableJob.class);
     }
 
     @Test
@@ -79,7 +82,9 @@ public class RssMemoryLimitTest extends AbstractCairoTest {
     public void testLargeTxEventuallySucceeds() throws Exception {
         long limitMiB = 60;
         assertMemoryLeak(limitMiB, () -> {
-            int batchCount = 10;
+            // fewer transactions on slow CI runners (Mac, Windows); the workload below still triggers
+            // memory pressure during WAL apply, which the easing-up log assertion at the end verifies
+            int batchCount = Os.isLinux() ? 10 : 4;
             int batchSize = 500_000;
 
             execute("create table x (ts timestamp, i int, l long, d double, vch varchar) timestamp(ts) partition by day wal;");
@@ -101,16 +106,22 @@ public class RssMemoryLimitTest extends AbstractCairoTest {
                 assertTrue(engine.getTableSequencerAPI().getTxnTracker(tt).getMemPressureControl().isReadyToProcess());
 
                 try {
-                    // cannot use assertQuery, because it clears CairoEngine - this clears all seqTxnTrackers
-                    // and we lose information about memory pressure
-                    assertQueryFullFatNoLeakCheck("count\n" +
-                                    expectedRowCount + "\n",
-                            "select count() from x", null, false, true, false);
+                    // .noLeakCheck() keeps CairoEngine intact - the leak-checked path would clear it and
+                    // with it all seqTxnTrackers, losing the memory-pressure information this test asserts
+                    assertQuery("select count() from x")
+                            .noRandomAccess()
+                            .expectSize()
+                            .noLeakCheck()
+                            .returns("count\n" + expectedRowCount + "\n");
                 } catch (Exception e) {
                     throw new RuntimeException(e);
                 }
             }, 600);
 
+            // The reduced workload must still exercise the memory pressure/recovery path; otherwise the
+            // test passes trivially. The apply job logs this line only after recovering from a pressure
+            // episode (onEnoughMemory() returns true), so its presence proves pressure was triggered.
+            capture.waitForRegex("table writing memory pressure is easing up \\[table=");
         });
     }
 
@@ -150,6 +161,48 @@ public class RssMemoryLimitTest extends AbstractCairoTest {
                 drainWalQueue();
                 assertTableSuspended();
             }, 600);
+        });
+    }
+
+    /**
+     * End-to-end check that ALTER TABLE ... ADD INDEX TYPE POSTING on a
+     * large partition does not OOM under a tight RSS limit. Without the
+     * spill back-pressure introduced alongside this test, a 200_000 row
+     * partition with a small spill budget would accumulate the entire
+     * partition's row IDs in anonymous heap before the seal, blowing the
+     * RSS_MEM_LIMIT during spillKey's per-key buffer doubling. With the
+     * back-pressure, mid-stream flushes drain into mmap'd .pv files and
+     * the indexing run completes within budget. Queries against the
+     * index must still return correct row counts after the alter.
+     */
+    @Test
+    public void testAlterAddPostingIndexUnderRssLimit() throws Exception {
+        // 1 MiB spill budget forces the periodic flush to fire repeatedly
+        // during ALTER ADD INDEX. The default budget would absorb the
+        // whole 200_000-row partition and never fire.
+        node1.getConfigurationOverrides().setProperty(
+                PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 1024L * 1024L);
+        // 96 MiB RSS limit: large enough for create+insert and the post-fix
+        // indexing path (which holds at most ~1 MiB of spill at a time);
+        // far too small for the unbounded pre-fix path (which would peak
+        // at ~1.6 MiB raw + doubling overhead per hot key, well past the
+        // limit when summed across a few hundred keys).
+        long limitMiB = 96;
+        assertMemoryLeak(limitMiB, () -> {
+            execute("create table t (ts timestamp, sym symbol, v double) timestamp(ts) partition by day wal;");
+            execute("insert into t select " +
+                    " timestamp_sequence('2024-01-01T00:00:00.000000Z', 1) ts," +
+                    " rnd_symbol('A','B','C','D','E','F','G','H','I','J') sym," +
+                    " rnd_double() v" +
+                    " from long_sequence(200_000)");
+            drainWalQueue();
+            execute("alter table t alter column sym add index type posting");
+            drainWalQueue();
+            assertQuery("select count() from t where sym = 'A' or sym = 'B' or sym = 'C' or sym = 'D' or sym = 'E' or sym = 'F' or sym = 'G' or sym = 'H' or sym = 'I' or sym = 'J'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n200000\n");
         });
     }
 

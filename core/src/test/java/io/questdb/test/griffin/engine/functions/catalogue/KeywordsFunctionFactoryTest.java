@@ -39,12 +39,18 @@ public class KeywordsFunctionFactoryTest extends AbstractCairoTest {
             CharSequence[] keywords = KEYWORDS.clone();
             Arrays.sort(keywords);
             String expected = "keyword\n" + String.join("\n", keywords) + '\n';
-            assertSql(expected, "select keyword from keywords() order by keyword asc");
+            assertQuery("select keyword from keywords() order by keyword asc")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
     @Test
     public void testSelectKeywordsWithFilter() throws Exception {
-        assertMemoryLeak(() -> assertSql("keyword\nadd\n", "keywords() where keyword = 'add'"));
+        assertMemoryLeak(() -> assertQuery("keywords() where keyword = 'add'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("keyword\nadd\n"));
     }
 }

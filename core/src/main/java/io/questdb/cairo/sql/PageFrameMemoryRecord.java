@@ -75,6 +75,14 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     protected final ObjList<Utf8SplitString> utf8ViewsB = new ObjList<>();
     protected DirectLongList auxPageAddresses;
     protected DirectLongList auxPageSizes;
+    // Pool bind generation captured when boundPool was stamped. The pool bumps its
+    // generation when it closes buffers that records may still alias (failed decode,
+    // bulk release), so a stale generation forces a rebind instead of a freed read.
+    protected long boundGeneration;
+    // Pool that owns the parquet buffers this record currently points at, or null.
+    // PageFrameMemoryPool.navigateTo() uses it to early-return only when the record
+    // is still bound to that pool's live buffers for the requested frame.
+    protected PageFrameMemoryPool boundPool;
     protected int columnOffset;
     protected byte frameFormat = -1;
     protected int frameIndex = -1;
@@ -120,6 +128,8 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         auxPageAddresses = null;
         pageSizes = null;
         auxPageSizes = null;
+        boundPool = null;
+        boundGeneration = 0;
     }
 
     @Override
@@ -220,6 +230,14 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
             return Unsafe.getByte(address + rowIndex) == 1;
         }
         return NullMemoryCMR.INSTANCE.getBool(0);
+    }
+
+    public long getBoundGeneration() {
+        return boundGeneration;
+    }
+
+    public PageFrameMemoryPool getBoundPool() {
+        return boundPool;
     }
 
     @Override
@@ -551,6 +569,12 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         this.pageSizes = frameMemory.getPageSizes();
         this.auxPageSizes = frameMemory.getAuxPageSizes();
         this.columnOffset = frameMemory.getColumnOffset();
+        // Stamp the owning pool so navigateTo() can early-return only while this
+        // record still points at that pool's live buffers. A foreign pool (e.g. a
+        // reduce task's) that later frees its buffers leaves boundPool != the
+        // navigating pool, forcing a safe rebind.
+        this.boundPool = frameMemory.getPool();
+        this.boundGeneration = boundPool != null ? boundPool.getBindGeneration() : 0;
     }
 
     @Override
@@ -561,6 +585,11 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     public void of(SymbolTableSource symbolTableSource) {
         close();
         this.symbolTableSource = symbolTableSource;
+    }
+
+    public void setBoundPool(PageFrameMemoryPool boundPool, long boundGeneration) {
+        this.boundPool = boundPool;
+        this.boundGeneration = boundGeneration;
     }
 
     /**
@@ -597,15 +626,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         }
         csViewsB.extendAndSet(columnIndex, view = new DirectString(this));
         return view;
-    }
-
-    private void getLong256(int columnIndex, Long256Acceptor sink) {
-        final long columnAddress = pageAddresses.get(columnOffset + columnIndex);
-        if (columnAddress != 0) {
-            sink.fromAddress(columnAddress + (rowIndex << 5));
-            return;
-        }
-        NullMemoryCMR.INSTANCE.getLong256(0, sink);
     }
 
     private @NotNull Long256Impl long256A(int columnIndex) {
@@ -710,6 +730,17 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
             return view.of(address + Long.BYTES, len);
         }
         return null;
+    }
+
+    // Subclasses may override (e.g. PageFrameFilteredMemoryRecord routes the index through
+    // getRowIndex(columnIndex) so a late-materialized LONG256 reads at the compacted index).
+    protected void getLong256(int columnIndex, Long256Acceptor sink) {
+        final long columnAddress = pageAddresses.get(columnOffset + columnIndex);
+        if (columnAddress != 0) {
+            sink.fromAddress(columnAddress + (rowIndex << 5));
+            return;
+        }
+        NullMemoryCMR.INSTANCE.getLong256(0, sink);
     }
 
     protected void getLong256(long addr, CharSink<?> sink) {

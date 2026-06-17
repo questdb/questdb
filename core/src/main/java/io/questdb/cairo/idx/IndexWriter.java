@@ -31,8 +31,10 @@ import io.questdb.cairo.TableToken;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Mutable;
+import io.questdb.std.ObjectStackPool;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
+import io.questdb.tasks.PostingSealPurgeTask;
 
 import java.io.Closeable;
 
@@ -66,6 +68,10 @@ public interface IndexWriter extends Closeable, Mutable {
      */
     void commit();
 
+    default void commitDense() {
+        commit();
+    }
+
     default void configureCovering(
             ObjList<CharSequence> coveredColumnNames,
             LongList coveredColumnNameTxns,
@@ -86,6 +92,55 @@ public interface IndexWriter extends Closeable, Mutable {
             IntList coveredColumnTypes,
             int coverCount,
             int timestampColumnIndex
+    ) {
+    }
+
+    /**
+     * Discards the writer's in-memory state so the caller can re-add entries
+     * from authoritative source data. Used to evict stale (key, rowId) pairs
+     * left by replace-range, dedup-replace, or O3 splits where the same row
+     * id takes a different value across writes -- cases the chain cannot
+     * surgically rewind because the stale entries sit inside the live row
+     * range.
+     * <p>
+     * Expected caller pattern:
+     * <pre>
+     *     writer.discardForRebuild();
+     *     for (...) writer.add(key, rowId);   // re-add from .d file
+     *     writer.commit();                    // flush as fresh gen 0
+     *     writer.seal();                      // rotate the value file
+     * </pre>
+     * The call rotates the writer's value file to a fresh sealTxn so the
+     * subsequent {@code commit()} appends a new chain entry rather than
+     * mutating the existing head in place. The OLD chain entry stays on
+     * disk as a prev entry until concurrent readers release it; the OLD
+     * value file is queued for the seal-purge job after the new entry
+     * lands. The trailing {@code seal()} rotates again and writes the
+     * dense final form.
+     * <p>
+     * Unlike {@link #truncate()}, this call preserves the chain head and
+     * the OLD value file so concurrent readers with active mmaps stay
+     * safe. The .pk header is not rewritten; only the writer's value-file
+     * mapping moves to the new sealTxn.
+     * <p>
+     * Default is no-op for index types that don't accumulate stale state
+     * (e.g. BitmapIndexWriter persists every add immediately and has no
+     * chain).
+     */
+    default void discardForRebuild() {
+    }
+
+    /**
+     * Moves unsafe finite-future purge entries into a TableWriter-owned queue
+     * before this index writer is closed or reopened.
+     */
+    default void drainPendingFuturePurges(
+            ObjList<PostingSealPurgeTask> sink,
+            ObjectStackPool<PostingSealPurgeTask> pool,
+            TableToken tableToken,
+            int partitionBy,
+            int timestampType,
+            long currentTableTxn
     ) {
     }
 
@@ -183,6 +238,16 @@ public interface IndexWriter extends Closeable, Mutable {
         of(path, name, columnNameTxn);
     }
 
+    /**
+     * Opens the writer using path context previously installed via
+     * {@link #setO3PathContext}. Used by the O3 copy path for index types
+     * (currently POSTING) that prefer path-based file management to fd
+     * preopen. Default is no-op; index types that don't override stick to
+     * fd-based {@link #of(CairoConfiguration, long, long, boolean, int)}.
+     */
+    default void openFromO3Context(boolean isInit) {
+    }
+
     default void publishPendingPurges(
             MessageBus messageBus,
             TableToken tableToken,
@@ -193,6 +258,14 @@ public interface IndexWriter extends Closeable, Mutable {
     }
 
     default void rebuildSidecars() {
+    }
+
+    /**
+     * Drop the read-side state set up for the most recent seal but keep
+     * the covering schema intact. See
+     * {@link io.questdb.cairo.idx.PostingIndexWriter#releaseCoveredColumnReadMappings()}.
+     */
+    default void releaseCoveredColumnReadMappings() {
     }
 
     /**
@@ -219,6 +292,9 @@ public interface IndexWriter extends Closeable, Mutable {
     }
 
     default void sealIfMultiGen(int threshold) {
+    }
+
+    default void setCoveredColumnAddrSizes(LongList dataSizes, LongList auxSizes) {
     }
 
     default void setCoveredColumnNameTxns(LongList txns) {
@@ -260,6 +336,28 @@ public interface IndexWriter extends Closeable, Mutable {
      * setter is called again.
      */
     default void setNextTxnAtSeal(long txnAtSeal) {
+    }
+
+    /**
+     * Installs partition path, column name, columnNameTxn and the upcoming
+     * table txn that the next {@link #openFromO3Context} call will consume.
+     * Lets the O3 copy path defer the actual {@code of(...)} to the worker
+     * while plumbing path information from the publisher.
+     * <p>
+     * Default is no-op: BitmapIndexWriter still uses fd-based of() in the
+     * O3 path. POSTING overrides to stash these for the path-based open
+     * that follows in {@link #openFromO3Context}.
+     */
+    default void setO3PathContext(Path path, CharSequence name, long columnNameTxn, long upcomingTxn) {
+    }
+
+    /**
+     * Records the partition timestamp and name-txn on the writer so a deferred
+     * seal-purge task can reconstruct the value-file directory after the writer
+     * is freed. The path-based of(...) overloads used by the parquet rebuild do
+     * not carry these. No-op for writers without a seal-purge outbox (e.g. BITMAP).
+     */
+    default void setPartitionContext(long partitionTimestamp, long partitionNameTxn) {
     }
 
     /**

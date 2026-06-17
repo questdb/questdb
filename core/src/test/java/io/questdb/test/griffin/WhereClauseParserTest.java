@@ -1082,6 +1082,19 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testContradictingNullSearchKeptByTautologicalSelfCompare() throws Exception {
+        // sym is null AND sym is not null is FALSE; a sibling tautological
+        // self-comparison (sym <= sym) must not overwrite that FALSE back to
+        // UNDEFINED/TRUE on its way through analyzeLess. Without the guard,
+        // the index-driven path saw keyColumn=sym with empty value/excluded
+        // lists and tripped an internal assert in SqlCodeGenerator.
+        IntrinsicModel m = modelOf("(sym <= sym and sym != null) and sym = null");
+        Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
+        Assert.assertEquals("[]", keyValueFuncsToString(m.keyValueFuncs));
+        Assert.assertEquals("[]", keyValueFuncsToString(m.keyExcludedValueFuncs));
+    }
+
+    @Test
     public void testContradictingSearch1() throws Exception {
         IntrinsicModel m = modelOf("sym != 'blah' and sym = 'blah'");
         Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
@@ -3581,6 +3594,24 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampEqualsOrWithNonTimestampCastRollback() throws Exception {
+        // The OR's lhs (timestamp = 'value') is extractable, but the rhs has a
+        // function that returns DATE, not TIMESTAMP. The structural check in
+        // isOrOfTimestampIn() lets the recursion start; the type check fires
+        // only after lhs has already accumulated an interval and a TRUE
+        // intrinsicValue mark. tryExtractOrTimestampIntrinsics must roll the
+        // partial state back so the OR survives intact as the model filter.
+        IntrinsicModel m = modelOf("timestamp = '2018-01-01' or (-339289)::DATE = timestamp");
+        Assert.assertFalse(m.hasIntervalFilters());
+        Assert.assertNotNull("filter must survive partial OR rollback", m.filter);
+        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.filter.intrinsicValue);
+        Assert.assertNotNull("OR.lhs must survive rollback", m.filter.lhs);
+        Assert.assertNotNull("OR.rhs must survive rollback", m.filter.rhs);
+        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.filter.lhs.intrinsicValue);
+        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.filter.rhs.intrinsicValue);
+    }
+
+    @Test
     public void testTimestampEqualsToBindVariable() throws SqlException {
         long day = 24L * 3600 * 1000 * 1000;
         bindVariableService.clear();
@@ -4204,25 +4235,23 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             String tableName = "testVarcharPracticalParsing_" + timestampType.getTypeName();
             executeWithRewriteTimestamp("create table " + tableName + " ( a string, ts #TIMESTAMP) timestamp(ts)", timestampType.getTypeName());
-            assertPlanNoLeakCheck(
-                    "select * from " + tableName + " where\n" +
-                            "ts = '2024-02-29' or ts <= '2024-03-01'",
-                    "Async JIT Filter workers: 1\n" +
+            assertQuery("select * from " + tableName + " where\n" +
+                    "ts = '2024-02-29' or ts <= '2024-03-01'")
+                    .noLeakCheck()
+                    .assertsPlan("Async JIT Filter workers: 1\n" +
                             "  filter: (2024-02-29T00:00:00.000000Z=ts or 2024-03-01T00:00:00.000000Z>=ts)\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
-                            "        Frame forward scan on: " + tableName + "\n"
-            );
+                            "        Frame forward scan on: " + tableName + "\n");
 
-            assertPlanNoLeakCheck(
-                    "select * from " + tableName + " where\n" +
-                            "(ts = '2024-02-29'::varchar or ts <= '2024-03-01'::varchar) or ts = '2024-05-01'::varchar",
-                    "Async Filter workers: 1\n" +
+            assertQuery("select * from " + tableName + " where\n" +
+                    "(ts = '2024-02-29'::varchar or ts <= '2024-03-01'::varchar) or ts = '2024-05-01'::varchar")
+                    .noLeakCheck()
+                    .assertsPlan("Async Filter workers: 1\n" +
                             "  filter: ((2024-02-29T00:00:00.000000Z=ts or 2024-03-01T00:00:00.000000Z>=ts) or 2024-05-01T00:00:00.000000Z=ts)\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
-                            "        Frame forward scan on: " + tableName + "\n"
-            );
+                            "        Frame forward scan on: " + tableName + "\n");
         });
     }
 

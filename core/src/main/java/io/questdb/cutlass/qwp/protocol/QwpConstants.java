@@ -57,26 +57,21 @@ public final class QwpConstants {
      */
     public static final int DEFAULT_MAX_EGRESS_DICT_ENTRIES = 100_000;
     /**
-     * Default soft cap on distinct schemas registered by an egress connection.
-     * On exceeding this threshold the server emits a {@code CACHE_RESET} and
-     * resets the schema-fingerprint cache; the connection remains usable and
-     * continues with fresh schema ids. Tighter than the shared
-     * {@link #DEFAULT_MAX_SCHEMAS_PER_CONNECTION} because egress-side state is
-     * fully server-owned and reusable.
-     */
-    public static final int DEFAULT_MAX_EGRESS_SCHEMAS_PER_CONNECTION = 4_096;
-    /**
      * Default maximum rows per table in a batch.
      */
     public static final int DEFAULT_MAX_ROWS_PER_TABLE = 1_000_000;
     /**
-     * Default maximum number of distinct schemas registered on a single connection.
-     */
-    public static final int DEFAULT_MAX_SCHEMAS_PER_CONNECTION = 65_535;
-    /**
      * Default maximum number of distinct tables per connection or UDP receiver.
      */
     public static final int DEFAULT_MAX_TABLES_PER_CONNECTION = 10_000;
+    public static final long DEFAULT_MAX_UNCOMMITTED_ROWS = 1_000_000;
+    /**
+     * Flag bit: defer WAL commit. The server appends rows to WAL writers
+     * but does not commit them until a subsequent message without this flag.
+     * Allows clients to split a logical batch across multiple messages that
+     * individually fit within the WebSocket recv buffer.
+     */
+    public static final byte FLAG_DEFER_COMMIT = 0x01;
     /**
      * Flag bit: Delta symbol dictionary encoding enabled.
      * When set, symbol columns use global IDs and send only new dictionary entries.
@@ -138,10 +133,6 @@ public final class QwpConstants {
      * Maximum table name length in bytes.
      */
     public static final int MAX_TABLE_NAME_LENGTH = 127;
-    /**
-     * Schema mode: Full schema included.
-     */
-    public static final byte SCHEMA_MODE_FULL = 0x00;
     /**
      * Status: Egress-only. Query aborted because the client sent a {@code CANCEL}
      * frame or the server invoked explicit cancellation.
@@ -295,32 +286,12 @@ public final class QwpConstants {
      */
     public static final byte TYPE_VARCHAR = 0x0F;
     /**
-     * Current protocol version.
+     * The QWP protocol version. QWP runs at a single version: the per-frame
+     * version byte is always written as this value and validated to equal it.
+     * The {@code X-QWP-Max-Version} handshake header and the version-negotiation
+     * machinery are retained so a future version bump can re-introduce a range.
      */
-    public static final byte VERSION_1 = 1;
-    /**
-     * Protocol v2 adds an unsolicited {@code SERVER_INFO} control frame delivered
-     * as the first WebSocket frame after the 101 upgrade. Carries the server's
-     * replication role, cluster/node identity, and a capabilities bitfield so
-     * clients can route reads to primary vs replica and react to role changes
-     * across reconnects.
-     */
-    public static final byte VERSION_2 = 2;
-    /**
-     * Maximum protocol version accepted by the QWP ingest path (WebSocket
-     * binary ingest + UDP). Pinned to v1 because the v2 bump only adds the
-     * egress {@code SERVER_INFO} frame, which has no ingest semantics; bumping
-     * ingest to v2 would be a no-op on the wire and would silently accept
-     * version bytes that a v1-only server would reject.
-     */
-    public static final byte MAX_SUPPORTED_INGEST_VERSION = VERSION_1;
-    /**
-     * Maximum protocol version supported by this build. Egress advertises this
-     * value in its {@code X-QWP-Version} handshake header; the shared message-
-     * header validator accepts any version in {@code [VERSION_1, MAX_SUPPORTED_VERSION]}.
-     * Ingest pins to {@link #MAX_SUPPORTED_INGEST_VERSION} instead.
-     */
-    public static final byte MAX_SUPPORTED_VERSION = VERSION_2;
+    public static final byte VERSION = 1;
 
     private QwpConstants() {
         // utility class
@@ -339,7 +310,7 @@ public final class QwpConstants {
             case TYPE_BOOLEAN -> 0; // Special: bit-packed
             case TYPE_BYTE -> 1;
             case TYPE_SHORT, TYPE_CHAR -> 2;
-            case TYPE_INT, TYPE_FLOAT -> 4;
+            case TYPE_INT, TYPE_IPV4, TYPE_FLOAT -> 4;
             case TYPE_LONG, TYPE_DOUBLE, TYPE_TIMESTAMP, TYPE_TIMESTAMP_NANOS, TYPE_DATE, TYPE_DECIMAL64 -> 8;
             case TYPE_UUID, TYPE_DECIMAL128 -> 16;
             case TYPE_LONG256, TYPE_DECIMAL256 -> 32;
@@ -392,7 +363,7 @@ public final class QwpConstants {
     public static boolean isFixedWidthType(byte typeCode) {
         return switch (typeCode) {
             case TYPE_BOOLEAN, TYPE_BYTE, TYPE_SHORT, TYPE_CHAR,
-                 TYPE_INT, TYPE_LONG, TYPE_FLOAT, TYPE_DOUBLE,
+                 TYPE_INT, TYPE_IPV4, TYPE_LONG, TYPE_FLOAT, TYPE_DOUBLE,
                  TYPE_TIMESTAMP, TYPE_TIMESTAMP_NANOS, TYPE_DATE,
                  TYPE_UUID, TYPE_LONG256,
                  TYPE_DECIMAL64, TYPE_DECIMAL128, TYPE_DECIMAL256 -> true;

@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
@@ -39,6 +40,17 @@ public interface SecurityContext extends Mutable {
     // The user is not authenticated.
     // Either tried to authenticate and failed, or did not try to authenticate at all.
     byte AUTH_TYPE_NONE = 0;
+
+    /**
+     * Returns the security context to use during SQL validation, i.e. syntax-only
+     * compilation that must not enforce authorization. The default returns an
+     * allow-all context, which is sufficient for open-source builds; implementations
+     * that enforce permissions return a view that skips authorization while
+     * preserving identity information.
+     */
+    default SecurityContext asValidationContext() {
+        return AllowAllSecurityContext.INSTANCE;
+    }
 
     void authorizeAlterMatViewSetRefreshLimit(TableToken tableToken);
 
@@ -74,6 +86,8 @@ public interface SecurityContext extends Mutable {
 
     // the names are pairs from-to
     void authorizeAlterTableRenameColumn(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
+
+    void authorizeAlterTableSetFormat(TableToken tableToken);
 
     void authorizeAlterTableSetParam(TableToken tableToken);
 

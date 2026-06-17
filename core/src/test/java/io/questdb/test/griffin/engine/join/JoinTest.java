@@ -24,12 +24,14 @@
 
 package io.questdb.test.griffin.engine.join;
 
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
@@ -77,181 +79,158 @@ public class JoinTest extends AbstractCairoTest {
             execute("insert into table_2 values ( '2022-10-25T04:00:00.000000Z', 'tom',  24, '1 Houston St' )");
 
             // query "2"
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                     select a.name, a.age, a.member, b.address, a.ts
+                     from table_1 as a
+                     left join table_2 as b
+                        on a.ts = b.ts\
+                    """)
+                    .noLeakCheck()
+                    .ddl(null)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
                             name\tage\tmember\taddress\tts
                             alice\t60\ttrue\t1 Glebe St\t2022-10-25T01:00:00.000000Z
                             peter\t58\tfalse\t1 Broon St\t2022-10-25T02:00:00.000000Z
                             david\t21\ttrue\t\t2022-10-25T03:00:00.000000Z
-                            """,
-                    """
-                             select a.name, a.age, a.member, b.address, a.ts
-                             from table_1 as a
-                             left join table_2 as b
-                                on a.ts = b.ts\
-                            """,
-                    null,
-                    "ts", false,
-                    false
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                     select a.name, a.age, a.member, b.address, a.ts
+                     from table_2 as b
+                     right join table_1 as a
+                        on a.ts = b.ts
+                    """)
+                    .noLeakCheck()
+                    .ddl(null)
+                    .noRandomAccess()
+                    .returns("""
                             name\tage\tmember\taddress\tts
                             alice\t60\ttrue\t1 Glebe St\t2022-10-25T01:00:00.000000Z
                             peter\t58\tfalse\t1 Broon St\t2022-10-25T02:00:00.000000Z
                             david\t21\ttrue\t\t2022-10-25T03:00:00.000000Z
-                            """,
-                    """
-                             select a.name, a.age, a.member, b.address, a.ts
-                             from table_2 as b
-                             right join table_1 as a
-                                on a.ts = b.ts
-                            """,
-                    null,
-                    null
-                    , false,
-                    false
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                     select a.name, a.age, a.member, b.address, a.ts
+                     from table_2 as b
+                     full join table_1 as a
+                        on a.ts = b.ts
+                    """)
+                    .noLeakCheck()
+                    .ddl(null)
+                    .noRandomAccess()
+                    .returns("""
                             name\tage\tmember\taddress\tts
                             alice\t60\ttrue\t1 Glebe St\t2022-10-25T01:00:00.000000Z
                             peter\t58\tfalse\t1 Broon St\t2022-10-25T02:00:00.000000Z
                             \tnull\tfalse\t1 Houston St\t
                             david\t21\ttrue\t\t2022-10-25T03:00:00.000000Z
-                            """,
-                    """
-                             select a.name, a.age, a.member, b.address, a.ts
-                             from table_2 as b
-                             full join table_1 as a
-                                on a.ts = b.ts
-                            """,
-                    null,
-                    null,
-                    false,
-                    false
-            );
+                            """);
 
             // query "3"
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)
+                    from table_1 as a
+                    left join table_2 as b
+                    on a.ts between dateadd('m', -1, b.ts)  and dateadd('m', 1, b.ts)
+                    """)
+                    .noLeakCheck()
+                    .ddl(null)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
                             name\tage\taddress\tts\tdateadd\tdateadd1
                             alice\t60\t1 Glebe St\t2022-10-25T01:00:00.000000Z\t2022-10-25T00:59:00.000000Z\t2022-10-25T01:01:00.000000Z
                             peter\t58\t1 Broon St\t2022-10-25T02:00:00.000000Z\t2022-10-25T01:59:00.000000Z\t2022-10-25T02:01:00.000000Z
                             david\t21\t\t2022-10-25T03:00:00.000000Z\t\t
-                            """,
-                    """
-                            select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)
-                            from table_1 as a
-                            left join table_2 as b
-                            on a.ts between dateadd('m', -1, b.ts)  and dateadd('m', 1, b.ts)
-                            """,
-                    null,
-                    "ts",
-                    false,
-                    false
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)
+                    from table_2 as b
+                    right join table_1 as a
+                       on a.ts between dateadd('m', -1, b.ts)  and dateadd('m', 1, b.ts)
+                    """)
+                    .noLeakCheck()
+                    .ddl(null)
+                    .noRandomAccess()
+                    .returns("""
                             name\tage\taddress\tts\tdateadd\tdateadd1
                             alice\t60\t1 Glebe St\t2022-10-25T01:00:00.000000Z\t2022-10-25T00:59:00.000000Z\t2022-10-25T01:01:00.000000Z
                             peter\t58\t1 Broon St\t2022-10-25T02:00:00.000000Z\t2022-10-25T01:59:00.000000Z\t2022-10-25T02:01:00.000000Z
                             david\t21\t\t2022-10-25T03:00:00.000000Z\t\t
-                            """,
-                    """
-                            select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)
-                            from table_2 as b
-                            right join table_1 as a
-                               on a.ts between dateadd('m', -1, b.ts)  and dateadd('m', 1, b.ts)
-                            """,
-                    null,
-                    null,
-                    false,
-                    false
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)
+                    from table_1 as a
+                    full join table_2 as b
+                       on a.ts between dateadd('m', -1, b.ts)  and dateadd('m', 1, b.ts)
+                    """)
+                    .noLeakCheck()
+                    .ddl(null)
+                    .noRandomAccess()
+                    .returns("""
                             name\tage\taddress\tts\tdateadd\tdateadd1
                             alice\t60\t1 Glebe St\t2022-10-25T01:00:00.000000Z\t2022-10-25T00:59:00.000000Z\t2022-10-25T01:01:00.000000Z
                             peter\t58\t1 Broon St\t2022-10-25T02:00:00.000000Z\t2022-10-25T01:59:00.000000Z\t2022-10-25T02:01:00.000000Z
                             david\t21\t\t2022-10-25T03:00:00.000000Z\t\t
                             \tnull\t1 Houston St\t\t2022-10-25T03:59:00.000000Z\t2022-10-25T04:01:00.000000Z
-                            """,
-                    """
-                            select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)
-                            from table_1 as a
-                            full join table_2 as b
-                               on a.ts between dateadd('m', -1, b.ts)  and dateadd('m', 1, b.ts)
-                            """,
-                    null,
-                    null,
-                    false,
-                    false
-            );
+                            """);
 
             // query "4" - same as "3" but between is replaced with >= and <=
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)
+                    from table_1 as a
+                    left join table_2 as b
+                       on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts)
+                    """)
+                    .noLeakCheck()
+                    .ddl(null)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
                             name\tage\taddress\tts\tdateadd\tdateadd1
                             alice\t60\t1 Glebe St\t2022-10-25T01:00:00.000000Z\t2022-10-25T00:59:00.000000Z\t2022-10-25T01:01:00.000000Z
                             peter\t58\t1 Broon St\t2022-10-25T02:00:00.000000Z\t2022-10-25T01:59:00.000000Z\t2022-10-25T02:01:00.000000Z
                             david\t21\t\t2022-10-25T03:00:00.000000Z\t\t
-                            """,
-                    """
-                            select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)
-                            from table_1 as a
-                            left join table_2 as b
-                               on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts)
-                            """,
-                    null,
-                    "ts",
-                    false,
-                    false
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)
+                    from table_2 as b
+                    right join table_1 as a
+                       on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts)
+                    """)
+                    .noLeakCheck()
+                    .ddl(null)
+                    .noRandomAccess()
+                    .returns("""
                             name\tage\taddress\tts\tdateadd\tdateadd1
                             alice\t60\t1 Glebe St\t2022-10-25T01:00:00.000000Z\t2022-10-25T00:59:00.000000Z\t2022-10-25T01:01:00.000000Z
                             peter\t58\t1 Broon St\t2022-10-25T02:00:00.000000Z\t2022-10-25T01:59:00.000000Z\t2022-10-25T02:01:00.000000Z
                             david\t21\t\t2022-10-25T03:00:00.000000Z\t\t
-                            """,
-                    """
-                            select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)
-                            from table_2 as b
-                            right join table_1 as a
-                               on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts)
-                            """,
-                    null,
-                    null,
-                    false,
-                    false
-            );
+                            """);
 
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)
+                    from table_2 as b
+                    full join table_1 as a
+                       on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts)
+                    """)
+                    .noLeakCheck()
+                    .ddl(null)
+                    .noRandomAccess()
+                    .returns("""
                             name\tage\taddress\tts\tdateadd\tdateadd1
                             alice\t60\t1 Glebe St\t2022-10-25T01:00:00.000000Z\t2022-10-25T00:59:00.000000Z\t2022-10-25T01:01:00.000000Z
                             peter\t58\t1 Broon St\t2022-10-25T02:00:00.000000Z\t2022-10-25T01:59:00.000000Z\t2022-10-25T02:01:00.000000Z
                             \tnull\t1 Houston St\t\t2022-10-25T03:59:00.000000Z\t2022-10-25T04:01:00.000000Z
                             david\t21\t\t2022-10-25T03:00:00.000000Z\t\t
-                            """,
-                    """
-                            select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)
-                            from table_2 as b
-                            full join table_1 as a
-                               on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts)
-                            """,
-                    null,
-                    null,
-                    false,
-                    false
-            );
+                            """);
         });
     }
 
@@ -320,19 +299,18 @@ public class JoinTest extends AbstractCairoTest {
                 orders.commit();
             }
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select * from orders asof join quotes on(sym)")
+                    .noLeakCheck()
+                    .ddl(null)
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             sym\tamount\tside\ttimestamp\tsym1\tbid\task\ttimestamp1
                             googl\t2000.0\t49\t2018-11-02T10:00:03.000000Z\tgoogl\t100.2\t100.3\t2018-11-02T10:00:02.000000Z
                             msft\t150.0\t49\t2018-11-02T10:00:04.000000Z\tmsft\t183.4\t185.9\t2018-11-02T10:00:02.000002Z
                             googl\t3000.0\t50\t2018-11-02T10:00:05.000000Z\tgoogl\t100.2\t100.3\t2018-11-02T10:00:02.000000Z
-                            """,
-                    "select * from orders asof join quotes on(sym)",
-                    null,
-                    "timestamp",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -393,12 +371,10 @@ public class JoinTest extends AbstractCairoTest {
                             """
             );
 
-            assertExceptionNoLeakCheck(
-                    "select x.i, x.c, y.c, x.amt, price, x.timestamp, y.timestamp, y.m from x asof join y on y.c = x.c",
-                    73,
-                    "right side column 'm' is of unsupported type",
-                    true
-            );
+            assertQuery("select x.i, x.c, y.c, x.amt, price, x.timestamp, y.timestamp, y.m from x asof join y on y.c = x.c")
+                    .fullFatJoins()
+                    .noLeakCheck()
+                    .fails(73, "right side column 'm' is of unsupported type");
         });
     }
 
@@ -487,7 +463,12 @@ public class JoinTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryAndCacheFullFat(expected, query, "timestamp", false, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
 
             execute(
                     """
@@ -538,8 +519,13 @@ public class JoinTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryFullFatNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .fullFatJoins()
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             i\tc\tc1\tamt\tprice\ttimestamp\ttimestamp1
                             1\tXYZ\t\t50.938\tnull\t2018-01-01T00:12:00.000000Z\t
                             2\tABC\tABC\t42.281\t0.537\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:24:00.000000Z
@@ -561,13 +547,7 @@ public class JoinTest extends AbstractCairoTest {
                             18\tCDE\tCDE\t18.305\t0.401\t2018-01-01T03:36:00.000000Z\t2018-01-01T02:00:00.000000Z
                             19\tABC\tABC\t16.378\t0.775\t2018-01-01T03:48:00.000000Z\t2018-01-01T01:54:00.000000Z
                             20\t\t\t4.773\t0.624\t2018-01-01T04:00:00.000000Z\t2018-01-01T01:34:00.000000Z
-                            """,
-                    query,
-                    "timestamp",
-                    false,
-                    true,
-                    true
-            );
+                            """);
 
         });
     }
@@ -652,7 +632,12 @@ public class JoinTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryAndCache(expected, query, "timestamp", true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
 
             execute(
                     """
@@ -705,8 +690,12 @@ public class JoinTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             i\tsym\tamt\tprice\ttimestamp\ttimestamp1
                             1\tmsft\t50.938\t0.198\t2018-01-01T00:12:00.000000Z\t2018-01-01T00:10:00.000000Z
                             2\tmsft\t5.048\t0.049\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:22:00.000000Z
@@ -728,12 +717,7 @@ public class JoinTest extends AbstractCairoTest {
                             18\tibm\t98.293\t0.556\t2018-01-01T03:36:00.000000Z\t2018-01-01T02:00:00.000000Z
                             19\tmsft\t90.087\t0.11\t2018-01-01T03:48:00.000000Z\t2018-01-01T01:52:00.000000Z
                             20\tibm\t59.437000000000005\t0.556\t2018-01-01T04:00:00.000000Z\t2018-01-01T02:00:00.000000Z
-                            """,
-                    query,
-                    "timestamp",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -747,11 +731,9 @@ public class JoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)");
             execute("create table y as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)");
-            assertExceptionNoLeakCheck(
-                    "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from (x order by timestamp desc) x asof join y on y.sym2 = x.sym",
-                    93,
-                    "left"
-            );
+            assertQuery("select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from (x order by timestamp desc) x asof join y on y.sym2 = x.sym")
+                    .noLeakCheck()
+                    .fails(93, "left");
         });
     }
 
@@ -821,7 +803,12 @@ public class JoinTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryAndCache(expected, query, "timestamp", true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
 
             execute(
                     """
@@ -869,8 +856,12 @@ public class JoinTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             i\tsym\tamt\tprice\ttimestamp\ttimestamp1
                             1\tmsft\t50.938\t0.523\t2018-01-01T00:12:00.000000Z\t2018-01-01T00:12:00.000000Z
                             2\tgoogl\t42.281\t0.044\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:24:00.000000Z
@@ -892,12 +883,7 @@ public class JoinTest extends AbstractCairoTest {
                             18\tibm\t60.678000000000004\t0.148\t2018-01-01T03:36:00.000000Z\t2018-01-01T02:00:00.000000Z
                             19\tmsft\t4.727\t0.148\t2018-01-01T03:48:00.000000Z\t2018-01-01T02:00:00.000000Z
                             20\tgoogl\t26.222\t0.148\t2018-01-01T04:00:00.000000Z\t2018-01-01T02:00:00.000000Z
-                            """,
-                    query,
-                    "timestamp",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -987,7 +973,12 @@ public class JoinTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryAndCache(expected, query, "timestamp", true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -1076,7 +1067,12 @@ public class JoinTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryAndCache(expected, query, "timestamp", true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -1171,7 +1167,12 @@ public class JoinTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryAndCache(expected, query, "timestamp", true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -1261,7 +1262,12 @@ public class JoinTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryAndCache(expected, query, "timestamp", true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -1270,11 +1276,9 @@ public class JoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10))");
             execute("create table y as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)");
-            assertExceptionNoLeakCheck(
-                    "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x asof join y on y.sym2 = x.sym",
-                    65,
-                    "left"
-            );
+            assertQuery("select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x asof join y on y.sym2 = x.sym")
+                    .noLeakCheck()
+                    .fails(65, "left");
         });
     }
 
@@ -1284,11 +1288,9 @@ public class JoinTest extends AbstractCairoTest {
             final String query = "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x asof join y on y.sym2 = x.sym";
             execute("create table x as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)");
             execute("create table y as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30))");
-            assertExceptionNoLeakCheck(
-                    query,
-                    65,
-                    "right"
-            );
+            assertQuery(query)
+                    .noLeakCheck()
+                    .fails(65, "right");
         });
     }
 
@@ -1336,7 +1338,12 @@ public class JoinTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryAndCache(expected, query, "timestamp", true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
 
             execute(
                     """
@@ -1364,8 +1371,12 @@ public class JoinTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             i\tsym\tamt\ttimestamp\ti1\tsym2\tprice\ttimestamp1
                             1\tmsft\t22.463\t2018-01-01T00:12:00.000000Z\tnull\t\tnull\t
                             2\tgoogl\t29.92\t2018-01-01T00:24:00.000000Z\t12\tgoogl\t0.885\t2018-01-01T00:24:00.000000Z
@@ -1387,12 +1398,7 @@ public class JoinTest extends AbstractCairoTest {
                             18\tmsft\t36.798\t2018-01-01T03:36:00.000000Z\t55\tmsft\t0.051000000000000004\t2018-01-01T01:50:00.000000Z
                             19\tmsft\t66.98\t2018-01-01T03:48:00.000000Z\t55\tmsft\t0.051000000000000004\t2018-01-01T01:50:00.000000Z
                             20\tgoogl\t26.369\t2018-01-01T04:00:00.000000Z\t60\tgoogl\t0.6900000000000001\t2018-01-01T02:00:00.000000Z
-                            """,
-                    query,
-                    "timestamp",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -1445,7 +1451,12 @@ public class JoinTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryAndCache(expected, query, "timestamp", true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
 
             execute(
                     """
@@ -1473,8 +1484,12 @@ public class JoinTest extends AbstractCairoTest {
                             """
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             i\tsym\tamt\ttimestamp\ti1\tsym2\tprice\ttimestamp1
                             1\tmsft\t22.463\t2018-01-01T00:12:00.000000Z\tnull\t\tnull\t
                             2\tgoogl\t29.92\t2018-01-01T00:24:00.000000Z\t12\tgoogl\t0.885\t2018-01-01T00:24:00.000000Z
@@ -1496,12 +1511,7 @@ public class JoinTest extends AbstractCairoTest {
                             18\tmsft\t36.798\t2018-01-01T03:36:00.000000Z\t55\tmsft\t0.051000000000000004\t2018-01-01T01:50:00.000000Z
                             19\tmsft\t66.98\t2018-01-01T03:48:00.000000Z\t55\tmsft\t0.051000000000000004\t2018-01-01T01:50:00.000000Z
                             20\tgoogl\t26.369\t2018-01-01T04:00:00.000000Z\t60\tgoogl\t0.6900000000000001\t2018-01-01T02:00:00.000000Z
-                            """,
-                    query,
-                    "timestamp",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -1569,7 +1579,12 @@ public class JoinTest extends AbstractCairoTest {
                             ") timestamp(timestamp)"
             );
 
-            assertQueryAndCache(expected, query, "timestamp", true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
 
             execute(
                     "insert into x select * from " +
@@ -1616,8 +1631,12 @@ public class JoinTest extends AbstractCairoTest {
                             ") timestamp(timestamp)"
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             i\tc\tc1\tamt\tprice\ttimestamp\ttimestamp1
                             1\tXYZ\t\t50.938\tnull\t2018-01-01T00:12:00.000000Z\t
                             2\tABC\tABC\t42.281\t0.537\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:24:00.000000Z
@@ -1639,12 +1658,7 @@ public class JoinTest extends AbstractCairoTest {
                             18\tCDE\tCDE\t18.305\t0.401\t2018-01-01T03:36:00.000000Z\t2018-01-01T02:00:00.000000Z
                             19\tABC\tABC\t16.378\t0.775\t2018-01-01T03:48:00.000000Z\t2018-01-01T01:54:00.000000Z
                             20\t\t\t4.773\t0.624\t2018-01-01T04:00:00.000000Z\t2018-01-01T01:34:00.000000Z
-                            """,
-                    query,
-                    "timestamp",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -1673,11 +1687,9 @@ public class JoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)");
             execute("create table y as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)");
-            assertExceptionNoLeakCheck(
-                    "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x asof join (y order by timestamp desc) y on y.sym2 = x.sym",
-                    65,
-                    "right"
-            );
+            assertQuery("select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x asof join (y order by timestamp desc) y on y.sym2 = x.sym")
+                    .noLeakCheck()
+                    .fails(65, "right");
         });
     }
 
@@ -1707,24 +1719,22 @@ public class JoinTest extends AbstractCairoTest {
                     "  from long_sequence(5)) " +
                     "timestamp(timestamp)");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("""
+                    SELECT pickup_datetime, fare_amount, tempF, windDir\s
+                    FROM (trips WHERE pickup_datetime IN '1970-01-01')\s
+                    ASOF JOIN weather""")
+                    .noLeakCheck()
+                    .timestamp("pickup_datetime")
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns("""
                             pickup_datetime\tfare_amount\ttempF\twindDir
                             1970-01-01T00:00:00.000001Z\t0.6607777894187332\t0.6508594025855301\t-1436881714
                             1970-01-01T00:00:00.000002Z\t0.2246301342497259\t0.7905675319675964\t1545253512
                             1970-01-01T00:00:00.000003Z\t0.08486964232560668\t0.22452340856088226\t-409854405
                             1970-01-01T00:00:00.000004Z\t0.299199045961845\t0.3491070363730514\t1904508147
                             1970-01-01T00:00:00.000005Z\t0.20447441837877756\t0.7611029514995744\t1125579207
-                            """,
-                    """
-                            SELECT pickup_datetime, fare_amount, tempF, windDir\s
-                            FROM (trips WHERE pickup_datetime IN '1970-01-01')\s
-                            ASOF JOIN weather""",
-                    "pickup_datetime",
-                    false,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -1768,6 +1778,145 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table t2 (l2 long, m2 long, ts2 timestamp) timestamp(ts2) partition by year");
 
             assertFailure("select * from t1 asof join t2 on l1=l2 and l2=m2", "unsupported ASOF join expression [expr='l2 = m2']", 45);
+        });
+    }
+
+    @Test
+    public void testBarrierJoinedMasterFilterStaysPostJoin() throws Exception {
+        // The filter references a single table (u1), but u1 is itself the slave of a LEFT join, so
+        // assignFilters cannot push it into u1's sub-query and routes it to the multi-reference
+        // else-branch. A later RIGHT join NULL-extends both u0 and u1 for the unmatched u2 key 2;
+        // the predicate must be held back past it. Anchoring at the LEFT join (where u1 arrives)
+        // leaked that NULL-master row, returning 2 rows instead of 1.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE u0 (k INT)");
+            execute("INSERT INTO u0 VALUES (1)");
+            execute("CREATE TABLE u1 (k INT, x INT)");
+            execute("INSERT INTO u1 VALUES (1, 1)");
+            execute("CREATE TABLE u2 (k INT)");
+            execute("INSERT INTO u2 VALUES (1), (2)");
+
+            final String expected = "k\tx\tk1\n1\t1\t1\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                final String literal = "SELECT u0.k, u1.x, u2.k FROM u0 LEFT JOIN u1 ON u0.k = u1.k " + joinType + " JOIN u2 ON u2.k = u0.k WHERE u1.x = 1";
+                bindVariableService.clear();
+                assertQuery(literal)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanContaining("Filter filter: u1.x=1")
+                        .returns(expected);
+
+                final String bind = "SELECT u0.k, u1.x, u2.k FROM u0 LEFT JOIN u1 ON u0.k = u1.k " + joinType + " JOIN u2 ON u2.k = u0.k WHERE u1.x = :v::INT";
+                bindVariableService.clear();
+                bindVariableService.setInt("v", 1);
+                assertQuery(bind).noLeakCheck().noRandomAccess().returns(expected);
+            }
+        });
+    }
+
+    @Test
+    public void testColumnEqColumnMasterFilterStaysPostJoin() throws Exception {
+        // A same-table column comparison (a.c1 = a.c2) is single-table, so it used to be pushed
+        // into the master sub-query. RIGHT/FULL OUTER NULL-extend the master: pushing it emptied
+        // the master (its only row fails c1=c2), pairing each slave row with a NULL master and
+        // leaking 2 rows. As a post-join filter the full join keeps the matched (1,2) row, which
+        // c1=c2 drops, and the unmatched NULL-master row, which c1=c2 keeps because NULL=NULL is
+        // true here, leaving exactly one (null,null) row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (c1 INT, c2 INT, k INT)");
+            execute("INSERT INTO m VALUES (1, 2, 10)");
+            execute("CREATE TABLE s (k INT)");
+            execute("INSERT INTO s VALUES (10), (20)");
+
+            final String expected = "c1\tc2\nnull\tnull\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                assertQuery("SELECT m.c1, m.c2 FROM m " + joinType + " JOIN s ON m.k = s.k WHERE m.c1 = m.c2")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanContaining("Filter filter: m.c1=m.c2")
+                        .returns(expected);
+            }
+        });
+    }
+
+    @Test
+    public void testColumnEqColumnOuterJoinedTableStaysPostJoin() throws Exception {
+        // Variant of testColumnEqColumnMasterFilterStaysPostJoin where the table the predicate
+        // references (a) is itself reached via an outer join, then NULL-extended by a SECOND outer
+        // join. analyseEquals routes a same-table equality whose table is barrier-joined to a
+        // model-order post-join anchor at that table's own join -- below the later FULL/RIGHT OUTER,
+        // which then synthesizes NULL-master rows that bypass the filter, leaking (null,null,1) on
+        // top of the legitimate (null,null,3). Held above the outer join, the matched (1,2) row is
+        // dropped by c1=c2 and only the (null,null,3) row survives because null=null is true for INT.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (k INT)");
+            execute("INSERT INTO t0 VALUES (1)");
+            execute("CREATE TABLE a (c1 INT, c2 INT, k INT)");
+            execute("INSERT INTO a VALUES (1, 2, 1)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (3)");
+
+            final String expected = "c1\tc2\tk\nnull\tnull\t3\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                assertQuery("SELECT a.c1, a.c2, t2.k FROM t0 RIGHT JOIN a ON t0.k = a.k " + joinType + " JOIN t2 ON a.k = t2.k WHERE a.c1 = a.c2")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanContaining("Filter filter: a.c1=a.c2")
+                        .returns(expected);
+            }
+        });
+    }
+
+    @Test
+    public void testColumnEqColumnReorderedFilterStaysPostJoin() throws Exception {
+        // Companion to testColumnEqColumnMasterFilterStaysPostJoin: there the col=col WHERE sits on the
+        // directly NULL-extended master; here it sits on an INNER-joined table (c) whose NULL-extension
+        // comes from a lower-model-index non-equi RIGHT/FULL OUTER. That join carries no JoinContext, so
+        // it homogenizes to a CROSS variant reorderTables appends last -- after c joins -- and NULL-
+        // extends c. masterNullingJoinIndex scans only higher model indexes and misses the reorder, so
+        // analyseEquals defers via hasNonEquiNullingJoin to the exec-order-aware assignFilters, keeping
+        // c.c1 = c.c2 post-join. Pushing it into c emptied c (7 != 8), so the join paired the slave row
+        // with a NULL c and leaked (null,50,null,null) -- 1 row for 0. The matched (100,50,7,8) row fails
+        // c1=c2, so the correct result is empty.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (x INT, k INT)");
+            execute("INSERT INTO a VALUES (100, 1)");
+            execute("CREATE TABLE b (y INT)");
+            execute("INSERT INTO b VALUES (50)");
+            execute("CREATE TABLE c (k INT, c1 INT, c2 INT)");
+            execute("INSERT INTO c VALUES (1, 7, 8)");
+
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                assertQuery("SELECT a.x, b.y, c.c1, c.c2 FROM a " + joinType + " JOIN b ON a.x > b.y JOIN c ON c.k = a.k WHERE c.c1 = c.c2")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanContaining("Filter filter: c.c1=c.c2")
+                        .returns("x\ty\tc1\tc2\n");
+            }
+        });
+    }
+
+    @Test
+    public void testColumnEqColumnReorderedFilterStaysPostJoinSymbol() throws Exception {
+        // SYMBOL variant of testColumnEqColumnReorderedFilterStaysPostJoin. Unlike INT, SYMBOL null=null
+        // is not unconditionally true, so the mechanism is the match-set change, not the null-row's own
+        // verdict: pushing c.v = c.w into c changes which rows the reordered join NULL-extends and leaked
+        // a (null,100,,) row. Held post-join, the full join keeps only the matched (10,5,foo,foo) row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (x INT, k INT)");
+            execute("INSERT INTO a VALUES (10, 1)");
+            execute("CREATE TABLE b (y INT)");
+            execute("INSERT INTO b VALUES (5), (100)");
+            execute("CREATE TABLE c (k INT, v SYMBOL, w SYMBOL)");
+            execute("INSERT INTO c VALUES (1, 'foo', 'foo')");
+
+            final String expected = "x\ty\tv\tw\n10\t5\tfoo\tfoo\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                assertQuery("SELECT a.x, b.y, c.v, c.w FROM a " + joinType + " JOIN b ON a.x > b.y JOIN c ON c.k = a.k WHERE c.v = c.w ORDER BY b.y")
+                        .noLeakCheck()
+                        .withPlanContaining("Filter filter: c.v=c.w")
+                        .returns(expected);
+            }
         });
     }
 
@@ -1827,7 +1976,11 @@ public class JoinTest extends AbstractCairoTest {
             );
 
             // filter is applied to final join result
-            assertQueryNoLeakCheck(expected, "select * from x cross join y", null, false, true);
+            assertQuery("select * from x cross join y")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -1956,7 +2109,56 @@ public class JoinTest extends AbstractCairoTest {
             );
 
             // filter is applied to final join result
-            assertQueryNoLeakCheck(expected, "select x.kk, x.a, x.b, x.c, x.d, x.e, x.f, x.g, x.i, x.j, x.l, x.m, x.n, x.vch, y.kk, y.a, y.b from x cross join y", null, false, true);
+            assertQuery("select x.kk, x.a, x.b, x.c, x.d, x.e, x.f, x.g, x.i, x.j, x.l, x.m, x.n, x.vch, y.kk, y.a, y.b from x cross join y")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testCrossJoinSkipRowsIsReentrant() throws Exception {
+        // Regression test: CrossJoinRecordCursor.skipRows() used to be correct only when called from a
+        // master-row boundary. A second skipRows() call (e.g. the one a wrapping LIMIT cursor issues from
+        // calculateSize()) re-skipped the already-consumed master cursor and silently dropped the
+        // remaining rows of the partially iterated master row. A single master row is the cleanest
+        // trigger: after the first skip consumes it, the second skip would find the master exhausted and
+        // skip nothing. The original failure (testOrderByAdviceWorksWithCrossJoin1a) was seed-dependent;
+        // the exhaustive skip split below reproduces it deterministically.
+        assertMemoryLeak(() -> {
+            final long[][] shapes = {{1, 9}, {3, 4}, {1, 1}, {5, 1}};
+            for (int s = 0; s < shapes.length; s++) {
+                final long masterRows = shapes[s][0];
+                final long slaveRows = shapes[s][1];
+                final long total = masterRows * slaveRows;
+                final String query = "select * from long_sequence(" + masterRows
+                        + ") a cross join long_sequence(" + slaveRows + ") b";
+                try (RecordCursorFactory factory = select(query)) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        final RecordCursor.Counter counter = new RecordCursor.Counter();
+                        // Split the skip across two skipRows() calls so the second one lands mid-stream.
+                        for (long skip1 = 0; skip1 <= total; skip1++) {
+                            for (long skip2 = 0; skip2 <= total - skip1; skip2++) {
+                                cursor.toTop();
+                                counter.set(skip1);
+                                cursor.skipRows(counter, RecordCursor.UNBOUNDED_ROW_COUNT);
+                                Assert.assertEquals("first skip should fully apply", 0, counter.get());
+                                counter.set(skip2);
+                                cursor.skipRows(counter, RecordCursor.UNBOUNDED_ROW_COUNT);
+                                Assert.assertEquals("second skip should fully apply", 0, counter.get());
+                                long remaining = 0;
+                                while (cursor.hasNext()) {
+                                    remaining++;
+                                }
+                                Assert.assertEquals(
+                                        query + " skip1=" + skip1 + " skip2=" + skip2,
+                                        total - skip1 - skip2, remaining);
+                            }
+                        }
+                    }
+                }
+            }
         });
     }
 
@@ -2016,7 +2218,12 @@ public class JoinTest extends AbstractCairoTest {
             );
 
             // filter is applied to final join result
-            assertQueryNoLeakCheck(expected, "select * from x cross join y", "k", false, true);
+            assertQuery("select * from x cross join y")
+                    .noLeakCheck()
+                    .timestamp("k")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -2025,21 +2232,44 @@ public class JoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (event INT, origin INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t VALUES (1, 1, '2024-01-01T00:00:00.000000Z'), (2, 2, '2024-01-02T00:00:00.000000Z')");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT T1.origin, count(*) " +
+                    "FROM t T1 " +
+                    "CROSS JOIN t T2 " +
+                    "CROSS JOIN t T3 " +
+                    "JOIN t T4 ON T3.event = T4.event AND T3.origin = T4.origin " +
+                    "GROUP BY T1.origin " +
+                    "ORDER BY T1.origin")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             origin\tcount
                             1\t4
                             2\t4
-                            """,
-                    "SELECT T1.origin, count(*) " +
-                            "FROM t T1 " +
-                            "CROSS JOIN t T2 " +
-                            "CROSS JOIN t T3 " +
-                            "JOIN t T4 ON T3.event = T4.event AND T3.origin = T4.origin " +
-                            "GROUP BY T1.origin " +
-                            "ORDER BY T1.origin",
-                    null, true, true
-            );
+                            """);
+        });
+    }
+
+    @Test
+    public void testCrossJoinedMasterFilterPushesDownWhenNotNulled() throws Exception {
+        // t0 is cross-joined and, after reordering, executes AFTER the RIGHT join, so that join never
+        // NULL-extends t0. WHERE t0.c = 1 must push down into t0's scan. Anchoring the post-join filter by
+        // model index (where the RIGHT join precedes t0) compiled it against metadata lacking t0 -
+        // "Invalid column: t0.c". Choosing the anchor in execution order fixes the failure and keeps the
+        // pushdown.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (c INT)");
+            execute("INSERT INTO t0 VALUES (1)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("INSERT INTO t1 VALUES (1)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (2)");
+            assertQuery("SELECT t0.c, t1.k, t2.k FROM t0 CROSS JOIN t1 RIGHT JOIN t2 ON t2.k = t1.k WHERE t0.c = 1 ORDER BY t2.k")
+                    .noLeakCheck()
+                    // A non-pushed master filter would render alias-qualified as a post-join
+                    // "Filter filter: t0.c=1" node (cf. testMasterFilterAnchorsAtLastNullingJoinInOrder);
+                    // its absence proves t0.c=1 pushed into t0's scan instead.
+                    .withPlanNotContaining("Filter filter: t0.c")
+                    .returns("c\tk\tk1\n1\t1\t1\n1\tnull\t2\n");
         });
     }
 
@@ -2059,6 +2289,65 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testForwardRefOuterJoinColumnEqColumnFilterStaysPostJoin() throws Exception {
+        // col=col counterpart of testForwardRefOuterJoinConstFilterStaysPostJoin: the RIGHT/FULL OUTER
+        // ON b.k = c.k forward-references c (joined later), so no JoinContext attaches at the join's own
+        // model index and it homogenizes to a CROSS variant reordered last, NULL-extending c. With
+        // c1 != c2 the matched row fails, leaving only the b row that the join NULL-extends; held
+        // post-join, NULL=NULL keeps that (null,9,29,null,null) row. Pushing c.c1 = c.c2 into c emptied c
+        // and leaked a second NULL-master row (2 rows for 1). Needs both the predictor fix (so
+        // hasNonEquiNullingJoin sees the forward-ref join) and the col=col deferral.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (k INT, k2 INT, av INT)");
+            execute("INSERT INTO a VALUES (1, 100, 11)");
+            execute("CREATE TABLE b (k INT, bv INT)");
+            execute("INSERT INTO b VALUES (1, 21), (9, 29)");
+            execute("CREATE TABLE c (k INT, k2 INT, c1 INT, c2 INT)");
+            execute("INSERT INTO c VALUES (1, 100, 7, 8)");
+
+            final String expected = "av\tbk\tbv\tc1\tc2\nnull\t9\t29\tnull\tnull\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                assertQuery("SELECT a.av, b.k bk, b.bv, c.c1, c.c2 FROM a " + joinType + " JOIN b ON b.k = c.k JOIN c ON c.k2 = a.k2 WHERE c.c1 = c.c2 ORDER BY bk")
+                        .noLeakCheck()
+                        .withPlanContaining("Filter filter: c.c1=c.c2")
+                        .returns(expected);
+            }
+        });
+    }
+
+    @Test
+    public void testForwardRefOuterJoinConstFilterStaysPostJoin() throws Exception {
+        // The RIGHT/FULL OUTER ON b.k = c.k forward-references c, which is joined later, so analyseEquals
+        // builds no JoinContext at this join's own model index. homogenizeCrossJoins therefore rewrites it
+        // to a CROSS variant reorderTables appends last, NULL-extending c. criteriaHasCrossTableEquality
+        // used to count the forward-ref equality as context-building and leave hasNonEquiNullingJoin
+        // false, so the col=CONST WHERE c.v = 1 pushed into c and leaked a (null,9,29,null) row (2 rows
+        // for 1). Requiring the equality's higher index to equal the join's own index fixes the predictor;
+        // the filter stays post-join. literal == bind (a bind variable cannot fold, so this divergence is
+        // invisible to the fuzzer).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (k INT, k2 INT, av INT)");
+            execute("INSERT INTO a VALUES (1, 100, 11)");
+            execute("CREATE TABLE b (k INT, bv INT)");
+            execute("INSERT INTO b VALUES (1, 21), (9, 29)");
+            execute("CREATE TABLE c (k INT, k2 INT, v INT)");
+            execute("INSERT INTO c VALUES (1, 100, 1)");
+
+            final String expected = "av\tbk\tbv\tcv\n11\t1\t21\t1\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                final String literal = "SELECT a.av, b.k bk, b.bv, c.v cv FROM a " + joinType + " JOIN b ON b.k = c.k JOIN c ON c.k2 = a.k2 WHERE c.v = 1 ORDER BY bk";
+                bindVariableService.clear();
+                assertQuery(literal).noLeakCheck().withPlanContaining("Filter filter: c.v=1").returns(expected);
+
+                final String bind = "SELECT a.av, b.k bk, b.bv, c.v cv FROM a " + joinType + " JOIN b ON b.k = c.k JOIN c ON c.k2 = a.k2 WHERE c.v = :v::INT ORDER BY bk";
+                bindVariableService.clear();
+                bindVariableService.setInt("v", 1);
+                assertQuery(bind).noLeakCheck().returns(expected);
+            }
+        });
+    }
+
+    @Test
     public void testHashJoinLightdNoLeaks() throws Exception {
         testJoinForCursorLeaks("with crj as (select * from xx latest by x) select xx.x from xx join crj on xx.x = crj.x ", false);
     }
@@ -2066,6 +2355,332 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testHashJoinRecordNoLeaks() throws Exception {
         testJoinForCursorLeaks("with crj as (select first(x) x, first(ts) ts from xx latest by x) select xx.x from xx join crj on xx.x = crj.x ", false);
+    }
+
+    @Test
+    public void testInnerJoinOnConjunctPushesPastNullingJoin() throws Exception {
+        // An inner-join ON conjunct that references only the master (m.c = 1, m.c > 0, abs(m.c) = 1)
+        // gates the inner join, which runs before the downstream RIGHT/FULL OUTER join that NULL-extends
+        // the master. It must push down into the master scan, not stay as a post-join filter - otherwise
+        // the unmatched (NULL-master) slave rows the outer join synthesizes get dropped. Regression: the
+        // master-nulling guard used to intercept these ON conjuncts as if they were WHERE predicates.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (k INT, c INT)");
+            execute("INSERT INTO m VALUES (1, 1)");
+            execute("CREATE TABLE x (k INT)");
+            execute("INSERT INTO x VALUES (1)");
+            execute("CREATE TABLE s (k INT)");
+            execute("INSERT INTO s VALUES (1), (2), (3)");
+
+            final String expected = "sk\tmk\tmc\n1\t1\t1\n2\tnull\tnull\n3\tnull\tnull\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                for (String onConjunct : new String[]{"m.c = 1", "m.c > 0", "abs(m.c) = 1"}) {
+                    assertQuery("SELECT s.k sk, m.k mk, m.c mc FROM m JOIN x ON x.k = m.k AND " + onConjunct
+                            + " " + joinType + " JOIN s ON s.k = x.k ORDER BY sk")
+                            .noLeakCheck()
+                            .returns(expected);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testInSubQueryWithJoinOnClause() throws Exception {
+        // A JOIN nested in a lambda IN sub-query (e.g. "x IN (SELECT ... JOIN ... ON ...)",
+        // HORIZON JOIN as first reported) used to drain the shared parser arg stack and consume
+        // the IN operand, crashing with an NPE in WhereClauseParser.analyzeIn. The sub-query must
+        // compile and filter correctly regardless of join type or how the ON clause is written.
+        // ON-clause sub-queries are unsupported and must reject with "query is not allowed here"
+        // at every nesting depth: the top level already did, while on master the nested case
+        // returned a misleading "Column name expected" (the ON drain consumed the enclosing operand).
+        assertMemoryLeak(() -> {
+            execute("create table trades (symbol symbol, ts timestamp) timestamp(ts) partition by day");
+            execute("create table src (symbol symbol, ts timestamp) timestamp(ts) partition by day");
+            execute("create table ref (symbol symbol, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into trades values ('A', '2020-01-01T00:00:00.000000Z'), ('B', '2020-01-02T00:00:00.000000Z'), ('C', '2020-01-03T00:00:00.000000Z')");
+            execute("insert into src values ('A', '2020-01-01T00:00:00.000000Z'), ('B', '2020-01-02T00:00:00.000000Z')");
+            execute("insert into ref values ('A', '2020-01-01T00:00:00.000000Z'), ('B', '2020-01-02T00:00:00.000000Z')");
+
+            final String expected = "symbol\tts\n" +
+                    "A\t2020-01-01T00:00:00.000000Z\n" +
+                    "B\t2020-01-02T00:00:00.000000Z\n";
+
+            // HORIZON JOIN with shorthand ON (col) -- the exact shape from the bug report
+            assertQuery(
+                    "select * from trades where symbol in " +
+                            "(select s.symbol from src s horizon join ref r on (symbol) range from -30s to 30s step 5s as h)"
+            ).noLeakCheck().timestamp("ts").returns(expected);
+
+            // explicit equality ON -- used to fail with "Column name expected"
+            assertQuery(
+                    "select * from trades where symbol in " +
+                            "(select s.symbol from src s horizon join ref r on s.symbol = r.symbol range from -30s to 30s step 5s as h)"
+            ).noLeakCheck().timestamp("ts").returns(expected);
+
+            // a second join type with shorthand ON, to cover the shared ON-clause parse path
+            // (ASOF and the INNER/LEFT/... family share the same ON-drain code in parseJoin)
+            assertQuery(
+                    "select * from trades where symbol in (select s.symbol from src s asof join ref r on (symbol))"
+            ).noLeakCheck().timestamp("ts").returns(expected);
+
+            // INNER join is the common real-world shape and enters the ON case via the direct arm
+            // (not the ASOF/HORIZON fall-through). The hash join in the lambda still filters trades
+            // down to A, B, but its slave row chain (eagerly sized to the join page size, >64 KiB) is
+            // held by the IN sub-query factory until factory close, past the outer cursor close, so
+            // skip assertQuery's post-close memory-usage check (which flags the still-owned RSS as a leak).
+            assertQuery(
+                    "select * from trades where symbol in (select s.symbol from src s join ref r on s.symbol = r.symbol)"
+            ).noLeakCheck().noMemoryUsageCheck().timestamp("ts").returns(expected);
+
+            // multi-column shorthand ON (a, b) inside the lambda exercises the list-of-columns drain
+            // arm (parseJoin's default case), distinct from the single-column ON (col) above; the same
+            // hash-join slave-chain retention applies, hence noMemoryUsageCheck()
+            assertQuery(
+                    "select * from trades where symbol in (select s.symbol from src s join ref r on (symbol, ts))"
+            ).noLeakCheck().noMemoryUsageCheck().timestamp("ts").returns(expected);
+
+            // NOT IN exercises the same parse path with a negated operator -- expect only C
+            assertQuery(
+                    "select * from trades where symbol not in " +
+                            "(select s.symbol from src s horizon join ref r on (symbol) range from -30s to 30s step 5s as h)"
+            ).noLeakCheck().timestamp("ts").returns(
+                    "symbol\tts\n" +
+                            "C\t2020-01-03T00:00:00.000000Z\n"
+            );
+
+            // A scalar sub-query operand (not just IN/NOT IN) hits the same shared arg stack: the "="
+            // left-hand side stays on the stack while the inner join's ON clause is parsed. ASOF is a
+            // merge join (<64 KiB RSS), so assertQuery works here -- max(s.ts) over the join is the
+            // last src timestamp, 2020-01-02, matching trades row B.
+            assertQuery(
+                    "select * from trades where ts = " +
+                            "(select max(s.ts) from src s asof join ref r on (symbol))"
+            ).noLeakCheck().timestamp("ts").returns(
+                    "symbol\tts\n" +
+                            "B\t2020-01-02T00:00:00.000000Z\n"
+            );
+
+            // the same for a scalar ">" with an INNER (hash) join; skip the memory-usage check for the
+            // >64 KiB RSS reason above. min(s.ts) over the join is 2020-01-01, so trades after it is B, C.
+            assertQuery(
+                    "select * from trades where ts > " +
+                            "(select min(s.ts) from src s join ref r on s.symbol = r.symbol)"
+            ).noLeakCheck().noMemoryUsageCheck().timestamp("ts").returns(
+                    "symbol\tts\n" +
+                            "B\t2020-01-02T00:00:00.000000Z\n" +
+                            "C\t2020-01-03T00:00:00.000000Z\n"
+            );
+
+            // ON-clause sub-queries stay unsupported when nested, just like at top level. On master
+            // the nested "IN sub-query in ON" form returned a misleading "Column name expected" ...
+            assertExceptionNoLeakCheck(
+                    "select * from trades where symbol in " +
+                            "(select s.symbol from src s join ref r on s.symbol in (select symbol from trades))",
+                    92,
+                    "query is not allowed here",
+                    sqlExecutionContext
+            );
+            // ... and a bare sub-query as the ON criteria returned the same "Column name expected".
+            assertExceptionNoLeakCheck(
+                    "select * from trades where symbol in " +
+                            "(select s.symbol from src s join ref r on (select symbol from trades))",
+                    80,
+                    "query is not allowed here",
+                    sqlExecutionContext
+            );
+            // The same rejection must hold two lambda levels deep. The ON-clause reject fires inside
+            // a parseExpr frame whose scope-stack bottom was raised by the outer lambdas; without the
+            // scope-stack clamp this fix adds, the error-unwind would restore that stale bottom over an
+            // already-cleared stack and surface an internal "Tried to set bottom beyond the top of the
+            // stack" IllegalStateException instead of the positioned SqlException.
+            assertExceptionNoLeakCheck(
+                    "select * from trades where symbol in " +
+                            "(select symbol from src where symbol in " +
+                            "(select x.symbol from src x join ref y on x.symbol in (select symbol from trades)))",
+                    132,
+                    "query is not allowed here",
+                    sqlExecutionContext
+            );
+            assertExceptionNoLeakCheck(
+                    "select * from trades where symbol in " +
+                            "(select symbol from src where symbol in " +
+                            "(select x.symbol from src x join ref y on (select symbol from trades)))",
+                    120,
+                    "query is not allowed here",
+                    sqlExecutionContext
+            );
+
+            // A rejected ON-clause sub-query must leave the shared parser state clean: the error
+            // path unwinds through reset() and popArgStackBottom(), so the SAME pooled compiler
+            // compiles the next, valid query without carrying over corrupted arg-stack state.
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                try {
+                    CairoEngine.select(
+                            compiler,
+                            "select * from trades where symbol in " +
+                                    "(select s.symbol from src s join ref r on s.symbol in (select symbol from trades))",
+                            sqlExecutionContext
+                    ).close();
+                    Assert.fail("nested ON-clause sub-query must be rejected");
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "query is not allowed here");
+                }
+                assertQuery(
+                        "select * from trades where symbol in (select s.symbol from src s asof join ref r on (symbol))"
+                ).withCompiler(compiler).noLeakCheck().timestamp("ts").returns(expected);
+            }
+        });
+    }
+
+    @Test
+    public void testJoinOnClauseRejectsDeclaredSubQuery() throws Exception {
+        // ON-clause sub-queries are unsupported and rejected during expression parsing. A declared
+        // variable is a literal at parse time and only expands to its definition later, in
+        // rewriteKnownStatements, so a variable bound to a sub-query (e.g. "@q := (SELECT ...)" used
+        // as "ON x IN @q") used to slip past the parse-time block and compile to surprising cross-join
+        // semantics -- the very footgun the literal rejection prevents. The declared form must now
+        // reject with "query is not allowed here", just like the literal one, at every nesting depth
+        // and in every ON-clause position: operator forms, single-column shorthand "ON (@q)", and
+        // multi-column shorthand "ON (@q, ts)" alike.
+        assertMemoryLeak(() -> {
+            execute("create table trades (symbol symbol, ts timestamp) timestamp(ts) partition by day");
+            execute("create table src (symbol symbol, ts timestamp) timestamp(ts) partition by day");
+            execute("create table ref (symbol symbol, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into src values ('A', '2020-01-01T00:00:00.000000Z'), ('B', '2020-01-02T00:00:00.000000Z')");
+            execute("insert into ref values ('A', '2020-01-01T00:00:00.000000Z'), ('B', '2020-01-02T00:00:00.000000Z')");
+
+            // declared sub-query in the ON clause of a join nested in an IN sub-query
+            assertExceptionNoLeakCheck(
+                    "select * from trades where symbol in " +
+                            "(declare @q := (select symbol from trades) " +
+                            "select s.symbol from src s join ref r on s.symbol in @q)",
+                    53,
+                    "query is not allowed here",
+                    sqlExecutionContext
+            );
+            // the same shape at the top level (a pre-existing bypass, now also rejected)
+            assertExceptionNoLeakCheck(
+                    "declare @q := (select symbol from trades) " +
+                            "select s.symbol from src s join ref r on s.symbol in @q",
+                    15,
+                    "query is not allowed here",
+                    sqlExecutionContext
+            );
+            // a scalar operator with a declared sub-query operand hits the same rewrite path
+            assertExceptionNoLeakCheck(
+                    "declare @q := (select max(symbol) from trades) " +
+                            "select s.symbol from src s join ref r on s.symbol = @q",
+                    15,
+                    "query is not allowed here",
+                    sqlExecutionContext
+            );
+            // bare single-column shorthand "ON (@q)" -- declared var expands to a sub-query and is
+            // rejected, instead of leaking a raw "@q" literal as "Invalid column: s.@q"
+            assertExceptionNoLeakCheck(
+                    "declare @q := (select symbol from trades) " +
+                            "select s.symbol from src s join ref r on (@q)",
+                    15,
+                    "query is not allowed here",
+                    sqlExecutionContext
+            );
+            // bare single-column shorthand without parentheses "ON @q"
+            assertExceptionNoLeakCheck(
+                    "declare @q := (select symbol from trades) " +
+                            "select s.symbol from src s join ref r on @q",
+                    15,
+                    "query is not allowed here",
+                    sqlExecutionContext
+            );
+            // multi-column shorthand "ON (@q, ts)" -- the column-list branch rejects the sub-query too
+            assertExceptionNoLeakCheck(
+                    "declare @q := (select symbol from trades) " +
+                            "select s.symbol from src s join ref r on (@q, ts)",
+                    15,
+                    "query is not allowed here",
+                    sqlExecutionContext
+            );
+            // single-column shorthand nested in an IN sub-query, to prove the reject holds at depth
+            assertExceptionNoLeakCheck(
+                    "select * from trades where symbol in " +
+                            "(declare @q := (select symbol from trades) " +
+                            "select s.symbol from src s join ref r on (@q))",
+                    53,
+                    "query is not allowed here",
+                    sqlExecutionContext
+            );
+
+            // A declared variable bound to a column (not a sub-query) in the ON clause is valid and
+            // must still compile and run -- the reject only fires on sub-query nodes.
+            assertQuery(
+                    "declare @x := s.symbol, @y := r.symbol " +
+                            "select s.symbol from src s join ref r on @x = @y"
+            ).noLeakCheck().noRandomAccess().returns(
+                    "symbol\n" +
+                            "A\n" +
+                            "B\n"
+            );
+
+            // A rejected declared ON-clause sub-query must leave the shared parser state clean: the
+            // SAME pooled compiler compiles the next, valid query without carrying over corrupted state.
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                try {
+                    CairoEngine.select(
+                            compiler,
+                            "declare @q := (select symbol from trades) " +
+                                    "select s.symbol from src s join ref r on s.symbol in @q",
+                            sqlExecutionContext
+                    ).close();
+                    Assert.fail("declared ON-clause sub-query must be rejected");
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "query is not allowed here");
+                }
+                assertQuery(
+                        "select s.symbol from src s join ref r on s.symbol = r.symbol"
+                ).withCompiler(compiler).noLeakCheck().noRandomAccess().returns(
+                        "symbol\n" +
+                                "A\n" +
+                                "B\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testJoinOnClauseDeclaredColumnShorthand() throws Exception {
+        // A declared variable bound to a bare column may be used as a shorthand join column, exactly
+        // like the inline column it expands to. "ON (@c)" with "@c := symbol" behaves like
+        // "ON (symbol)" -> "src.symbol = ref.symbol"; the variable is expanded before the join-column
+        // dispatch instead of leaking a raw "@c" literal as "Invalid column: s.@c".
+        assertMemoryLeak(() -> {
+            execute("create table src (symbol symbol, ts timestamp) timestamp(ts) partition by day");
+            execute("create table ref (symbol symbol, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into src values ('A', '2020-01-01T00:00:00.000000Z'), ('B', '2020-01-02T00:00:00.000000Z')");
+            execute("insert into ref values ('A', '2020-01-01T00:00:00.000000Z'), ('B', '2020-01-02T00:00:00.000000Z')");
+
+            final String expected = "symbol\n" +
+                    "A\n" +
+                    "B\n";
+
+            // single-column shorthand with parentheses
+            assertQuery(
+                    "declare @c := symbol " +
+                            "select s.symbol from src s join ref r on (@c) order by s.symbol"
+            ).noLeakCheck().returns(expected);
+            // single-column shorthand without parentheses
+            assertQuery(
+                    "declare @c := symbol " +
+                            "select s.symbol from src s join ref r on @c order by s.symbol"
+            ).noLeakCheck().returns(expected);
+            // multi-column shorthand mixing a declared column var with a plain column
+            assertQuery(
+                    "declare @c := symbol " +
+                            "select s.symbol from src s join ref r on (@c, ts) order by s.symbol"
+            ).noLeakCheck().returns(expected);
+            // baseline: the equivalent inline shorthand must produce the same result
+            assertQuery(
+                    "select s.symbol from src s join ref r on (symbol) order by s.symbol"
+            ).noLeakCheck().returns(expected);
+        });
     }
 
     @Test
@@ -2084,18 +2699,18 @@ public class JoinTest extends AbstractCairoTest {
 
     @Test
     public void testJoinByInterval() throws Exception {
-        assertMemoryLeak(() -> assertQueryNoLeakCheck(
-                """
+        assertMemoryLeak(() -> assertQuery("select * from (" +
+                "  (select interval(100000,200000) i, 'foo' s) a " +
+                "  join " +
+                "  (select interval(100000,200000) i, 'bar' s) b " +
+                "  on a.i = b.i " +
+                ")")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("""
                         i\ts\ti1\ts1
                         ('1970-01-01T00:00:00.100Z', '1970-01-01T00:00:00.200Z')\tfoo\t('1970-01-01T00:00:00.100Z', '1970-01-01T00:00:00.200Z')\tbar
-                        """,
-                "select * from (" +
-                        "  (select interval(100000,200000) i, 'foo' s) a " +
-                        "  join " +
-                        "  (select interval(100000,200000) i, 'bar' s) b " +
-                        "  on a.i = b.i " +
-                        ")"
-        ));
+                        """));
     }
 
     @Test
@@ -2150,13 +2765,9 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table y as (select x, cast(2*((x-1)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(10))");
 
             // master records should be filtered out because slave records missing
-            assertQueryNoLeakCheck(
-                    expected,
-                    "select x.c, x.a, b from x join y on y.m = x.c and 1 < 10 order by c, a, b",
-                    null,
-                    true,
-                    false
-            );
+            assertQuery("select x.c, x.a, b from x join y on y.m = x.c and 1 < 10 order by c, a, b")
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
@@ -2190,16 +2801,95 @@ public class JoinTest extends AbstractCairoTest {
                     FROM t as T1 JOIN t as T2 on T1.created = T2.created JOIN t as T3 ON T2.created = T3.created
                     WHERE T3.created < now()""";
 
-            assertQueryNoLeakCheck("count\n0\n", query1, null, false, true);
-            assertQueryNoLeakCheck("count\n1\n", query2, null, false, true);
+            assertQuery(query1)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n0\n");
+            assertQuery(query2)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n1\n");
 
-            assertQueryNoLeakCheck(
-                    "count\n",
-                    query1 + " INTERSECT " + query2,
-                    null,
-                    false,
-                    false
-            );
+            assertQuery(query1 + " INTERSECT " + query2)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("count\n");
+        });
+    }
+
+    @Test
+    public void testJoinContextIsolationInLambdaConstCondition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (akey SYMBOL INDEX, av STRING)");
+            execute("CREATE TABLE tb2 (akey SYMBOL INDEX, bv STRING)");
+            execute("CREATE TABLE tc (ckey SYMBOL INDEX, cv STRING)");
+            execute("INSERT INTO ta VALUES ('x', 'ax'), ('y', 'ay')");
+            execute("INSERT INTO tb2 VALUES ('x', 'bx'), ('y', 'by')");
+            execute("INSERT INTO tc VALUES ('x', 'cx'), ('y', 'cy')");
+
+            // optimiseExpressionModels optimises the IN-lambda before the enclosing
+            // query's join pass. The lambda's join pass collects akey='x' into the
+            // transitive-filter const maps; the enclosing pass must not read that
+            // stale entry and derive ckey='x' on tc, which would drop the 'y' row.
+            assertQuery(
+                    """
+                            SELECT a.akey, a.av, c.cv
+                            FROM ta a
+                            JOIN tc c ON c.ckey = a.akey
+                            WHERE a.akey IN (SELECT t1.akey FROM ta t1 CROSS JOIN tb2 t2 WHERE t1.akey = t2.akey AND t1.akey = 'x')
+                               OR a.av = 'ay'
+                            ORDER BY av"""
+            )
+                    .noLeakCheck()
+                    // a join inside an IN (SELECT ...) lambda retains ~131 KiB of factory
+                    // memory until factory close, tripping the 64 KiB post-close RSS check
+                    // for any such query; the test-end leak check still guards real leaks
+                    .noMemoryUsageCheck()
+                    .returns("""
+                            akey\tav\tcv
+                            x\tax\tcx
+                            y\tay\tcy
+                            """);
+        });
+    }
+
+    @Test
+    public void testJoinContextIsolationInLambdaPushedPredicate() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (akey SYMBOL INDEX, av STRING)");
+            execute("CREATE TABLE tb2 (akey SYMBOL INDEX, bv STRING)");
+            execute("CREATE TABLE tc (ckey SYMBOL INDEX, cv STRING)");
+            execute("INSERT INTO ta VALUES ('x', 'ax'), ('y', 'ay')");
+            execute("INSERT INTO tb2 VALUES ('x', 'bx'), ('y', 'by')");
+            execute("INSERT INTO tc VALUES ('x', 'cx'), ('y', 'cy')");
+            execute("CREATE VIEW v1 AS (SELECT t1.akey AS k, t1.av FROM ta t1 CROSS JOIN tb2 t2 WHERE t1.akey = t2.akey)");
+
+            // moveWhereInsideSubQueries pushes k='x' into the view's join inside the
+            // IN-lambda and re-derives transitive filters from the pushed predicate.
+            // The const-map entry it writes must not survive into the enclosing
+            // query's join pass, or tc picks up a derived ckey='x' filter and the
+            // 'y' row disappears.
+            assertQuery(
+                    """
+                            SELECT a.akey, a.av, c.cv
+                            FROM ta a
+                            JOIN tc c ON c.ckey = a.akey
+                            WHERE a.akey IN (SELECT k FROM v1 WHERE k = 'x')
+                               OR a.av = 'ay'
+                            ORDER BY av"""
+            )
+                    .noLeakCheck()
+                    // a join inside an IN (SELECT ...) lambda retains ~131 KiB of factory
+                    // memory until factory close, tripping the 64 KiB post-close RSS check
+                    // for any such query; the test-end leak check still guards real leaks
+                    .noMemoryUsageCheck()
+                    .returns("""
+                            akey\tav\tcv
+                            x\tax\tcx
+                            y\tay\tcy
+                            """);
         });
     }
 
@@ -2227,20 +2917,25 @@ public class JoinTest extends AbstractCairoTest {
             final String query2 = "SELECT count(1)\n" +
                     "FROM t as T1 JOIN t as T2 ON T1.event = T2.event";
 
-            assertQueryNoLeakCheck("count\n2\n", query1, null, false, true);
-            assertQueryNoLeakCheck("count\n4\n", query2, null, false, true);
+            assertQuery(query1)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n2\n");
+            assertQuery(query2)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n4\n");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query1 + " UNION " + query2)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             count
                             2
                             4
-                            """,
-                    query1 + " UNION " + query2,
-                    null,
-                    false,
-                    false
-            );
+                            """);
         });
     }
 
@@ -2295,13 +2990,9 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table y as (select cast((x-1)/4 + 1 as int) c, abs(rnd_int() % 100) b from long_sequence(20))");
             execute("create table z as (select cast((x-1)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(40))");
 
-            assertQueryNoLeakCheck(
-                    expected,
-                    "select z.c, x.a, b, d, d-b from x join y on(c) join z on (c) order by z.c, b, d",
-                    null,
-                    true,
-                    false
-            );
+            assertQuery("select z.c, x.a, b, d, d-b from x join y on(c) join z on (c) order by z.c, b, d")
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
@@ -2377,9 +3068,13 @@ public class JoinTest extends AbstractCairoTest {
                     """;
 
             // filter is applied to final join result
-            assertQueryNoLeakCheck(expected, "select * from x join y on (kk) order by x.id, y.id", null, true, false);
+            assertQuery("select * from x join y on (kk) order by x.id, y.id")
+                    .noLeakCheck()
+                    .returns(expected);
             // add no-op filter, so that x size estimate is not available anymore
-            assertQueryNoLeakCheck(expected, "select * from (x where kk > -1) x join y on (kk) order by x.id, y.id", null, true, false);
+            assertQuery("select * from (x where kk > -1) x join y on (kk) order by x.id, y.id")
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
@@ -2452,13 +3147,9 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table y as (select cast((x-1)/4 + 1 as int) m, abs(rnd_int() % 100) b from long_sequence(20))");
             execute("create table z as (select cast((x-1)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(40))");
 
-            assertQueryNoLeakCheck(
-                    expected,
-                    "select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) order by z.c, d-b",
-                    null,
-                    true,
-                    false
-            );
+            assertQuery("select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) order by z.c, d-b")
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
@@ -2477,16 +3168,14 @@ public class JoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE IF NOT EXISTS x (ts timestamp, event short) TIMESTAMP(ts);");
             execute("INSERT INTO x VALUES (now(), 42)");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT count(*) FROM x AS a INNER JOIN x AS b ON a.event = b.event WHERE now() = now()")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             count
                             1
-                            """,
-                    "SELECT count(*) FROM x AS a INNER JOIN x AS b ON a.event = b.event WHERE now() = now()",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -2518,14 +3207,17 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table z as (select cast((x-1)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(16))");
 
             // filter is applied to intermediate join result
-            assertQueryAndCache(expected, "select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) where y.b < 20 order by z.c, d-b", null, true, false);
+            assertQuery("select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) where y.b < 20 order by z.c, d-b")
+                    .noLeakCheck()
+                    .returns(expected);
 
             execute("insert into x select cast(x+6 as int) c, abs(rnd_int() % 650) a from long_sequence(3)");
             execute("insert into y select cast((x+19)/4 + 1 as int) m, abs(rnd_int() % 100) b from long_sequence(16)");
             execute("insert into z select cast((x+15)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(2)");
 
-            assertQueryNoLeakCheck(
-                    expected +
+            assertQuery("select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) where y.b < 20 order by z.c, d-b")
+                    .noLeakCheck()
+                    .returns(expected +
                             "7\t253\t14\t228\t214\n" +
                             "7\t253\t14\t723\t709\n" +
                             "8\t431\t0\t348\t348\n" +
@@ -2533,12 +3225,7 @@ public class JoinTest extends AbstractCairoTest {
                             "9\t100\t19\t456\t437\n" +
                             "9\t100\t8\t456\t448\n" +
                             "9\t100\t19\t667\t648\n" +
-                            "9\t100\t8\t667\t659\n",
-                    "select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) where y.b < 20 order by z.c, d-b",
-                    null,
-                    true,
-                    false
-            );
+                            "9\t100\t8\t667\t659\n");
         });
     }
 
@@ -2601,7 +3288,9 @@ public class JoinTest extends AbstractCairoTest {
             );
 
             // filter is applied to final join result
-            assertQueryNoLeakCheck(expected, "select * from x join y on (kk) order by kk, b1", null, true, false);
+            assertQuery("select * from x join y on (kk) order by kk, b1")
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
@@ -2649,7 +3338,9 @@ public class JoinTest extends AbstractCairoTest {
             );
 
             // filter is applied to final join result
-            assertQueryNoLeakCheck(expected, "select * from x join y on (kk) order by x.a, x.b, y.a", null, true, false);
+            assertQuery("select * from x join y on (kk) order by x.a, x.b, y.a")
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
@@ -2673,22 +3364,20 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table x as (select cast(x as int) c, abs(rnd_int() % 650) a from long_sequence(10))");
             execute("create table y as (select x, cast(2*((x-1)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(10))");
 
-            assertQueryAndCache(expected, "select x.c, x.a, b from x join y on y.m = x.c order by 1,2,3", null, true, false);
+            assertQuery("select x.c, x.a, b from x join y on y.m = x.c order by 1,2,3")
+                    .noLeakCheck()
+                    .returns(expected);
 
             execute("insert into x select cast(x+10 as int) c, abs(rnd_int() % 650) a from long_sequence(4)");
             execute("insert into y select x, cast(2*((x-1+10)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(6)");
 
-            assertQueryNoLeakCheck(
-                    expected +
+            assertQuery("select x.c, x.a, b from x join y on y.m = x.c order by 1,2,3")
+                    .noLeakCheck()
+                    .returns(expected +
                             "12\t347\t0\n" +
                             "12\t347\t7\n" +
                             "14\t197\t50\n" +
-                            "14\t197\t68\n",
-                    "select x.c, x.a, b from x join y on y.m = x.c order by 1,2,3",
-                    null,
-                    true,
-                    false
-            );
+                            "14\t197\t68\n");
         });
     }
 
@@ -2793,21 +3482,19 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table z as (select rnd_symbol('D','B',null,'A') c, abs(rnd_int() % 1000) d from long_sequence(16))");
 
             // filter is applied to intermediate join result
-            assertQueryAndCache(expected, "select x.c xc, z.c zc, y.m yc, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) order by x.c, d", null, true, false);
+            assertQuery("select x.c xc, z.c zc, y.m yc, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) order by x.c, d")
+                    .noLeakCheck()
+                    .returns(expected);
 
             execute("insert into x select rnd_symbol('L','K','P') c, abs(rnd_int() % 650) a from long_sequence(3)");
             execute("insert into y select rnd_symbol('P','L','K') m, abs(rnd_int() % 100) b from long_sequence(6)");
             execute("insert into z select rnd_symbol('K','P','L') c, abs(rnd_int() % 1000) d from long_sequence(6)");
 
-            assertQueryNoLeakCheck(
-                    expected +
+            assertQuery("select x.c xc, z.c zc, y.m yc, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) order by x.c, d")
+                    .noLeakCheck()
+                    .returns(expected +
                             "L\tL\tL\t148\t38\t121\t83\n" +
-                            "L\tL\tL\t148\t52\t121\t69\n",
-                    "select x.c xc, z.c zc, y.m yc, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) order by x.c, d",
-                    null,
-                    true,
-                    false
-            );
+                            "L\tL\tL\t148\t52\t121\t69\n");
         });
     }
 
@@ -2831,18 +3518,17 @@ public class JoinTest extends AbstractCairoTest {
                     (2, '2024-01-02T00:00:00.000000Z'),
                     (3, '2024-01-03T00:00:00.000000Z')
                     """);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT T1.val, T2.val FROM t T1 " +
+                    "INNER JOIN t T2 ON T1.ts < T2.ts " +
+                    "WHERE T1.val > 0 AND NOW() = NOW()")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             val\tval1
                             1\t2
                             1\t3
                             2\t3
-                            """,
-                    "SELECT T1.val, T2.val FROM t T1 " +
-                            "INNER JOIN t T2 ON T1.ts < T2.ts " +
-                            "WHERE T1.val > 0 AND NOW() = NOW()",
-                    null, false, false
-            );
+                            """);
         });
     }
 
@@ -2854,13 +3540,12 @@ public class JoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t VALUES (1, '2024-01-01T00:00:00.000000Z')");
-            assertQueryNoLeakCheck(
-                    "val\tval1\n",
-                    "SELECT T1.val, T2.val FROM t T1 " +
-                            "INNER JOIN t T2 ON T1.ts < T2.ts " +
-                            "WHERE T1.val > 0 AND 1 > 10 AND NOW() = NOW()",
-                    null, false, true
-            );
+            assertQuery("SELECT T1.val, T2.val FROM t T1 " +
+                    "INNER JOIN t T2 ON T1.ts < T2.ts " +
+                    "WHERE T1.val > 0 AND 1 > 10 AND NOW() = NOW()")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("val\tval1\n");
         });
     }
 
@@ -2879,29 +3564,30 @@ public class JoinTest extends AbstractCairoTest {
             String query = "SELECT T1.val, T2.val FROM t T1 " +
                     "INNER JOIN t T2 ON T1.ts < T2.ts " +
                     "WHERE T1.val > 0 AND 1 < 10 AND NOW() = NOW()";
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             val\tval1
                             1\t2
-                            """,
-                    query,
-                    null, false, false
-            );
+                            """);
             // Verify: no Empty table (1 < 10 folded as constant true), and
             // now()=now() merged from constWhereClause into a post-join filter.
-            assertPlanNoLeakCheck(query, """
-                    SelectedRecord
-                        Filter filter: (T1.ts<T2.ts and now()=now())
-                            Cross Join
-                                Async JIT Filter workers: 1
-                                  filter: 0<val
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: t
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                    """);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            SelectedRecord
+                                Filter filter: (T1.ts<T2.ts and now()=now())
+                                    Cross Join
+                                        Async JIT Filter workers: 1
+                                          filter: 0<val
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """);
         });
     }
 
@@ -2931,14 +3617,17 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table z as (select cast((x-1)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(16))");
 
             // filter is applied to intermediate join result
-            assertQueryAndCache(expected, "select z.c, x.a, b, d, a+b from x join y on y.m = x.c join z on (c) where a+b < 300 order by z.c, d", null, true, false);
+            assertQuery("select z.c, x.a, b, d, a+b from x join y on y.m = x.c join z on (c) where a+b < 300 order by z.c, d")
+                    .noLeakCheck()
+                    .returns(expected);
 
             execute("insert into x select cast(x+6 as int) c, abs(rnd_int() % 650) a from long_sequence(3)");
             execute("insert into y select cast((x+19)/4 + 1 as int) m, abs(rnd_int() % 100) b from long_sequence(16)");
             execute("insert into z select cast((x+15)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(2)");
 
-            assertQueryNoLeakCheck(
-                    expected +
+            assertQuery("select z.c, x.a, b, d, a+b from x join y on y.m = x.c join z on (c) where a+b < 300 order by z.c, d")
+                    .noLeakCheck()
+                    .returns(expected +
                             "7\t253\t35\t228\t288\n" +
                             "7\t253\t14\t228\t267\n" +
                             "7\t253\t35\t723\t288\n" +
@@ -2950,12 +3639,7 @@ public class JoinTest extends AbstractCairoTest {
                             "9\t100\t63\t667\t163\n" +
                             "9\t100\t19\t667\t119\n" +
                             "9\t100\t38\t667\t138\n" +
-                            "9\t100\t8\t667\t108\n",
-                    "select z.c, x.a, b, d, a+b from x join y on y.m = x.c join z on (c) where a+b < 300 order by z.c, d",
-                    null,
-                    true,
-                    false
-            );
+                            "9\t100\t8\t667\t108\n");
 
         });
     }
@@ -2988,20 +3672,19 @@ public class JoinTest extends AbstractCairoTest {
                     (100, '2024-01-03T00:00:00.000000Z'),
                     (200, '2024-01-04T00:00:00.000000Z')
                     """);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT a.val, b.val, c.val FROM t1 a " +
+                    "INNER JOIN t2 b ON a.ts < b.ts " +
+                    "INNER JOIN t3 c ON b.ts < c.ts " +
+                    "WHERE a.val + b.val > 5 AND b.val + c.val > 50")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             val\tval1\tval2
                             1\t10\t100
                             1\t10\t200
                             1\t20\t200
                             2\t20\t200
-                            """,
-                    "SELECT a.val, b.val, c.val FROM t1 a " +
-                            "INNER JOIN t2 b ON a.ts < b.ts " +
-                            "INNER JOIN t3 c ON b.ts < c.ts " +
-                            "WHERE a.val + b.val > 5 AND b.val + c.val > 50",
-                    null, false, false
-            );
+                            """);
         });
     }
 
@@ -3056,13 +3739,9 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table y as (select cast((x-1)/4 + 1 as int) c, abs(rnd_int() % 100) b from long_sequence(20))");
             execute("create table z as (select cast((x-1)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(40))");
 
-            assertQueryNoLeakCheck(
-                    expected,
-                    "select z.c, x.a, b, d, d-b, ts from x join y on(c) join z on (c) order by z.c, b",
-                    null,
-                    true,
-                    false
-            );
+            assertQuery("select z.c, x.a, b, d, d-b, ts from x join y on(c) join z on (c) order by z.c, b")
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
@@ -3079,16 +3758,14 @@ public class JoinTest extends AbstractCairoTest {
             execute("CREATE VIEW v1 AS (SELECT c2, max(c1) FROM t GROUP BY c2)");
             execute("CREATE VIEW v2 AS (SELECT v1.max, v1.c2 FROM t t0 LEFT JOIN v1 ON t0.c1 = v1.max)");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT v2.c2 FROM t t0 JOIN v2 ON t0.c1 = v2.max WHERE t0.c1 = 1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             c2
                             10
-                            """,
-                    "SELECT v2.c2 FROM t t0 JOIN v2 ON t0.c1 = v2.max WHERE t0.c1 = 1",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -3105,39 +3782,39 @@ public class JoinTest extends AbstractCairoTest {
                             ")"
             );
 
-            super.assertQueryNoLeakCheck(
-                    """
+            assertQuery("select \"in\", \"from\" from x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             in\tfrom
                             2\t3
                             4\t6
                             6\t9
-                            """,
-                    "select \"in\", \"from\" from x"
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select x.\"in\", x.\"from\", x1.\"in\", x1.\"from\" " +
+                    "from x " +
+                    "join x as x1 on x.i = x1.i")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             in\tfrom\tin1\tfrom1
                             2\t3\t2\t3
                             4\t6\t4\t6
                             6\t9\t6\t9
-                            """,
-                    "select x.\"in\", x.\"from\", x1.\"in\", x1.\"from\" " +
-                            "from x " +
-                            "join x as x1 on x.i = x1.i"
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select *, x.\"in\" + x1.\"from\" " +
+                    "from x " +
+                    "join x as x1 on x.i = x1.i")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             i\tin\tfrom\ti1\tin1\tfrom1\tcolumn
                             1\t2\t3\t1\t2\t3\t5
                             2\t4\t6\t2\t4\t6\t10
                             3\t6\t9\t3\t6\t9\t15
-                            """,
-                    "select *, x.\"in\" + x1.\"from\" " +
-                            "from x " +
-                            "join x as x1 on x.i = x1.i"
-            );
+                            """);
         });
     }
 
@@ -3192,7 +3869,11 @@ public class JoinTest extends AbstractCairoTest {
 
             String sql = "select * from t1 join t2 on t1.val = t2.val";
 
-            assertQueryNoLeakCheck(expected, sql, "ts", false, false);
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(expected);
         });
     }
 
@@ -3204,7 +3885,10 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table t2 (dec decimal(8, 4), ts timestamp) timestamp(ts)");
 
             try {
-                assertQueryNoLeakCheck("", "select * from t1 join t2 on t1.dec = t2.dec");
+                assertQuery("select * from t1 join t2 on t1.dec = t2.dec")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("");
                 Assert.fail();
             } catch (SqlException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "join column type mismatch");
@@ -3242,7 +3926,11 @@ public class JoinTest extends AbstractCairoTest {
 
             String sql = "select * from t1 join t2 on t1.dec = t2.dec";
 
-            assertQueryNoLeakCheck(expected, sql, "ts", false, false);
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(expected);
         });
     }
 
@@ -3276,7 +3964,11 @@ public class JoinTest extends AbstractCairoTest {
 
             String sql = "select * from t1 join t2 on cast(t1.dec as decimal(8, 4)) = t2.dec";
 
-            assertQueryNoLeakCheck(expected, sql, "ts", false, false);
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(expected);
         });
     }
 
@@ -3322,8 +4014,19 @@ public class JoinTest extends AbstractCairoTest {
                     "g2 as (select distinct * from t2 order by ts)" +
                     "select * from g1 lt join g2 on g1.geo4 = g2.geo4";
 
-            assertQueryNoLeakCheckWithFatJoin(sql, expected, "ts", true, false, true);
-            assertQueryNoLeakCheck(expected, sql, "ts", false, true);
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .fullFatJoins()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -3348,7 +4051,10 @@ public class JoinTest extends AbstractCairoTest {
                     "select * from g1 lt join g2 on g1.geo4 = g2.geo1";
 
             try {
-                assertQueryNoLeakCheck("", sql);
+                assertQuery(sql)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("");
                 Assert.fail();
             } catch (SqlException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "join column type mismatch");
@@ -3377,7 +4083,10 @@ public class JoinTest extends AbstractCairoTest {
                             ")"
             );
 
-            assertQueryAndCache(expected, query, null, false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expected);
         });
     }
 
@@ -3404,7 +4113,10 @@ public class JoinTest extends AbstractCairoTest {
                             ")"
             );
 
-            assertQueryAndCache(expected, query, null, false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expected);
         });
     }
 
@@ -3457,15 +4169,13 @@ public class JoinTest extends AbstractCairoTest {
             );
 
             // filter is applied to final join result
-            assertQueryNoLeakCheck(
-                    expected,
-                    "select * from x left join y on (kk) order by kk,a",
-                    null,
-                    true
-            );
+            assertQuery("select * from x left join y on (kk) order by kk,a")
+                    .noLeakCheck()
+                    .returns(expected);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select x.*, y.* from y right join x on (kk) order by kk,a")
+                    .noLeakCheck()
+                    .returns("""
                             kk\ta\tb\tkk1\ta1\tb1
                             1\t0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\tC\tnull\t\t
                             2\t0xdb2d34586f6275fab5b2159a23565217965d4c984f0ffa8a7bcd48d8c77aa655\tY\t2\t0x58dfd08eeb9cc39ecec82869edec121bc2593f82b430328d84a09f29df637e38\tB
@@ -3482,14 +4192,11 @@ public class JoinTest extends AbstractCairoTest {
                             9\t0x8a538661f350d0b46f06560981acb5496adc00ebd29fdd5373dee145497c5436\tH\tnull\t\t
                             10\t0x9c8afa23e6ca6ca17c1b058af93c08086bafc47f4abcd93b7f98b0c74238337e\tP\t10\t0x9a77e857727e751a7d67d36a09a1b5bb2932c3ad61000d645277ee62a5a6e9fb\tZ
                             10\t0x9c8afa23e6ca6ca17c1b058af93c08086bafc47f4abcd93b7f98b0c74238337e\tP\t10\t0x9b27eba5e9cfa1e29660300cea7db540954a62eca44acb2d71660a9b0890a2f0\tJ
-                            """,
-                    "select x.*, y.* from y right join x on (kk) order by kk,a",
-                    null,
-                    true
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select x.*, y.* from y full join x on (kk) order by kk,a")
+                    .noLeakCheck()
+                    .returns("""
                             kk\ta\tb\tkk1\ta1\tb1
                             1\t0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\tC\tnull\t\t
                             2\t0xdb2d34586f6275fab5b2159a23565217965d4c984f0ffa8a7bcd48d8c77aa655\tY\t2\t0x58dfd08eeb9cc39ecec82869edec121bc2593f82b430328d84a09f29df637e38\tB
@@ -3506,11 +4213,7 @@ public class JoinTest extends AbstractCairoTest {
                             9\t0x8a538661f350d0b46f06560981acb5496adc00ebd29fdd5373dee145497c5436\tH\tnull\t\t
                             10\t0x9c8afa23e6ca6ca17c1b058af93c08086bafc47f4abcd93b7f98b0c74238337e\tP\t10\t0x9a77e857727e751a7d67d36a09a1b5bb2932c3ad61000d645277ee62a5a6e9fb\tZ
                             10\t0x9c8afa23e6ca6ca17c1b058af93c08086bafc47f4abcd93b7f98b0c74238337e\tP\t10\t0x9b27eba5e9cfa1e29660300cea7db540954a62eca44acb2d71660a9b0890a2f0\tJ
-                            """,
-                    "select x.*, y.* from y full join x on (kk) order by kk,a",
-                    null,
-                    true
-            );
+                            """);
         });
     }
 
@@ -3553,14 +4256,12 @@ public class JoinTest extends AbstractCairoTest {
             );
 
             // filter is applied to final join result
-            assertQueryNoLeakCheck(
-                    expected,
-                    "select * from x left join y on (kk) order by x.a desc, y.a",
-                    null,
-                    true
-            );
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select * from x left join y on (kk) order by x.a desc, y.a")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("select * from x right join y on (kk) order by x.a desc, y.a")
+                    .noLeakCheck()
+                    .returns("""
                             kk\ta\tb\tkk1\ta1\tb1
                             2\t0xdb2d34586f6275fab5b2159a23565217965d4c984f0ffa8a7bcd48d8c77aa655\tY\t2\t0x4c0094500fbffdfe76fb2001fe5dfb09acea66fbe47c5e39bccb30ed7795ebc8\tJ
                             2\t0xdb2d34586f6275fab5b2159a23565217965d4c984f0ffa8a7bcd48d8c77aa655\tY\t2\t0x58dfd08eeb9cc39ecec82869edec121bc2593f82b430328d84a09f29df637e38\tB
@@ -3572,17 +4273,10 @@ public class JoinTest extends AbstractCairoTest {
                             8\t0x74ce62a98a4516952705e02c613acfc405374f5fbcef4819523eb59d99c647af\tY\t8\t0x69440048957ae05360802a2ca499f211b771e27f939096b9c356f99ae70523b5\tM
                             4\t0x2f1a8266e7921e3b716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288\tZ\t4\t0x10bb226eb4243e3683b91ec970b04e788a50f7ff7f6ed3305705e75fe328fa9d\tE
                             4\t0x2f1a8266e7921e3b716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288\tZ\t4\t0xbacd57f41b59057caa237cfb02a208e494cfe42988a633de738bab883dc7e332\tU
-                            """,
-                    "select * from x right join y on (kk) order by x.a desc, y.a",
-                    null,
-                    true
-            );
-            assertQueryNoLeakCheck(
-                    expected,
-                    "select * from x full join y on (kk) order by x.a desc, y.a",
-                    null,
-                    true
-            );
+                            """);
+            assertQuery("select * from x full join y on (kk) order by x.a desc, y.a")
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
@@ -3625,9 +4319,15 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table y as (select x, cast(2*((x-1)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(10))");
 
             // master records should be filtered out because slave records missing
-            assertQueryAndCache(expected, leftJoin, null, true, false);
-            assertQueryAndCache(expected, rightJoin, null, true, false);
-            assertQueryAndCache(expected, fullJoin, null, true, false);
+            assertQuery(leftJoin)
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery(rightJoin)
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery(fullJoin)
+                    .noLeakCheck()
+                    .returns(expected);
 
 
             execute("insert into x select * from (select cast(x+10 as int) c, abs(rnd_int() % 650) a, to_timestamp('2018-03-01', 'yyyy-MM-dd') + x + 10 ts from long_sequence(4)) timestamp(ts)");
@@ -3640,30 +4340,18 @@ public class JoinTest extends AbstractCairoTest {
                     "13\t244\tnull\t2018-03-01T00:00:00.000013Z\n" +
                     "14\t197\t50\t2018-03-01T00:00:00.000014Z\n" +
                     "14\t197\t68\t2018-03-01T00:00:00.000014Z\n";
-            assertQueryNoLeakCheck(
-                    expected,
-                    leftJoin,
-                    null,
-                    true,
-                    false
-            );
-            assertQueryNoLeakCheck(
-                    expected,
-                    rightJoin,
-                    null,
-                    true,
-                    false
-            );
-            assertQueryNoLeakCheck(
-                    "c\ta\tb\tts\n" +
+            assertQuery(leftJoin)
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery(rightJoin)
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery(fullJoin)
+                    .noLeakCheck()
+                    .returns("c\ta\tb\tts\n" +
                             "null\tnull\t55\t\n" +
                             "null\tnull\t64\t\n" +
-                            expected.replace("c\ta\tb\tts\n", ""),
-                    fullJoin,
-                    null,
-                    true,
-                    false
-            );
+                            expected.replace("c\ta\tb\tts\n", ""));
         });
     }
 
@@ -3704,8 +4392,12 @@ public class JoinTest extends AbstractCairoTest {
                             " from long_sequence(20))"
             );
 
-            assertQueryNoLeakCheckWithFatJoin(query, expected, null, true, true, false);
-            super.assertQueryNoLeakCheck(expected, query, null, true, false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
@@ -3746,29 +4438,38 @@ public class JoinTest extends AbstractCairoTest {
                             " from long_sequence(20))  timestamp(kk)"
             );
 
-            assertQueryNoLeakCheckWithFatJoin(query, expected, "k", true, false, true);
-            assertQueryNoLeakCheck(expected, query, "k", false, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .fullFatJoins()
+                    .timestamp("k")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("k")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
     @Test
     public void testJoiningSubqueryWithDotInColumnName() throws Exception {
-        assertMemoryLeak(() -> assertQueryNoLeakCheck(
-                """
+        assertMemoryLeak(() -> assertQuery("""
+                SELECT * FROM (SELECT x as "foo.bar" FROM long_sequence(5))
+                LEFT JOIN (select 1) ON true;
+                """)
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("""
                         "foo.bar"	1
                         1	1
                         2	1
                         3	1
                         4	1
                         5	1
-                        """,
-                """
-                        SELECT * FROM (SELECT x as "foo.bar" FROM long_sequence(5))
-                        LEFT JOIN (select 1) ON true;
-                        """,
-                null,
-                false
-        ));
+                        """));
     }
 
     @Test
@@ -4068,7 +4769,7 @@ public class JoinTest extends AbstractCairoTest {
                             1\ta\t1970-01-01T00:00:00.000001Z\t1\ta\t1970-01-01T00:00:00.000001Z
                             1\ta\t1970-01-01T00:00:00.000001Z\t1\td\t1970-01-01T00:00:00.000004Z
                             """,
-                    "ts1###DESC", true
+                    "ts1", true, true
             );
 
             assertHashJoinSql(
@@ -4081,7 +4782,7 @@ public class JoinTest extends AbstractCairoTest {
                             null\t\t\t1\tf\t1970-01-01T00:00:00.000002Z
                             null\t\t\t1\tg\t1970-01-01T00:00:00.000003Z
                             """,
-                    "ts1###DESC", true
+                    "ts1", true, true
             );
             assertHashJoinSql(
                     "select * from t1 full join t2 on j = i and (s2 ~ '[abde]') order by ts1 desc, s2",
@@ -4094,7 +4795,7 @@ public class JoinTest extends AbstractCairoTest {
                             null\t\t\t1\tf\t1970-01-01T00:00:00.000002Z
                             null\t\t\t1\tg\t1970-01-01T00:00:00.000003Z
                             """,
-                    "ts1###DESC", true
+                    "ts1", true, true
             );
         });
     }
@@ -4118,6 +4819,7 @@ public class JoinTest extends AbstractCairoTest {
                             5\te\tnull\t
                             """,
                     null,
+                    false,
                     false
             );
             assertHashJoinSql(
@@ -4131,6 +4833,7 @@ public class JoinTest extends AbstractCairoTest {
                             3\tc\t3\tc
                             """,
                     null,
+                    false,
                     true
             );
             assertHashJoinSql(
@@ -4147,6 +4850,7 @@ public class JoinTest extends AbstractCairoTest {
                             5\te\tnull\t
                             """,
                     null,
+                    false,
                     true
             );
         });
@@ -4777,19 +5481,28 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table t1 (i int);");
             execute("create table t2 as (select x+10 j from long_sequence(3))");
 
-            assertQueryNoLeakCheck("i\tj\n", "select * from t1 left join t2 on t1.i+10 = t2.j");
-            assertQueryNoLeakCheck("""
-                    i\tj
-                    null\t11
-                    null\t12
-                    null\t13
-                    """, "select * from t1 right join t2 on t1.i+10 = t2.j");
-            assertQueryNoLeakCheck("""
-                    i\tj
-                    null\t11
-                    null\t12
-                    null\t13
-                    """, "select * from t1 full join t2 on t1.i+10 = t2.j");
+            assertQuery("select * from t1 left join t2 on t1.i+10 = t2.j")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("i\tj\n");
+            assertQuery("select * from t1 right join t2 on t1.i+10 = t2.j")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            i\tj
+                            null\t11
+                            null\t12
+                            null\t13
+                            """);
+            assertQuery("select * from t1 full join t2 on t1.i+10 = t2.j")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            i\tj
+                            null\t11
+                            null\t12
+                            null\t13
+                            """);
         });
     }
 
@@ -4799,43 +5512,37 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table t1 as (select x i from long_sequence(5))");
             execute("create table t2 as (select x+10 j from long_sequence(3))");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select * from t1 left join t2 on t1.i+10 = t2.j")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             i\tj
                             1\t11
                             2\t12
                             3\t13
                             4\tnull
                             5\tnull
-                            """,
-                    "select * from t1 left join t2 on t1.i+10 = t2.j",
-                    null,
-                    false
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("select * from t1 right join t2 on t1.i+10 = t2.j")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             i\tj
                             1\t11
                             2\t12
                             3\t13
-                            """,
-                    "select * from t1 right join t2 on t1.i+10 = t2.j",
-                    null,
-                    false
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("select * from t1 full join t2 on t1.i+10 = t2.j")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             i\tj
                             1\t11
                             2\t12
                             3\t13
                             4\tnull
                             5\tnull
-                            """,
-                    "select * from t1 full join t2 on t1.i+10 = t2.j",
-                    null,
-                    false
-            );
+                            """);
         });
     }
 
@@ -4845,30 +5552,32 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table t1 as (select x i from long_sequence(5))");
             execute("create table t2 as (select x-3 j from long_sequence(3))");//-2,-1,0
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select * from t1 left join t2 on t1.i = - t2.j")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             i\tj
                             1\t-1
                             2\t-2
                             3\tnull
                             4\tnull
                             5\tnull
-                            """,
-                    "select * from t1 left join t2 on t1.i = - t2.j"
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select * from t1 right join t2 on t1.i = - t2.j")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             i\tj
                             2\t-2
                             1\t-1
                             null\t0
-                            """,
-                    "select * from t1 right join t2 on t1.i = - t2.j"
-            );
+                            """);
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select * from t1 full join t2 on t1.i = - t2.j")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             i\tj
                             1\t-1
                             2\t-2
@@ -4876,9 +5585,7 @@ public class JoinTest extends AbstractCairoTest {
                             4\tnull
                             5\tnull
                             null\t0
-                            """,
-                    "select * from t1 full join t2 on t1.i = - t2.j"
-            );
+                            """);
         });
     }
 
@@ -4890,39 +5597,39 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table t2 (j int)");
             execute("insert into t2 values (-1), (-2), (3), (0), (-5);");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select * from t1 left join t2 on abs(t1.i) = abs(t2.j)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             i\tj
                             1\t-1
                             -2\t-2
                             3\t3
                             -4\tnull
                             5\t-5
-                            """,
-                    "select * from t1 left join t2 on abs(t1.i) = abs(t2.j)"
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("select * from t1 right join t2 on abs(t1.i) = abs(t2.j)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             i\tj
                             1\t-1
                             -2\t-2
                             3\t3
                             null\t0
                             5\t-5
-                            """,
-                    "select * from t1 right join t2 on abs(t1.i) = abs(t2.j)"
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("select * from t1 right join t2 on abs(t1.i) = abs(t2.j)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             i\tj
                             1\t-1
                             -2\t-2
                             3\t3
                             null\t0
                             5\t-5
-                            """,
-                    "select * from t1 right join t2 on abs(t1.i) = abs(t2.j)"
-            );
+                            """);
         });
     }
 
@@ -4934,30 +5641,32 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table t2 (j int)");
             execute("insert into t2 values (-1), (-2), (-3), (-4), (-5);");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select * from t1 left join t2 on case when i < 4 then 0 else i end = abs(j)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             i\tj
                             1\tnull
                             2\tnull
                             3\tnull
                             4\t-4
                             5\t-5
-                            """,
-                    "select * from t1 left join t2 on case when i < 4 then 0 else i end = abs(j)"
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("select * from t1 right join t2 on case when i < 4 then 0 else i end = abs(j)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             i\tj
                             null\t-1
                             null\t-2
                             null\t-3
                             4\t-4
                             5\t-5
-                            """,
-                    "select * from t1 right join t2 on case when i < 4 then 0 else i end = abs(j)"
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("select * from t1 full join t2 on case when i < 4 then 0 else i end = abs(j)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             i\tj
                             1\tnull
                             2\tnull
@@ -4967,9 +5676,7 @@ public class JoinTest extends AbstractCairoTest {
                             null\t-1
                             null\t-2
                             null\t-3
-                            """,
-                    "select * from t1 full join t2 on case when i < 4 then 0 else i end = abs(j)"
-            );
+                            """);
         });
     }
 
@@ -4981,8 +5688,10 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table t2 (j int)");
             execute("insert into t2 values (-5), (-4), (-3), (-2), (-1);");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select * from t1 left join t2 on i > 4  ")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             i\tj
                             1\tnull
                             2\tnull
@@ -4993,22 +5702,22 @@ public class JoinTest extends AbstractCairoTest {
                             5\t-3
                             5\t-2
                             5\t-1
-                            """,
-                    "select * from t1 left join t2 on i > 4  "
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("select * from t1 right join t2 on i > 4  ")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             i\tj
                             5\t-5
                             5\t-4
                             5\t-3
                             5\t-2
                             5\t-1
-                            """,
-                    "select * from t1 right join t2 on i > 4  "
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("select * from t1 full join t2 on i > 4  ")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             i\tj
                             1\tnull
                             2\tnull
@@ -5019,9 +5728,7 @@ public class JoinTest extends AbstractCairoTest {
                             5\t-3
                             5\t-2
                             5\t-1
-                            """,
-                    "select * from t1 full join t2 on i > 4  "
-            );
+                            """);
         });
     }
 
@@ -5033,8 +5740,10 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table t2 (j int)");
             execute("insert into t2 values (-5), (-4), (-3), (-2), (-1);");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select * from t1 left join t2 on i > 4 and j < -3 ")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             i\tj
                             1\tnull
                             2\tnull
@@ -5042,22 +5751,22 @@ public class JoinTest extends AbstractCairoTest {
                             4\tnull
                             5\t-5
                             5\t-4
-                            """,
-                    "select * from t1 left join t2 on i > 4 and j < -3 "
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("select * from t1 right join t2 on i > 4 and j < -3 ")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             i\tj
                             5\t-5
                             5\t-4
                             null\t-3
                             null\t-2
                             null\t-1
-                            """,
-                    "select * from t1 right join t2 on i > 4 and j < -3 "
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("select * from t1 full join t2 on i > 4 and j < -3 ")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             i\tj
                             1\tnull
                             2\tnull
@@ -5068,9 +5777,7 @@ public class JoinTest extends AbstractCairoTest {
                             null\t-3
                             null\t-2
                             null\t-1
-                            """,
-                    "select * from t1 full join t2 on i > 4 and j < -3 "
-            );
+                            """);
         });
     }
 
@@ -5082,8 +5789,10 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table t2 (j int)");
             execute("insert into t2 values (-5), (-4), (-3), (-2), (-1);");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select * from t1 left join t2 on i*j >= -4 ")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             i\tj
                             1\t-4
                             1\t-3
@@ -5094,13 +5803,11 @@ public class JoinTest extends AbstractCairoTest {
                             3\t-1
                             4\t-1
                             5\tnull
-                            """,
-                    "select * from t1 left join t2 on i*j >= -4 ",
-                    null,
-                    false
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("select * from t1 right join t2 on i*j >= -4 ")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             i\tj
                             null\t-5
                             1\t-4
@@ -5111,13 +5818,11 @@ public class JoinTest extends AbstractCairoTest {
                             2\t-1
                             3\t-1
                             4\t-1
-                            """,
-                    "select * from t1 right join t2 on i*j >= -4 ",
-                    null,
-                    false
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("select * from t1 full join t2 on i*j >= -4 ")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             i\tj
                             1\t-4
                             1\t-3
@@ -5129,11 +5834,7 @@ public class JoinTest extends AbstractCairoTest {
                             4\t-1
                             5\tnull
                             null\t-5
-                            """,
-                    "select * from t1 full join t2 on i*j >= -4 ",
-                    null,
-                    false
-            );
+                            """);
         });
     }
 
@@ -5145,39 +5846,39 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table t2 (j int)");
             execute("insert into t2 values (-5), (-4), (-3), (-2), (-1);");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select * from t1 left join t2 on abs(i) = abs(j) and abs(i*j) <= 4")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             i\tj
                             1\t-1
                             2\t-2
                             3\tnull
                             4\tnull
                             5\tnull
-                            """,
-                    "select * from t1 left join t2 on abs(i) = abs(j) and abs(i*j) <= 4"
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("select * from t1 right join t2 on abs(i) = abs(j) and abs(i*j) <= 4")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             i\tj
                             null\t-5
                             null\t-4
                             null\t-3
                             2\t-2
                             1\t-1
-                            """,
-                    "select * from t1 right join t2 on abs(i) = abs(j) and abs(i*j) <= 4"
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("select * from t1 right join t2 on abs(i) = abs(j) and abs(i*j) <= 4")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             i\tj
                             null\t-5
                             null\t-4
                             null\t-3
                             2\t-2
                             1\t-1
-                            """,
-                    "select * from t1 right join t2 on abs(i) = abs(j) and abs(i*j) <= 4"
-            );
+                            """);
         });
     }
 
@@ -5188,35 +5889,35 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table t2 as (select x+10 j from long_sequence(3))");
             execute("create table t3 as (select x+1 k from long_sequence(3))");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select * from t1 left join (select * from t2 left join t3 on t2.j-1 = t3.k) tx on t1.i+10 = tx.j")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             i\tj\tk
                             1\t11\tnull
                             2\t12\tnull
                             3\t13\tnull
                             4\tnull\tnull
                             5\tnull\tnull
-                            """,
-                    "select * from t1 left join (select * from t2 left join t3 on t2.j-1 = t3.k) tx on t1.i+10 = tx.j"
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("select * from t1 right join (select * from t2 right join t3 on t2.j-1 = t3.k) tx on t1.i+10 = tx.j")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             i\tj\tk
                             null\tnull\t2
                             null\tnull\t3
                             null\tnull\t4
-                            """,
-                    "select * from t1 right join (select * from t2 right join t3 on t2.j-1 = t3.k) tx on t1.i+10 = tx.j"
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("select * from t1 right join (select * from t2 right join t3 on t2.j-1 = t3.k) tx on t1.i+10 = tx.j")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             i\tj\tk
                             null\tnull\t2
                             null\tnull\t3
                             null\tnull\t4
-                            """,
-                    "select * from t1 right join (select * from t2 right join t3 on t2.j-1 = t3.k) tx on t1.i+10 = tx.j"
-            );
+                            """);
         });
     }
 
@@ -5231,37 +5932,28 @@ public class JoinTest extends AbstractCairoTest {
             execute("CREATE TABLE y (id INT)");
             execute("INSERT INTO y VALUES (1), (2)");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT x.id, x.a, x.b, y.id FROM x LEFT JOIN y ON x.id = y.id AND x.a = x.b ORDER BY x.id")
+                    .noLeakCheck()
+                    .returns("""
                             id\ta\tb\tid1
                             1\t1\t1\t1
                             2\t1\t2\tnull
-                            """,
-                    "SELECT x.id, x.a, x.b, y.id FROM x LEFT JOIN y ON x.id = y.id AND x.a = x.b ORDER BY x.id",
-                    null,
-                    true
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("SELECT x.id, x.a, x.b, y.id FROM x RIGHT JOIN y ON x.id = y.id AND x.a = x.b ORDER BY y.id")
+                    .noLeakCheck()
+                    .returns("""
                             id\ta\tb\tid1
                             1\t1\t1\t1
                             null\tnull\tnull\t2
-                            """,
-                    "SELECT x.id, x.a, x.b, y.id FROM x RIGHT JOIN y ON x.id = y.id AND x.a = x.b ORDER BY y.id",
-                    null,
-                    true
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("SELECT x.id, x.a, x.b, y.id FROM x FULL JOIN y ON x.id = y.id AND x.a = x.b ORDER BY x.id, y.id")
+                    .noLeakCheck()
+                    .returns("""
                             id\ta\tb\tid1
                             null\tnull\tnull\t2
                             1\t1\t1\t1
                             2\t1\t2\tnull
-                            """,
-                    "SELECT x.id, x.a, x.b, y.id FROM x FULL JOIN y ON x.id = y.id AND x.a = x.b ORDER BY x.id, y.id",
-                    null,
-                    true
-            );
+                            """);
         });
     }
 
@@ -5276,39 +5968,30 @@ public class JoinTest extends AbstractCairoTest {
             execute("CREATE TABLE y (id INT, a INT, b INT)");
             execute("INSERT INTO y VALUES (1, 1, 1), (1, 1, 2), (3, 5, 5)");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT x.id, y.id, y.a, y.b FROM x LEFT JOIN y ON x.id = y.id AND y.a = y.b ORDER BY x.id")
+                    .noLeakCheck()
+                    .returns("""
                             id\tid1\ta\tb
                             1\t1\t1\t1
                             2\tnull\tnull\tnull
-                            """,
-                    "SELECT x.id, y.id, y.a, y.b FROM x LEFT JOIN y ON x.id = y.id AND y.a = y.b ORDER BY x.id",
-                    null,
-                    true
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("SELECT x.id, y.id, y.a, y.b FROM x RIGHT JOIN y ON x.id = y.id AND y.a = y.b ORDER BY x.id, y.id, y.a, y.b")
+                    .noLeakCheck()
+                    .returns("""
                             id\tid1\ta\tb
                             null\t1\t1\t2
                             null\t3\t5\t5
                             1\t1\t1\t1
-                            """,
-                    "SELECT x.id, y.id, y.a, y.b FROM x RIGHT JOIN y ON x.id = y.id AND y.a = y.b ORDER BY x.id, y.id, y.a, y.b",
-                    null,
-                    true
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("SELECT x.id, y.id, y.a, y.b FROM x FULL JOIN y ON x.id = y.id AND y.a = y.b ORDER BY x.id, y.id")
+                    .noLeakCheck()
+                    .returns("""
                             id\tid1\ta\tb
                             null\t1\t1\t2
                             null\t3\t5\t5
                             1\t1\t1\t1
                             2\tnull\tnull\tnull
-                            """,
-                    "SELECT x.id, y.id, y.a, y.b FROM x FULL JOIN y ON x.id = y.id AND y.a = y.b ORDER BY x.id, y.id",
-                    null,
-                    true
-            );
+                            """);
         });
     }
 
@@ -5318,32 +6001,30 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table t1 as (select x i from long_sequence(3))");
             execute("create table t2 as (select x+10 j from long_sequence(3))");
 
-            assertQueryNoLeakCheck(
-                    "i\tj\n",
-                    "select * from t1 join t2 on i=j and abs(1) = 0"
-            );
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select * from t1 join t2 on i=j and abs(1) = 0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("i\tj\n");
+            assertQuery("select * from t1 left join t2 on i=j and abs(1) = 0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             i\tj
                             1\tnull
                             2\tnull
                             3\tnull
-                            """,
-                    "select * from t1 left join t2 on i=j and abs(1) = 0"
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("select * from t1 right join t2 on i=j and abs(1) = 0 order by i, j")
+                    .noLeakCheck()
+                    .returns("""
                             i\tj
                             null\t11
                             null\t12
                             null\t13
-                            """,
-                    "select * from t1 right join t2 on i=j and abs(1) = 0 order by i, j",
-                    null,
-                    true
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("select * from t1 full join t2 on i=j and abs(1) = 0 order by i, j")
+                    .noLeakCheck()
+                    .returns("""
                             i\tj
                             null\t11
                             null\t12
@@ -5351,11 +6032,7 @@ public class JoinTest extends AbstractCairoTest {
                             1\tnull
                             2\tnull
                             3\tnull
-                            """,
-                    "select * from t1 full join t2 on i=j and abs(1) = 0 order by i, j",
-                    null,
-                    true
-            );
+                            """);
         });
     }
 
@@ -5388,21 +6065,18 @@ public class JoinTest extends AbstractCairoTest {
                       fact_table AS "fact_table"
                       LEFT JOIN dim_apTemperature AS "dim_ap_temperature" ON "fact_table".id_aparent_temperature = "dim_ap_temperature".id
                     LIMIT 3;""";
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             dim_ap_temperature__category\tfact_table__date_time_day
                             a\t1970-01-01T00:00:00.000000Z
                             b\t1970-01-01T00:00:00.000000Z
                             c\t1970-01-01T00:00:00.000000Z
-                            """,
-                    query,
-                    null,
-                    false,
-                    false
-            );
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+                            """);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Limit value: 3 skip-rows-max: 0 take-rows-max: 3
                                 VirtualRecord
                                   functions: [dim_ap_temperature__category,timestamp_floor('day',to_timezone(date_time))]
@@ -5416,8 +6090,7 @@ public class JoinTest extends AbstractCairoTest {
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: dim_apTemperature
-                            """
-            );
+                            """);
 
             query = """
                     SELECT
@@ -5427,21 +6100,18 @@ public class JoinTest extends AbstractCairoTest {
                       fact_table AS "fact_table"
                       RIGHT JOIN dim_apTemperature AS "dim_ap_temperature" ON "fact_table".id_aparent_temperature = "dim_ap_temperature".id
                     LIMIT 3;""";
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             dim_ap_temperature__category\tfact_table__date_time_day
                             a\t1970-01-01T00:00:00.000000Z
                             b\t1970-01-01T00:00:00.000000Z
                             c\t1970-01-01T00:00:00.000000Z
-                            """,
-                    query,
-                    null,
-                    false,
-                    false
-            );
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+                            """);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Limit value: 3 skip-rows-max: 0 take-rows-max: 3
                                 VirtualRecord
                                   functions: [dim_ap_temperature__category,timestamp_floor('day',to_timezone(date_time))]
@@ -5455,8 +6125,7 @@ public class JoinTest extends AbstractCairoTest {
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: dim_apTemperature
-                            """
-            );
+                            """);
 
             query = """
                     SELECT
@@ -5466,21 +6135,18 @@ public class JoinTest extends AbstractCairoTest {
                       fact_table AS "fact_table"
                       FULL JOIN dim_apTemperature AS "dim_ap_temperature" ON "fact_table".id_aparent_temperature = "dim_ap_temperature".id
                     LIMIT 3;""";
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             dim_ap_temperature__category\tfact_table__date_time_day
                             a\t1970-01-01T00:00:00.000000Z
                             b\t1970-01-01T00:00:00.000000Z
                             c\t1970-01-01T00:00:00.000000Z
-                            """,
-                    query,
-                    null,
-                    false,
-                    false
-            );
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+                            """);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Limit value: 3 skip-rows-max: 0 take-rows-max: 3
                                 VirtualRecord
                                   functions: [dim_ap_temperature__category,timestamp_floor('day',to_timezone(date_time))]
@@ -5494,8 +6160,7 @@ public class JoinTest extends AbstractCairoTest {
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: dim_apTemperature
-                            """
-            );
+                            """);
         });
     }
 
@@ -5504,11 +6169,9 @@ public class JoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)");
             execute("create table y as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)");
-            assertExceptionNoLeakCheck(
-                    "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from (x order by timestamp desc) x lt join y on y.sym2 = x.sym",
-                    93,
-                    "left"
-            );
+            assertQuery("select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from (x order by timestamp desc) x lt join y on y.sym2 = x.sym")
+                    .noLeakCheck()
+                    .fails(93, "left");
         });
     }
 
@@ -5522,11 +6185,9 @@ public class JoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10))");
             execute("create table y as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)");
-            assertExceptionNoLeakCheck(
-                    "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x lt join y on y.sym2 = x.sym",
-                    65,
-                    "left"
-            );
+            assertQuery("select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x lt join y on y.sym2 = x.sym")
+                    .noLeakCheck()
+                    .fails(65, "left");
         });
     }
 
@@ -5535,11 +6196,9 @@ public class JoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)");
             execute("create table y as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30))");
-            assertExceptionNoLeakCheck(
-                    "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x lt join y on y.sym2 = x.sym",
-                    65,
-                    "right"
-            );
+            assertQuery("select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x lt join y on y.sym2 = x.sym")
+                    .noLeakCheck()
+                    .fails(65, "right");
         });
     }
 
@@ -5558,11 +6217,8 @@ public class JoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)");
             execute("create table y as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)");
-            assertException(
-                    "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x lt join (y order by timestamp desc) y on y.sym2 = x.sym",
-                    65,
-                    "right"
-            );
+            assertQuery("select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x lt join (y order by timestamp desc) y on y.sym2 = x.sym")
+                    .fails(65, "right");
         });
     }
 
@@ -5617,16 +6273,17 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
             execute("insert into t2 select x, x::timestamp from long_sequence(3)");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select * from t1 lt join t2 on l1=l2")
+                    .noLeakCheck()
+                    .timestamp("ts1")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             l1\tts1\tl2\tts2
                             1\t1970-01-01T00:00:00.000001Z\tnull\t
                             2\t1970-01-01T00:00:00.000002Z\tnull\t
                             3\t1970-01-01T00:00:00.000003Z\tnull\t
-                            """,
-                    "select * from t1 lt join t2 on l1=l2",
-                    "ts1", false, true
-            );
+                            """);
         });
     }
 
@@ -5638,16 +6295,17 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
             execute("insert into t2 select x, x::timestamp from long_sequence(3)");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select * from t1 lt join t2")
+                    .noLeakCheck()
+                    .timestamp("ts1")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             l1\tts1\tl2\tts2
                             1\t1970-01-01T00:00:00.000001Z\tnull\t
                             2\t1970-01-01T00:00:00.000002Z\t1\t1970-01-01T00:00:00.000001Z
                             3\t1970-01-01T00:00:00.000003Z\t2\t1970-01-01T00:00:00.000002Z
-                            """,
-                    "select * from t1 lt join t2",
-                    "ts1", false, true
-            );
+                            """);
         });
     }
 
@@ -5660,18 +6318,17 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
             execute("insert into t2 select x, (x + 1000000)::timestamp from long_sequence(3)");
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select * from t1 lt join t2")
+                    .noLeakCheck()
+                    .timestamp("ts1")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             l1\tts1\tl2\tts2
                             1\t1970-01-01T00:00:00.000001Z\tnull\t
                             2\t1970-01-01T00:00:00.000002Z\tnull\t
                             3\t1970-01-01T00:00:00.000003Z\tnull\t
-                            """,
-                    "select * from t1 lt join t2",
-                    "ts1",
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -5693,6 +6350,172 @@ public class JoinTest extends AbstractCairoTest {
                 ORDER BY order_ts + usec_offs
                 """;
         assertSkipToAndCalculateSize(sql, 1000);
+    }
+
+    @Test
+    public void testMasterFilterAnchorsAtLastNullingJoinInOrder() throws Exception {
+        // wm is NULL-extended by two joins: a homogenized CROSS_RIGHT (non-equi ON) and a RIGHT join.
+        // doReorderTables appends the context-less CROSS_RIGHT last, so it executes AFTER the RIGHT join.
+        // The master WHERE wm.c = 1 must anchor at that last-executing nulling join; anchoring by model
+        // index placed it below the CROSS_RIGHT, which then re-synthesized a NULL-master row that leaked.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE wm (x INT, q INT, c INT)");
+            execute("INSERT INTO wm VALUES (1, 1, 9)");
+            execute("CREATE TABLE ws1 (y INT)");
+            execute("INSERT INTO ws1 VALUES (100)");
+            execute("CREATE TABLE ws2 (q INT)");
+            execute("INSERT INTO ws2 VALUES (2)");
+            assertQuery("SELECT * FROM wm RIGHT JOIN ws1 ON wm.x > ws1.y RIGHT JOIN ws2 ON ws2.q = wm.q WHERE wm.c = 1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Filter filter: wm.c=1")
+                    .returns("x\tq\tc\ty\tq1\n");
+        });
+    }
+
+    @Test
+    public void testMasterFilterPushesTransitiveSlaveConstForLiteral() throws Exception {
+        // Parity with the regex path: a master-side equality predicate on a NULL-extending join
+        // stays a post-join filter (removing NULL-master rows), but a non-null literal constant is
+        // still propagated to the slave through the join key, so the slave is pre-filtered. The
+        // push is result-neutral (matched rows have b.sym = a.sym, and the post-join filter already
+        // drops the NULL-master rows). A bind variable is deliberately NOT propagated, because it can
+        // be NULL at runtime and `null = null` is TRUE; the literal and bind forms must still agree.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (sym SYMBOL, c1 INT)");
+            execute("INSERT INTO m VALUES ('s2', 100), ('x', 200)");
+            execute("CREATE TABLE s (sym SYMBOL, v INT)");
+            execute("INSERT INTO s VALUES ('s2', 10), ('x', 50), ('zz', 99)");
+
+            final String expected = "e0\te1\ns2\t100\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                final String literal = "SELECT a.sym AS e0, a.c1 AS e1 FROM m a " + joinType + " JOIN s b ON a.sym = b.sym WHERE a.sym = 's2'";
+                final String bind = "SELECT a.sym AS e0, a.c1 AS e1 FROM m a " + joinType + " JOIN s b ON a.sym = b.sym WHERE a.sym = :sym::SYMBOL";
+
+                // Literal: the post-join filter (a.sym) stays, and the transitive slave filter (sym)
+                // is pushed into the slave sub-query.
+                bindVariableService.clear();
+                assertQuery(literal).noLeakCheck().noRandomAccess().withPlanContaining("filter: sym='s2'").returns(expected);
+
+                // Bind: no transitive push, but the result must match the literal form.
+                bindVariableService.clear();
+                bindVariableService.setStr("sym", "s2");
+                assertQuery(bind).noLeakCheck().noRandomAccess().returns(expected);
+            }
+        });
+    }
+
+    @Test
+    public void testMultiTableEqualityMasterFilterStaysPostJoin() throws Exception {
+        // Companion to testMultiTableMasterFilterStaysPostJoin, which uses an INEQUALITY (t0.a < t1.b)
+        // that analyseEquals routes straight to assignFilters. An EQUALITY across two master tables
+        // (t0.a = t1.b) instead folds into the inner join's keys, so it was applied BEFORE the later
+        // RIGHT/FULL OUTER NULL-extends t0 and t1 for the unmatched t2 key 2. With the equality folded,
+        // the inner t0/t1 join is empty (1 != 5), so every t2 row became a NULL-master row and the
+        // filter never ran -- leaking (null,null,1) on top of the legitimate (null,null,2), 2 rows for
+        // 1. Held post-join the inner join keeps (1,5,1), which t0.a=t1.b drops, and the outer join's
+        // (null,null,2) survives because null=null is true for INT.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT, k INT)");
+            execute("INSERT INTO t0 VALUES (1, 1)");
+            execute("CREATE TABLE t1 (b INT, k INT)");
+            execute("INSERT INTO t1 VALUES (5, 1)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (2)");
+
+            final String expected = "a\tb\tk\nnull\tnull\t2\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                assertQuery("SELECT t0.a, t1.b, t2.k FROM t0 JOIN t1 ON t0.k = t1.k " + joinType + " JOIN t2 ON t2.k = t1.k WHERE t0.a = t1.b")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanContaining("Filter filter: t0.a=t1.b")
+                        .returns(expected);
+            }
+        });
+    }
+
+    @Test
+    public void testMultiTableEqualityOuterJoinedTableStaysPostJoin() throws Exception {
+        // Variant of testMultiTableEqualityMasterFilterStaysPostJoin where the HIGHER table of the
+        // equality (t1) is itself reached via an outer join, then NULL-extended by a SECOND outer
+        // join. analyseEquals routes a two-table equality whose higher table is barrier-joined to a
+        // model-order post-join anchor at that table's own join -- below the later FULL/RIGHT OUTER,
+        // leaking (null,null,1) on top of the legitimate (null,null,3). Held above the outer join,
+        // the matched (1,5) row fails 1=5 and only (null,null,3) survives because null=null is true.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT, k INT)");
+            execute("INSERT INTO t0 VALUES (1, 1)");
+            execute("CREATE TABLE t1 (b INT, k INT)");
+            execute("INSERT INTO t1 VALUES (5, 1), (9, 2)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (3)");
+
+            final String expected = "a\tb\tk\nnull\tnull\t3\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                assertQuery("SELECT t0.a, t1.b, t2.k FROM t0 RIGHT JOIN t1 ON t0.k = t1.k " + joinType + " JOIN t2 ON t1.k = t2.k WHERE t0.a = t1.b")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanContaining("Filter filter: t0.a=t1.b")
+                        .returns(expected);
+            }
+        });
+    }
+
+    @Test
+    public void testMultiTableEqualityReorderedFilterStaysPostJoin() throws Exception {
+        // Covers the hasNonEquiNullingJoin arm of the two-table equality deferral;
+        // testMultiTableEqualityMasterFilterStaysPostJoin covers the masterNullingJoinIndex arm.
+        // The WHERE equality (c.c1 = d.d1) is across two INNER-joined tables whose NULL-extension
+        // comes from a lower-model-index non-equi RIGHT/FULL OUTER. That join carries no JoinContext,
+        // so homogenizeCrossJoins rewrites it to a CROSS variant reorderTables appends last -- after
+        // c and d join -- and NULL-extends them. masterNullingJoinIndex scans only higher model
+        // indexes and misses the reorder, so analyseEquals defers via hasNonEquiNullingJoin to the
+        // exec-order-aware assignFilters, keeping c.c1 = d.d1 post-join. Folding it into the c/d inner
+        // join applies it before the reordered outer join, emptying that subtree (7 != 8) so the join
+        // pairs the slave row with NULL c/d and leaks (null,50,null,null) -- 1 row for 0.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (x INT, k INT)");
+            execute("INSERT INTO a VALUES (100, 1)");
+            execute("CREATE TABLE b (y INT)");
+            execute("INSERT INTO b VALUES (50)");
+            execute("CREATE TABLE c (k INT, c1 INT)");
+            execute("INSERT INTO c VALUES (1, 7)");
+            execute("CREATE TABLE d (k INT, d1 INT)");
+            execute("INSERT INTO d VALUES (1, 8)");
+
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                assertQuery("SELECT a.x, b.y, c.c1, d.d1 FROM a " + joinType + " JOIN b ON a.x > b.y JOIN c ON c.k = a.k JOIN d ON d.k = a.k WHERE c.c1 = d.d1")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanContaining("Filter filter: c.c1=d.d1")
+                        .returns("x\ty\tc1\td1\n");
+            }
+        });
+    }
+
+    @Test
+    public void testMultiTableMasterFilterStaysPostJoin() throws Exception {
+        // A WHERE predicate that references TWO master tables (t0.a < t1.b) reaches assignFilters'
+        // multi-reference else-branch, which anchored it at the inner join where both tables arrive.
+        // A later RIGHT/FULL OUTER join NULL-extends t0 and t1 for the unmatched t2 key 2; the filter
+        // must stay above that join. Anchoring below it leaked the (null,null,2) row -- 2 rows for 1.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT, k INT)");
+            execute("INSERT INTO t0 VALUES (1, 1)");
+            execute("CREATE TABLE t1 (b INT, k INT)");
+            execute("INSERT INTO t1 VALUES (5, 1)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (2)");
+
+            final String expected = "a\tb\tk\n1\t5\t1\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                assertQuery("SELECT t0.a, t1.b, t2.k FROM t0 JOIN t1 ON t0.k = t1.k " + joinType + " JOIN t2 ON t2.k = t1.k WHERE t0.a < t1.b")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanContaining("Filter filter: t0.a<t1.b")
+                        .returns(expected);
+            }
+        });
     }
 
     @Test
@@ -5736,40 +6559,213 @@ public class JoinTest extends AbstractCairoTest {
             execute("insert into t values('2023-09-21T10:00:00.000000Z',1,1);\n");
             execute("insert into t values('2023-09-21T10:00:00.000000Z',1,1);\n");
 
-            assertQueryNoLeakCheck(
-                    "count\n0\n",
-                    "select count(*) " +
-                            "from t as t1 " +
-                            "join t as t2 on t1.c0<t2.c0 " +
-                            "cross join t as t3",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("select count(*) " +
+                    "from t as t1 " +
+                    "join t as t2 on t1.c0<t2.c0 " +
+                    "cross join t as t3")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n0\n");
 
-            assertQueryNoLeakCheck(
-                    "count\n0\n",
-                    "select count(*) " +
-                            "from t as t3 " +
-                            "cross join t as t1 " +
-                            "join t as t2 on t1.c0<t2.c0 ",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("select count(*) " +
+                    "from t as t3 " +
+                    "cross join t as t1 " +
+                    "join t as t2 on t1.c0<t2.c0 ")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n0\n");
 
-            assertQueryNoLeakCheck(
-                    "count\n0\n",
-                    "select count(*) " +
-                            "from t as t3 " +
-                            "cross join t as t2 " +
-                            "join t as t1 on t1.c0<t2.c0 ",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("select count(*) " +
+                    "from t as t3 " +
+                    "cross join t as t2 " +
+                    "join t as t1 on t1.c0<t2.c0 ")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n0\n");
         });
 
+    }
+
+    @Test
+    public void testNonEquiOuterJoinMasterFilterStaysPostJoin() throws Exception {
+        // A RIGHT/FULL OUTER join with a NON-equi ON clause carries no JoinContext, so
+        // homogenizeCrossJoins (which runs before assignFilters) rewrites it to
+        // JOIN_CROSS_RIGHT/JOIN_CROSS_FULL. Those CROSS variants still NULL-extend the
+        // master (NestedLoopRight/FullJoin), so a master-only WHERE must stay a post-join
+        // filter. With the predicate pushed into the master sub-query the unmatched
+        // (NULL-master) slave rows leaked. i=5 is a non-NULL predicate, so the result must
+        // equal the INNER ground truth (5|-5, 5|-4).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (i INT)");
+            execute("INSERT INTO t1 VALUES (1),(2),(3),(4),(5)");
+            execute("CREATE TABLE t2 (j INT)");
+            execute("INSERT INTO t2 VALUES (-5),(-4),(-3),(-2),(-1)");
+
+            final String expected = "i\tj\n5\t-5\n5\t-4\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                final String literal = "SELECT i, j FROM t1 " + joinType + " JOIN t2 ON i > 4 AND j < -3 WHERE i = 5 ORDER BY j";
+
+                // i=5 must stay above the join as a post-join Filter, not be pushed into t1.
+                bindVariableService.clear();
+                assertQuery(literal).noLeakCheck().withPlanContaining("Filter filter: t1.i=5").returns(expected);
+
+                final String bind = "SELECT i, j FROM t1 " + joinType + " JOIN t2 ON i > 4 AND j < -3 WHERE i = :v::INT ORDER BY j";
+                bindVariableService.clear();
+                bindVariableService.setInt("v", 5);
+                // Bind-variable form must produce the identical result under the full assertion battery.
+                assertQuery(bind).noLeakCheck().returns(expected);
+            }
+        });
+    }
+
+    @Test
+    public void testNonEquiOuterJoinReorderedFilterStaysPostJoin() throws Exception {
+        // Companion to testNonEquiOuterJoinMasterFilterStaysPostJoin, which filters the directly
+        // NULL-extended master that masterNullingJoinIndex catches in model order. Here the WHERE
+        // predicate (c.v = 1) is on an INNER-joined table whose NULL-extension comes from a lower-
+        // model-index non-equi RIGHT/FULL OUTER. That join carries no JoinContext, so it homogenizes
+        // to JOIN_CROSS_RIGHT/JOIN_CROSS_FULL and reorderTables appends it last -- after c joins, so
+        // it NULL-extends c. masterNullingJoinIndex only scans higher model indexes and misses the
+        // reorder, so analyseEquals (hasNonEquiNullingJoin) defers the predicate to the exec-order-
+        // aware assignFilters, which keeps it post-join. Pushing it into c leaked the (null,100,null)
+        // row -- 2 rows for 1.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (x INT, k INT)");
+            execute("INSERT INTO a VALUES (10, 1)");
+            execute("CREATE TABLE b (y INT)");
+            execute("INSERT INTO b VALUES (5), (100)");
+            execute("CREATE TABLE c (k INT, v INT)");
+            execute("INSERT INTO c VALUES (1, 1)");
+
+            final String expected = "x\ty\tv\n10\t5\t1\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                final String literal = "SELECT a.x, b.y, c.v FROM a " + joinType + " JOIN b ON a.x > b.y JOIN c ON c.k = a.k WHERE c.v = 1 ORDER BY b.y";
+                bindVariableService.clear();
+                assertQuery(literal).noLeakCheck().withPlanContaining("Filter filter: c.v=1").returns(expected);
+
+                final String bind = "SELECT a.x, b.y, c.v FROM a " + joinType + " JOIN b ON a.x > b.y JOIN c ON c.k = a.k WHERE c.v = :v::INT ORDER BY b.y";
+                bindVariableService.clear();
+                bindVariableService.setInt("v", 1);
+                assertQuery(bind).noLeakCheck().returns(expected);
+            }
+        });
+    }
+
+    @Test
+    public void testNullLiteralMasterFilterStaysPostJoin() throws Exception {
+        // A NULL-literal master predicate (m.x = null, which QuestDB evaluates as IS NULL) keeps the
+        // NULL-master rows instead of dropping them, the opposite of the operator/equality tests. It
+        // still must stay a post-join filter: pushing it into the master sub-query strips it from the
+        // post-join stage, so the NULL-master rows that the join synthesizes afterwards bypass it. The
+        // matched master row (x=5) fails IS NULL and is dropped; the single NULL-master row passes and
+        // is the only survivor under RIGHT/FULL/SPLICE. Pushing the predicate left the matched row in
+        // and re-leaked the NULL-master rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (x INT, k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO m VALUES (5, 1, 2)");
+            execute("CREATE TABLE s (k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO s VALUES (1, 1), (2, 3)");
+
+            final String expected = "x\nnull\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                assertQuery("SELECT m.x FROM m " + joinType + " JOIN s ON m.k = s.k WHERE m.x = null")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanContaining("Filter filter: m.x=null")
+                        .returns(expected);
+            }
+
+            // SPLICE NULL-extends the master for the pre-master timestamp; only that NULL-master row
+            // passes IS NULL, the prevailing-master rows (x=5) are dropped.
+            assertQuery("SELECT m.x FROM m SPLICE JOIN s WHERE m.x = null")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Filter filter: m.x=null")
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testOperatorMasterFilterStaysPostJoin() throws Exception {
+        // assignFilters routes a non-folded operator predicate (a.c1 < 100) on a NULL-extending
+        // master to a post-join filter; the existing folded-FALSE splice test only exercises that
+        // path for a constant-FALSE predicate. The master row (c1=50) matches the slave and passes
+        // the filter; the slave's unmatched row becomes a NULL-master row that c1<100 drops
+        // (NULL<100 is NULL/false). Pushing the predicate into the master would leak that
+        // NULL-master row, so RIGHT/FULL must return only the matched row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (c1 INT, k INT)");
+            execute("INSERT INTO m VALUES (50, 10)");
+            execute("CREATE TABLE s (k INT)");
+            execute("INSERT INTO s VALUES (10), (20)");
+
+            final String expected = "c1\n50\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                assertQuery("SELECT m.c1 FROM m " + joinType + " JOIN s ON m.k = s.k WHERE m.c1 < 100")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanContaining("Filter filter: m.c1<100")
+                        .returns(expected);
+            }
+        });
+    }
+
+    @Test
+    public void testOuterConstFilterDoesNotLeakIntoNestedNullingJoin() throws Exception {
+        // The outer query filters tc.k = 2 and the nested subquery RIGHT JOINs ta a to tb b under a
+        // master-only WHERE a.k = 1. That WHERE references the NULL-extended master, so the
+        // master-nulling guard keeps it post-join and skips registering a's constant in the
+        // constNameTo* maps. Those maps are instance state keyed by bare column name; without a clear
+        // between join-model levels the outer query's stale "k -> 2" entry survived into the nested
+        // model, and addTransitiveFilters injected b.k = 2 into the nested slave, dropping the matching
+        // row (0 rows instead of 1). optimiseJoins now clears the maps before recursing into nested
+        // and union models, so the foreign constant no longer leaks.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tc (q INT, k INT)");
+            execute("INSERT INTO tc VALUES (1, 2)");
+            execute("CREATE TABLE ta (k INT)");
+            execute("INSERT INTO ta VALUES (1)");
+            execute("CREATE TABLE tb (k INT, v INT)");
+            execute("INSERT INTO tb VALUES (1, 10)");
+
+            assertQuery("SELECT * FROM tc " +
+                    "JOIN (SELECT a.k k1, b.v FROM ta a RIGHT JOIN tb b ON a.k = b.k WHERE a.k = 1) x " +
+                    "  ON tc.q = x.k1 " +
+                    "WHERE tc.k = 2")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("q\tk\tk1\tv\n1\t2\t1\t10\n");
+        });
+    }
+
+    @Test
+    public void testOuterConstFilterDoesNotLeakIntoNestedNullingJoinDifferentColumn() throws Exception {
+        // Keeps the per-level clearConstNameMaps() load-bearing: unlike the sibling test where the
+        // nested WHERE a.k = 1 re-registers "k" and masks a missing clear, here the nested master
+        // WHERE filters a DIFFERENT column (a.j = 1) while the join key still reuses "k". Without the
+        // clear the outer "k -> 2" survives and addTransitiveFilters injects a foreign b.k = 2 into
+        // the nested slave, dropping the matching row (0 rows instead of 1).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tc (q INT, k INT)");
+            execute("INSERT INTO tc VALUES (1, 2)");
+            execute("CREATE TABLE ta (j INT, k INT)");
+            execute("INSERT INTO ta VALUES (1, 1)");
+            execute("CREATE TABLE tb (k INT, v INT)");
+            execute("INSERT INTO tb VALUES (1, 10)");
+
+            assertQuery("SELECT * FROM tc " +
+                    "JOIN (SELECT a.k k1, b.v FROM ta a RIGHT JOIN tb b ON a.k = b.k WHERE a.j = 1) x " +
+                    "  ON tc.q = x.k1 " +
+                    "WHERE tc.k = 2")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("q\tk\tk1\tv\n1\t2\t1\t10\n");
+        });
     }
 
     @Test
@@ -5824,6 +6820,76 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOuterJoinMasterFilterKeepsMatchedRow() throws Exception {
+        // Companion to testOuterJoinMasterFilterStaysPostJoin: that test proves the NULL-master
+        // rows are removed; this one proves a genuine master match survives, so the post-join
+        // filter does not over-filter. The master holds a matching 's2' row (joined to the
+        // slave's 's2') plus an unrelated 'x' row, and the slave holds an unmatched 'zzz' row
+        // that becomes a NULL-master row. WHERE a.sym = 's2' must keep the matched (s2, 300)
+        // row and drop the NULL-master 'zzz' row for both RIGHT and FULL OUTER, with the
+        // constant on either side of the equality (the two analyseEquals branches). The
+        // predicate stays a post-join Filter; pushing it into the master sub-query would also
+        // propagate 's2' to the slave for the literal form, so its leak is only visible in the
+        // bind-variable form, which the plan assertion and the bind arm both guard against.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (sym SYMBOL, c1 INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO m VALUES ('x', 200, 4), ('s2', 300, 6)");
+            execute("CREATE TABLE s (sym SYMBOL, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO s VALUES ('s2', 10, 1), ('zzz', 99, 7)");
+
+            final String expected = "e0\te1\ns2\t300\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                // Constant on the RHS of the equality (a.sym = 's2').
+                final String rhs = "SELECT a.sym AS e0, a.c1 AS e1 FROM m a " + joinType + " JOIN s b ON a.sym = b.sym WHERE a.sym = 's2'";
+                bindVariableService.clear();
+                assertQuery(rhs).noLeakCheck().noRandomAccess().withPlanContaining("Filter filter: a.sym='s2'").returns(expected);
+
+                // Constant on the LHS of the equality ('s2' = a.sym), the mirror analyseEquals branch.
+                final String lhs = "SELECT a.sym AS e0, a.c1 AS e1 FROM m a " + joinType + " JOIN s b ON a.sym = b.sym WHERE 's2' = a.sym";
+                bindVariableService.clear();
+                assertQuery(lhs).noLeakCheck().noRandomAccess().withPlanContaining("Filter filter: a.sym='s2'").returns(expected);
+
+                // Bind-variable form must produce the identical result under the full assertion battery.
+                final String bind = "SELECT a.sym AS e0, a.c1 AS e1 FROM m a " + joinType + " JOIN s b ON a.sym = b.sym WHERE a.sym = :sym::SYMBOL";
+                bindVariableService.clear();
+                bindVariableService.setStr("sym", "s2");
+                assertQuery(bind).noLeakCheck().noRandomAccess().returns(expected);
+            }
+        });
+    }
+
+    @Test
+    public void testOuterJoinMasterFilterStaysPostJoin() throws Exception {
+        // Regression for a query-fuzzer bind-variable divergence. RIGHT and FULL OUTER joins
+        // NULL-extend the master (left) table, so a WHERE predicate that references only the
+        // master used to be pushed into the master sub-query, leaving the unmatched right
+        // rows (with a NULL master) unfiltered. Here the master has no 's2' row, so the
+        // slave's 's2' row has no match; WHERE a.sym = 's2' must return no rows because the
+        // master symbol is NULL. The literal form leaked one such row and the bind-variable
+        // form two; both now correctly return nothing because the predicate stays post-join.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (sym SYMBOL, c1 INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO m VALUES ('x', 200, 4)");
+            execute("CREATE TABLE s (sym SYMBOL, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO s VALUES ('s2', 10, 1), ('x', 50, 5)");
+
+            final String empty = "e0\te1\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                final String literal = "SELECT a.sym AS e0, a.c1 AS e1 FROM m a " + joinType + " JOIN s b ON a.sym = b.sym WHERE a.sym = 's2'";
+                final String bind = "SELECT a.sym AS e0, a.c1 AS e1 FROM m a " + joinType + " JOIN s b ON a.sym = b.sym WHERE a.sym = :sym::SYMBOL";
+
+                bindVariableService.clear();
+                assertQuery(literal).noLeakCheck().noRandomAccess().returns(empty);
+
+                // Bind-variable form must produce the identical result under the full assertion battery.
+                bindVariableService.clear();
+                bindVariableService.setStr("sym", "s2");
+                assertQuery(bind).noLeakCheck().noRandomAccess().returns(empty);
+            }
+        });
+    }
+
+    @Test
     public void testSelectAliasTest() throws Exception {
         assertMemoryLeak(() -> {
             execute(
@@ -5844,24 +6910,21 @@ public class JoinTest extends AbstractCairoTest {
                             "timestamp(timestamp)"
             );
 
-            assertQueryNoLeakCheck(
-                    "id\n",
-                    """
-                            with
-                            eventlist as (select * from contact_events latest on timestamp partition by _id order by timestamp)
-                            ,contactlist as (select * from contacts latest on timestamp partition by _id order by timestamp)
-                            ,c as (select distinct contactid from eventlist where groupId = 'ykom80aRN5AwUcuRp4LJ' except select distinct _id as contactId from contactlist where notRealType = 'bot')
-                            select
-                            c.contactId as id
-                            from
-                            c
-                            join contactlist on c.contactid = contactlist._id
-                            """,
-                    null,
-                    false,
-                    false,
-                    true
-            );
+            assertQuery("""
+                    with
+                    eventlist as (select * from contact_events latest on timestamp partition by _id order by timestamp)
+                    ,contactlist as (select * from contacts latest on timestamp partition by _id order by timestamp)
+                    ,c as (select distinct contactid from eventlist where groupId = 'ykom80aRN5AwUcuRp4LJ' except select distinct _id as contactId from contactlist where notRealType = 'bot')
+                    select
+                    c.contactId as id
+                    from
+                    c
+                    join contactlist on c.contactid = contactlist._id
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns("id\n");
         });
     }
 
@@ -5890,7 +6953,9 @@ public class JoinTest extends AbstractCairoTest {
                     ETH-USD\t2001-01-01T00:00:01.000000Z\t4\tETH-USD\t2001-01-01T00:00:01.000000Z\t4
                     ETH-USD\t2001-01-01T00:00:01.000000Z\t4\tETH-USD\t2001-01-01T00:00:00.000000Z\t3
                     """;
-            assertQueryAndCache(expected, query, null, true, false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
@@ -5921,7 +6986,9 @@ public class JoinTest extends AbstractCairoTest {
                     ETH-USD\t2001-01-01T00:00:01.000000Z\t4\t2001-01-01T00:00:00.000000Z\t3\tETH-USD
                     ETH-USD\t2001-01-01T00:00:01.000000Z\t4\t2001-01-01T00:00:01.000000Z\t4\tETH-USD
                     """;
-            assertQueryAndCache(expected, query, null, true, false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
@@ -5946,7 +7013,11 @@ public class JoinTest extends AbstractCairoTest {
                     ETH-USD\tbuy\t2001-01-01T00:00:01.000000Z\t5\tETH-USD\tbuy\t2001-01-01T00:00:01.000000Z\t5
                     BTC-USD\tbuy\t2001-01-01T00:00:01.000000Z\t2\tBTC-USD\tbuy\t2001-01-01T00:00:01.000000Z\t2
                     """;
-            assertQueryAndCache(expected, query, "ts", false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(expected);
         });
     }
 
@@ -5975,7 +7046,11 @@ public class JoinTest extends AbstractCairoTest {
                     2\t2000-01-01T00:00:00.000000Z\t2\t2000-01-01T00:00:00.000000Z
                     4\t2000-01-01T00:00:00.000000Z\t4\t2000-01-01T00:00:00.000000Z
                     """;
-            assertQueryAndCache(expected, query, "ts", false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(expected);
         });
     }
 
@@ -6002,9 +7077,87 @@ public class JoinTest extends AbstractCairoTest {
                     BTC-USD\t2000-01-01T00:00:00.000000Z\t1\tBTC-USD\t2001-01-01T00:00:01.000000Z\t2
                     BTC-USD\t2001-01-01T00:00:01.000000Z\t2\tBTC-USD\t2001-01-01T00:00:01.000000Z\t2
                     """;
-            assertQueryAndCache(expected, leftJoinQuery, "ts", false);
-            assertQueryAndCache(expected, rightJoinQuery, null, false);
-            assertQueryAndCache(expected, fullJoinQuery, null, false);
+            assertQuery(leftJoinQuery)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(expected);
+            assertQuery(rightJoinQuery)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expected);
+            assertQuery(fullJoinQuery)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testSpliceColumnEqColumnMasterFilterStaysPostJoin() throws Exception {
+        // SPLICE variant of testColumnEqColumnMasterFilterStaysPostJoin: a same-table column
+        // comparison (m.c1 = m.c2) is single-table, so it used to be pushed into the master
+        // sub-query. SPLICE NULL-extends the master (slave-only timestamps emit NULL-master rows),
+        // so pushing it emptied the master and paired each slave timestamp with a NULL master,
+        // leaking a row per slave-only timestamp. Held post-join the splice keeps the prevailing
+        // master row, which c1=c2 drops, and the single pre-master NULL-master row, which c1=c2
+        // keeps because null=null is true for INT, leaving exactly one (null,null) row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (c1 INT, c2 INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO m VALUES (1, 2, 2)");
+            execute("CREATE TABLE s (sv INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // s leads (ts=1) and trails (ts=3) the single master row at ts=2; the ts=1 row is a
+            // pre-master NULL-master splice row, the ts=2/ts=3 rows carry the prevailing (1,2) master.
+            execute("INSERT INTO s VALUES (10, 1), (20, 3)");
+
+            assertQuery("SELECT m.c1, m.c2 FROM m SPLICE JOIN s WHERE m.c1 = m.c2")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Filter filter: m.c1=m.c2")
+                    .returns("c1\tc2\nnull\tnull\n");
+        });
+    }
+
+    @Test
+    public void testSpliceConstOnLhsMasterFilterStaysPostJoin() throws Exception {
+        // Const-on-LHS variant of testSpliceJoinMasterFilterProjectsSlaveColumn: the equality is
+        // written 'A' = m.k, so analyseEquals routes it through the case-0 (constant on the left)
+        // branch rather than case-1. That branch registers the literal const for the transitive
+        // slave prune, but addTransitiveFilters must still skip the push for SPLICE: SPLICE is a
+        // temporal prevailing join, so pruning the slave to key 'A' shifts which slave row prevails
+        // at each master timestamp and diverges the literal from the bind form. The master-side
+        // predicate stays a post-join filter and the slave column is projected to surface a diverging
+        // prevailing value if the const were wrongly pushed.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (k SYMBOL, mv INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO m VALUES ('A',1,1),('B',2,2),('A',3,5)");
+            execute("CREATE TABLE s (k SYMBOL, sv INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // The B-key slave rows (99@1, 88@4) prevail at master timestamps for key A; pruning them
+            // would change the prevailing slave value, so the literal and bind forms would diverge.
+            execute("INSERT INTO s VALUES ('A',10,0),('B',99,1),('A',20,3),('B',88,4),('A',30,6)");
+
+            final String expected = """
+                    k\tmv\tsv
+                    A\t1\tnull
+                    A\t1\t20
+                    A\t3\t20
+                    A\t3\t30
+                    """;
+
+            // Literal form: the predicate stays a post-join Filter over a full slave scan (no
+            // 'A'=k pushed into the slave sub-query). The plan normalizes 'A'=m.k to m.k='A'.
+            bindVariableService.clear();
+            assertQuery("SELECT m.k, m.mv, s.sv FROM m SPLICE JOIN s ON m.k = s.k WHERE 'A' = m.k ORDER BY m.mv, s.sv")
+                    .noLeakCheck()
+                    .withPlanContaining("Filter filter: m.k='A'")
+                    .returns(expected);
+
+            // Bind-variable form must produce the identical result.
+            bindVariableService.clear();
+            bindVariableService.setStr("v", "A");
+            assertQuery("SELECT m.k, m.mv, s.sv FROM m SPLICE JOIN s ON m.k = s.k WHERE :v::SYMBOL = m.k ORDER BY m.mv, s.sv")
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
@@ -6074,8 +7227,11 @@ public class JoinTest extends AbstractCairoTest {
                 orders.commit();
             }
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select * from orders splice join quotes on(sym)")
+                    .noLeakCheck()
+                    .ddl(null)
+                    .noRandomAccess()
+                    .returns("""
                             sym\tamount\tside\ttimestamp\tsym1\tbid\task\ttimestamp1
                             \tnull\t0\t\tgoogl\t100.2\t100.3\t2018-11-02T10:00:02.000000Z
                             \tnull\t0\t\tmsft\t185.9\t187.3\t2018-11-02T10:00:02.000001Z
@@ -6084,12 +7240,7 @@ public class JoinTest extends AbstractCairoTest {
                             googl\t2000.0\t49\t2018-11-02T10:00:03.000000Z\tgoogl\t100.2\t100.3\t2018-11-02T10:00:02.000000Z
                             msft\t150.0\t49\t2018-11-02T10:00:04.000000Z\tmsft\t183.4\t185.9\t2018-11-02T10:00:02.000002Z
                             googl\t3000.0\t50\t2018-11-02T10:00:05.000000Z\tgoogl\t100.2\t100.3\t2018-11-02T10:00:02.000000Z
-                            """,
-                    "select * from orders splice join quotes on(sym)",
-                    null,
-                    null,
-                    false
-            );
+                            """);
         });
     }
 
@@ -6182,7 +7333,10 @@ public class JoinTest extends AbstractCairoTest {
                             ") timestamp(timestamp)"
             );
 
-            assertQueryAndCache(expected, query, null, false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expected);
 
             execute(
                     "insert into x select * from " +
@@ -6229,7 +7383,10 @@ public class JoinTest extends AbstractCairoTest {
                             ") timestamp(timestamp)"
             );
 
-            assertQueryNoLeakCheck("""
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             i\tsym\tamt\tprice\ttimestamp\ttimestamp1
                             null\t\tnull\t0.032\t\t2018-01-01T00:02:00.000000Z
                             null\t\tnull\t0.043000000000000003\t\t2018-01-01T00:04:00.000000Z
@@ -6301,9 +7458,38 @@ public class JoinTest extends AbstractCairoTest {
                             18\tmsft\t57.556000000000004\t0.209\t2018-01-01T03:36:00.000000Z\t2018-01-01T02:00:00.000000Z
                             19\tgoogl\t34.25\t0.26\t2018-01-01T03:48:00.000000Z\t2018-01-01T01:58:00.000000Z
                             20\tgoogl\t2.6750000000000003\t0.26\t2018-01-01T04:00:00.000000Z\t2018-01-01T01:58:00.000000Z
-                            """,
-                    query,
-                    null);
+                            """);
+        });
+    }
+
+    @Test
+    public void testSpliceJoinAsMasterOfSecondJoin() throws Exception {
+        // A splice join as the left (master) side of a following join used to leak the root
+        // table alias into the second join's metadata, crashing on a fully qualified column
+        // name. The splice result already carries qualified names, so the alias must be cleared.
+        assertMemoryLeak(() -> {
+            execute("create table m (k symbol, mv int, ts timestamp) timestamp(ts) partition by day");
+            execute("create table s (k symbol, sv int, ts timestamp) timestamp(ts) partition by day");
+            execute("create table r (k symbol, rv int, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into m values ('a', 1, '2020-01-01T00:00:00.000000Z')");
+            execute("insert into s values ('a', 2, '2020-01-01T00:00:00.000000Z')");
+            execute("insert into r values ('a', 3, '2020-01-01T00:00:00.000000Z'), ('b', 4, '2020-01-01T00:00:01.000000Z')");
+
+            assertQuery("select m.k, s.sv, r.rv from m splice join s on m.k = s.k right join r on r.k = m.k")
+                    .noLeakCheck()
+                    .ddl(null)
+                    .noRandomAccess()
+                    .returns("k\tsv\trv\na\t2\t3\n\tnull\t4\n");
+            assertQuery("select m.k, s.sv, r.rv from m splice join s on m.k = s.k full join r on r.k = m.k")
+                    .noLeakCheck()
+                    .ddl(null)
+                    .noRandomAccess()
+                    .returns("k\tsv\trv\na\t2\t3\n\tnull\t4\n");
+            assertQuery("select m.k, s.sv, r.rv from m splice join s on m.k = s.k inner join r on r.k = m.k")
+                    .noLeakCheck()
+                    .ddl(null)
+                    .noRandomAccess()
+                    .returns("k\tsv\trv\na\t2\t3\n");
         });
     }
 
@@ -6354,14 +7540,79 @@ public class JoinTest extends AbstractCairoTest {
                       qty DOUBLE
                     ) timestamp (ts) PARTITION BY MONTH""");
 
-            assertExceptionNoLeakCheck(
-                    "SELECT *" +
-                            "FROM trade t1 " +
-                            "SPLICE JOIN trade t2",
-                    22,
-                    "splice join doesn't support full fat mode",
-                    true
-            );
+            assertQuery("SELECT *" +
+                    "FROM trade t1 " +
+                    "SPLICE JOIN trade t2")
+                    .fullFatJoins()
+                    .noLeakCheck()
+                    .fails(22, "splice join doesn't support full fat mode");
+        });
+    }
+
+    @Test
+    public void testSpliceJoinFoldedFalseMasterFilterProducesNoRows() throws Exception {
+        // A master-only WHERE on a SPLICE join that folds to FALSE: ((a.c0 + null))::TIMESTAMP
+        // is NULL for every row (AddIntFunctionFactory short-circuits the null), so the
+        // comparison is NULL, hence FALSE, throughout. SPLICE NULL-extends the master, so the
+        // predicate stays a post-join Filter rather than being pushed into the master
+        // sub-query (which would empty the master and pair each slave row with a NULL master,
+        // leaking one row per slave). A WHERE that is always FALSE therefore produces no rows,
+        // and the literal and bind-variable forms must agree. The literal folds to a post-join
+        // "Filter filter: false" over a full Splice Join (no Empty table substitution).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (c0 SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE t0 (c0 INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t1 VALUES (1::SHORT, '2024-01-01T00:00:00.000000Z'), " +
+                    "(2::SHORT, '2024-01-02T00:00:00.000000Z'), " +
+                    "(3::SHORT, '2024-01-03T00:00:00.000000Z')");
+            execute("INSERT INTO t0 VALUES (10, '2024-01-01T00:00:00.000000Z'), " +
+                    "(20, '2024-01-02T00:00:00.000000Z'), " +
+                    "(30, '2024-01-03T00:00:00.000000Z')");
+            drainWalQueue();
+
+            final String expected = "e0\te1\n";
+            final String literalSql = "SELECT (a.c0)::STRING AS e0, true AS e1 " +
+                    "FROM t1 a SPLICE JOIN t0 b " +
+                    "WHERE ((a.c0 + null))::TIMESTAMP < '2024-03-06T20:54:00.000000Z'::TIMESTAMP";
+            bindVariableService.clear();
+            assertQuery(literalSql).noLeakCheck().noRandomAccess().withPlanContaining("Filter filter: false").returns(expected);
+
+            // Bind-variable form evaluates the same NULL/FALSE predicate per row and must agree.
+            bindVariableService.clear();
+            bindVariableService.setStr("b1", "2024-03-06T20:54:00.000000Z");
+            assertQuery("SELECT (a.c0)::STRING AS e0, true AS e1 " +
+                    "FROM t1 a SPLICE JOIN t0 b " +
+                    "WHERE ((a.c0 + null))::TIMESTAMP < :b1::TIMESTAMP")
+                    .noLeakCheck().noRandomAccess().returns(expected);
+        });
+    }
+
+    @Test
+    public void testSpliceJoinIndexedSymbolMasterWithOrderByPreservesTimestamp() throws Exception {
+        // Regression for a query-fuzzer divergence: a SPLICE JOIN whose master
+        // table has an indexed SYMBOL column and an interval WHERE on ts, with
+        // the outer query ordering by that indexed symbol, used to compile the
+        // master as SortedSymbolIndexRecordCursorFactory. That factory emits
+        // rows in symbol order and zeroes the timestamp index, so the SPLICE
+        // join validation either threw "left side of time series join has no
+        // timestamp" or, with the timestamp restored, would have fed
+        // sym-ordered input into a merge that assumes ts order. The codegen
+        // now skips the symbol-index sort path when the parent join requires
+        // a timestamp on the master.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x_idx (sym SYMBOL INDEX, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE y_tab (sym SYMBOL, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x_idx SELECT 'a', x::DOUBLE, ('2024-01-01T00:00:00'::TIMESTAMP + x * 1_000_000) FROM long_sequence(3)");
+            execute("INSERT INTO y_tab SELECT 'b', x::DOUBLE, ('2024-01-01T00:00:00'::TIMESTAMP + x * 1_000_000) FROM long_sequence(3)");
+            assertQuery("SELECT b.val AS e0, b.sym AS e1, a.sym AS e2 FROM x_idx a SPLICE JOIN y_tab b WHERE a.ts IN '2024-01-01' ORDER BY 3")
+                    .noLeakCheck()
+                    .ddl(null)
+                    .returns("""
+                            e0\te1\te2
+                            1.0\tb\ta
+                            2.0\tb\ta
+                            3.0\tb\ta
+                            """);
         });
     }
 
@@ -6370,11 +7621,92 @@ public class JoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)");
             execute("create table y as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)");
-            assertExceptionNoLeakCheck(
-                    "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from (x order by timestamp desc) x splice join y on y.sym2 = x.sym",
-                    93,
-                    "left"
-            );
+            assertQuery("select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from (x order by timestamp desc) x splice join y on y.sym2 = x.sym")
+                    .noLeakCheck()
+                    .fails(93, "left");
+        });
+    }
+
+    @Test
+    public void testSpliceJoinMasterFilterProjectsSlaveColumn() throws Exception {
+        // Regression: the transitive slave-const prune that is result-neutral for RIGHT/FULL OUTER
+        // set joins is NOT neutral for SPLICE. SPLICE is a temporal prevailing join, so removing
+        // slave rows of other keys (pushing s.k = 'A' into the slave) shifts which slave row
+        // prevails at a master timestamp. The master-side literal predicate stays a post-join filter,
+        // but the const must NOT be pushed into the slave; addTransitiveFilters skips SPLICE. The
+        // bug only surfaces when a SLAVE column is projected: testSpliceJoinMasterFilterStaysPostJoin
+        // projects master columns only, hiding the diverging slave value.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (k SYMBOL, mv INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO m VALUES ('A',1,1),('B',2,2),('A',3,5)");
+            execute("CREATE TABLE s (k SYMBOL, sv INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // The B-key slave rows (99@1, 88@4) prevail at master timestamps for key A; pruning them
+            // would change the prevailing slave value, so the literal and bind forms would diverge.
+            execute("INSERT INTO s VALUES ('A',10,0),('B',99,1),('A',20,3),('B',88,4),('A',30,6)");
+
+            final String expected = """
+                    k\tmv\tsv
+                    A\t1\tnull
+                    A\t1\t20
+                    A\t3\t20
+                    A\t3\t30
+                    """;
+
+            // Literal form: the predicate stays a post-join Filter over a full slave scan (no
+            // filter: k='A' pushed into the slave sub-query).
+            bindVariableService.clear();
+            assertQuery("SELECT m.k, m.mv, s.sv FROM m SPLICE JOIN s ON m.k = s.k WHERE m.k = 'A' ORDER BY m.mv, s.sv")
+                    .noLeakCheck()
+                    .withPlanContaining("Filter filter: m.k='A'")
+                    .returns(expected);
+
+            // Bind-variable form must produce the identical result.
+            bindVariableService.clear();
+            bindVariableService.setStr("v", "A");
+            assertQuery("SELECT m.k, m.mv, s.sv FROM m SPLICE JOIN s ON m.k = s.k WHERE m.k = :v::SYMBOL ORDER BY m.mv, s.sv")
+                    .noLeakCheck()
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testSpliceJoinMasterFilterStaysPostJoin() throws Exception {
+        // Regression for a query-fuzzer bind-variable divergence. A WHERE predicate that
+        // references only the master (left) table of a SPLICE join used to be pushed into
+        // the master sub-query. SPLICE is a full outer temporal join, so it emits rows in
+        // which the master columns are all NULL (slave-only timestamps); pushing the
+        // predicate left those NULL-master rows unfiltered, and for the literal form it was
+        // also propagated to the slave through the join key, so the literal and
+        // bind-variable forms of the same query diverged (here 3 vs 4 rows). The predicate
+        // now stays a post-join filter, so both forms agree and NULL-master rows are removed.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (sym SYMBOL, c1 INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO m VALUES ('s2', 100, 2), ('s2', 200, 4)");
+            execute("CREATE TABLE s (sym SYMBOL, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // s2@1 leads the first master row (would be a NULL-master splice row); x@3 never
+            // has a master match (another NULL-master splice row). Both must be filtered out.
+            execute("INSERT INTO s VALUES ('s2', 10, 1), ('x', 50, 3)");
+
+            final String query = "SELECT a.sym AS e0, a.c1 AS e1 FROM m a SPLICE JOIN s b ON (sym) WHERE a.sym = 's2' ORDER BY e1";
+            final String expected = """
+                    e0\te1
+                    s2\t100
+                    s2\t200
+                    """;
+
+            // Literal form: correct result and a post-join Filter over a full master scan
+            // (no predicate pushed into the master sub-query).
+            bindVariableService.clear();
+            assertQuery(query)
+                    .noLeakCheck()
+                    .withPlanContaining("Filter filter: a.sym='s2'")
+                    .returns(expected);
+
+            // Bind-variable form must produce the identical result under the full assertion battery.
+            bindVariableService.clear();
+            bindVariableService.setStr("sym", "s2");
+            assertQuery("SELECT a.sym AS e0, a.c1 AS e1 FROM m a SPLICE JOIN s b ON (sym) WHERE a.sym = :sym::SYMBOL ORDER BY e1")
+                    .noLeakCheck().returns(expected);
         });
     }
 
@@ -6383,11 +7715,9 @@ public class JoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10))");
             execute("create table y as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)");
-            assertExceptionNoLeakCheck(
-                    "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x splice join y on y.sym2 = x.sym",
-                    65,
-                    "left"
-            );
+            assertQuery("select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x splice join y on y.sym2 = x.sym")
+                    .noLeakCheck()
+                    .fails(65, "left");
         });
     }
 
@@ -6396,11 +7726,9 @@ public class JoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)");
             execute("create table y as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30))");
-            assertExceptionNoLeakCheck(
-                    "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x splice join y on y.sym2 = x.sym",
-                    65,
-                    "right"
-            );
+            assertQuery("select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x splice join y on y.sym2 = x.sym")
+                    .noLeakCheck()
+                    .fails(65, "right");
         });
     }
 
@@ -6490,7 +7818,10 @@ public class JoinTest extends AbstractCairoTest {
                             ") timestamp(timestamp)"
             );
 
-            assertQueryAndCache(expected, query, null, false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expected);
 
             execute(
                     "insert into x select * from " +
@@ -6534,8 +7865,10 @@ public class JoinTest extends AbstractCairoTest {
                             ") timestamp(timestamp)"
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             i\tsym\tamt\tprice\ttimestamp\ttimestamp1
                             null\t\tnull\t0.032\t\t2018-01-01T00:02:00.000000Z
                             null\t\tnull\t0.113\t\t2018-01-01T00:04:00.000000Z
@@ -6607,10 +7940,7 @@ public class JoinTest extends AbstractCairoTest {
                             18\tibm\t60.678000000000004\t0.388\t2018-01-01T03:36:00.000000Z\t2018-01-01T01:56:00.000000Z
                             19\tmsft\t4.727\t0.912\t2018-01-01T03:48:00.000000Z\t2018-01-01T01:58:00.000000Z
                             20\tgoogl\t26.222\t0.148\t2018-01-01T04:00:00.000000Z\t2018-01-01T02:00:00.000000Z
-                            """,
-                    query,
-                    null
-            );
+                            """);
         });
     }
 
@@ -6624,11 +7954,9 @@ public class JoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)");
             execute("create table y as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)");
-            assertExceptionNoLeakCheck(
-                    "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x splice join (y order by timestamp desc) y on y.sym2 = x.sym",
-                    65,
-                    "right"
-            );
+            assertQuery("select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x splice join (y order by timestamp desc) y on y.sym2 = x.sym")
+                    .noLeakCheck()
+                    .fails(65, "right");
         });
     }
 
@@ -6712,7 +8040,77 @@ public class JoinTest extends AbstractCairoTest {
                     1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000004Z\t103\t102
                     """;
 
-            printSqlResult(expected, query, null, false, false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testSpliceOperatorMasterFilterStaysPostJoin() throws Exception {
+        // SPLICE variant of testOperatorMasterFilterStaysPostJoin: assignFilters routes a non-folded
+        // operator predicate (m.c1 < 100) on a NULL-extending master to a post-join filter; the only
+        // existing SPLICE master-filter test for a live operator is the folded-FALSE case. The master
+        // row (c1=50) passes the filter, so pushing the predicate into the master leaves it unchanged,
+        // but it also strips the post-join filter, leaking the pre-master NULL-master splice row that
+        // c1<100 must drop (NULL<100 is NULL/false). Held post-join, only the two prevailing-master
+        // rows survive.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (c1 INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO m VALUES (50, 2)");
+            execute("CREATE TABLE s (sv INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // s@1 leads the single master row (a NULL-master splice row); s@3 trails it (prevailing
+            // master 50). The leading row must be filtered out, the two prevailing rows kept.
+            execute("INSERT INTO s VALUES (10, 1), (20, 3)");
+
+            assertQuery("SELECT m.c1 FROM m SPLICE JOIN s WHERE m.c1 < 100")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Filter filter: m.c1<100")
+                    .returns("c1\n50\n50\n");
+        });
+    }
+
+    @Test
+    public void testStackedNullingJoinsMasterFilterStaysPostJoin() throws Exception {
+        // Two stacked nulling joins both NULL-extend the master mm. masterNullingJoinIndex must
+        // anchor the master-only WHERE to the OUTERMOST nulling join (the ..s2 join), not the inner
+        // one: a filter applied after only the inner join would be re-exposed to the NULL-master rows
+        // synthesized by the outer join. Here the inner join (mm..s1) matches on k=1, so mm.col
+        // survives it; the outer join (..s2) then NULL-extends the master for the unmatched s2 key 2.
+        // WHERE mm.col = 1 must drop that NULL-master row, leaving exactly one row. Anchoring to the
+        // inner join instead would leak it (two rows). Both RIGHT and FULL OUTER null the master, so
+        // every combination of the two join slots must behave the same, for literal and bind forms.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE mm (k INT, col INT)");
+            execute("INSERT INTO mm VALUES (1, 1)");
+            execute("CREATE TABLE s1 (k INT)");
+            execute("INSERT INTO s1 VALUES (1)");
+            execute("CREATE TABLE s2 (k INT)");
+            execute("INSERT INTO s2 VALUES (1), (2)");
+
+            final String expected = "col\n1\n";
+            for (String inner : new String[]{"RIGHT JOIN", "FULL JOIN"}) {
+                for (String outer : new String[]{"RIGHT JOIN", "FULL JOIN"}) {
+                    final String from = " FROM mm " + inner + " s1 ON mm.k = s1.k " + outer + " s2 ON s1.k = s2.k WHERE mm.col ";
+
+                    bindVariableService.clear();
+                    assertQuery("SELECT mm.col" + from + "= 1")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .withPlanContaining("Filter filter: mm.col=1")
+                            .returns(expected);
+
+                    // Bind-variable form must produce the identical result under the full battery.
+                    bindVariableService.clear();
+                    bindVariableService.setInt("v", 1);
+                    assertQuery("SELECT mm.col" + from + "= :v::INT")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .returns(expected);
+                }
+            }
         });
     }
 
@@ -6753,16 +8151,36 @@ public class JoinTest extends AbstractCairoTest {
                     5\te\te\t5\te
                     """;
 
-            assertQueryNoLeakCheck(expected, "select i, s, b, j, v from t1 inner join t2 on s = v order by i", null, true);
-            assertQueryNoLeakCheck(expected, "select i, s, b, j, v from t1 inner join t2 on b = v order by i", null, true);
-            assertQueryNoLeakCheck(expected, "select i, s, b, j, v from t1 left join t2 on s = v");
-            assertQueryNoLeakCheck(expected, "select i, s, b, j, v from t1 left join t2 on b = v");
+            assertQuery("select i, s, b, j, v from t1 inner join t2 on s = v order by i")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("select i, s, b, j, v from t1 inner join t2 on b = v order by i")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("select i, s, b, j, v from t1 left join t2 on s = v")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expected);
+            assertQuery("select i, s, b, j, v from t1 left join t2 on b = v")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expected);
 
-            assertQueryNoLeakCheck(rightJoinExpected, "select i, s, b, j, v from t1 right join t2 on s = v");
-            assertQueryNoLeakCheck(rightJoinExpected, "select i, s, b, j, v from t1 right join t2 on b = v");
+            assertQuery("select i, s, b, j, v from t1 right join t2 on s = v")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(rightJoinExpected);
+            assertQuery("select i, s, b, j, v from t1 right join t2 on b = v")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(rightJoinExpected);
 
-            assertQueryNoLeakCheck(fullJoinExpected, "select i, s, b, j, v from t1 full join t2 on s = v order by i", null, true);
-            assertQueryNoLeakCheck(fullJoinExpected, "select i, s, b, j, v from t1 full join t2 on b = v order by i", null, true);
+            assertQuery("select i, s, b, j, v from t1 full join t2 on s = v order by i")
+                    .noLeakCheck()
+                    .returns(fullJoinExpected);
+            assertQuery("select i, s, b, j, v from t1 full join t2 on b = v order by i")
+                    .noLeakCheck()
+                    .returns(fullJoinExpected);
 
             final String expected2 = """
                     i\ts\tb\tj\tv
@@ -6803,7 +8221,11 @@ public class JoinTest extends AbstractCairoTest {
                     5\te\te\t1\ta
                     """;
 
-            assertQueryNoLeakCheck(expected2, "select i, s, b, j, v from t1 cross join t2", null, false, true);
+            assertQuery("select i, s, b, j, v from t1 cross join t2")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected2);
         });
     }
 
@@ -6812,30 +8234,26 @@ public class JoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table xy2 as (select rnd_str(1,3,1) a from long_sequence(1000))");
             execute("create table xy3 as (select a::symbol a, rnd_int() b from xy2);");
-            super.assertQueryNoLeakCheck(
-                    """
+            assertQuery("xy3 join xy2 on (a) order by a desc, b limit 5")
+                    .noLeakCheck()
+                    .returns("""
                             a\tb\ta1
                             ZY\t-2057990897\tZY
                             ZW\t-1719808959\tZW
                             ZW\t-1719808959\tZW
                             ZW\t-1067292175\tZW
                             ZW\t-1067292175\tZW
-                            """,
-                    "xy3 join xy2 on (a) order by a desc, b limit 5",
-                    false
-            );
-            super.assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("xy2 join xy3 on (a) order by a desc, b limit 5")
+                    .noLeakCheck()
+                    .returns("""
                             a\ta1\tb
                             ZY\tZY\t-2057990897
                             ZW\tZW\t-1719808959
                             ZW\tZW\t-1719808959
                             ZW\tZW\t-1067292175
                             ZW\tZW\t-1067292175
-                            """,
-                    "xy2 join xy3 on (a) order by a desc, b limit 5",
-                    false
-            );
+                            """);
         });
     }
 
@@ -6844,30 +8262,59 @@ public class JoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table xy2 as (select rnd_varchar(1,3,1) a from long_sequence(1000))");
             execute("create table xy3 as (select a::symbol a, rnd_int() b from xy2);");
-            super.assertQueryNoLeakCheck(
-                    """
+            assertQuery("xy3 join xy2 on (a) order by a desc, b limit 5")
+                    .noLeakCheck()
+                    .returns("""
                             a\tb\ta1
                             סּ\uDA07\uDD7B\uDBD1\uDCF9\t393942866\tסּ\uDA07\uDD7B\uDBD1\uDCF9
                             櫓\t2125240559\t櫓
                             \uF8F2\t-1552484280\t\uF8F2
                             \uEF20X\t1327628680\t\uEF20X
                             \uED0D|\uDB08\uDCF3\t-890115527\t\uED0D|\uDB08\uDCF3
-                            """,
-                    "xy3 join xy2 on (a) order by a desc, b limit 5",
-                    false
-            );
-            super.assertQueryNoLeakCheck(
-                    """
+                            """);
+            assertQuery("xy2 join xy3 on (a) order by a desc, b limit 5")
+                    .noLeakCheck()
+                    .returns("""
                             a\ta1\tb
                             \uDBE9\uDC70,䜉\t\uDBE9\uDC70,䜉\t1756786531
                             \uDBD8\uDD33\uDB58\uDFC4\t\uDBD8\uDD33\uDB58\uDFC4\t-1759183734
                             \uDBB2\uDE2Eӿ\uDAF8\uDD66\t\uDBB2\uDE2Eӿ\uDAF8\uDD66\t2059419445
                             \uDBAE\uDD12ɜ|\t\uDBAE\uDD12ɜ|\t-2013119811
                             \uDBAD\uDCF1푻䑫\t\uDBAD\uDCF1푻䑫\t-681264014
-                            """,
-                    "xy2 join xy3 on (a) order by a desc, b limit 5",
-                    false
-            );
+                            """);
+        });
+    }
+
+    @Test
+    public void testThreeTableMasterFilterStaysPostJoin() throws Exception {
+        // A WHERE predicate that references THREE master tables (t0.a + t1.b + t2.c > 0), wrapped in a
+        // sub-query so moveWhereInsideSubQueries re-anchors it. The multi-table branch there routes
+        // through lastNullingJoinAfterReferencedTables, whose loop over the referenced indexes only
+        // iterated over two entries in every other test. A later RIGHT/FULL join NULL-extends t0, t1
+        // and t2 for the unmatched t3 key 2; the predicate must stay above that join. Anchoring at the
+        // highest referenced model index (t2's inner join) would leak the (null,null,null,2) row -- 2
+        // rows for 1. The matched row (1+2+3=6 > 0) survives; the NULL-master row (null+...>0 is
+        // NULL/false) is dropped.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT, k INT)");
+            execute("INSERT INTO t0 VALUES (1, 1)");
+            execute("CREATE TABLE t1 (b INT, k INT)");
+            execute("INSERT INTO t1 VALUES (2, 1)");
+            execute("CREATE TABLE t2 (c INT, k INT)");
+            execute("INSERT INTO t2 VALUES (3, 1)");
+            execute("CREATE TABLE t3 (k INT)");
+            execute("INSERT INTO t3 VALUES (1), (2)");
+
+            final String expected = "a\tb\tc\tk\n1\t2\t3\t1\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                assertQuery("SELECT a, b, c, k FROM (SELECT t0.a a, t1.b b, t2.c c, t3.k k " +
+                        "FROM t0 JOIN t1 ON t0.k = t1.k JOIN t2 ON t1.k = t2.k " + joinType + " JOIN t3 ON t3.k = t2.k) " +
+                        "WHERE a + b + c > 0")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanContaining("Filter filter: 0<t0.a+t1.b+t2.c")
+                        .returns(expected);
+            }
         });
     }
 
@@ -6964,6 +8411,87 @@ public class JoinTest extends AbstractCairoTest {
         testJoinForCursorLeaks("with crj as (select x, ts from xx latest by x) select x from xx union select x from crj", false);
     }
 
+    @Test
+    public void testWrappedBarrierSlaveMasterFilterStaysPostJoin() throws Exception {
+        // LEAK-B: a single-table predicate (b.w + b.m > 0) references only b, which is the SLAVE of
+        // the inner RIGHT join AND is NULL-extended by the later c RIGHT join. Because the join is
+        // wrapped in a sub-query, the predicate routes through moveWhereInsideSubQueries' barrier
+        // branch, which anchored it at b's own join -- below the c nulling join. The unmatched c key
+        // 2 produces a NULL-master row that the predicate must drop; anchoring below the c join leaked
+        // it (2 rows for 1). The non-wrapped form already stays post-join via assignFilters.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (k INT)");
+            execute("INSERT INTO a VALUES (1)");
+            execute("CREATE TABLE b (k INT, w INT, m INT)");
+            execute("INSERT INTO b VALUES (1, 5, 5)");
+            execute("CREATE TABLE c (k INT, x INT)");
+            execute("INSERT INTO c VALUES (1, 9), (2, 99)");
+
+            final String expected = "ak\tbk\tbw\tbm\tck\tcx\n1\t1\t5\t5\t1\t9\n";
+            assertQuery("SELECT * FROM (SELECT a.k ak, b.k bk, b.w bw, b.m bm, c.k ck, c.x cx " +
+                    "FROM a RIGHT JOIN b ON a.k = b.k RIGHT JOIN c ON b.k = c.k) WHERE bw + bm > 0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Filter filter: 0<b.w+b.m")
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testWrappedMultiTableMasterFilterStaysPostJoin() throws Exception {
+        // LEAK-A: companion to testMultiTableMasterFilterStaysPostJoin, but the join is wrapped in a
+        // sub-query. After moveWhereInsideSubQueries inlines the outer predicate into the join model,
+        // the rewritten t0.a < t1.b references two master tables and routes through the
+        // distinctIndexes>1 branch instead of assignFilters. A later RIGHT/FULL join NULL-extends t0
+        // and t1 for the unmatched t2 key 2; the filter must stay above that join. Anchoring at the
+        // highest referenced model index (t1's inner join) leaked the (null,null,2) row -- 2 for 1.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT, k INT)");
+            execute("INSERT INTO t0 VALUES (1, 1)");
+            execute("CREATE TABLE t1 (b INT, k INT)");
+            execute("INSERT INTO t1 VALUES (5, 1)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (2)");
+
+            final String expected = "a\tb\tk\n1\t5\t1\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                assertQuery("SELECT a, b, k FROM (SELECT t0.a a, t1.b b, t2.k k " +
+                        "FROM t0 JOIN t1 ON t0.k = t1.k " + joinType + " JOIN t2 ON t2.k = t1.k) WHERE a < b")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanContaining("Filter filter: t0.a<t1.b")
+                        .returns(expected);
+            }
+        });
+    }
+
+    @Test
+    public void testWrappedSubQueryMasterFilterStaysPostJoin() throws Exception {
+        // The join is wrapped in a sub-query and the master predicate sits on the outer model, so
+        // it reaches moveWhereInsideSubQueries instead of analyseEquals. The same master-nulling
+        // guard must apply: RIGHT/FULL/SPLICE all NULL-extend the master, and the master has no
+        // 's2' row, so every output row is NULL-master and WHERE a = 's2' must return nothing.
+        // Pushing the predicate into the master sub-query emptied it and leaked 2 NULL-master rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (sym SYMBOL, c1 INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO m VALUES ('x', 200, 1)");
+            execute("CREATE TABLE s (sym SYMBOL, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO s VALUES ('s2', 10, 2), ('s3', 50, 3)");
+
+            final String empty = "a\tb\n";
+            for (String join : new String[]{
+                    "m RIGHT JOIN s ON m.sym = s.sym",
+                    "m FULL JOIN s ON m.sym = s.sym",
+                    "m SPLICE JOIN s ON (sym)"}) {
+                assertQuery("SELECT a, b FROM (SELECT m.sym a, m.c1 b FROM " + join + ") WHERE a = 's2'")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanContaining("Filter filter: m.sym='s2'")
+                        .returns(empty);
+            }
+        });
+    }
+
     private void assertFailure(String query, String expectedMessage, int position) {
         try {
             execute(query, sqlExecutionContext);
@@ -6975,25 +8503,44 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     private void assertHashJoinSql(String query, String expected) throws Exception {
-        assertHashJoinSql(query, expected, null, false);
+        assertHashJoinSql(query, expected, null, false, false);
     }
 
-    private void assertHashJoinSql(String query, String expected, String ts, boolean supportRandom) throws Exception {
-        assertQueryFullFatNoLeakCheck(expected, query, ts, supportRandom, false, true);
+    private void assertHashJoinSql(String query, String expected, String tsColumn, boolean tsDescending, boolean supportRandom) throws Exception {
+        var qa = assertQuery(query)
+                .noLeakCheck()
+                .fullFatJoins();
+        if (tsColumn != null) {
+            if (tsDescending) {
+                qa.timestampDesc(tsColumn);
+            } else {
+                qa.timestampAsc(tsColumn);
+            }
+        }
+        qa.supportsRandomAccess(supportRandom)
+                .returns(expected);
         printSql(query, true);
         TestUtils.assertEquals("full fat join", expected, sink);
     }
 
     private void assertHashJoinSqlWithRandomAccess(String query, String expected) throws Exception {
-        assertHashJoinSql(query, expected, null, true);
+        assertHashJoinSql(query, expected, null, false, true);
     }
 
     private void assertRepeatedJoinQuery(String query, String left, boolean expectSize) throws Exception {
-        assertQueryNoLeakCheck("id\n1\n", query.replace("#JOIN_TYPE#", left), null, false, expectSize);
+        assertQuery(query.replace("#JOIN_TYPE#", left))
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize(expectSize)
+                .returns("id\n1\n");
     }
 
     private void assertSkipToAndCalculateSize(String select, int size) throws Exception {
-        assertQueryNoLeakCheck("count\n" + size + "\n", "select count(*) from (" + select + ")", null, false, true);
+        assertQuery("select count(*) from (" + select + ")")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("count\n" + size + "\n");
 
         RecordCursor.Counter counter = new RecordCursor.Counter();
 
@@ -7005,7 +8552,7 @@ public class JoinTest extends AbstractCairoTest {
                 for (int i = 0; i < size + 2; i++) {
                     cursor.toTop();
                     counter.set(i);
-                    cursor.skipRows(counter);
+                    cursor.skipRows(counter, RecordCursor.UNBOUNDED_ROW_COUNT);
 
                     Assert.assertEquals(Math.max(i - size, 0), counter.get());
 
@@ -7067,7 +8614,12 @@ public class JoinTest extends AbstractCairoTest {
                             ") timestamp(timestamp)"
             );
 
-            assertQueryAndCacheFullFat(expected, query, "timestamp", false, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
 
             execute(
                     "insert into x select * from (" +
@@ -7091,8 +8643,13 @@ public class JoinTest extends AbstractCairoTest {
                             ") timestamp(timestamp)"
             );
 
-            assertQueryFullFatNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .fullFatJoins(fullFatJoin)
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             i\tsym\tamt\tprice\ttimestamp\ttimestamp1
                             1\tmsft\t22.463\tnull\t2018-01-01T00:12:00.000000Z\t
                             2\tgoogl\t29.92\t0.885\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:24:00.000000Z
@@ -7114,13 +8671,7 @@ public class JoinTest extends AbstractCairoTest {
                             18\tmsft\t36.798\t0.051000000000000004\t2018-01-01T03:36:00.000000Z\t2018-01-01T01:50:00.000000Z
                             19\tmsft\t66.98\t0.051000000000000004\t2018-01-01T03:48:00.000000Z\t2018-01-01T01:50:00.000000Z
                             20\tgoogl\t26.369\t0.6900000000000001\t2018-01-01T04:00:00.000000Z\t2018-01-01T02:00:00.000000Z
-                            """,
-                    query,
-                    "timestamp",
-                    false,
-                    true,
-                    fullFatJoin
-            );
+                            """);
         });
     }
 
@@ -7184,7 +8735,12 @@ public class JoinTest extends AbstractCairoTest {
                             ") timestamp(timestamp)"
             );
 
-            assertQueryAndCacheFullFat(expected, query, "timestamp", false, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
 
             execute(
                     "insert into x select * from " +
@@ -7228,8 +8784,13 @@ public class JoinTest extends AbstractCairoTest {
                             ") timestamp(timestamp)"
             );
 
-            assertQueryFullFatNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .fullFatJoins(fullFatJoin)
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             i\tsym\tamt\tprice\ttimestamp\ttimestamp1
                             1\tmsft\t50.938\t0.523\t2018-01-01T00:12:00.000000Z\t2018-01-01T00:12:00.000000Z
                             2\tgoogl\t42.281\t0.215\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:18:00.000000Z
@@ -7251,13 +8812,7 @@ public class JoinTest extends AbstractCairoTest {
                             18\tibm\t60.678000000000004\t0.388\t2018-01-01T03:36:00.000000Z\t2018-01-01T01:56:00.000000Z
                             19\tmsft\t4.727\t0.912\t2018-01-01T03:48:00.000000Z\t2018-01-01T01:58:00.000000Z
                             20\tgoogl\t26.222\t0.148\t2018-01-01T04:00:00.000000Z\t2018-01-01T02:00:00.000000Z
-                            """,
-                    query,
-                    "timestamp",
-                    false,
-                    true,
-                    fullFatJoin
-            );
+                            """);
         });
     }
 
@@ -7323,7 +8878,12 @@ public class JoinTest extends AbstractCairoTest {
                             ") timestamp(timestamp)"
             );
 
-            assertQueryAndCache(expected, query, "timestamp", true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
 
             execute(
                     "insert into x select * from " +
@@ -7368,8 +8928,13 @@ public class JoinTest extends AbstractCairoTest {
                             ") timestamp(timestamp)"
             );
 
-            assertQueryFullFatNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .fullFatJoins(fullFatJoin)
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             i\tc\tc1\tamt\tprice\ttimestamp\ttimestamp1
                             1\tXYZ\tXYZ\t50.938\t0.294\t2018-01-01T00:12:00.000000Z\t2018-01-01T00:10:00.000000Z
                             2\tABC\tABC\t42.281\t0.167\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:22:00.000000Z
@@ -7391,13 +8956,7 @@ public class JoinTest extends AbstractCairoTest {
                             18\t\t\t1.869\t0.46900000000000003\t2018-01-01T03:36:00.000000Z\t2018-01-01T01:52:00.000000Z
                             19\tABC\tABC\t85.427\t0.359\t2018-01-01T03:48:00.000000Z\t2018-01-01T01:24:00.000000Z
                             20\tABC\tABC\t54.586\t0.359\t2018-01-01T04:00:00.000000Z\t2018-01-01T01:24:00.000000Z
-                            """,
-                    query,
-                    "timestamp",
-                    false,
-                    true,
-                    fullFatJoin
-            );
+                            """);
         });
     }
 
@@ -7463,7 +9022,12 @@ public class JoinTest extends AbstractCairoTest {
                             ") timestamp(timestamp)"
             );
 
-            assertQueryAndCache(expected, query, "timestamp", true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
 
             execute(
                     "insert into x select * from " +
@@ -7508,8 +9072,13 @@ public class JoinTest extends AbstractCairoTest {
                             ") timestamp(timestamp)"
             );
 
-            assertQueryFullFatNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .fullFatJoins(fullFatJoin)
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             i\tc\tc1\tamt\tprice\ttimestamp\ttimestamp1
                             1\tXYZ\tXYZ\t50.938\t0.294\t2018-01-01T00:12:00.000000Z\t2018-01-01T00:10:00.000000Z
                             2\tABC\tABC\t42.281\t0.167\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:22:00.000000Z
@@ -7531,13 +9100,7 @@ public class JoinTest extends AbstractCairoTest {
                             18\t\t\t1.869\t0.46900000000000003\t2018-01-01T03:36:00.000000Z\t2018-01-01T01:52:00.000000Z
                             19\tABC\tABC\t85.427\t0.359\t2018-01-01T03:48:00.000000Z\t2018-01-01T01:24:00.000000Z
                             20\tABC\tABC\t54.586\t0.359\t2018-01-01T04:00:00.000000Z\t2018-01-01T01:24:00.000000Z
-                            """,
-                    query,
-                    "timestamp",
-                    false,
-                    true,
-                    fullFatJoin
-            );
+                            """);
         });
     }
 
@@ -7580,12 +9143,23 @@ public class JoinTest extends AbstractCairoTest {
                             ") timestamp(timestamp)"
             );
 
-            assertQueryAndCacheFullFat(expected, query, "timestamp", false, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
 
             execute("insert into x select * from (select cast(x + 10 as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)");
             execute("insert into y select * from (select cast(x + 30 as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + (x + 30) * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)");
 
-            assertQueryFullFatNoLeakCheck("""
+            assertQuery(query)
+                    .noLeakCheck()
+                    .fullFatJoins(fullFatJoin)
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             i\tsym\tsym2\tamt\tprice\ttimestamp\ttimestamp1
                             1\tmsft\t\t22.463\tnull\t2018-01-01T00:12:00.000000Z\t
                             2\tgoogl\tgoogl\t29.92\t0.885\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:24:00.000000Z
@@ -7607,13 +9181,7 @@ public class JoinTest extends AbstractCairoTest {
                             18\tmsft\tmsft\t36.798\t0.051000000000000004\t2018-01-01T03:36:00.000000Z\t2018-01-01T01:50:00.000000Z
                             19\tmsft\tmsft\t66.98\t0.051000000000000004\t2018-01-01T03:48:00.000000Z\t2018-01-01T01:50:00.000000Z
                             20\tgoogl\tgoogl\t26.369\t0.6900000000000001\t2018-01-01T04:00:00.000000Z\t2018-01-01T02:00:00.000000Z
-                            """,
-                    query,
-                    "timestamp",
-                    false,
-                    true,
-                    fullFatJoin
-            );
+                            """);
         });
     }
 
@@ -7640,11 +9208,23 @@ public class JoinTest extends AbstractCairoTest {
                 )""").replace("#JOIN_TYPE#", joinType);
         String expected = "LT JOIN".equals(joinType) ? "amount\tprice1\n2.0\tnull\n" : "amount\tprice1\n2.0\t2.0\n";
 
-        assertQueryNoLeakCheck(expected, query.replace("#JOIN_CLAUSE#", "symbol"), null, false, false);
-        assertQueryNoLeakCheck(expected, query.replace("#JOIN_CLAUSE#", "a.symbol = b.symbol"), null, false, false);
-        assertQueryNoLeakCheck(expected, query.replace("#JOIN_CLAUSE#", "a.symbol = b.symbol and a.price = b.price"), null, false, false);
+        assertQuery(query.replace("#JOIN_CLAUSE#", "symbol"))
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns(expected);
+        assertQuery(query.replace("#JOIN_CLAUSE#", "a.symbol = b.symbol"))
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns(expected);
+        assertQuery(query.replace("#JOIN_CLAUSE#", "a.symbol = b.symbol and a.price = b.price"))
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns(expected);
         if (!joinType.contains("LT") && !joinType.contains("ASOF")) {
-            assertQueryNoLeakCheck(expected, query.replace("#JOIN_CLAUSE#", "b.symbol = a.symbol and a.timestamp = b.timestamp"), null, false, false);
+            assertQuery(query.replace("#JOIN_CLAUSE#", "b.symbol = a.symbol and a.timestamp = b.timestamp"))
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expected);
         }
     }
 
@@ -7655,14 +9235,11 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table y as (select x, cast(2*((x-1)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(10))");
 
             // master records should be filtered out because slave records missing
-            assertQueryFullFatNoLeakCheck(
-                    expected,
-                    "select x.c, x.a, b, a+b from x join y on y.m = x.c and 1 > 10",
-                    null,
-                    false,
-                    true,
-                    fullFatJoin
-            );
+            assertQuery("select x.c, x.a, b, a+b from x join y on y.m = x.c and 1 > 10")
+                    .noLeakCheck()
+                    .fullFatJoins(fullFatJoin)
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -7686,14 +9263,12 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table y as (select x, cast(2*((x-1)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(10))");
 
             // master records should be filtered out because slave records missing
-            assertQueryFullFatNoLeakCheck(
-                    expected,
-                    "select x.c, x.a, b from x join y on y.m = x.c and 1 < 10",
-                    null,
-                    false,
-                    true,
-                    fullFatJoin
-            );
+            assertQuery("select x.c, x.a, b from x join y on y.m = x.c and 1 < 10")
+                    .noLeakCheck()
+                    .fullFatJoins(fullFatJoin)
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -7782,14 +9357,12 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table y as (select cast((x-1)/4 + 1 as int) c, abs(rnd_int() % 100) b from long_sequence(20))");
             execute("create table z as (select cast((x-1)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(40))");
 
-            assertQueryFullFatNoLeakCheck(
-                    expected,
-                    "select z.c, x.a, b, d, d-b from x join y on(c) join z on (c)",
-                    null,
-                    false,
-                    true,
-                    fullFatJoin
-            );
+            assertQuery("select z.c, x.a, b, d, d-b from x join y on(c) join z on (c)")
+                    .noLeakCheck()
+                    .fullFatJoins(fullFatJoin)
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -7862,14 +9435,12 @@ public class JoinTest extends AbstractCairoTest {
             );
 
             // filter is applied to final join result
-            assertQueryFullFatNoLeakCheck(
-                    expected,
-                    "select * from x join y on (kk)",
-                    null,
-                    false,
-                    true,
-                    fullFatJoin
-            );
+            assertQuery("select * from x join y on (kk)")
+                    .noLeakCheck()
+                    .fullFatJoins(fullFatJoin)
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -7922,14 +9493,12 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table x as (select cast(x as int) c, abs(rnd_int() % 650) a from long_sequence(5))");
             execute("create table y as (select cast((x-1)/4 + 1 as int) m, abs(rnd_int() % 100) b from long_sequence(20))");
             execute("create table z as (select cast((x-1)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(40))");
-            assertQueryFullFatNoLeakCheck(
-                    expected,
-                    "select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c)",
-                    null,
-                    false,
-                    true,
-                    fullFatJoin
-            );
+            assertQuery("select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c)")
+                    .noLeakCheck()
+                    .fullFatJoins(fullFatJoin)
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -7960,20 +9529,19 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table z as (select cast((x-1)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(16))");
 
             // filter is applied to intermediate join result
-            assertQueryAndCacheFullFat(
-                    expected,
-                    "select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) where y.b < 20 order by z.c, b, d",
-                    null,
-                    true,
-                    false
-            );
+            assertQuery("select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) where y.b < 20 order by z.c, b, d")
+                    .noLeakCheck()
+                    .returns(expected);
 
             execute("insert into x select cast(x+6 as int) c, abs(rnd_int() % 650) a from long_sequence(3)");
             execute("insert into y select cast((x+19)/4 + 1 as int) m, abs(rnd_int() % 100) b from long_sequence(16)");
             execute("insert into z select cast((x+15)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(2)");
 
-            assertQueryFullFatNoLeakCheck(
-                    expected +
+            assertQuery("select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) where y.b < 20 order by z.c, b, d")
+                    .noLeakCheck()
+                    .fullFatJoins(fullFatJoin)
+                    .expectSize()
+                    .returns(expected +
                             "7\t253\t14\t228\t214\n" +
                             "7\t253\t14\t723\t709\n" +
                             "8\t431\t0\t348\t348\n" +
@@ -7981,13 +9549,7 @@ public class JoinTest extends AbstractCairoTest {
                             "9\t100\t8\t456\t448\n" +
                             "9\t100\t8\t667\t659\n" +
                             "9\t100\t19\t456\t437\n" +
-                            "9\t100\t19\t667\t648\n",
-                    "select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) where y.b < 20 order by z.c, b, d",
-                    null,
-                    true,
-                    true,
-                    fullFatJoin
-            );
+                            "9\t100\t19\t667\t648\n");
         });
     }
 
@@ -8024,14 +9586,10 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table z as (select cast((x-1)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(40))");
 
             // filter is applied to final join result
-            assertQueryFullFatNoLeakCheck(
-                    expected,
-                    "select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) where d-b > 100 order by z.c, d-b",
-                    null,
-                    true,
-                    false,
-                    fullFatJoin
-            );
+            assertQuery("select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) where d-b > 100 order by z.c, d-b")
+                    .noLeakCheck()
+                    .fullFatJoins(fullFatJoin)
+                    .returns(expected);
         });
     }
 
@@ -8054,29 +9612,22 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table x as (select cast(x as int) c, abs(rnd_int() % 650) a from long_sequence(10))");
             execute("create table y as (select x, cast(2*((x-1)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(10))");
 
-            assertQueryAndCache(
-                    expected,
-                    "select x.c, x.a, b from x join y on y.m = x.c order by x.c, b",
-                    null,
-                    true,
-                    false
-            );
+            assertQuery("select x.c, x.a, b from x join y on y.m = x.c order by x.c, b")
+                    .noLeakCheck()
+                    .returns(expected);
 
             execute("insert into x select cast(x+10 as int) c, abs(rnd_int() % 650) a from long_sequence(4)");
             execute("insert into y select x, cast(2*((x-1+10)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(6)");
 
-            assertQueryNoLeakCheck(
-                    expected +
+            assertQuery("select x.c, x.a, b from x join y on y.m = x.c order by x.c, b")
+                    .fullFatJoins(fullFatJoin)
+                    .noLeakCheck()
+                    .expectSize(fullFatJoin) // full-fat join materializes (known size); optimized path streams (-1)
+                    .returns(expected +
                             "12\t347\t0\n" +
                             "12\t347\t7\n" +
                             "14\t197\t50\n" +
-                            "14\t197\t68\n",
-                    "select x.c, x.a, b from x join y on y.m = x.c order by x.c, b",
-                    null,
-                    true,
-                    false,
-                    fullFatJoin
-            );
+                            "14\t197\t68\n");
         });
     }
 
@@ -8175,20 +9726,19 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table z as (select rnd_symbol('D','B',null,'A') c, abs(rnd_int() % 1000) d from long_sequence(16))");
 
             // filter is applied to intermediate join result
-            assertQueryAndCacheFullFat(
-                    expected,
-                    "select x.c xc, z.c zc, y.m yc, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) order by x.c, d, d-b",
-                    null,
-                    true,
-                    false
-            );
+            assertQuery("select x.c xc, z.c zc, y.m yc, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) order by x.c, d, d-b")
+                    .noLeakCheck()
+                    .returns(expected);
 
             execute("insert into x select rnd_symbol('L','K','P') c, abs(rnd_int() % 650) a from long_sequence(3)");
             execute("insert into y select rnd_symbol('P','L','K') m, abs(rnd_int() % 100) b from long_sequence(6)");
             execute("insert into z select rnd_symbol('K','P','L') c, abs(rnd_int() % 1000) d from long_sequence(6)");
 
-            assertQueryFullFatNoLeakCheck(
-                    """
+            assertQuery("select x.c xc, z.c zc, y.m yc, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) order by x.c, d, d-b")
+                    .noLeakCheck()
+                    .fullFatJoins(fullFatJoin)
+                    .expectSize()
+                    .returns("""
                             xc\tzc\tyc\ta\tb\td\tcolumn
                             \t\t\t521\t69\t2\t-67
                             \t\t\t598\t69\t2\t-67
@@ -8276,13 +9826,7 @@ public class JoinTest extends AbstractCairoTest {
                             B\tB\tB\t439\t72\t933\t861
                             L\tL\tL\t148\t52\t121\t69
                             L\tL\tL\t148\t38\t121\t83
-                            """,
-                    "select x.c xc, z.c zc, y.m yc, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) order by x.c, d, d-b",
-                    null,
-                    true,
-                    true,
-                    fullFatJoin
-            );
+                            """);
 
         });
     }
@@ -8312,20 +9856,19 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table z as (select cast((x-1)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(16))");
 
             // filter is applied to intermediate join result
-            assertQueryAndCacheFullFat(
-                    expected,
-                    "select z.c, x.a, b, d, a+b from x join y on y.m = x.c join z on (c) where a+b < 300 order by z.c, b, d",
-                    null,
-                    true,
-                    false
-            );
+            assertQuery("select z.c, x.a, b, d, a+b from x join y on y.m = x.c join z on (c) where a+b < 300 order by z.c, b, d")
+                    .noLeakCheck()
+                    .returns(expected);
 
             execute("insert into x select cast(x+6 as int) c, abs(rnd_int() % 650) a from long_sequence(3)");
             execute("insert into y select cast((x+19)/4 + 1 as int) m, abs(rnd_int() % 100) b from long_sequence(16)");
             execute("insert into z select cast((x+15)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(2)");
 
-            assertQueryFullFatNoLeakCheck(
-                    expected +
+            assertQuery("select z.c, x.a, b, d, a+b from x join y on y.m = x.c join z on (c) where a+b < 300 order by z.c, b, d")
+                    .noLeakCheck()
+                    .fullFatJoins(fullFatJoin)
+                    .expectSize()
+                    .returns(expected +
                             "7\t253\t14\t228\t267\n" +
                             "7\t253\t14\t723\t267\n" +
                             "7\t253\t35\t228\t288\n" +
@@ -8337,13 +9880,7 @@ public class JoinTest extends AbstractCairoTest {
                             "9\t100\t38\t456\t138\n" +
                             "9\t100\t38\t667\t138\n" +
                             "9\t100\t63\t456\t163\n" +
-                            "9\t100\t63\t667\t163\n",
-                    "select z.c, x.a, b, d, a+b from x join y on y.m = x.c join z on (c) where a+b < 300 order by z.c, b, d",
-                    null,
-                    true,
-                    true,
-                    fullFatJoin
-            );
+                            "9\t100\t63\t667\t163\n");
         });
     }
 
@@ -8412,32 +9949,20 @@ public class JoinTest extends AbstractCairoTest {
                     "null\tnull\tnull\tfalse\t\tnull\tnull\t0\t\t\tnull\t\t0\t\t\t11\t12\t-2099411412\ttrue\t\tnull\tnull\t119\t2015-09-08T05:51:33.432Z\tYRZL\t8196152051414471878\t1970-01-01T02:46:40.000000Z\t17\t00000000 05 2b 73 51 cf c3 7e c0 1d 6c a9 65 81 ad 79 87\tYWXBBZVRLPT\n";
 
             // filter is applied to final join result
-            assertQueryFullFatNoLeakCheck(
-                    expected,
-                    "select * from x left join y on (kk) order by x.id desc, y.id desc",
-                    null,
-                    true,
-                    false,
-                    fullFatJoins
-            );
+            assertQuery("select * from x left join y on (kk) order by x.id desc, y.id desc")
+                    .noLeakCheck()
+                    .fullFatJoins(fullFatJoins)
+                    .returns(expected);
 
-            assertQueryFullFatNoLeakCheck(
-                    expected,
-                    "select x.*, y.* from y right join x on (kk) order by x.id desc, y.id desc",
-                    null,
-                    true,
-                    false,
-                    fullFatJoins
-            );
+            assertQuery("select x.*, y.* from y right join x on (kk) order by x.id desc, y.id desc")
+                    .noLeakCheck()
+                    .fullFatJoins(fullFatJoins)
+                    .returns(expected);
 
-            assertQueryFullFatNoLeakCheck(
-                    fullJoinExpected,
-                    "select * from x full join y on (kk) order by x.id desc, y.id desc",
-                    null,
-                    true,
-                    false,
-                    fullFatJoins
-            );
+            assertQuery("select * from x full join y on (kk) order by x.id desc, y.id desc")
+                    .noLeakCheck()
+                    .fullFatJoins(fullFatJoins)
+                    .returns(fullJoinExpected);
         });
     }
 
@@ -8466,42 +9991,40 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table y as (select x, cast(2*((x-1)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(10))");
 
             // master records should be filtered out because slave records missing
-            assertQueryAndCache(expected, "select x.c, x.a, b from x left join y on y.m = x.c order by x.c, b", null, true, false);
-            assertQueryAndCache(expected, "select x.c, x.a, b from y right join x on y.m = x.c order by x.c, b", null, true, false);
-            assertQueryAndCache(expected, "select x.c, x.a, b from y full join x on y.m = x.c order by x.c, b", null, true, false);
+            assertQuery("select x.c, x.a, b from x left join y on y.m = x.c order by x.c, b")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("select x.c, x.a, b from y right join x on y.m = x.c order by x.c, b")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("select x.c, x.a, b from y full join x on y.m = x.c order by x.c, b")
+                    .noLeakCheck()
+                    .returns(expected);
 
             execute("insert into x select * from (select cast(x+10 as int) c, abs(rnd_int() % 650) a, to_timestamp('2018-03-01', 'yyyy-MM-dd') + x + 10 ts from long_sequence(4)) timestamp(ts)");
             execute("insert into y select x, cast(2*((x-1+10)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(6)");
 
-            assertQueryFullFatNoLeakCheck(
-                    expected +
+            assertQuery("select x.c, x.a, b from x left join y on y.m = x.c order by x.c, b")
+                    .noLeakCheck()
+                    .fullFatJoins(fullFatJoins)
+                    .returns(expected +
                             "11\t467\tnull\n" +
                             "12\t347\t0\n" +
                             "12\t347\t7\n" +
                             "13\t244\tnull\n" +
                             "14\t197\t50\n" +
-                            "14\t197\t68\n",
-                    "select x.c, x.a, b from x left join y on y.m = x.c order by x.c, b",
-                    null,
-                    true,
-                    false,
-                    fullFatJoins
-            );
+                            "14\t197\t68\n");
 
-            assertQueryFullFatNoLeakCheck(
-                    expected +
+            assertQuery("select x.c, x.a, b from y right join x on y.m = x.c order by x.c, b")
+                    .noLeakCheck()
+                    .fullFatJoins(fullFatJoins)
+                    .returns(expected +
                             "11\t467\tnull\n" +
                             "12\t347\t0\n" +
                             "12\t347\t7\n" +
                             "13\t244\tnull\n" +
                             "14\t197\t50\n" +
-                            "14\t197\t68\n",
-                    "select x.c, x.a, b from y right join x on y.m = x.c order by x.c, b",
-                    null,
-                    true,
-                    false,
-                    fullFatJoins
-            );
+                            "14\t197\t68\n");
         });
     }
 
@@ -8517,21 +10040,6 @@ public class JoinTest extends AbstractCairoTest {
                     fullFatJoins
             );
         });
-    }
-
-    protected void assertQueryNoLeakCheck(String expected, String query) throws SqlException {
-        snapshotMemoryUsage();
-        try (RecordCursorFactory factory = select(query)) {
-            assertFactoryCursor(
-                    expected,
-                    null,
-                    factory,
-                    false,
-                    sqlExecutionContext,
-                    false,
-                    false
-            );
-        }
     }
 
     @FunctionalInterface

@@ -543,6 +543,7 @@ public class PGCleartextPasswordAuthenticator implements SocketAuthenticator {
     }
 
     private class ResponseSink implements Utf8Sink {
+        private int[] ryuE10;
 
         @Override
         public Utf8Sink put(@Nullable Utf8Sequence us) {
@@ -574,6 +575,14 @@ public class PGCleartextPasswordAuthenticator implements SocketAuthenticator {
             Vect.memcpy(sendBufWritePos, lo, size);
             sendBufWritePos += size;
             return this;
+        }
+
+        @Override
+        public int[] ryuScratch() {
+            if (ryuE10 == null) {
+                ryuE10 = new int[1];
+            }
+            return ryuE10;
         }
 
         void encodeUtf8Z(CharSequence value) {

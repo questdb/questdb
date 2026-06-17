@@ -26,11 +26,11 @@ package io.questdb.std.str;
 
 import io.questdb.ParanoiaState;
 import io.questdb.cairo.TableToken;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.SecurePath;
-import io.questdb.std.ThreadLocal;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.bytes.Bytes;
@@ -52,11 +52,11 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
     private static final byte NULL = (byte) 0;
     private static final int OVERHEAD = 4;
     private static final boolean PARANOIA_MODE = false;
-    private static final AtomicInteger threadLocalInstanceCounter = new AtomicInteger();
-    public static final ThreadLocal<Path> PATH = new ThreadLocal<>(Path::newTLPath);
-    public static final ThreadLocal<Path> PATH2 = new ThreadLocal<>(Path::newTLPath);
+    private static final AtomicInteger carrierLocalInstanceCounter = new AtomicInteger();
+    public static final CarrierLocal<Path> PATH = new CarrierLocal<>(Path::newTLPath);
+    public static final CarrierLocal<Path> PATH2 = new CarrierLocal<>(Path::newTLPath);
     public static final Closeable THREAD_LOCAL_CLEANER = Path::clearThreadLocals;
-    private static final ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);
+    private static final CarrierLocal<StringSink> tlSink = new CarrierLocal<>(StringSink::new);
     private final AsciiCharSequence asciiCharSequence = new AsciiCharSequence();
     private final Exception creationStackTrace;
     private final int initialCapacity;
@@ -65,6 +65,7 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
     private boolean ascii;
     private int capacity;
     private long headPtr;
+    private int[] ryuE10;
     private long tailPtr;
 
     public Path() {
@@ -92,14 +93,13 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
         creationStackTrace = stackTrace;
     }
 
-
     public static void clearThreadLocals() {
         // It could be PATH.get.close(); but this would generated JDK failures on MacOS (SIGABRT)
         // when running tests. Despite all the effort to find the exact cause, it was not possible
         // and this is the best solution so far. This approach will remove the thread local
         // on close and the next time a new object is created.
-        PATH.close();
-        PATH2.close();
+        PATH.removeAndFree();
+        PATH2.removeAndFree();
         SecurePath.clearThreadLocals();
     }
 
@@ -408,6 +408,14 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
         }
     }
 
+    @Override
+    public int[] ryuScratch() {
+        if (ryuE10 == null) {
+            ryuE10 = new int[1];
+        }
+        return ryuE10;
+    }
+
     public Path seekZ() {
         int count = 0;
         while (count < capacity) {
@@ -467,7 +475,7 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
 
     private static Path newTLPath() {
         if (ParanoiaState.THREAD_LOCAL_PATH_PARANOIA_MODE) {
-            Exception ex = new Exception("ThreadLocal Path " + threadLocalInstanceCounter.incrementAndGet());
+            Exception ex = new Exception("CarrierLocal Path " + carrierLocalInstanceCounter.incrementAndGet());
             synchronized (System.err) {
                 System.err.print("Creating ");
                 ex.printStackTrace(System.err);

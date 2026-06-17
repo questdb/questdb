@@ -41,8 +41,10 @@ public class MatchStrBindVariableTest extends AbstractCairoTest {
                     println(factory, cursor);
                 }
 
-                TestUtils.assertEquals("x\n" +
-                        "1\n", sink);
+                TestUtils.assertEquals("""
+                        x
+                        1
+                        """, sink);
 
                 bindVariableService.setStr(0, "QTQ");
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
@@ -63,12 +65,9 @@ public class MatchStrBindVariableTest extends AbstractCairoTest {
 
     @Test
     public void testDynamicRegexFailure() throws Exception {
-        assertException(
-                "x where s ~ s",
-                "create table x as (select rnd_str() s from long_sequence(100))",
-                12,
-                "not implemented: dynamic pattern would be very slow to execute"
-        );
+        assertQuery("x where s ~ s")
+                .ddl("create table x as (select rnd_str() s from long_sequence(100))")
+                .fails(12, "not implemented: dynamic pattern would be very slow to execute");
     }
 
     @Test
@@ -82,16 +81,20 @@ public class MatchStrBindVariableTest extends AbstractCairoTest {
                     println(factory, cursor);
                 }
 
-                TestUtils.assertEquals("s\n" +
-                        "YCTGQO\n", sink);
+                TestUtils.assertEquals("""
+                        s
+                        YCTGQO
+                        """, sink);
 
                 bindVariableService.setStr(0, "QTQ");
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     println(factory, cursor);
                 }
 
-                TestUtils.assertEquals("s\n" +
-                        "ZWEVQTQO\n", sink);
+                TestUtils.assertEquals("""
+                        s
+                        ZWEVQTQO
+                        """, sink);
 
                 bindVariableService.setStr(0, null);
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {

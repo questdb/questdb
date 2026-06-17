@@ -61,6 +61,15 @@ import org.jetbrains.annotations.TestOnly;
 import java.util.Arrays;
 
 public abstract class AbstractPostingIndexReader implements IndexReader {
+    // Number of consecutive values decoded per FSST decompressBlock0 call.
+    // The block as a whole is symbol-table-trained once (imported on first
+    // access), then chunks are decoded on demand as the cursor walks the
+    // block's ordinals. Bounds the anonymous-heap decode scratch to
+    // FSST_DECODE_CHUNK_SIZE * worstCaseValueSize regardless of total block
+    // size -- the previous "decompress whole block" path sized dstCap to
+    // 4 * totalCompressed, which on a multi-GiB sealed block ran the
+    // process out of RSS budget before a single value could be served.
+    private static final int FSST_DECODE_CHUNK_SIZE = 256;
     private static final String INDEX_CORRUPT = "posting index is corrupt";
     private static final Log LOG = LogFactory.getLog(AbstractPostingIndexReader.class);
     protected final PostingIndexChainEntry.Snapshot entryScratch = new PostingIndexChainEntry.Snapshot();
@@ -82,9 +91,21 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     protected long columnTop;
     protected int coverCount;
     protected boolean[] coveredAvailable;
+    // Highest row id the picked chain entry's index data covers
+    // (V2_ENTRY_OFFSET_MAX_VALUE). Cursor reads must not surface row ids
+    // beyond this value: the writer can leave dirty entries in .pv past
+    // the chain's tracked maxValue (e.g. after an O3 split shrinks the
+    // partition before the next reseal evicts them).
+    // readIndexMetadataFromChain() refreshes this field on each success;
+    // -1 indicates the picker has no visible chain entry, in which case
+    // the cursor degrades to the empty path and ignores entryMaxValue.
+    protected long entryMaxValue = -1L;
     protected int genCount;
     protected int keyCount;
     protected RecordMetadata metadata;
+    // Assertion-only stamp of the thread that last checked out a cursor; see
+    // assertStampOperatingThread() / assertSameOperatingThread().
+    private long assertOperatingThreadId = -1L;
     // Last successfully observed seqlock value of the chain header's active
     // page. Used by reloadConditionally to detect any publish (appendNewEntry
     // or extendHead — both republish the header) and skip the picker walk
@@ -99,12 +120,17 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     private long headEntryOffset = PostingIndexUtils.V2_NO_HEAD;
     private CharSequence indexColumnName;
     private int keyCountIncludingNulls;
+    // Pin value used at the most recent successful pick. reloadConditionally
+    // compares against pinnedTableTxn to force a re-pick on pin change even
+    // when the chain seqlock has not advanced.
+    private long lastPickedPinnedTxn = Long.MIN_VALUE;
     private long partitionTimestamp;
     private long partitionTxn;
-    // Strict-pin: the table txn that this reader is pinned at via the
-    // scoreboard. Picker selects the chain entry with the largest
-    // {@code txnAtSeal <= pinnedTableTxn}. Defaults to Long.MAX_VALUE so a
-    // reader opened without explicit plumbing falls back to "see the head".
+    // Strict-pin: the table txn this reader is pinned at via the scoreboard.
+    // Picker selects the entry with the largest {@code txnAtSeal <= pinnedTableTxn};
+    // computeVisibleGenCount trims the head entry's visible genCount to slots
+    // with {@code slot.TXN_AT_SEAL <= pinnedTableTxn}. Default Long.MAX_VALUE
+    // is "unpinned"; production callers replace it via setPinnedTableTxn.
     private long pinnedTableTxn = Long.MAX_VALUE;
     private long spinLockTimeoutMs;
     private long valueFileTxn;
@@ -123,14 +149,23 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         genCount = 0;
         valueMemSize = -1;
         chainSequence = 0;
+        entryMaxValue = -1L;
         headEntryOffset = PostingIndexUtils.V2_NO_HEAD;
         pinnedTableTxn = Long.MAX_VALUE;
+        lastPickedPinnedTxn = Long.MIN_VALUE;
     }
 
     @Override
     public int collectDistinctKeys(DirectBitSet foundKeys) {
         if (genCount == 0 || keyCount == 0) {
             return 0;
+        }
+        if (entryMaxValue >= 0) {
+            // The key-directory fast path can only tell that a key has encoded
+            // row ids somewhere in .pv; it cannot tell whether all of them sit
+            // past the picked chain entry's MAX_VALUE. Use the ranged scanner
+            // so full-partition DISTINCT observes the same clamp as cursors.
+            return collectDistinctKeysInRange(foundKeys, 0, Long.MAX_VALUE);
         }
         int newlyFound = 0;
         for (int g = 0; g < genCount; g++) {
@@ -148,6 +183,16 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     @Override
     public int collectDistinctKeysInRange(DirectBitSet foundKeys, long rowLo, long rowHi) {
         if (genCount == 0 || keyCount == 0) {
+            return 0;
+        }
+        // Clamp rowHi to the picked chain entry's MAX_VALUE for the same
+        // reason PostingIndexFwdReader#getCursor does: dirty (key, rowId)
+        // pairs in .pv past the entry's coverage must not surface as
+        // keys "present in range".
+        if (entryMaxValue >= 0 && rowHi > entryMaxValue) {
+            rowHi = entryMaxValue;
+        }
+        if (rowHi < rowLo) {
             return 0;
         }
         int newlyFound = 0;
@@ -300,14 +345,16 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             // again. We keep the existing snapshot in the meantime.
             return;
         }
-        if (headerScratch.sequence == chainSequence) {
+        // A pin change can move the picker to a different entry even when
+        // the chain hasn't been republished.
+        boolean chainAdvanced = headerScratch.sequence != chainSequence;
+        boolean pinChanged = lastPickedPinnedTxn != pinnedTableTxn;
+        if (!chainAdvanced && !pinChanged) {
             return;
         }
 
-        // The writer may have appended new chain entries past our current
-        // keyMem mapping. Extend the mapping to cover the whole file before
-        // re-picking. ff.length() is cheap on modern OSes.
-        if (ff != null) {
+        // File can only have grown when the chain advanced.
+        if (chainAdvanced && ff != null) {
             long fd = keyMem.getFd();
             if (fd > 0) {
                 long fileLen = ff.length(fd);
@@ -363,6 +410,11 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     @TestOnly
     public void setGenLookupCacheBudget(long budget) {
         genLookup.setCacheMemoryBudget(budget);
+    }
+
+    @Override
+    public void setPinnedTableTxn(long pinnedTableTxn) {
+        this.pinnedTableTxn = pinnedTableTxn;
     }
 
     private static boolean deltaKeyHasValueInRange(long baseAddr, long encodedOffset, long rowLo, long rowHi) {
@@ -543,6 +595,116 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         return false;
     }
 
+    /**
+     * Returns a (possibly slack) upper bound on the largest row id encoded
+     * for one key, given the per-key encoded blob at {@code encodedOffset}
+     * inside the value memory mapping. Returns {@code -1L} when the key
+     * holds no values, and {@code Long.MAX_VALUE} when bit-width arithmetic
+     * would overflow (handled as MIXED by {@code Cursor.size()}).
+     * <p>
+     * Flat-mode strides do not use the delta layout, so this helper covers
+     * only the per-key delta-FoR / Elias-Fano blob format that
+     * {@code deltaKeyHasValueInRange} consumes.
+     */
+    private static long peekDeltaKeyMaxValueUpperBound(long baseAddr, long encodedOffset) {
+        int blockCount = Unsafe.getInt(baseAddr + encodedOffset);
+        if (blockCount == PostingIndexUtils.EF_FORMAT_SENTINEL) {
+            // EF: writer stores universe == lastValue + 1, so max == universe - 1 exactly.
+            long universe = Unsafe.getLong(baseAddr + encodedOffset + 9);
+            return universe - 1;
+        }
+        if (blockCount <= 0) {
+            return -1L;
+        }
+        long valueCountsOff = encodedOffset + 4;
+        long firstValuesOff = valueCountsOff + blockCount;
+        long minDeltasOff = firstValuesOff + (long) blockCount * Long.BYTES;
+        long bitWidthsOff = minDeltasOff + (long) blockCount * Long.BYTES;
+        int last = blockCount - 1;
+        long lastFv = Unsafe.getLong(baseAddr + firstValuesOff + (long) last * Long.BYTES);
+        int lastCount = Unsafe.getByte(baseAddr + valueCountsOff + last) & 0xFF;
+        int numDeltas = lastCount - 1;
+        if (numDeltas == 0) {
+            return lastFv;
+        }
+        long lastMinD = Unsafe.getLong(baseAddr + minDeltasOff + (long) last * Long.BYTES);
+        int lastBitWidth = Unsafe.getByte(baseAddr + bitWidthsOff + last) & 0xFF;
+        if (lastBitWidth == 0) {
+            // Constant-stride block: writer guarantees minD > 0 when count > 1, so the
+            // arithmetic progression's last value is exact.
+            return lastFv + (long) numDeltas * lastMinD;
+        }
+        // Slack upper bound: assume every delta in the last block packs to (1<<bw)-1.
+        // Real values are <= this, so a CLEAN classification stays correct; the cost
+        // is a stricter cutoff for MIXED detection at high bitwidth.
+        if (lastBitWidth >= 32) {
+            return Long.MAX_VALUE;
+        }
+        long maxDelta = lastMinD + (1L << lastBitWidth) - 1;
+        if (maxDelta < lastMinD) {
+            return Long.MAX_VALUE;
+        }
+        long span = (long) numDeltas * maxDelta;
+        if (maxDelta != 0 && span / maxDelta != numDeltas) {
+            return Long.MAX_VALUE;
+        }
+        long max = lastFv + span;
+        if (max < lastFv) {
+            return Long.MAX_VALUE;
+        }
+        return max;
+    }
+
+    /**
+     * Exact smallest row id encoded for one key, taken from the encoded blob
+     * at {@code encodedOffset}. Returns {@code -1L} when the key holds no
+     * values. Mirror to {@link #peekDeltaKeyMaxValueUpperBound}.
+     */
+    private static long peekDeltaKeyMinValue(long baseAddr, long encodedOffset) {
+        int firstWord = Unsafe.getInt(baseAddr + encodedOffset);
+        if (firstWord == PostingIndexUtils.EF_FORMAT_SENTINEL) {
+            return peekEFKeyMinValue(baseAddr, encodedOffset);
+        }
+        if (firstWord <= 0) {
+            return -1L;
+        }
+        long firstValuesOff = encodedOffset + 4 + firstWord;
+        return Unsafe.getLong(baseAddr + firstValuesOff);
+    }
+
+    private static long peekEFKeyMinValue(long baseAddr, long encodedOffset) {
+        long pos = encodedOffset + 4; // skip EF_FORMAT_SENTINEL
+        int totalCount = Unsafe.getInt(baseAddr + pos);
+        pos += 4;
+        if (totalCount == 0) {
+            return -1L;
+        }
+        int bitsL = Unsafe.getByte(baseAddr + pos) & 0xFF;
+        pos += 1;
+        long universe = Unsafe.getLong(baseAddr + pos);
+        pos += 8;
+        long lowOffset = pos;
+        long highOffset = pos + PostingIndexUtils.efLowBytesAligned(totalCount, bitsL);
+        int numHighWords = (int) ((totalCount + (universe >>> bitsL) + 63) / 64);
+        for (int i = 0; i < numHighWords; i++) {
+            long word = Unsafe.getLong(baseAddr + highOffset + (long) i * 8);
+            if (word == 0) {
+                continue;
+            }
+            // First set bit's absolute index in the high-bit stream is the high
+            // part of value 0 (outputCount == 0 at the start, so base == i*64).
+            long high = (long) i * 64 + Long.numberOfTrailingZeros(word);
+            long low = 0;
+            if (bitsL > 0) {
+                long lowMask = (bitsL < 64) ? (1L << bitsL) - 1 : -1L;
+                long lowWord = Unsafe.getLong(baseAddr + lowOffset);
+                low = lowWord & lowMask;
+            }
+            return (high << bitsL) | low;
+        }
+        return -1L;
+    }
+
     private void closeSidecarMems() {
         Misc.freeObjListAndKeepObjects(sidecarMems);
         coverCount = 0;
@@ -604,6 +766,24 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             }
         }
         return newlyFound;
+    }
+
+    private long computeVisibleEntryMaxValue(PostingIndexChainEntry.Snapshot e, int visibleGenCount) {
+        if (visibleGenCount == 0) {
+            return -1L;
+        }
+        return visibleGenCount == e.genCount
+                ? e.maxValue
+                : genLookup.getGenMaxValue(visibleGenCount - 1);
+    }
+
+    private int computeVisibleGenCount(PostingIndexChainEntry.Snapshot e) {
+        for (int g = 0; g < e.genCount; g++) {
+            if (genLookup.getGenTxnAtSeal(g) > pinnedTableTxn) {
+                return g;
+            }
+        }
+        return e.genCount;
     }
 
     /**
@@ -752,9 +932,10 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
 
                 this.headEntryOffset = entryScratch.offset;
                 this.chainSequence = headerScratch.sequence;
+                this.genCount = computeVisibleGenCount(entryScratch);
+                this.entryMaxValue = computeVisibleEntryMaxValue(entryScratch, this.genCount);
                 this.valueMemSize = entryScratch.valueMemSize;
                 this.keyCount = entryScratch.keyCount;
-                this.genCount = entryScratch.genCount;
                 this.valueFileTxn = entryScratch.sealTxn;
                 this.keyCountIncludingNulls = columnTop > 0 ? keyCount + 1 : keyCount;
                 // Promote the picked entry's per-cover end offsets into the
@@ -766,6 +947,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 for (int c = 0; c < coverCount; c++) {
                     sidecarFileEndOffsets.setQuick(c, c < picked ? entryScratch.coverFileEndOffsets.getQuick(c) : 0L);
                 }
+                this.lastPickedPinnedTxn = this.pinnedTableTxn;
                 return;
             }
 
@@ -776,6 +958,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             // the .pv file in of().
             this.headEntryOffset = PostingIndexUtils.V2_NO_HEAD;
             this.chainSequence = headerScratch.sequence;
+            this.entryMaxValue = -1L;
             this.valueMemSize = 0;
             this.keyCount = 0;
             this.genCount = 0;
@@ -790,6 +973,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             genLookup.snapshotMetadata(keyMem, 0, 0L);
             genLookup.commitSnapshot();
             genLookup.invalidateCache();
+            this.lastPickedPinnedTxn = this.pinnedTableTxn;
             return;
         }
     }
@@ -896,6 +1080,27 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         return (long) (count + 1) * (longOffsets ? Long.BYTES : Integer.BYTES);
     }
 
+    // Single-owner tripwire (assertion-only). A posting reader and its pooled
+    // cursors are driven by exactly one thread at a time: the thread that owns the
+    // enclosing TableReader between pool acquire/release. getCursor() stamps that
+    // thread via assertStampOperatingThread() and every cursor close() checks it
+    // here. A posting cursor whose close() runs after the reader was released to the
+    // pool and re-acquired by another thread -- the lifecycle hazard that
+    // CoveringIndexRecordCursorFactory.CoveringCursor.close() avoids by freeing the
+    // row cursor BEFORE the frame cursor -- trips this assert instead of silently
+    // re-pooling into / racing a concurrently-reloaded reader. Never relied upon for
+    // correctness: the isOpen() guard in each cursor close() is the actual leak
+    // mitigation, and this stamp is only written under -ea.
+    protected boolean assertSameOperatingThread() {
+        final long owner = assertOperatingThreadId;
+        return owner == -1L || owner == Thread.currentThread().threadId();
+    }
+
+    protected boolean assertStampOperatingThread() {
+        assertOperatingThreadId = Thread.currentThread().threadId();
+        return true;
+    }
+
     protected void ensureSidecarOpen(int c) {
         MemoryMR mem = sidecarMems.getQuick(c);
         long publishedEnd = c < sidecarFileEndOffsets.size() ? sidecarFileEndOffsets.getQuick(c) : 0L;
@@ -967,6 +1172,10 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         protected int decodeWorkspaceCapacity;
         protected int denseVarKeyStartCount;
         protected long[] fsstCachedBlockBases;
+        // First ordinal of the currently-decoded chunk for each cover column,
+        // or -1 if no chunk is decoded for this block. Used together with
+        // fsstCachedBlockBases to address the chunk cache.
+        protected long[] fsstCachedChunkStarts;
         protected long[] fsstDecoderAddrs;
         protected long[] fsstDstAddrs;
         protected long[] fsstDstCapacities;
@@ -1198,12 +1407,45 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             if (requestedKey < 0) {
                 return 0;
             }
+            // Per-gen classification when the chain entry advertises a tracked
+            // coverage: CLEAN gens (max <= entryMaxValue) contribute their count,
+            // ALL_DIRTY gens (min > entryMaxValue) contribute zero, MIXED gens
+            // force a -1 bail so the caller falls back to the clamped iteration.
+            // entryMaxValue == -1 means an empty chain entry where no clamping
+            // applies; the original count fast path is taken verbatim.
             long total = 0;
             for (int g = 0; g < cursorGenCount; g++) {
                 int gkc = genLookup.getGenKeyCount(g);
                 if (gkc >= 0) {
+                    if (entryMaxValue >= 0) {
+                        long minV = peekDenseKeyMinValue(g, gkc);
+                        if (minV < 0) {
+                            continue;
+                        }
+                        if (minV > entryMaxValue) {
+                            continue;
+                        }
+                        long maxV = peekDenseKeyMaxValueUpperBound(g, gkc);
+                        if (maxV > entryMaxValue) {
+                            return -1;
+                        }
+                    }
                     total += getDenseGenKeyCount(g, gkc);
                 } else if (!genLookup.notContainKey(valueMem, g, requestedKey)) {
+                    int activeKeyCount = -gkc;
+                    if (entryMaxValue >= 0) {
+                        long minV = peekSparseKeyMinValue(g, activeKeyCount);
+                        if (minV < 0) {
+                            continue;
+                        }
+                        if (minV > entryMaxValue) {
+                            continue;
+                        }
+                        long maxV = peekSparseKeyMaxValueUpperBound(g, activeKeyCount);
+                        if (maxV > entryMaxValue) {
+                            return -1;
+                        }
+                    }
                     total += getSparseGenKeyCount(g);
                 }
             }
@@ -1211,12 +1453,13 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         }
 
         private CharSequence decompressFsstStr(MemoryMR mem, long blockBase, int count, int ordinal, int includeIdx, DirectString view, boolean longOffsets) {
-            if (isFsstBlockUnavailable(mem, blockBase, count, includeIdx, longOffsets)) {
+            if (isFsstChunkUnavailable(mem, blockBase, count, ordinal, includeIdx, longOffsets)) {
                 return null;
             }
+            int chunkOrdinal = (int) (ordinal - fsstCachedChunkStarts[includeIdx]);
             long offsBase = fsstOffsetsAddrs[includeIdx];
-            long lo = Unsafe.getLong(offsBase + (long) ordinal * Long.BYTES);
-            long hi = Unsafe.getLong(offsBase + (long) (ordinal + 1) * Long.BYTES);
+            long lo = Unsafe.getLong(offsBase + (long) chunkOrdinal * Long.BYTES);
+            long hi = Unsafe.getLong(offsBase + (long) (chunkOrdinal + 1) * Long.BYTES);
             if (lo == hi) {
                 return null;
             }
@@ -1229,12 +1472,13 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         }
 
         private Utf8Sequence decompressFsstUtf8(MemoryMR mem, long blockBase, int count, int ordinal, int includeIdx, DirectUtf8String view, boolean longOffsets) {
-            if (isFsstBlockUnavailable(mem, blockBase, count, includeIdx, longOffsets)) {
+            if (isFsstChunkUnavailable(mem, blockBase, count, ordinal, includeIdx, longOffsets)) {
                 return null;
             }
+            int chunkOrdinal = (int) (ordinal - fsstCachedChunkStarts[includeIdx]);
             long offsBase = fsstOffsetsAddrs[includeIdx];
-            long lo = Unsafe.getLong(offsBase + (long) ordinal * Long.BYTES);
-            long hi = Unsafe.getLong(offsBase + (long) (ordinal + 1) * Long.BYTES);
+            long lo = Unsafe.getLong(offsBase + (long) chunkOrdinal * Long.BYTES);
+            long hi = Unsafe.getLong(offsBase + (long) (chunkOrdinal + 1) * Long.BYTES);
             if (lo == hi) {
                 return null;
             }
@@ -1249,6 +1493,8 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             if (fsstCachedBlockBases == null) {
                 fsstCachedBlockBases = new long[coverCount];
                 Arrays.fill(fsstCachedBlockBases, -1L);
+                fsstCachedChunkStarts = new long[coverCount];
+                Arrays.fill(fsstCachedChunkStarts, -1L);
                 fsstDecoderAddrs = new long[coverCount];
                 fsstDstAddrs = new long[coverCount];
                 fsstDstCapacities = new long[coverCount];
@@ -1306,6 +1552,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                     fsstOffsetsCapacities[i] = 0;
                 }
                 fsstCachedBlockBases[i] = -1;
+                fsstCachedChunkStarts[i] = -1;
             }
         }
 
@@ -1449,12 +1696,13 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             long dataAddr;
             int dataLen;
             if (fsst) {
-                if (isFsstBlockUnavailable(mem, blockBase, count, includeIdx, longOffsets)) {
+                if (isFsstChunkUnavailable(mem, blockBase, count, ordinal, includeIdx, longOffsets)) {
                     return null;
                 }
+                int chunkOrdinal = (int) (ordinal - fsstCachedChunkStarts[includeIdx]);
                 long offsBase = fsstOffsetsAddrs[includeIdx];
-                long lo = Unsafe.getLong(offsBase + (long) ordinal * Long.BYTES);
-                long hi = Unsafe.getLong(offsBase + (long) (ordinal + 1) * Long.BYTES);
+                long lo = Unsafe.getLong(offsBase + (long) chunkOrdinal * Long.BYTES);
+                long hi = Unsafe.getLong(offsBase + (long) (chunkOrdinal + 1) * Long.BYTES);
                 if (lo == hi) {
                     arrayView.ofNull();
                     return arrayView;
@@ -1509,12 +1757,13 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             }
 
             if (fsst) {
-                if (isFsstBlockUnavailable(mem, blockBase, count, includeIdx, longOffsets)) {
+                if (isFsstChunkUnavailable(mem, blockBase, count, ordinal, includeIdx, longOffsets)) {
                     return null;
                 }
+                int chunkOrdinal = (int) (ordinal - fsstCachedChunkStarts[includeIdx]);
                 long offsBase = fsstOffsetsAddrs[includeIdx];
-                long lo = Unsafe.getLong(offsBase + (long) ordinal * Long.BYTES);
-                long hi = Unsafe.getLong(offsBase + (long) (ordinal + 1) * Long.BYTES);
+                long lo = Unsafe.getLong(offsBase + (long) chunkOrdinal * Long.BYTES);
+                long hi = Unsafe.getLong(offsBase + (long) (chunkOrdinal + 1) * Long.BYTES);
                 if (lo == hi) {
                     return null;
                 }
@@ -1564,12 +1813,13 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             }
 
             if (fsst) {
-                if (isFsstBlockUnavailable(mem, blockBase, count, includeIdx, longOffsets)) {
+                if (isFsstChunkUnavailable(mem, blockBase, count, ordinal, includeIdx, longOffsets)) {
                     return -1;
                 }
+                int chunkOrdinal = (int) (ordinal - fsstCachedChunkStarts[includeIdx]);
                 long offsBase = fsstOffsetsAddrs[includeIdx];
-                long lo = Unsafe.getLong(offsBase + (long) ordinal * Long.BYTES);
-                long hi = Unsafe.getLong(offsBase + (long) (ordinal + 1) * Long.BYTES);
+                long lo = Unsafe.getLong(offsBase + (long) chunkOrdinal * Long.BYTES);
+                long hi = Unsafe.getLong(offsBase + (long) (chunkOrdinal + 1) * Long.BYTES);
                 if (lo == hi) {
                     return -1;
                 }
@@ -1668,33 +1918,70 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             return view.of(dataAddr, dataAddr + (hi - lo - 1));
         }
 
-        private boolean isFsstBlockUnavailable(MemoryMR mem, long blockBase, int count, int includeIdx, boolean longOffsets) {
+        /**
+         * Returns true if the FSST chunk covering {@code ordinal} cannot
+         * be decoded -- the block's table won't import, the chunk's
+         * decompression failed, or the decoder is in a corrupted state.
+         * Otherwise leaves the chunk's bytes in {@code fsstDstAddrs[includeIdx]}
+         * and chunk-relative offsets in {@code fsstOffsetsAddrs[includeIdx]}.
+         * Callers index using {@code (ordinal - fsstCachedChunkStarts[includeIdx])}.
+         * <p>
+         * Decoding is chunked at {@link #FSST_DECODE_CHUNK_SIZE} values. The
+         * symbol-table import happens once per block (cached via
+         * {@code fsstCachedBlockBases}); chunk decode happens per FSST chunk
+         * (cached via {@code fsstCachedChunkStarts}). Anonymous-heap scratch
+         * is bounded to a chunk's worth of decoded bytes plus
+         * {@code (chunkSize + 1) * 8} for the offset table -- a few tens of
+         * KiB in typical workloads, never the multi-GiB the whole-block
+         * decode required.
+         */
+        private boolean isFsstChunkUnavailable(MemoryMR mem, long blockBase, int count, int ordinal, int includeIdx, boolean longOffsets) {
             ensureFsstCacheCapacity();
-            if (fsstCachedBlockBases[includeIdx] == blockBase) {
+            // Compute the chunk that owns this ordinal. CHUNK_SIZE is a
+            // power of two so the divide and modulo both compile to shifts.
+            final int chunkStart = (ordinal / FSST_DECODE_CHUNK_SIZE) * FSST_DECODE_CHUNK_SIZE;
+
+            // Fast path: same block and same chunk as last access.
+            if (fsstCachedBlockBases[includeIdx] == blockBase
+                    && fsstCachedChunkStarts[includeIdx] == chunkStart) {
                 return false;
             }
 
             long pos = blockBase + 4;
             int tableLen = Unsafe.getShort(mem.addressOf(pos)) & 0xFFFF;
             long tableAddr = mem.addressOf(pos + 2);
-            long offsetsAddr = mem.addressOf(pos + 2 + tableLen);
+            long blockOffsetsAddr = mem.addressOf(pos + 2 + tableLen);
             long offsetsTableSize = varBlockOffsetsSize(count, longOffsets);
             long dataBase = pos + 2 + tableLen + offsetsTableSize;
+            int srcOffsetsWidth = longOffsets ? Long.BYTES : Integer.BYTES;
 
-            long decoderAddr = fsstDecoderAddrs[includeIdx];
-            if (decoderAddr == 0) {
-                decoderAddr = Unsafe.malloc(FSSTNative.DECODER_STRUCT_SIZE, MemoryTag.NATIVE_INDEX_READER);
-                fsstDecoderAddrs[includeIdx] = decoderAddr;
-            }
-            if (FSSTNative.importTable(decoderAddr, tableAddr) < 0) {
-                fsstCachedBlockBases[includeIdx] = -1;
-                return true;
+            // Re-import the symbol table only when the block changed. The
+            // table is small (<= FSST_MAXHEADER, ~2 KiB) and reusable across
+            // every chunk inside this block.
+            if (fsstCachedBlockBases[includeIdx] != blockBase) {
+                long decoderAddr = fsstDecoderAddrs[includeIdx];
+                if (decoderAddr == 0) {
+                    decoderAddr = Unsafe.malloc(FSSTNative.DECODER_STRUCT_SIZE, MemoryTag.NATIVE_INDEX_READER);
+                    fsstDecoderAddrs[includeIdx] = decoderAddr;
+                }
+                if (FSSTNative.importTable(decoderAddr, tableAddr) < 0) {
+                    fsstCachedBlockBases[includeIdx] = -1;
+                    fsstCachedChunkStarts[includeIdx] = -1;
+                    return true;
+                }
+                fsstCachedBlockBases[includeIdx] = blockBase;
+                // Force chunk decode below; the new block invalidates any
+                // chunk position cached from the previous block.
+                fsstCachedChunkStarts[includeIdx] = -1;
             }
 
-            // Use realloc so an OOM throw leaves the previous (addr, capacity)
-            // intact. The buffers are overwritten end-to-end on each miss, so
-            // realloc's potential stale-copy is harmless.
-            long offsetsBytes = (long) (count + 1) * Long.BYTES;
+            // chunkCount is the number of values in this chunk. The last
+            // chunk is short when count is not a multiple of CHUNK_SIZE.
+            final int chunkCount = Math.min(FSST_DECODE_CHUNK_SIZE, count - chunkStart);
+
+            // Offsets buffer for this chunk: (chunkCount + 1) longs.
+            // Bounded to (CHUNK_SIZE + 1) * 8 = ~2 KiB.
+            long offsetsBytes = (long) (chunkCount + 1) * Long.BYTES;
             if (fsstOffsetsCapacities[includeIdx] < offsetsBytes) {
                 fsstOffsetsAddrs[includeIdx] = Unsafe.realloc(
                         fsstOffsetsAddrs[includeIdx], fsstOffsetsCapacities[includeIdx],
@@ -1702,8 +1989,19 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 fsstOffsetsCapacities[includeIdx] = offsetsBytes;
             }
 
-            long totalCompressed = readVarBlockOffset(offsetsAddr, count, longOffsets);
-            long initialDstCap = Math.max(totalCompressed * 4L, 256L);
+            // Estimate the chunk's decoded size from this chunk's compressed
+            // span (chunk-local, not block-wide). Pointer-shift the source
+            // offsets so the JNI sees the chunk's slice as a self-contained
+            // block; src*Addr stays at the absolute compressed-bytes base so
+            // fsst_decompress reads from the right file position.
+            long chunkOffsetsAddr = blockOffsetsAddr + (long) chunkStart * srcOffsetsWidth;
+            long compressedChunkStart = readVarBlockOffset(blockOffsetsAddr, chunkStart, longOffsets);
+            long compressedChunkEnd = readVarBlockOffset(blockOffsetsAddr, chunkStart + chunkCount, longOffsets);
+            long compressedChunkLen = compressedChunkEnd - compressedChunkStart;
+            // FSST worst-case expansion is 8x; pad up so the first attempt
+            // usually succeeds without a realloc-retry round-trip. Floor at
+            // 256 bytes for very short chunks.
+            long initialDstCap = Math.max(compressedChunkLen * 8L, 256L);
             if (fsstDstCapacities[includeIdx] < initialDstCap) {
                 fsstDstAddrs[includeIdx] = Unsafe.realloc(
                         fsstDstAddrs[includeIdx], fsstDstCapacities[includeIdx],
@@ -1711,11 +2009,10 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 fsstDstCapacities[includeIdx] = initialDstCap;
             }
 
-            int srcOffsetsWidth = longOffsets ? Long.BYTES : Integer.BYTES;
             while (true) {
                 long decoded = FSSTNative.decompressBlock(
-                        decoderAddr,
-                        mem.addressOf(dataBase), offsetsAddr, srcOffsetsWidth, count,
+                        fsstDecoderAddrs[includeIdx],
+                        mem.addressOf(dataBase), chunkOffsetsAddr, srcOffsetsWidth, chunkCount,
                         fsstDstAddrs[includeIdx], fsstDstCapacities[includeIdx],
                         fsstOffsetsAddrs[includeIdx]
                 );
@@ -1729,8 +2026,158 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 fsstDstCapacities[includeIdx] = newCap;
             }
 
-            fsstCachedBlockBases[includeIdx] = blockBase;
+            fsstCachedChunkStarts[includeIdx] = chunkStart;
             return false;
+        }
+
+        private long peekDenseKeyMaxValueUpperBound(int gen, int genKeyCount) {
+            if (requestedKey >= genKeyCount) {
+                return -1L;
+            }
+            int stride = requestedKey / PostingIndexUtils.DENSE_STRIDE;
+            int localKey = requestedKey % PostingIndexUtils.DENSE_STRIDE;
+            long genFileOffset = genLookup.getGenFileOffset(gen);
+            long genAddr = valueMem.addressOf(genFileOffset);
+            long strideOff = Unsafe.getLong(genAddr + (long) stride * Long.BYTES);
+            long nextStrideOff = Unsafe.getLong(genAddr + (long) (stride + 1) * Long.BYTES);
+            if (nextStrideOff == strideOff) {
+                return -1L;
+            }
+            int siSize = PostingIndexUtils.strideIndexSize(genKeyCount);
+            long strideAddr = genAddr + siSize + strideOff;
+            long strideFileOffset = genFileOffset + siSize + strideOff;
+            byte mode = Unsafe.getByte(strideAddr);
+            int ks = PostingIndexUtils.keysInStride(genKeyCount, stride);
+            if (mode == PostingIndexUtils.STRIDE_MODE_FLAT) {
+                int bitWidth = Unsafe.getByte(strideAddr + 1) & 0xFF;
+                long baseValue = Unsafe.getLong(strideAddr + PostingIndexUtils.STRIDE_FLAT_BASE_OFFSET);
+                long prefixAddr = strideAddr + PostingIndexUtils.STRIDE_FLAT_PREFIX_COUNTS_OFFSET;
+                int start = Unsafe.getInt(prefixAddr + (long) localKey * Integer.BYTES);
+                int end = Unsafe.getInt(prefixAddr + (long) (localKey + 1) * Integer.BYTES);
+                if (end == start) {
+                    return -1L;
+                }
+                if (bitWidth == 0) {
+                    return baseValue;
+                }
+                long dataAddr = strideAddr + PostingIndexUtils.strideFlatHeaderSize(ks);
+                return BitpackUtils.unpackValue(dataAddr, end - 1, bitWidth, baseValue);
+            }
+            if (mode != PostingIndexUtils.STRIDE_MODE_DELTA) {
+                throw CairoException.critical(0).put(INDEX_CORRUPT).put(" [bad stride mode=").put(mode).put(']');
+            }
+            long countsAddr = strideAddr + PostingIndexUtils.STRIDE_MODE_PREFIX_SIZE;
+            int totalCount = Unsafe.getInt(countsAddr + (long) localKey * Integer.BYTES);
+            if (totalCount == 0) {
+                return -1L;
+            }
+            long offsetsBase = countsAddr + (long) ks * Integer.BYTES;
+            long dataOffset = Unsafe.getLong(offsetsBase + (long) localKey * Long.BYTES);
+            long encodedOffset = strideFileOffset + PostingIndexUtils.strideDeltaHeaderSize(ks) + dataOffset;
+            long baseAddr = valueMem.addressOf(0);
+            return peekDeltaKeyMaxValueUpperBound(baseAddr, encodedOffset);
+        }
+
+        private long peekDenseKeyMinValue(int gen, int genKeyCount) {
+            if (requestedKey >= genKeyCount) {
+                return -1L;
+            }
+            int stride = requestedKey / PostingIndexUtils.DENSE_STRIDE;
+            int localKey = requestedKey % PostingIndexUtils.DENSE_STRIDE;
+            long genFileOffset = genLookup.getGenFileOffset(gen);
+            long genAddr = valueMem.addressOf(genFileOffset);
+            long strideOff = Unsafe.getLong(genAddr + (long) stride * Long.BYTES);
+            long nextStrideOff = Unsafe.getLong(genAddr + (long) (stride + 1) * Long.BYTES);
+            if (nextStrideOff == strideOff) {
+                return -1L;
+            }
+            int siSize = PostingIndexUtils.strideIndexSize(genKeyCount);
+            long strideAddr = genAddr + siSize + strideOff;
+            long strideFileOffset = genFileOffset + siSize + strideOff;
+            byte mode = Unsafe.getByte(strideAddr);
+            int ks = PostingIndexUtils.keysInStride(genKeyCount, stride);
+            if (mode == PostingIndexUtils.STRIDE_MODE_FLAT) {
+                int bitWidth = Unsafe.getByte(strideAddr + 1) & 0xFF;
+                long baseValue = Unsafe.getLong(strideAddr + PostingIndexUtils.STRIDE_FLAT_BASE_OFFSET);
+                long prefixAddr = strideAddr + PostingIndexUtils.STRIDE_FLAT_PREFIX_COUNTS_OFFSET;
+                int start = Unsafe.getInt(prefixAddr + (long) localKey * Integer.BYTES);
+                int end = Unsafe.getInt(prefixAddr + (long) (localKey + 1) * Integer.BYTES);
+                if (end == start) {
+                    return -1L;
+                }
+                if (bitWidth == 0) {
+                    return baseValue;
+                }
+                long dataAddr = strideAddr + PostingIndexUtils.strideFlatHeaderSize(ks);
+                return BitpackUtils.unpackValue(dataAddr, start, bitWidth, baseValue);
+            }
+            if (mode != PostingIndexUtils.STRIDE_MODE_DELTA) {
+                throw CairoException.critical(0).put(INDEX_CORRUPT).put(" [bad stride mode=").put(mode).put(']');
+            }
+            long countsAddr = strideAddr + PostingIndexUtils.STRIDE_MODE_PREFIX_SIZE;
+            int totalCount = Unsafe.getInt(countsAddr + (long) localKey * Integer.BYTES);
+            if (totalCount == 0) {
+                return -1L;
+            }
+            long offsetsBase = countsAddr + (long) ks * Integer.BYTES;
+            long dataOffset = Unsafe.getLong(offsetsBase + (long) localKey * Long.BYTES);
+            long encodedOffset = strideFileOffset + PostingIndexUtils.strideDeltaHeaderSize(ks) + dataOffset;
+            long baseAddr = valueMem.addressOf(0);
+            return peekDeltaKeyMinValue(baseAddr, encodedOffset);
+        }
+
+        private long peekSparseKeyMaxValueUpperBound(int gen, int activeKeyCount) {
+            int minKey = genLookup.getGenMinKey(gen);
+            int maxKey = genLookup.getGenMaxKey(gen);
+            if (requestedKey < minKey || requestedKey > maxKey) {
+                return -1L;
+            }
+            long genFileOffset = genLookup.getGenFileOffset(gen);
+            long prefixSumAddr = valueMem.addressOf(genLookup.getGenPrefixSumOffset(gen, valueMem));
+            int k = requestedKey - minKey;
+            int start = Unsafe.getInt(prefixSumAddr + (long) k * Integer.BYTES);
+            int end = Unsafe.getInt(prefixSumAddr + (long) (k + 1) * Integer.BYTES);
+            if (start >= end) {
+                return -1L;
+            }
+            long genAddr = valueMem.addressOf(genFileOffset);
+            long countsBase = genAddr + (long) activeKeyCount * Integer.BYTES;
+            long offsetsBase = countsBase + (long) activeKeyCount * Integer.BYTES;
+            int totalCount = Unsafe.getInt(countsBase + (long) start * Integer.BYTES);
+            if (totalCount == 0) {
+                return -1L;
+            }
+            long dataOffset = Unsafe.getLong(offsetsBase + (long) start * Long.BYTES);
+            long encodedOffset = genFileOffset + PostingIndexUtils.genHeaderSizeSparse(activeKeyCount) + dataOffset;
+            long baseAddr = valueMem.addressOf(0);
+            return peekDeltaKeyMaxValueUpperBound(baseAddr, encodedOffset);
+        }
+
+        private long peekSparseKeyMinValue(int gen, int activeKeyCount) {
+            int minKey = genLookup.getGenMinKey(gen);
+            int maxKey = genLookup.getGenMaxKey(gen);
+            if (requestedKey < minKey || requestedKey > maxKey) {
+                return -1L;
+            }
+            long genFileOffset = genLookup.getGenFileOffset(gen);
+            long prefixSumAddr = valueMem.addressOf(genLookup.getGenPrefixSumOffset(gen, valueMem));
+            int k = requestedKey - minKey;
+            int start = Unsafe.getInt(prefixSumAddr + (long) k * Integer.BYTES);
+            int end = Unsafe.getInt(prefixSumAddr + (long) (k + 1) * Integer.BYTES);
+            if (start >= end) {
+                return -1L;
+            }
+            long genAddr = valueMem.addressOf(genFileOffset);
+            long countsBase = genAddr + (long) activeKeyCount * Integer.BYTES;
+            long offsetsBase = countsBase + (long) activeKeyCount * Integer.BYTES;
+            int totalCount = Unsafe.getInt(countsBase + (long) start * Integer.BYTES);
+            if (totalCount == 0) {
+                return -1L;
+            }
+            long dataOffset = Unsafe.getLong(offsetsBase + (long) start * Long.BYTES);
+            long encodedOffset = genFileOffset + PostingIndexUtils.genHeaderSizeSparse(activeKeyCount) + dataOffset;
+            long baseAddr = valueMem.addressOf(0);
+            return peekDeltaKeyMinValue(baseAddr, encodedOffset);
         }
 
         protected void cacheSidecarKeyAddrs(int stride, int localKey) {
@@ -1862,7 +2309,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             }
             int rawCount = Unsafe.getInt(blockAddr);
             int count = rawCount & ~CoveringCompressor.RAW_BLOCK_FLAG;
-            if (count <= 0) {
+            if (count == 0) {
                 colCacheBlockAddrs[includeIdx] = blockAddr;
                 return true;
             }
@@ -1889,6 +2336,9 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                         CoveringCompressor.decompressShortsToAddr(blockAddr, colCacheAddrs[includeIdx], decodeWorkspaceAddr);
                 case ColumnType.BYTE, ColumnType.BOOLEAN, ColumnType.GEOBYTE, ColumnType.DECIMAL8 ->
                         CoveringCompressor.decompressBytesToAddr(blockAddr, colCacheAddrs[includeIdx], decodeWorkspaceAddr);
+                case ColumnType.LONG128, ColumnType.UUID, ColumnType.DECIMAL128, ColumnType.LONG256,
+                     ColumnType.DECIMAL256 ->
+                        Unsafe.copyMemory(blockAddr + 4, colCacheAddrs[includeIdx], (long) count * elemSize);
             }
             colCacheBlockAddrs[includeIdx] = blockAddr;
             return true;

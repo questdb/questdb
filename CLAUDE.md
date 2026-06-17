@@ -53,14 +53,26 @@ standard resizable list and integrates with `Misc.freeObjList()` /
 - resource leaks are a pain point in QuestDB. Always think carefully about all
   possible code paths, especially error paths, and write tests that ensure
   correct resource cleanup on each path.
-- use assertQueryNoLeakCheck() to assert the results of queries. This method
-  asserts factory properties (supportsRandomAccess, expectSize, expectedTimestamp)
-  in addition to data correctness. When a parameter combination does not match
-  a direct overload, adjust the call (pass explicit nulls, booleans, or use a
-  different overload) rather than falling back to assertSql(). Only use
-  assertSql() in storage tests (typically in the cairo test package) that
-  purely verify data persistence, where factory property assertions are
-  irrelevant and can cause false failures.
+- assert query results with the fluent `assertQuery(query)` builder
+  (`AbstractCairoTest.assertQuery(...)`): `assertQuery(sql).returns(expected)`.
+  Chain factory-property assertions as the query warrants — `.timestamp(...)`,
+  `.expectSize()`, `.noRandomAccess()`, `.sizeMayVary()`, `.ddl(...)`,
+  `.mutateWith(...)`, `.withEngine(...)`, `.withContext(...)`. For execution
+  plans use `.assertsPlan(...)` / `.assertsPlanContaining(...)` or fold the plan
+  into a data assertion with `.withPlan(...)` / `.withPlanContaining(...)`.
+- the old `assertSql(...)` / `TestUtils.assertSql(...)` query-result helpers have
+  been REMOVED — `.returns(...)` runs a strictly stronger battery (a second
+  cursor pass, a `calculateSize()` cross-check, a variable-column check, and the
+  factory-property assertions) that catches bugs the old single-pass print/compare
+  silently missed. (`TestServerMain.assertSql(sql, expected)` is a separate
+  live-`ServerMain` convenience wrapper and is unrelated.)
+- **never use `.returnsOnce(...)` unless the query's projection is genuinely
+  non-deterministic across a re-read** — an unseeded `rnd_*` function, or
+  time-varying output such as `now()`/`sysdate()`/`systimestamp()`. `returnsOnce`
+  deliberately skips the second cursor pass and every check listed above, so for
+  any deterministic query it leaves real bugs untested. Default to `.returns(...)`;
+  reach for `.returnsOnce(...)` only with a stated reason that the output cannot be
+  stable across two reads.
 - use execute() to run non-queries (DDL)
 - prefer UPPERCASE for SQL keywords (CREATE TABLE, INSERT, SELECT ... AS ... FROM,
   etc.), but mixing cases is acceptable since SQL is case-insensitive
@@ -91,6 +103,46 @@ offending character, not the start of the expression.
 
 ## Git & PR Conventions
 
+- **PRs are squash-merged. Commit history on a PR branch is throwaway** — only
+  the squashed commit message that lands on `master` is preserved. Do not
+  spend effort tidying the branch's history: no soft resets to "commit all at
+  once", no rewording prior commits, no force pushes to clean up. Adding a
+  fix-up commit on top is always fine. The squash flow folds the lot at merge
+  time anyway.
+- **Bundle related fixes into one PR; do NOT propose splitting by logic.** This
+  is a high-throughput shop (~20 PRs/day) and CI is the bottleneck, not review:
+  a full run takes ~40 min and can go red on an unrelated flake. Splitting one
+  branch into N "logically clean" PRs multiplies that cost — N× CI time, N×
+  flake exposure, PRs failing on each other's flakes, and N× the babysitting to
+  shepherd them all to merge. The squash-merge collapses everything into one
+  tidy `master` commit anyway, so multiple fixes on a branch cost nothing at
+  merge time. Default to adding the change to the PR/branch already in flight,
+  especially when the fixes share a CI lineage (one change is what makes the
+  other's CI go green). When a branch carries more than one fix, give each its
+  own clearly-labeled section in the PR body instead of opening another PR. Only
+  split if the user explicitly asks, or if the changes must merge/revert
+  independently.
+- **When asked to "send a change to PR #N" / update PR metadata:** push the
+  commit(s) to that PR's branch (rebase onto the remote head first if it moved),
+  then update the PR title/body to cover everything the branch now contains.
+  Re-running CI on that branch is the validation; do not open a new PR.
+- **Do not create worktrees or `pr-*` checkout branches when reviewing or
+  iterating on a PR.** All work belongs on `vi_api`. Even when a PR exists on a
+  separate branch (e.g. `pr-7128`), the canonical state to review and modify is
+  whatever is currently merged into `vi_api` — follow-up fixes routinely land
+  there directly, so `pr-*` branches lag and reviewing them in isolation gives
+  a misleading picture. If a `gh pr` command needs to fetch a PR's diff, fetch
+  the diff only (`gh pr diff`); do not check the branch out.
+
+## Investigating failures
+
+- **Never dismiss a failure as "pre-existing", "flaky", "unrelated", or "a
+  known issue" without actually proving it.** That label is a hypothesis,
+  not a conclusion. Treat any red test, red CI job, or surprising log line
+  as a live bug to investigate until the evidence — git log, reproduction
+  on master, a real timing constraint, an upstream report — forces a
+  different conclusion. Only after that proof can the issue be set aside,
+  and the proof itself should be reported back so it can be verified.
 - **`java-questdb-client/` is a separate git repo** (a git submodule). Always
   `cd` into it and commit there independently. Never commit it from the parent
   repo as a submodule pointer update without also committing inside it first.

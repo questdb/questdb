@@ -46,7 +46,7 @@ public class QwpSenderLowLevelTest extends AbstractQwpWebSocketTest {
                     "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 QwpTableBuffer buf = sender.getTableBuffer("test_date");
                 QwpTableBuffer.ColumnBuffer dateCol = buf.getOrCreateColumn("event_date", TYPE_DATE, false);
 
@@ -64,18 +64,19 @@ public class QwpSenderLowLevelTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT count() FROM test_date", "count\n3\n");
-            assertSql(
-                    "SELECT event_date FROM test_date ORDER BY ts",
-                    "event_date\n2024-01-01T00:00:00.000Z\n2024-06-15T12:30:00.000Z\n1970-01-01T00:00:00.000Z\n"
-            );
+            assertQuery("SELECT count() FROM test_date")
+                    .noLeakCheck()
+                    .returnsOnce("count\n3\n");
+            assertQuery("SELECT event_date FROM test_date ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("event_date\n2024-01-01T00:00:00.000Z\n2024-06-15T12:30:00.000Z\n1970-01-01T00:00:00.000Z\n");
         });
     }
 
     @Test
     public void testNullLong256() throws Exception {
         runInContext((port) -> {
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 // Use fast-path API to send null LONG256 via null bitmap
                 QwpTableBuffer buf = sender.getTableBuffer("test_null_long256");
                 QwpTableBuffer.ColumnBuffer col = buf.getOrCreateColumn("value", TYPE_LONG256, true);
@@ -92,21 +93,19 @@ public class QwpSenderLowLevelTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT count() FROM test_null_long256 WHERE value IS NULL",
-                    "count\n1\n"
-            );
-            assertSql(
-                    "SELECT count() FROM test_null_long256 WHERE value IS NOT NULL",
-                    "count\n2\n"
-            );
+            assertQuery("SELECT count() FROM test_null_long256 WHERE value IS NULL")
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
+            assertQuery("SELECT count() FROM test_null_long256 WHERE value IS NOT NULL")
+                    .noLeakCheck()
+                    .returnsOnce("count\n2\n");
         });
     }
 
     @Test
     public void testNullTimestamp() throws Exception {
         runInContext((port) -> {
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 // Use fast-path API to send null timestamp via null bitmap
                 QwpTableBuffer buf = sender.getTableBuffer("test_null_ts");
                 QwpTableBuffer.ColumnBuffer tsCol = buf.getOrCreateColumn("event_time", TYPE_TIMESTAMP, true);
@@ -123,21 +122,19 @@ public class QwpSenderLowLevelTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT count() FROM test_null_ts WHERE event_time IS NULL",
-                    "count\n1\n"
-            );
-            assertSql(
-                    "SELECT count() FROM test_null_ts WHERE event_time IS NOT NULL",
-                    "count\n2\n"
-            );
+            assertQuery("SELECT count() FROM test_null_ts WHERE event_time IS NULL")
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
+            assertQuery("SELECT count() FROM test_null_ts WHERE event_time IS NOT NULL")
+                    .noLeakCheck()
+                    .returnsOnce("count\n2\n");
         });
     }
 
     @Test
     public void testNullUuid() throws Exception {
         runInContext((port) -> {
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 // Use fast-path API to send null UUID via null bitmap
                 QwpTableBuffer buf = sender.getTableBuffer("test_null_uuid");
                 QwpTableBuffer.ColumnBuffer col = buf.getOrCreateColumn("id", TYPE_UUID, true);
@@ -154,14 +151,12 @@ public class QwpSenderLowLevelTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT count() FROM test_null_uuid WHERE id IS NULL",
-                    "count\n1\n"
-            );
-            assertSql(
-                    "SELECT count() FROM test_null_uuid WHERE id IS NOT NULL",
-                    "count\n2\n"
-            );
+            assertQuery("SELECT count() FROM test_null_uuid WHERE id IS NULL")
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
+            assertQuery("SELECT count() FROM test_null_uuid WHERE id IS NOT NULL")
+                    .noLeakCheck()
+                    .returnsOnce("count\n2\n");
         });
     }
 
@@ -173,7 +168,7 @@ public class QwpSenderLowLevelTest extends AbstractQwpWebSocketTest {
                     "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 QwpTableBuffer buf = sender.getTableBuffer("omit_date");
                 QwpTableBuffer.ColumnBuffer col = buf.getOrCreateColumn("col", TYPE_DATE, true);
 
@@ -197,14 +192,12 @@ public class QwpSenderLowLevelTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT count() FROM omit_date WHERE col IS NULL",
-                    "count\n2\n"
-            );
-            assertSql(
-                    "SELECT count() FROM omit_date WHERE col IS NOT NULL",
-                    "count\n3\n"
-            );
+            assertQuery("SELECT count() FROM omit_date WHERE col IS NULL")
+                    .noLeakCheck()
+                    .returnsOnce("count\n2\n");
+            assertQuery("SELECT count() FROM omit_date WHERE col IS NOT NULL")
+                    .noLeakCheck()
+                    .returnsOnce("count\n3\n");
         });
     }
 
@@ -216,7 +209,7 @@ public class QwpSenderLowLevelTest extends AbstractQwpWebSocketTest {
                     "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 QwpTableBuffer buf = sender.getTableBuffer("omit_geohash");
                 QwpTableBuffer.ColumnBuffer col = buf.getOrCreateColumn("col", TYPE_GEOHASH, true);
 
@@ -237,14 +230,12 @@ public class QwpSenderLowLevelTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT count() FROM omit_geohash WHERE col IS NULL",
-                    "count\n2\n"
-            );
-            assertSql(
-                    "SELECT count() FROM omit_geohash WHERE col IS NOT NULL",
-                    "count\n3\n"
-            );
+            assertQuery("SELECT count() FROM omit_geohash WHERE col IS NULL")
+                    .noLeakCheck()
+                    .returnsOnce("count\n2\n");
+            assertQuery("SELECT count() FROM omit_geohash WHERE col IS NOT NULL")
+                    .noLeakCheck()
+                    .returnsOnce("count\n3\n");
         });
     }
 }

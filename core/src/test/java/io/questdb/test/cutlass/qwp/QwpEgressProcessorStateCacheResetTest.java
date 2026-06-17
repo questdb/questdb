@@ -25,12 +25,9 @@
 package io.questdb.test.cutlass.qwp;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cutlass.qwp.codec.QwpEgressColumnDef;
 import io.questdb.cutlass.qwp.codec.QwpEgressConnSymbolDict;
 import io.questdb.cutlass.qwp.codec.QwpEgressMsgKind;
 import io.questdb.cutlass.qwp.server.egress.QwpEgressProcessorState;
-import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Before;
@@ -39,8 +36,8 @@ import org.junit.Test;
 /**
  * Exhaustive unit coverage for the connection-scope memory caps and their
  * {@code CACHE_RESET} plumbing on the server side: entry/heap caps on the
- * SYMBOL dict, schema-count cap, mask computation, and the {@code applyCacheReset}
- * state machine. End-to-end behaviour over the wire is covered by
+ * SYMBOL dict, mask computation, and the {@code applyCacheReset} state machine.
+ * End-to-end behaviour over the wire is covered by
  * {@link QwpEgressCacheResetWireTest}.
  */
 public class QwpEgressProcessorStateCacheResetTest extends AbstractCairoTest {
@@ -53,42 +50,16 @@ public class QwpEgressProcessorStateCacheResetTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testApplyCacheResetBothBitsClearsBoth() {
-        try (QwpEgressProcessorState state = new QwpEgressProcessorState(cfg)) {
-            QwpEgressConnSymbolDict dict = state.getConnSymbolDict();
-            dict.addEntry("foo");
-            state.findOrAllocateSchemaId(schemaOf("id", ColumnType.LONG));
-            Assert.assertEquals(1, dict.size());
-
-            byte mask = (byte) (QwpEgressMsgKind.RESET_MASK_DICT | QwpEgressMsgKind.RESET_MASK_SCHEMAS);
-            state.applyCacheReset(mask);
-
-            Assert.assertEquals("dict must be flushed", 0, dict.size());
-            // Re-adding the same schema shape must allocate id 0 (counter reset)
-            // rather than hitting the cached entry.
-            int id = state.findOrAllocateSchemaId(schemaOf("id", ColumnType.LONG));
-            Assert.assertEquals(0, id);
-            Assert.assertFalse("post-reset lookup is not a reuse", state.wasLastSchemaIdReuse());
-        }
-    }
-
-    @Test
-    public void testApplyCacheResetDictBitClearsOnlyDict() {
+    public void testApplyCacheResetDictBitClearsDict() {
         try (QwpEgressProcessorState state = new QwpEgressProcessorState(cfg)) {
             QwpEgressConnSymbolDict dict = state.getConnSymbolDict();
             dict.addEntry("foo");
             dict.addEntry("bar");
-            int schemaId = state.findOrAllocateSchemaId(schemaOf("id", ColumnType.LONG));
-            Assert.assertEquals(0, schemaId);
+            Assert.assertEquals(2, dict.size());
 
             state.applyCacheReset(QwpEgressMsgKind.RESET_MASK_DICT);
 
             Assert.assertEquals("dict must be flushed", 0, dict.size());
-            // Schema cache is untouched, so the same shape still returns id 0
-            // as a reuse hit.
-            int after = state.findOrAllocateSchemaId(schemaOf("id", ColumnType.LONG));
-            Assert.assertEquals(0, after);
-            Assert.assertTrue("schema cache must still be hot", state.wasLastSchemaIdReuse());
         }
     }
 
@@ -96,32 +67,10 @@ public class QwpEgressProcessorStateCacheResetTest extends AbstractCairoTest {
     public void testApplyCacheResetMaskZeroIsNoOp() {
         try (QwpEgressProcessorState state = new QwpEgressProcessorState(cfg)) {
             state.getConnSymbolDict().addEntry("foo");
-            state.findOrAllocateSchemaId(schemaOf("id", ColumnType.LONG));
 
             state.applyCacheReset((byte) 0);
 
             Assert.assertEquals("dict unchanged", 1, state.getConnSymbolDict().size());
-            int after = state.findOrAllocateSchemaId(schemaOf("id", ColumnType.LONG));
-            Assert.assertEquals(0, after);
-            Assert.assertTrue(state.wasLastSchemaIdReuse());
-        }
-    }
-
-    @Test
-    public void testApplyCacheResetSchemasBitClearsOnlySchemas() {
-        try (QwpEgressProcessorState state = new QwpEgressProcessorState(cfg)) {
-            QwpEgressConnSymbolDict dict = state.getConnSymbolDict();
-            dict.addEntry("foo");
-            state.findOrAllocateSchemaId(schemaOf("id", ColumnType.LONG));
-
-            state.applyCacheReset(QwpEgressMsgKind.RESET_MASK_SCHEMAS);
-
-            Assert.assertEquals("dict must be untouched", 1, dict.size());
-            Assert.assertEquals("dedup must still work", 0, dict.addEntry("foo"));
-            // Schema id counter is reset; the same shape allocates a fresh id.
-            int after = state.findOrAllocateSchemaId(schemaOf("id", ColumnType.LONG));
-            Assert.assertEquals(0, after);
-            Assert.assertFalse(state.wasLastSchemaIdReuse());
         }
     }
 
@@ -129,7 +78,7 @@ public class QwpEgressProcessorStateCacheResetTest extends AbstractCairoTest {
     public void testApplyCacheResetUnknownBitsAreIgnored() {
         try (QwpEgressProcessorState state = new QwpEgressProcessorState(cfg)) {
             state.getConnSymbolDict().addEntry("foo");
-            // Bits 2..7 are reserved. Unknown bits must be ignored rather than
+            // Bits 1..7 are reserved. Unknown bits must be ignored rather than
             // trigger spurious resets.
             state.applyCacheReset((byte) 0xFC);
             Assert.assertEquals("dict untouched by unknown bits", 1, state.getConnSymbolDict().size());
@@ -139,7 +88,7 @@ public class QwpEgressProcessorStateCacheResetTest extends AbstractCairoTest {
     @Test
     public void testComputeMaskDictEntriesCapExactBoundary() {
         try (QwpEgressProcessorState state = new QwpEgressProcessorState(cfg)) {
-            state.setCacheResetCapsForTest(4, -1, -1);
+            state.setCacheResetCapsForTest(4, -1);
             QwpEgressConnSymbolDict dict = state.getConnSymbolDict();
             dict.addEntry("a");
             dict.addEntry("b");
@@ -153,7 +102,7 @@ public class QwpEgressProcessorStateCacheResetTest extends AbstractCairoTest {
     @Test
     public void testComputeMaskDictHeapCapExactBoundary() {
         try (QwpEgressProcessorState state = new QwpEgressProcessorState(cfg)) {
-            state.setCacheResetCapsForTest(-1, 10, -1);
+            state.setCacheResetCapsForTest(-1, 10);
             QwpEgressConnSymbolDict dict = state.getConnSymbolDict();
             dict.addEntry("abcde");  // 5 bytes
             Assert.assertEquals("5 bytes < 10 cap", 0, state.computeCacheResetMask());
@@ -170,22 +119,9 @@ public class QwpEgressProcessorStateCacheResetTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testComputeMaskFiresBothWhenBothOverCap() {
-        try (QwpEgressProcessorState state = new QwpEgressProcessorState(cfg)) {
-            state.setCacheResetCapsForTest(2, -1, 2);
-            state.getConnSymbolDict().addEntry("a");
-            state.getConnSymbolDict().addEntry("b");
-            state.findOrAllocateSchemaId(schemaOf("a", ColumnType.LONG));
-            state.findOrAllocateSchemaId(schemaOf("b", ColumnType.LONG));
-            Assert.assertEquals((byte) (QwpEgressMsgKind.RESET_MASK_DICT | QwpEgressMsgKind.RESET_MASK_SCHEMAS),
-                    state.computeCacheResetMask());
-        }
-    }
-
-    @Test
     public void testComputeMaskIsNoSideEffects() {
         try (QwpEgressProcessorState state = new QwpEgressProcessorState(cfg)) {
-            state.setCacheResetCapsForTest(1, -1, -1);
+            state.setCacheResetCapsForTest(1, -1);
             state.getConnSymbolDict().addEntry("foo");
             Assert.assertEquals("mask says reset", QwpEgressMsgKind.RESET_MASK_DICT, state.computeCacheResetMask());
             // Calling computeMask must NOT alter dict state. applyCacheReset is
@@ -197,37 +133,49 @@ public class QwpEgressProcessorStateCacheResetTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testComputeMaskSchemasCapExactBoundary() {
-        try (QwpEgressProcessorState state = new QwpEgressProcessorState(cfg)) {
-            state.setCacheResetCapsForTest(-1, -1, 3);
-            state.findOrAllocateSchemaId(schemaOf("a", ColumnType.LONG));
-            state.findOrAllocateSchemaId(schemaOf("b", ColumnType.LONG));
-            Assert.assertEquals("2 < 3", 0, state.computeCacheResetMask());
-            state.findOrAllocateSchemaId(schemaOf("c", ColumnType.LONG));
-            Assert.assertEquals("3 >= 3", QwpEgressMsgKind.RESET_MASK_SCHEMAS, state.computeCacheResetMask());
-        }
-    }
-
-    @Test
     public void testDefaultCapsFromConstants() {
         try (QwpEgressProcessorState state = new QwpEgressProcessorState(cfg)) {
             // Exercise the "no override" path: a handful of entries is safely
             // below every production cap, so the mask is zero.
             state.getConnSymbolDict().addEntry("x");
-            state.findOrAllocateSchemaId(schemaOf("id", ColumnType.LONG));
             Assert.assertEquals(0, state.computeCacheResetMask());
+        }
+    }
+
+    @Test
+    public void testMergePendingCacheResetMaskIsIdempotent() {
+        // Re-staging the same bit must leave the mask unchanged. Covers the
+        // benign case where a non-SELECT trips the dict cap, then a follow-up
+        // non-SELECT recomputes the same DICT bit before the first one's
+        // CACHE_RESET has gone out.
+        try (QwpEgressProcessorState state = new QwpEgressProcessorState(cfg)) {
+            state.mergePendingCacheResetMask(QwpEgressMsgKind.RESET_MASK_DICT);
+            state.mergePendingCacheResetMask(QwpEgressMsgKind.RESET_MASK_DICT);
+            Assert.assertEquals(QwpEgressMsgKind.RESET_MASK_DICT, state.getPendingCacheResetMask());
+        }
+    }
+
+    @Test
+    public void testMergePendingCacheResetMaskZeroIsNoOp() {
+        // The processor guards against zero before calling merge, but the
+        // state method must still be safe to call with zero -- a regression
+        // here would mask a guard-bypass with silent corruption.
+        try (QwpEgressProcessorState state = new QwpEgressProcessorState(cfg)) {
+            state.mergePendingCacheResetMask(QwpEgressMsgKind.RESET_MASK_DICT);
+            state.mergePendingCacheResetMask((byte) 0);
+            Assert.assertEquals(QwpEgressMsgKind.RESET_MASK_DICT, state.getPendingCacheResetMask());
         }
     }
 
     @Test
     public void testOverrideResetViaNegativeOne() {
         try (QwpEgressProcessorState state = new QwpEgressProcessorState(cfg)) {
-            state.setCacheResetCapsForTest(1, 1, 1);
+            state.setCacheResetCapsForTest(1, 1);
             state.getConnSymbolDict().addEntry("x");
             Assert.assertNotEquals(0, state.computeCacheResetMask());
             // -1 restores production defaults, so the previously-tripped caps
             // no longer apply.
-            state.setCacheResetCapsForTest(-1, -1, -1);
+            state.setCacheResetCapsForTest(-1, -1);
             Assert.assertEquals(0, state.computeCacheResetMask());
         }
     }
@@ -235,7 +183,7 @@ public class QwpEgressProcessorStateCacheResetTest extends AbstractCairoTest {
     @Test
     public void testStateClearResetsOverrides() {
         try (QwpEgressProcessorState state = new QwpEgressProcessorState(cfg)) {
-            state.setCacheResetCapsForTest(1, 1, 1);
+            state.setCacheResetCapsForTest(1, 1);
             state.getConnSymbolDict().addEntry("x");
             Assert.assertNotEquals(0, state.computeCacheResetMask());
 
@@ -249,19 +197,5 @@ public class QwpEgressProcessorStateCacheResetTest extends AbstractCairoTest {
             state.getConnSymbolDict().addEntry("y");
             Assert.assertNotEquals("overrides survive clear", 0, state.computeCacheResetMask());
         }
-    }
-
-    private static ObjList<QwpEgressColumnDef> schemaOf(Object... nameTypePairs) {
-        if ((nameTypePairs.length & 1) != 0) {
-            throw new IllegalArgumentException("expected alternating name, type pairs");
-        }
-        ObjList<QwpEgressColumnDef> out = new ObjList<>();
-        for (int i = 0; i < nameTypePairs.length; i += 2) {
-            QwpEgressColumnDef def = new QwpEgressColumnDef();
-            int type = ((Number) nameTypePairs[i + 1]).intValue();
-            def.of((String) nameTypePairs[i], type);
-            out.add(def);
-        }
-        return out;
     }
 }

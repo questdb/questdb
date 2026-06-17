@@ -50,6 +50,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.MCSequence;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOUnboundedCountDownLatch;
@@ -62,6 +63,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
+import io.questdb.std.Os;
 import io.questdb.std.Rosti;
 import io.questdb.std.RostiAllocFacade;
 import io.questdb.std.Transient;
@@ -193,8 +195,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
             this.frameMemoryPools = new ObjList<>(workerCount);
             for (int i = 0; i < workerCount; i++) {
-                // We're using page frame memory only and do single scan, hence cache size of 1.
-                frameMemoryPools.add(new PageFrameMemoryPool(1));
+                // Single sequential scan; no LRU caching needed across frames.
+                frameMemoryPools.add(new PageFrameMemoryPool(0L));
             }
         } catch (Throwable th) {
             close();
@@ -288,6 +290,38 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         for (int i = start; i < end; i++) {
             columnSkewIndex.add(Unsafe.getInt(columnOffsets + vafList.getQuick(i).getValueOffset() * 4L));
         }
+    }
+
+    private static int runWhatsLeft(
+            MCSequence subSeq,
+            RingQueue<VectorAggregateTask> queue,
+            int queuedCount,
+            int reclaimed,
+            int mergedCount,
+            int workerId,
+            SOUnboundedCountDownLatch doneLatch,
+            SqlExecutionCircuitBreaker circuitBreaker,
+            AtomicBooleanCircuitBreaker sharedCB,
+            WorkStealingStrategy workStealingStrategy
+    ) {
+        while (!doneLatch.done(queuedCount)) {
+            if (circuitBreaker.checkIfTripped()) {
+                sharedCB.cancel();
+            }
+
+            if (workStealingStrategy.shouldSteal(mergedCount)) {
+                long cursor = subSeq.next();
+                if (cursor > -1) {
+                    VectorAggregateTask task = queue.get(cursor);
+                    task.entry.run(workerId, subSeq, cursor);
+                    reclaimed++;
+                } else {
+                    Os.pause();
+                }
+            }
+            mergedCount = doneLatch.getCount();
+        }
+        return reclaimed;
     }
 
     private void resetRostiMemorySize() {
@@ -561,7 +595,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 // Make sure we're consuming jobs even when we failed. We cannot close "rosti" when there are
                 // tasks in flight.
 
-                reclaimed = GroupByNotKeyedVectorRecordCursorFactory.runWhatsLeft(
+                reclaimed = runWhatsLeft(
                         bus.getVectorAggregateSubSeq(),
                         queue,
                         queuedCount,

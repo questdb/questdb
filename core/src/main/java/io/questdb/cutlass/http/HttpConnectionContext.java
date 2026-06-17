@@ -103,8 +103,8 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private final HttpRequestValidator requestValidator = new HttpRequestValidator();
     private final HttpResponseSink responseSink;
     private final RetryAttemptAttributes retryAttemptAttributes = new RetryAttemptAttributes();
-    private final RescheduleContext retryRescheduleContext = retry -> {
-        LOG.info().$("Retry is requested after successful writer allocation. Retry will be re-scheduled [thread=").$(Thread.currentThread().getId()).I$();
+    private final RescheduleContext retryRescheduleContext = _ -> {
+        LOG.info().$("Retry is requested after successful writer allocation. Retry will be re-scheduled [thread=").$(Thread.currentThread().threadId()).I$();
         throw RetryOperationException.INSTANCE;
     };
     private final AssociativeCache<RecordCursorFactory> selectCache;
@@ -236,6 +236,15 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.sessionIdSink.clear();
         this.authenticator.close();
         LOG.debug().$("closed [fd=").$(fd).I$();
+    }
+
+    public void drainRecvBuffer() {
+        try {
+            while (socket.recv(recvBuffer, recvBufferSize) > 0) {
+                // discard
+            }
+        } catch (Throwable ignored) {
+        }
     }
 
     @Override
@@ -497,7 +506,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 throw registerDispatcherDisconnect(DISCONNECT_REASON_PEER_DISCONNECT_AT_RERUN);
             } catch (PeerIsSlowToReadException e2) {
                 LOG.info().$("peer is slow on running the rerun [fd=").$(getFd())
-                        .$(", thread=").$(Thread.currentThread().getId()).I$();
+                        .$(", thread=").$(Thread.currentThread().threadId()).I$();
                 processor.parkRequest(this, false);
                 resumeHandlerId = (processor instanceof RejectProcessor)
                         ? HttpRequestProcessorSelector.REJECT_PROCESSOR_ID : currentHandlerId;
@@ -1117,9 +1126,21 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 throw registerDispatcherWrite();
                 // resumeHandlerId stays set (re-park with same ID)
             } catch (PeerDisconnectedException ignore) {
+                // Protocol-switched connections (e.g. WebSocket) rely on
+                // onConnectionClosed to undo per-connection bookkeeping the
+                // processor set up at handshake time (gauges, security state,
+                // etc.). The receive path already calls it via
+                // handleProtocolSwitchedRecv; mirror that here so a disconnect
+                // detected on the send drain doesn't leak the hook.
+                if (isProtocolSwitched) {
+                    proc.onConnectionClosed(this);
+                }
                 throw registerDispatcherDisconnect(DISCONNECT_REASON_PEER_DISCONNECT_AT_SEND);
             } catch (ServerDisconnectException ignore) {
                 LOG.info().$("kicked out [fd=").$(getFd()).I$();
+                if (isProtocolSwitched) {
+                    proc.onConnectionClosed(this);
+                }
                 throw registerDispatcherDisconnect(DISCONNECT_REASON_KICKED_OUT_AT_SEND);
             }
         } else {
@@ -1136,8 +1157,12 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         final HttpRequestProcessor processor = resolveResumeProcessor(selector);
         try {
             processor.resumeRecv(this);
-            // resumeRecv is not designed to complete normally (has a while-true loop). This line is unreachable.
-            return true;
+
+            // resumeRecv() returned normally -> the processor is ready to read from a websocket again.
+            // We don't return true, because that would make the infrastructure call us immediately again
+            // and we would monopolize the thread. Instead, we use PeerIsSlowToWriteException as a signal
+            // to be registered for reading. This gives the worker thread a chance to run other processors.
+            throw registerDispatcherRead();
         } catch (PeerIsSlowToReadException | PeerIsSlowToWriteException e) {
             // Need more data from/to peer
             throw e;

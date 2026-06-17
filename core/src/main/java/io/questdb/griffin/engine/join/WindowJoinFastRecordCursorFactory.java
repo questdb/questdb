@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -236,6 +237,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
         TimeFrameCursor slaveCursor = null;
         try {
             slaveCursor = slaveFactory.getTimeFrameCursor(executionContext);
+            slaveCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
             cursor.of(masterCursor, slaveCursor, executionContext);
         } catch (Throwable ex) {
             Misc.free(masterCursor);
@@ -305,6 +307,19 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
         Misc.free(value);
     }
 
+    private static StaticSymbolTable asStaticSymbolTable(SymbolTable symbolTable) {
+        if (symbolTable instanceof StaticSymbolTable sst) {
+            return sst;
+        }
+        if (symbolTable instanceof SymbolFunction sf) {
+            StaticSymbolTable sst = sf.getStaticSymbolTable();
+            if (sst != null) {
+                return sst;
+            }
+        }
+        throw new AssertionError("Failed to get static symbol table from " + symbolTable);
+    }
+
     private abstract class AbstractWindowJoinFastRecordCursor implements NoRandomAccessRecordCursor {
         protected final GroupByFunctionsUpdater groupByFunctionsUpdater;
         // Stores metadata about storage of slave underlying records
@@ -351,7 +366,8 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
 
         protected void setupSlaveLookupMap(RecordCursor masterCursor, TimeFrameCursor slaveCursor) {
             slaveSymbolLookupMap.reopen();
-            StaticSymbolTable masterSymbolTable = (StaticSymbolTable) masterCursor.getSymbolTable(masterSymbolIndex);
+            // Master may project the symbol through a SymbolColumn (e.g. CTE / sub-select), so unwrap.
+            StaticSymbolTable masterSymbolTable = asStaticSymbolTable(masterCursor.getSymbolTable(masterSymbolIndex));
             StaticSymbolTable slaveSymbolTable = slaveCursor.getSymbolTable(slaveSymbolIndex);
             for (int masterKey = 0, n = masterSymbolTable.getSymbolCount(); masterKey < n; masterKey++) {
                 final CharSequence masterSym = masterSymbolTable.valueOf(masterKey);

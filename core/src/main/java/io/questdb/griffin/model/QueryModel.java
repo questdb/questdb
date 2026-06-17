@@ -134,7 +134,9 @@ public class QueryModel implements IQueryModel {
     private boolean distinct = false;
     private boolean explicitTimestamp;
     private ExpressionNode fillFrom;
+    private ExpressionNode fillOffset;
     private ExpressionNode fillStride;
+    private ExpressionNode fillTimezoneName;
     private ExpressionNode fillTo;
     private ObjList<ExpressionNode> fillValues;
     private boolean forceBackwardScan;
@@ -467,8 +469,10 @@ public class QueryModel implements IQueryModel {
         sampleByTo = null;
         sampleByFrom = null;
         fillFrom = null;
+        fillOffset = null;
         fillTo = null;
         fillStride = null;
+        fillTimezoneName = null;
         fillValues = null;
         skipped = false;
         allowPropagationOfOrderByAdvice = true;
@@ -746,8 +750,18 @@ public class QueryModel implements IQueryModel {
     }
 
     @Override
+    public ExpressionNode getFillOffset() {
+        return fillOffset;
+    }
+
+    @Override
     public ExpressionNode getFillStride() {
         return fillStride;
+    }
+
+    @Override
+    public ExpressionNode getFillTimezoneName() {
+        return fillTimezoneName;
     }
 
     @Override
@@ -1461,6 +1475,16 @@ public class QueryModel implements IQueryModel {
 
     @Override
     public void moveSampleByFrom(IQueryModel model) {
+        // Donor must not carry fill* state. SqlOptimiser.rewriteSampleBy is the only fill* writer
+        // and clears sampleBy in the same block, so the gate `sampleBy != null` at the caller
+        // (SqlOptimiser.rewriteSelectClause0) is mutually exclusive with fill* being set.
+        assert model.getFillStride() == null
+                && model.getFillOffset() == null
+                && model.getFillTimezoneName() == null
+                && model.getFillFrom() == null
+                && model.getFillTo() == null
+                && model.getFillValues() == null
+                : "moveSampleByFrom donor must not have fill* set";
         this.sampleBy = model.getSampleBy();
         this.sampleByUnit = model.getSampleByUnit();
         this.sampleByFill.clear();
@@ -1507,7 +1531,9 @@ public class QueryModel implements IQueryModel {
                     }
                     n = n.lhs;
                 } else {
-                    addParsedWhereNode(n, false);
+                    // preserve the predicate's origin: an inner-join ON conjunct pushed onto the
+                    // master model's WHERE must stay distinguishable from a real WHERE predicate
+                    addParsedWhereNode(n, n.innerPredicate);
                     n = null;
                 }
             } else {
@@ -1636,8 +1662,18 @@ public class QueryModel implements IQueryModel {
     }
 
     @Override
+    public void setFillOffset(ExpressionNode fillOffset) {
+        this.fillOffset = fillOffset;
+    }
+
+    @Override
     public void setFillStride(ExpressionNode fillStride) {
         this.fillStride = fillStride;
+    }
+
+    @Override
+    public void setFillTimezoneName(ExpressionNode fillTimezoneName) {
+        this.fillTimezoneName = fillTimezoneName;
     }
 
     @Override
@@ -1780,6 +1816,14 @@ public class QueryModel implements IQueryModel {
     public void setSampleBy(ExpressionNode sampleBy, ExpressionNode sampleByUnit) {
         this.sampleBy = sampleBy;
         this.sampleByUnit = sampleByUnit;
+    }
+
+    @Override
+    public void setSampleByFill(ObjList<ExpressionNode> fill) {
+        sampleByFill.clear();
+        if (fill != null) {
+            sampleByFill.addAll(fill);
+        }
     }
 
     @Override
@@ -2311,9 +2355,19 @@ public class QueryModel implements IQueryModel {
             }
         }
 
+        if (fillOffset != null) {
+            sink.putAscii(" offset ");
+            sink.put(fillOffset);
+        }
+
         if (fillStride != null) {
             sink.putAscii(" stride ");
             sink.put(fillStride);
+        }
+
+        if (fillTimezoneName != null) {
+            sink.putAscii(" timezone ");
+            sink.put(fillTimezoneName);
         }
 
         if (showOrderBy && orderBy.size() > 0) {

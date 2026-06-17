@@ -40,11 +40,9 @@ import io.questdb.client.std.str.Utf8s;
 import io.questdb.std.BoolList;
 import io.questdb.std.LongList;
 import io.questdb.std.Unsafe;
-import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.Test;
 
 import java.util.ArrayList;
@@ -62,21 +60,14 @@ import java.util.List;
  * Each test asserts the schema's wire-type code and the per-cell round-trip. Runs against a
  * locally booted QuestDB; share via {@code -P local-client} so the locally-built client is used.
  */
-public class QwpEgressTypesExhaustiveTest extends AbstractBootstrapTest {
-
-    @Before
-    public void setUp() {
-        super.setUp();
-        TestUtils.unchecked(() -> createDummyConfiguration());
-        dbPath.parent().$();
-    }
+public class QwpEgressTypesExhaustiveTest extends AbstractReusedServerQwpEgressTest {
 
     @Test
     public void testAllNullColumn() throws Exception {
-        // Edge case: every row in the column is NULL. Null bitmap fully set; no values
-        // section. Pin that the per-column emit/decode handles the all-null path.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (TestServerMain serverMain = startEgressServer()) {
+                // Edge case: every row in the column is NULL. Null bitmap fully set; no values
+                // section. Pin that the per-column emit/decode handles the all-null path.
                 serverMain.execute("CREATE TABLE t(s STRING, l LONG, d DOUBLE, part_ts TIMESTAMP) "
                         + "TIMESTAMP(part_ts) PARTITION BY DAY WAL");
                 serverMain.execute("INSERT INTO t VALUES (NULL, NULL, NULL, 1::TIMESTAMP), "
@@ -116,7 +107,7 @@ public class QwpEgressTypesExhaustiveTest extends AbstractBootstrapTest {
     @Test
     public void testBinaryExhaustive() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (TestServerMain serverMain = startEgressServer()) {
                 serverMain.execute("CREATE TABLE t(b BINARY, part_ts TIMESTAMP) "
                         + "TIMESTAMP(part_ts) PARTITION BY DAY WAL");
                 // Mix of sizes via rnd_bin: small (1-2 bytes), medium (32 bytes), explicit NULL.
@@ -205,83 +196,97 @@ public class QwpEgressTypesExhaustiveTest extends AbstractBootstrapTest {
                 }
                 // Dual-view holds two cells without clobber
                 Assert.assertFalse("dual-view A and B should have captured two non-null cells", dualA.isEmpty());
-                Assert.assertFalse(Arrays.equals(dualA.getFirst(), dualB.getFirst()) && dualA.getFirst().length == dualB.getFirst().length
-                        && (dualA.getFirst().length == 0));
+                Assert.assertFalse(Arrays.equals(dualA.getFirst(), dualB.getFirst()) && dualA.getFirst().length == 0);
             }
         });
     }
 
     @Test
     public void testBoolean() throws Exception {
-        // BOOLEAN cannot hold NULL in QuestDB -- INSERT NULL stores false.
-        runRoundTrip(
-                "CREATE TABLE t(b BOOLEAN)",
-                "INSERT INTO t VALUES (true), (false), (NULL)",
-                QwpConstants.TYPE_BOOLEAN,
-                3,
-                (batch, results) -> {
-                    for (int r = 0; r < 3; r++) {
-                        results.add(new Object[]{batch.isNull(0, r), batch.getBoolValue(0, r)});
-                    }
-                },
-                rows -> {
-                    Assert.assertEquals(Boolean.TRUE, ((Object[]) rows.get(0))[1]);
-                    Assert.assertEquals(Boolean.FALSE, ((Object[]) rows.get(1))[1]);
-                    // NULL -> false (no NULL representation for BOOLEAN in QuestDB)
-                    Assert.assertEquals(Boolean.FALSE, ((Object[]) rows.get(2))[1]);
-                    Assert.assertEquals(Boolean.FALSE, ((Object[]) rows.get(0))[0]);
-                    Assert.assertEquals(Boolean.FALSE, ((Object[]) rows.get(1))[0]);
-                    Assert.assertEquals(Boolean.FALSE, ((Object[]) rows.get(2))[0]);
-                }
-        );
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = startEgressServer()) {
+                // BOOLEAN cannot hold NULL in QuestDB -- INSERT NULL stores false.
+                runRoundTrip(
+                        serverMain,
+                        "CREATE TABLE t(b BOOLEAN)",
+                        "INSERT INTO t VALUES (true), (false), (NULL)",
+                        QwpConstants.TYPE_BOOLEAN,
+                        3,
+                        (batch, results) -> {
+                            for (int r = 0; r < 3; r++) {
+                                results.add(new Object[]{batch.isNull(0, r), batch.getBoolValue(0, r)});
+                            }
+                        },
+                        rows -> {
+                            Assert.assertEquals(Boolean.TRUE, ((Object[]) rows.get(0))[1]);
+                            Assert.assertEquals(Boolean.FALSE, ((Object[]) rows.get(1))[1]);
+                            // NULL -> false (no NULL representation for BOOLEAN in QuestDB)
+                            Assert.assertEquals(Boolean.FALSE, ((Object[]) rows.get(2))[1]);
+                            Assert.assertEquals(Boolean.FALSE, ((Object[]) rows.get(0))[0]);
+                            Assert.assertEquals(Boolean.FALSE, ((Object[]) rows.get(1))[0]);
+                            Assert.assertEquals(Boolean.FALSE, ((Object[]) rows.get(2))[0]);
+                        }
+                );
+            }
+        });
     }
 
     @Test
     public void testByte() throws Exception {
-        // BYTE cannot hold NULL in QuestDB.
-        runRoundTrip(
-                "CREATE TABLE t(b BYTE)",
-                "INSERT INTO t VALUES (-128), (127), (0), (NULL)",
-                QwpConstants.TYPE_BYTE,
-                4,
-                (batch, results) -> {
-                    for (int r = 0; r < 4; r++) results.add(batch.getByteValue(0, r));
-                },
-                rows -> {
-                    Assert.assertEquals((byte) -128, rows.get(0));
-                    Assert.assertEquals((byte) 127, rows.get(1));
-                    Assert.assertEquals((byte) 0, rows.get(2));
-                    Assert.assertEquals((byte) 0, rows.get(3)); // NULL -> 0
-                }
-        );
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = startEgressServer()) {
+                // BYTE cannot hold NULL in QuestDB.
+                runRoundTrip(
+                        serverMain,
+                        "CREATE TABLE t(b BYTE)",
+                        "INSERT INTO t VALUES (-128), (127), (0), (NULL)",
+                        QwpConstants.TYPE_BYTE,
+                        4,
+                        (batch, results) -> {
+                            for (int r = 0; r < 4; r++) results.add(batch.getByteValue(0, r));
+                        },
+                        rows -> {
+                            Assert.assertEquals((byte) -128, rows.get(0));
+                            Assert.assertEquals((byte) 127, rows.get(1));
+                            Assert.assertEquals((byte) 0, rows.get(2));
+                            Assert.assertEquals((byte) 0, rows.get(3)); // NULL -> 0
+                        }
+                );
+            }
+        });
     }
 
     @Test
     public void testChar() throws Exception {
-        // CHAR can't hold NULL either.
-        runRoundTrip(
-                "CREATE TABLE t(c CHAR)",
-                "INSERT INTO t VALUES ('A'), ('z'), ('0')",
-                QwpConstants.TYPE_CHAR,
-                3,
-                (batch, results) -> {
-                    for (int r = 0; r < 3; r++) results.add(batch.getCharValue(0, r));
-                },
-                rows -> {
-                    Assert.assertEquals('A', rows.get(0));
-                    Assert.assertEquals('z', rows.get(1));
-                    Assert.assertEquals('0', rows.get(2));
-                }
-        );
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = startEgressServer()) {
+                // CHAR can't hold NULL either.
+                runRoundTrip(
+                        serverMain,
+                        "CREATE TABLE t(c CHAR)",
+                        "INSERT INTO t VALUES ('A'), ('z'), ('0')",
+                        QwpConstants.TYPE_CHAR,
+                        3,
+                        (batch, results) -> {
+                            for (int r = 0; r < 3; r++) results.add(batch.getCharValue(0, r));
+                        },
+                        rows -> {
+                            Assert.assertEquals('A', rows.get(0));
+                            Assert.assertEquals('z', rows.get(1));
+                            Assert.assertEquals('0', rows.get(2));
+                        }
+                );
+            }
+        });
     }
 
     @Test
     public void testColumnView() throws Exception {
-        // Pins the column-pinned facade: column(c) returns a flyweight whose
-        // single-arg accessors match the (col, row) primitives across types and
-        // NULL rows. Two concurrent ColumnView instances must coexist.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (TestServerMain serverMain = startEgressServer()) {
+                // Pins the column-pinned facade: column(c) returns a flyweight whose
+                // single-arg accessors match the (col, row) primitives across types and
+                // NULL rows. Two concurrent ColumnView instances must coexist.
                 serverMain.execute("CREATE TABLE t(i INT, d DOUBLE, s SYMBOL, part_ts TIMESTAMP) "
                         + "TIMESTAMP(part_ts) PARTITION BY DAY WAL");
                 serverMain.execute("""
@@ -345,11 +350,11 @@ public class QwpEgressTypesExhaustiveTest extends AbstractBootstrapTest {
 
     @Test
     public void testColumnViewRawAddrs() throws Exception {
-        // SIMD/JNI consumers iterate ColumnView.valuesAddr() directly. Assert
-        // that the raw addresses, stride, and null bitmap line up with what
-        // the typed accessors return.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (TestServerMain serverMain = startEgressServer()) {
+                // SIMD/JNI consumers iterate ColumnView.valuesAddr() directly. Assert
+                // that the raw addresses, stride, and null bitmap line up with what
+                // the typed accessors return.
                 serverMain.execute("CREATE TABLE t(d DOUBLE, part_ts TIMESTAMP) "
                         + "TIMESTAMP(part_ts) PARTITION BY DAY WAL");
                 serverMain.execute("""
@@ -408,33 +413,38 @@ public class QwpEgressTypesExhaustiveTest extends AbstractBootstrapTest {
 
     @Test
     public void testDate() throws Exception {
-        runRoundTrip(
-                "CREATE TABLE t(d DATE)",
-                """
-                        INSERT INTO t VALUES
-                            ('1970-01-01'::DATE),
-                            ('2024-01-15'::DATE),
-                            (NULL)
-                        """,
-                QwpConstants.TYPE_DATE,
-                3,
-                (batch, results) -> {
-                    for (int r = 0; r < 3; r++) {
-                        results.add(new Object[]{batch.isNull(0, r), batch.getLongValue(0, r)});
-                    }
-                },
-                rows -> {
-                    Assert.assertEquals(0L, ((Object[]) rows.get(0))[1]);
-                    Assert.assertTrue((Long) ((Object[]) rows.get(1))[1] > 0L);
-                    Assert.assertEquals(Boolean.TRUE, ((Object[]) rows.get(2))[0]);
-                }
-        );
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = startEgressServer()) {
+                runRoundTrip(
+                        serverMain,
+                        "CREATE TABLE t(d DATE)",
+                        """
+                                INSERT INTO t VALUES
+                                    ('1970-01-01'::DATE),
+                                    ('2024-01-15'::DATE),
+                                    (NULL)
+                                """,
+                        QwpConstants.TYPE_DATE,
+                        3,
+                        (batch, results) -> {
+                            for (int r = 0; r < 3; r++) {
+                                results.add(new Object[]{batch.isNull(0, r), batch.getLongValue(0, r)});
+                            }
+                        },
+                        rows -> {
+                            Assert.assertEquals(0L, ((Object[]) rows.get(0))[1]);
+                            Assert.assertTrue((Long) ((Object[]) rows.get(1))[1] > 0L);
+                            Assert.assertEquals(Boolean.TRUE, ((Object[]) rows.get(2))[0]);
+                        }
+                );
+            }
+        });
     }
 
     @Test
     public void testDecimal128() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (TestServerMain serverMain = startEgressServer()) {
                 serverMain.execute("CREATE TABLE t(d DECIMAL(38,6), part_ts TIMESTAMP) "
                         + "TIMESTAMP(part_ts) PARTITION BY DAY WAL");
                 serverMain.execute("INSERT INTO t VALUES (123456789.123456m, 1::TIMESTAMP), "
@@ -482,7 +492,7 @@ public class QwpEgressTypesExhaustiveTest extends AbstractBootstrapTest {
     @Test
     public void testDecimal256() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (TestServerMain serverMain = startEgressServer()) {
                 serverMain.execute("CREATE TABLE t(d DECIMAL(76,10), part_ts TIMESTAMP) "
                         + "TIMESTAMP(part_ts) PARTITION BY DAY WAL");
                 serverMain.execute("INSERT INTO t VALUES (123456789.1234567890m, 1::TIMESTAMP), "
@@ -534,7 +544,7 @@ public class QwpEgressTypesExhaustiveTest extends AbstractBootstrapTest {
     @Test
     public void testDecimal64() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (TestServerMain serverMain = startEgressServer()) {
                 serverMain.execute("CREATE TABLE t(d DECIMAL(18,4), part_ts TIMESTAMP) "
                         + "TIMESTAMP(part_ts) PARTITION BY DAY WAL");
                 serverMain.execute("INSERT INTO t VALUES (1234.5678m, 1::TIMESTAMP), (-1234.5678m, 2::TIMESTAMP), "
@@ -582,13 +592,13 @@ public class QwpEgressTypesExhaustiveTest extends AbstractBootstrapTest {
 
     @Test
     public void testDecimalScalesAcrossColumns() throws Exception {
-        // Covers two things:
-        // 1. Decoder reads the per-column scale byte for every DECIMAL column
-        //    independently. One shared field in the decoder would collapse all
-        //    scales to the last column's value.
-        // 2. Scale=0 byte decodes correctly (not confused with "scale unset").
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (TestServerMain serverMain = startEgressServer()) {
+                // Covers two things:
+                // 1. Decoder reads the per-column scale byte for every DECIMAL column
+                //    independently. One shared field in the decoder would collapse all
+                //    scales to the last column's value.
+                // 2. Scale=0 byte decodes correctly (not confused with "scale unset").
                 serverMain.execute("""
                         CREATE TABLE t(
                             d64_0   DECIMAL(18, 0),
@@ -651,30 +661,35 @@ public class QwpEgressTypesExhaustiveTest extends AbstractBootstrapTest {
 
     @Test
     public void testDouble() throws Exception {
-        runRoundTrip(
-                "CREATE TABLE t(d DOUBLE)",
-                "INSERT INTO t VALUES (3.141592653589793), (-3.141592653589793), (0.0), (NULL), (0.0/0.0)",
-                QwpConstants.TYPE_DOUBLE,
-                5,
-                (batch, results) -> {
-                    for (int r = 0; r < 5; r++) {
-                        results.add(new Object[]{batch.isNull(0, r), batch.getDoubleValue(0, r)});
-                    }
-                },
-                rows -> {
-                    Assert.assertEquals(3.141592653589793, (Double) ((Object[]) rows.get(0))[1], 1e-15);
-                    Assert.assertEquals(-3.141592653589793, (Double) ((Object[]) rows.get(1))[1], 1e-15);
-                    Assert.assertEquals(0.0, (Double) ((Object[]) rows.get(2))[1], 0.0);
-                    Assert.assertEquals(Boolean.TRUE, ((Object[]) rows.get(3))[0]);
-                    Assert.assertEquals(Boolean.TRUE, ((Object[]) rows.get(4))[0]);
-                }
-        );
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = startEgressServer()) {
+                runRoundTrip(
+                        serverMain,
+                        "CREATE TABLE t(d DOUBLE)",
+                        "INSERT INTO t VALUES (3.141592653589793), (-3.141592653589793), (0.0), (NULL), (0.0/0.0)",
+                        QwpConstants.TYPE_DOUBLE,
+                        5,
+                        (batch, results) -> {
+                            for (int r = 0; r < 5; r++) {
+                                results.add(new Object[]{batch.isNull(0, r), batch.getDoubleValue(0, r)});
+                            }
+                        },
+                        rows -> {
+                            Assert.assertEquals(3.141592653589793, (Double) ((Object[]) rows.get(0))[1], 1e-15);
+                            Assert.assertEquals(-3.141592653589793, (Double) ((Object[]) rows.get(1))[1], 1e-15);
+                            Assert.assertEquals(0.0, (Double) ((Object[]) rows.get(2))[1], 0.0);
+                            Assert.assertEquals(Boolean.TRUE, ((Object[]) rows.get(3))[0]);
+                            Assert.assertEquals(Boolean.TRUE, ((Object[]) rows.get(4))[0]);
+                        }
+                );
+            }
+        });
     }
 
     @Test
     public void testDoubleArray1DAnd2D() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (TestServerMain serverMain = startEgressServer()) {
                 serverMain.execute("CREATE TABLE t(a DOUBLE[], b DOUBLE[][], part_ts TIMESTAMP) "
                         + "TIMESTAMP(part_ts) PARTITION BY DAY WAL");
                 serverMain.execute("INSERT INTO t VALUES (ARRAY[1.0, 2.0, 3.0], ARRAY[[1.0, 2.0], [3.0, 4.0]], 1::TIMESTAMP)");
@@ -716,34 +731,39 @@ public class QwpEgressTypesExhaustiveTest extends AbstractBootstrapTest {
 
     @Test
     public void testFloat() throws Exception {
-        // FLOAT NULL convention: NaN. Real NaN cannot be distinguished from explicit NULL.
-        runRoundTrip(
-                "CREATE TABLE t(f FLOAT)",
-                "INSERT INTO t VALUES (1.5f), (-1.5f), (0.0f), (NULL), (CAST(0.0/0.0 AS FLOAT))",
-                QwpConstants.TYPE_FLOAT,
-                5,
-                (batch, results) -> {
-                    for (int r = 0; r < 5; r++) {
-                        results.add(new Object[]{batch.isNull(0, r), batch.getFloatValue(0, r)});
-                    }
-                },
-                rows -> {
-                    Assert.assertEquals(1.5f, (Float) ((Object[]) rows.get(0))[1], 0.0f);
-                    Assert.assertEquals(-1.5f, (Float) ((Object[]) rows.get(1))[1], 0.0f);
-                    Assert.assertEquals(0.0f, (Float) ((Object[]) rows.get(2))[1], 0.0f);
-                    Assert.assertEquals(Boolean.TRUE, ((Object[]) rows.get(3))[0]);
-                    Assert.assertEquals(Boolean.TRUE, ((Object[]) rows.get(4))[0]); // NaN -> null
-                }
-        );
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = startEgressServer()) {
+                // FLOAT NULL convention: NaN. Real NaN cannot be distinguished from explicit NULL.
+                runRoundTrip(
+                        serverMain,
+                        "CREATE TABLE t(f FLOAT)",
+                        "INSERT INTO t VALUES (1.5f), (-1.5f), (0.0f), (NULL), (CAST(0.0/0.0 AS FLOAT))",
+                        QwpConstants.TYPE_FLOAT,
+                        5,
+                        (batch, results) -> {
+                            for (int r = 0; r < 5; r++) {
+                                results.add(new Object[]{batch.isNull(0, r), batch.getFloatValue(0, r)});
+                            }
+                        },
+                        rows -> {
+                            Assert.assertEquals(1.5f, (Float) ((Object[]) rows.get(0))[1], 0.0f);
+                            Assert.assertEquals(-1.5f, (Float) ((Object[]) rows.get(1))[1], 0.0f);
+                            Assert.assertEquals(0.0f, (Float) ((Object[]) rows.get(2))[1], 0.0f);
+                            Assert.assertEquals(Boolean.TRUE, ((Object[]) rows.get(3))[0]);
+                            Assert.assertEquals(Boolean.TRUE, ((Object[]) rows.get(4))[0]); // NaN -> null
+                        }
+                );
+            }
+        });
     }
 
     @Test
     public void testForEachRow() throws Exception {
-        // Pins the row-pinned facade: forEachRow walks every row in order,
-        // RowView#getRowIndex tracks position, single-arg accessors match the
-        // (col, row) primitives, and the same flyweight instance is reused.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (TestServerMain serverMain = startEgressServer()) {
+                // Pins the row-pinned facade: forEachRow walks every row in order,
+                // RowView#getRowIndex tracks position, single-arg accessors match the
+                // (col, row) primitives, and the same flyweight instance is reused.
                 serverMain.execute("CREATE TABLE t(i INT, d DOUBLE, s SYMBOL, part_ts TIMESTAMP) "
                         + "TIMESTAMP(part_ts) PARTITION BY DAY WAL");
                 serverMain.execute("""
@@ -816,7 +836,7 @@ public class QwpEgressTypesExhaustiveTest extends AbstractBootstrapTest {
     @Test
     public void testGeohashAllWidths() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (TestServerMain serverMain = startEgressServer()) {
                 // 5 widths spanning all four storage classes (byte/short/int/long).
                 serverMain.execute("""
                         CREATE TABLE t(
@@ -879,7 +899,7 @@ public class QwpEgressTypesExhaustiveTest extends AbstractBootstrapTest {
     @Test
     public void testIPv4() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (TestServerMain serverMain = startEgressServer()) {
                 serverMain.execute("CREATE TABLE t(addr IPv4, part_ts TIMESTAMP) "
                         + "TIMESTAMP(part_ts) PARTITION BY DAY WAL");
                 // QuestDB convention: 0.0.0.0 == NULL for IPv4.
@@ -934,52 +954,62 @@ public class QwpEgressTypesExhaustiveTest extends AbstractBootstrapTest {
 
     @Test
     public void testInt() throws Exception {
-        runRoundTrip(
-                "CREATE TABLE t(i INT)",
-                "INSERT INTO t VALUES (-2147483647), (2147483647), (0), (-1), (NULL)",
-                QwpConstants.TYPE_INT,
-                5,
-                (batch, results) -> {
-                    for (int r = 0; r < 5; r++) {
-                        results.add(new Object[]{batch.isNull(0, r), batch.getIntValue(0, r)});
-                    }
-                },
-                rows -> {
-                    Assert.assertEquals(-2147483647, ((Object[]) rows.get(0))[1]);
-                    Assert.assertEquals(2147483647, ((Object[]) rows.get(1))[1]);
-                    Assert.assertEquals(0, ((Object[]) rows.get(2))[1]);
-                    Assert.assertEquals(-1, ((Object[]) rows.get(3))[1]);
-                    Assert.assertEquals(Boolean.TRUE, ((Object[]) rows.get(4))[0]); // explicit NULL
-                }
-        );
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = startEgressServer()) {
+                runRoundTrip(
+                        serverMain,
+                        "CREATE TABLE t(i INT)",
+                        "INSERT INTO t VALUES (-2147483647), (2147483647), (0), (-1), (NULL)",
+                        QwpConstants.TYPE_INT,
+                        5,
+                        (batch, results) -> {
+                            for (int r = 0; r < 5; r++) {
+                                results.add(new Object[]{batch.isNull(0, r), batch.getIntValue(0, r)});
+                            }
+                        },
+                        rows -> {
+                            Assert.assertEquals(-2147483647, ((Object[]) rows.get(0))[1]);
+                            Assert.assertEquals(2147483647, ((Object[]) rows.get(1))[1]);
+                            Assert.assertEquals(0, ((Object[]) rows.get(2))[1]);
+                            Assert.assertEquals(-1, ((Object[]) rows.get(3))[1]);
+                            Assert.assertEquals(Boolean.TRUE, ((Object[]) rows.get(4))[0]); // explicit NULL
+                        }
+                );
+            }
+        });
     }
 
     @Test
     public void testLong() throws Exception {
-        runRoundTrip(
-                "CREATE TABLE t(l LONG)",
-                "INSERT INTO t VALUES (-9223372036854775807L), (9223372036854775807L), (0L), (-1L), (NULL)",
-                QwpConstants.TYPE_LONG,
-                5,
-                (batch, results) -> {
-                    for (int r = 0; r < 5; r++) {
-                        results.add(new Object[]{batch.isNull(0, r), batch.getLongValue(0, r)});
-                    }
-                },
-                rows -> {
-                    Assert.assertEquals(-9223372036854775807L, ((Object[]) rows.get(0))[1]);
-                    Assert.assertEquals(9223372036854775807L, ((Object[]) rows.get(1))[1]);
-                    Assert.assertEquals(0L, ((Object[]) rows.get(2))[1]);
-                    Assert.assertEquals(-1L, ((Object[]) rows.get(3))[1]);
-                    Assert.assertEquals(Boolean.TRUE, ((Object[]) rows.get(4))[0]);
-                }
-        );
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = startEgressServer()) {
+                runRoundTrip(
+                        serverMain,
+                        "CREATE TABLE t(l LONG)",
+                        "INSERT INTO t VALUES (-9223372036854775807L), (9223372036854775807L), (0L), (-1L), (NULL)",
+                        QwpConstants.TYPE_LONG,
+                        5,
+                        (batch, results) -> {
+                            for (int r = 0; r < 5; r++) {
+                                results.add(new Object[]{batch.isNull(0, r), batch.getLongValue(0, r)});
+                            }
+                        },
+                        rows -> {
+                            Assert.assertEquals(-9223372036854775807L, ((Object[]) rows.get(0))[1]);
+                            Assert.assertEquals(9223372036854775807L, ((Object[]) rows.get(1))[1]);
+                            Assert.assertEquals(0L, ((Object[]) rows.get(2))[1]);
+                            Assert.assertEquals(-1L, ((Object[]) rows.get(3))[1]);
+                            Assert.assertEquals(Boolean.TRUE, ((Object[]) rows.get(4))[0]);
+                        }
+                );
+            }
+        });
     }
 
     @Test
     public void testLong256() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (TestServerMain serverMain = startEgressServer()) {
                 serverMain.execute("CREATE TABLE t(l256 LONG256, part_ts TIMESTAMP) "
                         + "TIMESTAMP(part_ts) PARTITION BY DAY WAL");
                 serverMain.execute("""
@@ -1035,11 +1065,11 @@ public class QwpEgressTypesExhaustiveTest extends AbstractBootstrapTest {
 
     @Test
     public void testLong256Sink() throws Exception {
-        // Same data as testLong256, but read via the single-call Long256Sink API.
-        // A reusable Long256Impl is handed to the batch for every row; the
-        // four-word copy happens inside getLong256 with one virtual dispatch.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (TestServerMain serverMain = startEgressServer()) {
+                // Same data as testLong256, but read via the single-call Long256Sink API.
+                // A reusable Long256Impl is handed to the batch for every row; the
+                // four-word copy happens inside getLong256 with one virtual dispatch.
                 serverMain.execute("CREATE TABLE t(l256 LONG256, part_ts TIMESTAMP) "
                         + "TIMESTAMP(part_ts) PARTITION BY DAY WAL");
                 serverMain.execute("""
@@ -1089,28 +1119,33 @@ public class QwpEgressTypesExhaustiveTest extends AbstractBootstrapTest {
 
     @Test
     public void testShort() throws Exception {
-        runRoundTrip(
-                "CREATE TABLE t(s SHORT)",
-                "INSERT INTO t VALUES (-32768), (32767), (0), (NULL)",
-                QwpConstants.TYPE_SHORT,
-                4,
-                (batch, results) -> {
-                    for (int r = 0; r < 4; r++) results.add(batch.getShortValue(0, r));
-                },
-                rows -> {
-                    Assert.assertEquals((short) -32768, rows.get(0));
-                    Assert.assertEquals((short) 32767, rows.get(1));
-                    Assert.assertEquals((short) 0, rows.get(2));
-                    Assert.assertEquals((short) 0, rows.get(3));
-                }
-        );
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = startEgressServer()) {
+                runRoundTrip(
+                        serverMain,
+                        "CREATE TABLE t(s SHORT)",
+                        "INSERT INTO t VALUES (-32768), (32767), (0), (NULL)",
+                        QwpConstants.TYPE_SHORT,
+                        4,
+                        (batch, results) -> {
+                            for (int r = 0; r < 4; r++) results.add(batch.getShortValue(0, r));
+                        },
+                        rows -> {
+                            Assert.assertEquals((short) -32768, rows.get(0));
+                            Assert.assertEquals((short) 32767, rows.get(1));
+                            Assert.assertEquals((short) 0, rows.get(2));
+                            Assert.assertEquals((short) 0, rows.get(3));
+                        }
+                );
+            }
+        });
     }
 
     @Test
     public void testString() throws Exception {
-        // Cover: empty, ASCII, multi-byte UTF-8, large, NULL.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (TestServerMain serverMain = startEgressServer()) {
+                // Cover: empty, ASCII, multi-byte UTF-8, large, NULL.
                 serverMain.execute("CREATE TABLE t(s STRING, part_ts TIMESTAMP) "
                         + "TIMESTAMP(part_ts) PARTITION BY DAY WAL");
                 serverMain.execute("""
@@ -1164,12 +1199,12 @@ public class QwpEgressTypesExhaustiveTest extends AbstractBootstrapTest {
 
     @Test
     public void testStringDualView() throws Exception {
-        // Realistic dual-view usage: run-length-style transition counting within a
-        // single batch. A single flyweight would be clobbered by the second call,
-        // so the caller needs getStrA(current row) + getStrB(previous row) to hold
-        // both bytes concurrently for the comparison.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (TestServerMain serverMain = startEgressServer()) {
+                // Realistic dual-view usage: run-length-style transition counting within a
+                // single batch. A single flyweight would be clobbered by the second call,
+                // so the caller needs getStrA(current row) + getStrB(previous row) to hold
+                // both bytes concurrently for the comparison.
                 serverMain.execute("CREATE TABLE t(sym SYMBOL, part_ts TIMESTAMP) "
                         + "TIMESTAMP(part_ts) PARTITION BY DAY WAL");
                 // Expected transitions in designated-ts order:
@@ -1220,11 +1255,11 @@ public class QwpEgressTypesExhaustiveTest extends AbstractBootstrapTest {
 
     @Test
     public void testStringSink() throws Exception {
-        // Exercises the zero-allocation getString(col, row, CharSink) overload on
-        // both Utf16Sink (transcodes to UTF-16) and Utf8Sink (pass-through).
-        // Multi-byte UTF-8 input catches any single-byte-only transcoding bug.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (TestServerMain serverMain = startEgressServer()) {
+                // Exercises the zero-allocation getString(col, row, CharSink) overload on
+                // both Utf16Sink (transcodes to UTF-16) and Utf8Sink (pass-through).
+                // Multi-byte UTF-8 input catches any single-byte-only transcoding bug.
                 serverMain.execute("CREATE TABLE t(s STRING, part_ts TIMESTAMP) "
                         + "TIMESTAMP(part_ts) PARTITION BY DAY WAL");
                 serverMain.execute("""
@@ -1288,9 +1323,9 @@ public class QwpEgressTypesExhaustiveTest extends AbstractBootstrapTest {
 
     @Test
     public void testSymbol() throws Exception {
-        // SYMBOL: dict dedup (repeated value -> same dict entry), NULL, empty string, multiple unique.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (TestServerMain serverMain = startEgressServer()) {
+                // SYMBOL: dict dedup (repeated value -> same dict entry), NULL, empty string, multiple unique.
                 serverMain.execute("CREATE TABLE t(s SYMBOL, part_ts TIMESTAMP) "
                         + "TIMESTAMP(part_ts) PARTITION BY DAY WAL");
                 serverMain.execute("INSERT INTO t VALUES ('A', 1::TIMESTAMP), ('B', 2::TIMESTAMP), "
@@ -1339,12 +1374,12 @@ public class QwpEgressTypesExhaustiveTest extends AbstractBootstrapTest {
 
     @Test
     public void testSymbolCache() throws Exception {
-        // Pins the caching invariant for SYMBOL: a scan over N rows with K
-        // distinct symbols returns K String instances, not N. Also exercises
-        // the id-based API (getSymbolId / getSymbolForId / getSymbolDictSize)
-        // and verifies getString shares the same cache.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (TestServerMain serverMain = startEgressServer()) {
+                // Pins the caching invariant for SYMBOL: a scan over N rows with K
+                // distinct symbols returns K String instances, not N. Also exercises
+                // the id-based API (getSymbolId / getSymbolForId / getSymbolDictSize)
+                // and verifies getString shares the same cache.
                 serverMain.execute("CREATE TABLE t(sym SYMBOL, part_ts TIMESTAMP) "
                         + "TIMESTAMP(part_ts) PARTITION BY DAY WAL");
                 // 3 distinct symbols repeated across 6 rows + 1 NULL.
@@ -1421,36 +1456,41 @@ public class QwpEgressTypesExhaustiveTest extends AbstractBootstrapTest {
 
     @Test
     public void testTimestamp() throws Exception {
-        runRoundTrip(
-                "CREATE TABLE t(ts TIMESTAMP)",
-                """
-                        INSERT INTO t VALUES
-                            ('1970-01-01T00:00:00.000000Z'),
-                            ('2024-01-01T00:00:00.000000Z'),
-                            ('2262-04-11T23:47:16.854775Z'),
-                            (NULL)
-                        """,
-                QwpConstants.TYPE_TIMESTAMP,
-                4,
-                (batch, results) -> {
-                    for (int r = 0; r < 4; r++) {
-                        results.add(new Object[]{batch.isNull(0, r), batch.getLongValue(0, r)});
-                    }
-                },
-                rows -> {
-                    Assert.assertEquals(0L, ((Object[]) rows.get(0))[1]);
-                    Assert.assertFalse("2024 timestamp must be non-null", (Boolean) ((Object[]) rows.get(1))[0]);
-                    Assert.assertTrue((Long) ((Object[]) rows.get(1))[1] > 0L);
-                    Assert.assertFalse("2262 timestamp must be non-null", (Boolean) ((Object[]) rows.get(2))[0]);
-                    Assert.assertEquals(Boolean.TRUE, ((Object[]) rows.get(3))[0]);
-                }
-        );
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = startEgressServer()) {
+                runRoundTrip(
+                        serverMain,
+                        "CREATE TABLE t(ts TIMESTAMP)",
+                        """
+                                INSERT INTO t VALUES
+                                    ('1970-01-01T00:00:00.000000Z'),
+                                    ('2024-01-01T00:00:00.000000Z'),
+                                    ('2262-04-11T23:47:16.854775Z'),
+                                    (NULL)
+                                """,
+                        QwpConstants.TYPE_TIMESTAMP,
+                        4,
+                        (batch, results) -> {
+                            for (int r = 0; r < 4; r++) {
+                                results.add(new Object[]{batch.isNull(0, r), batch.getLongValue(0, r)});
+                            }
+                        },
+                        rows -> {
+                            Assert.assertEquals(0L, ((Object[]) rows.get(0))[1]);
+                            Assert.assertFalse("2024 timestamp must be non-null", (Boolean) ((Object[]) rows.get(1))[0]);
+                            Assert.assertTrue((Long) ((Object[]) rows.get(1))[1] > 0L);
+                            Assert.assertFalse("2262 timestamp must be non-null", (Boolean) ((Object[]) rows.get(2))[0]);
+                            Assert.assertEquals(Boolean.TRUE, ((Object[]) rows.get(3))[0]);
+                        }
+                );
+            }
+        });
     }
 
     @Test
     public void testTimestampNanos() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (TestServerMain serverMain = startEgressServer()) {
                 serverMain.execute("CREATE TABLE t(ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute("""
                         INSERT INTO t VALUES
@@ -1492,7 +1532,7 @@ public class QwpEgressTypesExhaustiveTest extends AbstractBootstrapTest {
     @Test
     public void testUuid() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (TestServerMain serverMain = startEgressServer()) {
                 serverMain.execute("CREATE TABLE t(u UUID, part_ts TIMESTAMP) "
                         + "TIMESTAMP(part_ts) PARTITION BY DAY WAL");
                 serverMain.execute("""
@@ -1548,11 +1588,11 @@ public class QwpEgressTypesExhaustiveTest extends AbstractBootstrapTest {
 
     @Test
     public void testUuidSink() throws Exception {
-        // Same data as testUuid, but read via the single-call Uuid sink API.
-        // Pins that getUuid returns false for NULL rows and leaves the sink
-        // untouched (the caller's previous value stays intact).
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (TestServerMain serverMain = startEgressServer()) {
+                // Same data as testUuid, but read via the single-call Uuid sink API.
+                // Pins that getUuid returns false for NULL rows and leaves the sink
+                // untouched (the caller's previous value stays intact).
                 serverMain.execute("CREATE TABLE t(u UUID, part_ts TIMESTAMP) "
                         + "TIMESTAMP(part_ts) PARTITION BY DAY WAL");
                 serverMain.execute("""
@@ -1607,7 +1647,7 @@ public class QwpEgressTypesExhaustiveTest extends AbstractBootstrapTest {
     @Test
     public void testVarchar() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (TestServerMain serverMain = startEgressServer()) {
                 serverMain.execute("CREATE TABLE t(v VARCHAR, part_ts TIMESTAMP) "
                         + "TIMESTAMP(part_ts) PARTITION BY DAY WAL");
                 serverMain.execute("""
@@ -1706,6 +1746,7 @@ public class QwpEgressTypesExhaustiveTest extends AbstractBootstrapTest {
      * surfaces as expected and the row count matches.
      */
     private void runRoundTrip(
+            TestServerMain serverMain,
             String createSql,
             String insertSql,
             byte expectedWireType,
@@ -1713,40 +1754,36 @@ public class QwpEgressTypesExhaustiveTest extends AbstractBootstrapTest {
             RowExtractor rowExtractor,
             Asserter asserter
     ) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
-                serverMain.execute(walifyCreate(createSql));
-                serverMain.execute(walifyValuesInsert(insertSql));
-                serverMain.awaitTable("t");
+        serverMain.execute(walifyCreate(createSql));
+        serverMain.execute(walifyValuesInsert(insertSql));
+        serverMain.awaitTable("t");
 
-                final List<Object> rows = new ArrayList<>();
-                final byte[] wireType = {0};
-                try (QwpQueryClient client = QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
-                    client.connect();
-                    // Explicit column projection over SELECT * so the part_ts column added
-                    // by walifyCreate stays hidden from the test's row extractor.
-                    client.execute("SELECT " + extractColumnNames(createSql) + " FROM t", new QwpColumnBatchHandler() {
-                        @Override
-                        public void onBatch(QwpColumnBatch batch) {
-                            wireType[0] = batch.getColumnWireType(0);
-                            rowExtractor.extract(batch, rows);
-                        }
-
-                        @Override
-                        public void onEnd(long totalRows) {
-                        }
-
-                        @Override
-                        public void onError(byte status, String message) {
-                            Assert.fail("egress query error: " + message);
-                        }
-                    });
+        final List<Object> rows = new ArrayList<>();
+        final byte[] wireType = {0};
+        try (QwpQueryClient client = QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
+            client.connect();
+            // Explicit column projection over SELECT * so the part_ts column added
+            // by walifyCreate stays hidden from the test's row extractor.
+            client.execute("SELECT " + extractColumnNames(createSql) + " FROM t", new QwpColumnBatchHandler() {
+                @Override
+                public void onBatch(QwpColumnBatch batch) {
+                    wireType[0] = batch.getColumnWireType(0);
+                    rowExtractor.extract(batch, rows);
                 }
-                Assert.assertEquals("wire type code", expectedWireType, wireType[0]);
-                Assert.assertEquals("row count", expectedRowCount, rows.size());
-                asserter.run(rows);
-            }
-        });
+
+                @Override
+                public void onEnd(long totalRows) {
+                }
+
+                @Override
+                public void onError(byte status, String message) {
+                    Assert.fail("egress query error: " + message);
+                }
+            });
+        }
+        Assert.assertEquals("wire type code", expectedWireType, wireType[0]);
+        Assert.assertEquals("row count", expectedRowCount, rows.size());
+        asserter.run(rows);
     }
 
     /**
