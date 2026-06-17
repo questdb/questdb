@@ -87,7 +87,6 @@ jobs:
         quay.io/pypa/manylinux2014_x86_64
       volumes:
         - /nodeglibc217:/nodeglibc217
-        - /nodeglibc217:/__e/node20
         - /nodeglibc217:/__e/node24
     steps:
       - name: Install tools
@@ -101,8 +100,7 @@ jobs:
         # Q: Why do we need this hack at all? A: Many GitHub actions, e.g. actions/checkout, run on Node.js.
         # GitHub deprecated Node.js 20 and now forces actions onto its Node.js 24 build, which needs a newer glibc
         # than manylinux2014 has. Node.js 24 has no glibc 2.17 build, so we install the newest glibc 2.17-compatible
-        # release (Node.js 22 LTS) and mount it over both /__e/node20 and /__e/node24, so it is used no matter which
-        # runtime the runner picks.
+        # release (Node.js 22 LTS) and mount it over /__e/node24, the path the runner now resolves every action to.
         run: |
           curl -LO https://unofficial-builds.nodejs.org/download/release/v22.22.3/node-v22.22.3-linux-x64-glibc-217.tar.xz
           tar -xf node-v22.22.3-linux-x64-glibc-217.tar.xz --strip-components 1 -C /nodeglibc217
