@@ -36,7 +36,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: false
       - name: Build Rust in manylinux2014 (glibc 2.17)
@@ -53,7 +53,7 @@ jobs:
               cargo build --release
               rustc --version --verbose
             '
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: rust-linux-x64
           path: core/rust/qdbr/target/release/libquestdbr.so
@@ -63,7 +63,7 @@ jobs:
     runs-on: ubuntu-22.04-arm
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: false
       - name: Build Rust in manylinux_2_28 (glibc 2.28)
@@ -80,7 +80,7 @@ jobs:
               cargo build --release
               rustc --version --verbose
             '
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: rust-linux-arm64
           path: core/rust/qdbr/target/release/libquestdbr.so
@@ -90,7 +90,7 @@ jobs:
     runs-on: macos-14
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: false
       - name: Build Rust
@@ -98,7 +98,7 @@ jobs:
           export MACOSX_DEPLOYMENT_TARGET=13.0
           cd core/rust/qdbr
           cargo build --release
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: rust-macos-arm64
           path: core/rust/qdbr/target/release/libquestdbr.dylib
@@ -108,7 +108,7 @@ jobs:
     runs-on: macos-15-intel
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: false
       - name: Build Rust
@@ -116,7 +116,7 @@ jobs:
           export MACOSX_DEPLOYMENT_TARGET=13.0
           cd core/rust/qdbr
           cargo build --release
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: rust-macos-x64
           path: core/rust/qdbr/target/release/libquestdbr.dylib
@@ -126,14 +126,14 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: false
       - name: Build Rust
         run: |
           cd core/rust/qdbr
           cargo build --release
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: rust-windows
           path: core/rust/qdbr/target/release/questdbr.dll
@@ -152,7 +152,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: true
 
@@ -179,23 +179,23 @@ jobs:
           echo "${INSTALL_DIR}/bin" >> "$GITHUB_PATH"
 
       # Download all Rust libraries into the classpath so they end up in the JAR
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: rust-linux-x64
           path: core/target/classes/io/questdb/bin/linux-x86-64/
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: rust-linux-arm64
           path: core/target/classes/io/questdb/bin/linux-aarch64/
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: rust-macos-arm64
           path: core/target/classes/io/questdb/bin/darwin-aarch64/
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: rust-macos-x64
           path: core/target/classes/io/questdb/bin/darwin-x86-64/
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: rust-windows
           path: core/target/classes/io/questdb/bin/windows-x86-64/
@@ -216,7 +216,7 @@ jobs:
       # Share the freshly generated attributions with package-windows so the
       # Windows archive ships this same file rather than the committed fallback,
       # which may have drifted. Both archives then carry byte-identical legal/.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: third-party-licenses
           path: THIRD_PARTY_LICENSES.txt
@@ -225,7 +225,7 @@ jobs:
         working-directory: core
         run: mvn package -DskipTests -DskipNative -Dhttp.keepAlive=false -P build-web-console,build-binaries
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: release-linux
           path: core/target/questdb-*.gz
@@ -240,7 +240,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: true
 
@@ -273,7 +273,7 @@ jobs:
           echo "GRAALVM_HOME=$graalHome" >> $env:GITHUB_ENV
           echo "$graalHome\bin" >> $env:GITHUB_PATH
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: rust-windows
           path: core/target/classes/io/questdb/bin/windows-x86-64/
@@ -282,7 +282,7 @@ jobs:
       # package-linux regenerated, so the Windows archive's legal attributions
       # match libquestdbr's actual crates and are identical to the Linux/no-jre
       # archives.
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: third-party-licenses
           path: .
@@ -291,7 +291,7 @@ jobs:
         working-directory: core
         run: mvn package -DskipTests -DskipNative "-Dhttp.keepAlive=false" -P build-web-console,build-binaries
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: release-windows
           path: core/target/questdb-*-rt-*.gz
@@ -308,15 +308,15 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: false
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: release-linux
           path: artifacts/
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: release-windows
           path: artifacts/
