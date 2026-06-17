@@ -282,7 +282,7 @@ public class PartitionUpdaterTest extends AbstractCairoTest {
                 Assert.assertTrue("openAndMapRO must map the _pm", addr != 0);
                 mappedSize = parquetMetaReader.getFileSize();
                 try {
-                    Assert.assertTrue(parquetMetaReader.resolveFooter(Long.MAX_VALUE));
+                    Assert.assertTrue(parquetMetaReader.resolveLastFooter());
                     Assert.assertEquals("physically-last footer resolves to newHead", newHead, parquetMetaReader.getResolvedFileSize());
                 } finally {
                     parquetMetaReader.clear();
@@ -553,7 +553,7 @@ public class PartitionUpdaterTest extends AbstractCairoTest {
                 final long mappedSize = parquetMetaReader.getFileSize();
                 try {
                     Assert.assertEquals("header published to the new head", newHead, parquetMetaReader.getFileSize());
-                    Assert.assertTrue(parquetMetaReader.resolveFooter(Long.MAX_VALUE));
+                    Assert.assertTrue(parquetMetaReader.resolveLastFooter());
                     Assert.assertEquals(newHead, parquetMetaReader.getResolvedFileSize());
                 } finally {
                     parquetMetaReader.clear();

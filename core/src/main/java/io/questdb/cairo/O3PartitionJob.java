@@ -670,16 +670,21 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     // bytes sit past it as a dead tail the next update overwrites.
                     // Truncating would pull pages from under a concurrent reader's
                     // mmap and SIGBUS the JVM -- the hazard this change removes.
-                    // fsync so the leftover tail is durable, not a partial tail.
                     path.of(pathToTable);
                     setPathForParquetPartitionMetadata(path.slash(), timestampType, partitionBy, partitionTimestamp, srcNameTxn);
-                    fd = TableUtils.openRW(ff, path.$(), LOG, cairoConfiguration.getWriterFileOpenOpts());
-                    if (cairoConfiguration.getCommitMode() != CommitMode.NOSYNC) {
-                        // fsyncAndClose closes the fd even when fsync fails, so a
-                        // throw here does not leak the _pm fd.
-                        ff.fsyncAndClose(fd);
-                    } else {
-                        ff.close(fd);
+                    try {
+                        // Make the leftover _pm tail durable, but swallow any error:
+                        // o3BumpErrorCount below must still run to suspend the table.
+                        // fsyncAndClose closes the fd even on failure (no leak), and a
+                        // non-durable dead tail is harmless -- the next update rewrites it.
+                        fd = TableUtils.openRW(ff, path.$(), LOG, cairoConfiguration.getWriterFileOpenOpts());
+                        if (cairoConfiguration.getCommitMode() != CommitMode.NOSYNC) {
+                            ff.fsyncAndClose(fd);
+                        } else {
+                            ff.close(fd);
+                        }
+                    } catch (Throwable pmErr) {
+                        LOG.error().$("could not fsync _pm tail on rollback [path=").$(path).$(", e=").$(pmErr).I$();
                     }
                 }
             }

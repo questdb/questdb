@@ -651,258 +651,74 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
     }
 
     /**
-     * Locates the footer that matches {@code parquetFileSize} via the MVCC
-     * chain walk, validates the header and footer, and populates
-     * {@code footerAddr}, {@code columnCount}, and {@code rowGroupCount}.
-     * Must be called after {@link #of(long, long)} and before any accessor
-     * beyond {@link #getAddr()} / {@link #getFileSize()}.
+     * Resolves the footer whose derived parquet size equals
+     * {@code parquetFileSize} by walking the MVCC chain back from the mapped
+     * tail, then validates it and populates {@code footerAddr},
+     * {@code columnCount} and {@code rowGroupCount}. Call after
+     * {@link #of(long, long)}.
      * <p>
-     * Starting from {@code fileSize}, reads the trailer at
-     * {@code currentSize - 4} to derive the footer offset. If the latest
-     * footer's derived parquet file size does not equal
-     * {@code parquetFileSize}, walks back via each footer's
-     * {@code prev_parquet_meta_file_size}; each step re-applies the
-     * size-then-trailer indirection so its location is re-validated through
-     * its own trailer.
+     * Matching on the committed size (the {@code data.parquet} length, mirrored
+     * in {@code _txn} field 3) skips any orphaned dead footer a rolled-back
+     * in-place update left past the committed head: the {@code _pm} is no longer
+     * truncated, so the physically-last footer can be such an orphan. Pass the
+     * committed size, never the raw mapped size. To deliberately take the
+     * physically-last footer, use {@link #resolveLastFooter()}.
      *
-     * @param parquetFileSize parquet file size from {@code _txn} field 3,
-     *                        used as MVCC version token; pass
-     *                        {@link Long#MAX_VALUE} to take the physically-last
-     *                        footer without MVCC matching. Because the
-     *                        {@code _pm} is no longer truncated on a rolled-back
-     *                        in-place update, the physically-last footer can be
-     *                        an orphaned dead footer; {@link Long#MAX_VALUE} is
-     *                        therefore only safe for a file with no failed or
-     *                        concurrent in-place update (e.g. a freshly staged
-     *                        or read-only {@code _pm}).
-     * @return false if the parquet footer couldn't be found
+     * @param parquetFileSize the committed parquet file size, used as MVCC token
+     * @return false if no matching footer was found
      * @throws CairoException if the format is unsupported or corrupt
      */
     public boolean resolveFooter(long parquetFileSize) {
         final long addr = this.addr;
-        final long parquetMetaFileSize = this.fileSize;
-
-        // Walk the MVCC chain. Each step: read the trailer at
-        // `currentSize - 4` to get the footer length, derive the footer
-        // offset, then check the parquet file size. If it doesn't match,
-        // read `prev_parquet_meta_file_size` from the current footer and
-        // repeat.
-        //
-        // Long.MAX_VALUE is a sentinel: use the latest footer without
-        // MVCC matching. In practice K stays small because
-        // O3PartitionJob triggers a full _pm rewrite when the
-        // unused-bytes ratio exceeds the configured threshold (default
-        // 50%) or absolute unused bytes exceed the limit (default 1 GB).
-        long currentSize = parquetMetaFileSize;
-        long currentOffset;
-        long currentFooterLength;
+        // Walk the MVCC chain back from the mapped tail: each step reads the
+        // trailer at currentSize-4 for the footer length, derives the footer,
+        // and compares its parquet size to the target; on a mismatch it follows
+        // prev_parquet_meta_file_size. The chain stays short -- O3PartitionJob
+        // rewrites the whole _pm once unused bytes pass the configured ratio
+        // (default 50%) or byte cap (default 1 GB).
+        long currentSize = this.fileSize;
         while (true) {
-            currentFooterLength = Integer.toUnsignedLong(
+            long currentFooterLength = Integer.toUnsignedLong(
                     Unsafe.getInt(addr + currentSize - FOOTER_TRAILER_SIZE));
-            currentOffset = currentSize - FOOTER_TRAILER_SIZE - currentFooterLength;
-            // Bound checks use currentSize (the snapshot's committed size)
-            // not parquetMetaFileSize (the mapping size). Intermediate
-            // footers in the MVCC chain only own bytes up to their own
-            // currentSize; using the mapping size would let a corrupted
-            // footer steer reads into a later snapshot's bytes. The
-            // FOOTER_FIXED_SIZE guard ensures the subsequent fixed-field
-            // reads (parquet footer offset/length, prev_size, footer
-            // feature flags) all fall within currentSize.
-            if (currentOffset < HEADER_FIXED_SIZE
-                    || currentOffset + FOOTER_FIXED_SIZE > currentSize) {
-                throw CairoException.critical(0)
-                        .put("invalid _pm footer offset [footerLength=").put(currentFooterLength)
-                        .put(", parquetMetaFileSize=").put(currentSize)
-                        .put(']');
-            }
-            if (parquetFileSize == Long.MAX_VALUE) {
-                break;
-            }
+            long currentOffset = currentSize - FOOTER_TRAILER_SIZE - currentFooterLength;
+            checkFooterOffset(currentOffset, currentFooterLength, currentSize);
 
             long currentAddr = addr + currentOffset;
             long pqFooterOffset = Unsafe.getLong(currentAddr + FOOTER_PARQUET_FOOTER_OFFSET_OFF);
             int pqFooterLength = Unsafe.getInt(currentAddr + FOOTER_PARQUET_FOOTER_LENGTH_OFF);
             long derivedPqSize = pqFooterOffset + Integer.toUnsignedLong(pqFooterLength) + PARQUET_TRAILER_SIZE;
             if (derivedPqSize == parquetFileSize) {
-                break;
+                return validateAndCommitFooter(currentSize, currentOffset, currentFooterLength);
             }
             long prevSize = Unsafe.getLong(currentAddr + FOOTER_PREV_PARQUET_META_FILE_SIZE_OFF);
-            // Reject prevSize values too small to hold a header +
-            // trailer. The next iteration dereferences addr + prevSize
-            // - FOOTER_TRAILER_SIZE, which for prevSize <
-            // FOOTER_TRAILER_SIZE would land before the mapping start.
+            // prevSize must hold at least a header + trailer; the next step reads
+            // its trailer at addr + prevSize - FOOTER_TRAILER_SIZE.
             if (prevSize < HEADER_FIXED_SIZE + FOOTER_TRAILER_SIZE || prevSize >= currentSize) {
                 return false;
             }
             currentSize = prevSize;
         }
+    }
 
-        // Verify the CRC32 of the *resolved* footer (not the physically-last
-        // one) before trusting any of its bytes. With the dead-footer-tolerant
-        // writer the physically-last footer can be an orphaned, rolled-back
-        // footer; only the resolved footer is guaranteed committed and
-        // immutable. Keyed on currentSize so the native reader locates exactly
-        // that footer. Verified once per open; the cached flag stops
-        // re-verifying on subsequent canSkipRowGroup calls. verifyChecksum0
-        // throws CairoException on mismatch, null pointer, or unparseable file.
-        if (!checksumVerified) {
-            verifyChecksum0(addr, currentSize);
-            checksumVerified = true;
-        }
-
-        // Use local variables for all validation. Fields are only
-        // assigned at the very end so that a validation failure leaves
-        // isOpen()==false, preventing double-munmap in callers that
-        // check isOpen() in catch blocks.
-        //
-        // Read columnCount / rowGroupCount as u32 (writer emits Rust u32).
-        // A signed-int interpretation lets bit-31-set values become negative,
-        // making the (long) columnCount * COLUMN_DESCRIPTOR_SIZE arithmetic
-        // negative and silently passing the headerEndOffset bound check;
-        // downstream reads would then land at attacker-controlled offsets.
-        // Reject values that overflow Java int because they cannot be stored
-        // in this reader's int fields and would overflow downstream sizing
-        // arithmetic.
-        long footerAddr = addr + currentOffset;
-        long columnCountLong = Integer.toUnsignedLong(Unsafe.getInt(addr + HEADER_COLUMN_COUNT_OFF));
-        if (columnCountLong > Integer.MAX_VALUE) {
-            throw CairoException.critical(0)
-                    .put("invalid _pm columnCount [count=").put(columnCountLong)
-                    .put(", parquetMetaFileSize=").put(parquetMetaFileSize)
-                    .put(']');
-        }
-        int columnCount = (int) columnCountLong;
-        long headerEndOffset = HEADER_FIXED_SIZE + columnCountLong * COLUMN_DESCRIPTOR_SIZE;
-        if (headerEndOffset > parquetMetaFileSize) {
-            throw CairoException.critical(0)
-                    .put("invalid _pm columnCount [count=").put(columnCount)
-                    .put(", parquetMetaFileSize=").put(parquetMetaFileSize)
-                    .put(']');
-        }
-        long rowGroupCountLong = Integer.toUnsignedLong(Unsafe.getInt(footerAddr + FOOTER_ROW_GROUP_COUNT_OFF));
-        if (rowGroupCountLong > Integer.MAX_VALUE) {
-            throw CairoException.critical(0)
-                    .put("invalid _pm rowGroupCount [count=").put(rowGroupCountLong)
-                    .put(", footerOffset=").put(currentOffset)
-                    .put(", parquetMetaFileSize=").put(parquetMetaFileSize)
-                    .put(']');
-        }
-        int rowGroupCount = (int) rowGroupCountLong;
-        final long baseFooterLength = FOOTER_FIXED_SIZE + rowGroupCountLong * ROW_GROUP_ENTRY_SIZE + Integer.BYTES;
-        if (currentOffset + baseFooterLength > parquetMetaFileSize) {
-            throw CairoException.critical(0)
-                    .put("invalid _pm footer length [rowGroupCount=").put(rowGroupCount)
-                    .put(", footerOffset=").put(currentOffset)
-                    .put(", parquetMetaFileSize=").put(parquetMetaFileSize)
-                    .put(']');
-        }
-        // Validate designated timestamp column index. The writer emits -1
-        // when no DTS is set, otherwise a 0-based column index. Any other
-        // value (e.g. a sentinel from corruption or a stale-format file)
-        // would feed downstream readers an out-of-range index that
-        // silently aliases unrelated columns or reads past the descriptor
-        // table.
-        int dtsIndex = Unsafe.getInt(addr + HEADER_DESIGNATED_TS_OFF);
-        if (dtsIndex < -1 || dtsIndex >= columnCount) {
-            throw CairoException.critical(0)
-                    .put("invalid _pm designated timestamp column index [dtsIndex=").put(dtsIndex)
-                    .put(", columnCount=").put(columnCount)
-                    .put(']');
-        }
-        long featureFlags = Unsafe.getLong(addr + HEADER_FEATURE_FLAGS_OFF);
-        long unknownRequired = featureFlags & REQUIRED_FEATURE_MASK;
-        if (unknownRequired != 0) {
-            throw CairoException.critical(0)
-                    .put("unsupported required _pm feature flags [flags=0x")
-                    .put(Long.toHexString(unknownRequired))
-                    .put(']');
-        }
-        if ((featureFlags & SORTING_IS_DTS_ASC_FEATURE_FLAG) == 0) {
-            long sortingColumnCountLong = Integer.toUnsignedLong(Unsafe.getInt(addr + HEADER_SORTING_COL_CNT_OFF));
-            if (headerEndOffset + sortingColumnCountLong * Integer.BYTES > parquetMetaFileSize) {
-                throw CairoException.critical(0)
-                        .put("invalid _pm sorting column count [count=").put(sortingColumnCountLong)
-                        .put(", parquetMetaFileSize=").put(parquetMetaFileSize)
-                        .put(']');
-            }
-        }
-        long footerFeatureFlags = Unsafe.getLong(footerAddr + FOOTER_FEATURE_FLAGS_OFF);
-        long unknownRequiredFooter = footerFeatureFlags & REQUIRED_FEATURE_MASK;
-        if (unknownRequiredFooter != 0) {
-            throw CairoException.critical(0)
-                    .put("unsupported required _pm footer feature flags [flags=0x")
-                    .put(Long.toHexString(unknownRequiredFooter))
-                    .put(']');
-        }
-
-        // Cross-validate actual footer size from the selected footer's
-        // trailer against the expected base size. Extra bytes without
-        // feature flags to justify them indicate corruption. Both
-        // header and footer optional flag bits can attach sections, so
-        // either set is enough. The check applies to whichever footer
-        // the MVCC walk settled on — each step reads its own trailer,
-        // so this covers every footer in the chain. baseFooterLength
-        // already includes CRC (Integer.BYTES at the end). The
-        // trailer's footer_length covers from footer start through CRC.
-        long knownOptionalFeatureFlags = featureFlags & OPTIONAL_FEATURE_MASK;
-        long knownOptionalFooterFeatureFlags = footerFeatureFlags & OPTIONAL_FEATURE_MASK;
-        if (knownOptionalFeatureFlags == 0
-                && knownOptionalFooterFeatureFlags == 0
-                && currentFooterLength != baseFooterLength) {
-            throw CairoException.critical(0)
-                    .put("unexpected _pm footer feature bytes [expected=").put(baseFooterLength)
-                    .put(", actual=").put(currentFooterLength)
-                    .put(']');
-        }
-
-        long minBlockSize = ROW_GROUP_BLOCK_HEADER_SIZE + (long) columnCount * COLUMN_CHUNK_SIZE;
-        for (int i = 0; i < rowGroupCount; i++) {
-            long entryAddr = footerAddr + FOOTER_FIXED_SIZE + (long) i * ROW_GROUP_ENTRY_SIZE;
-            int stored = Unsafe.getInt(entryAddr);
-            long blockOffset = Integer.toUnsignedLong(stored) << BLOCK_ALIGNMENT_SHIFT;
-            if (blockOffset + minBlockSize > parquetMetaFileSize) {
-                throw CairoException.critical(0)
-                        .put("invalid _pm row group block offset [rowGroup=").put(i)
-                        .put(", offset=").put(blockOffset)
-                        .put(", parquetMetaFileSize=").put(parquetMetaFileSize)
-                        .put(']');
-            }
-        }
-
-        // Validate column descriptor name pointers. Each descriptor stores a
-        // (nameOffset, nameLength) pair pointing into the same mapping.
-        // Without validation, getColumnName would build a flyweight over an
-        // arbitrary memory region (UB) and even nameOffset+nameLength could
-        // wrap. Reject offsets that land in the fixed header / column
-        // descriptor area, and pairs whose end exceeds the committed size.
-        // nameLength is read as int and treated as unsigned.
-        for (int i = 0; i < columnCount; i++) {
-            long descAddr = addr + HEADER_FIXED_SIZE + (long) i * COLUMN_DESCRIPTOR_SIZE;
-            long nameOffset = Unsafe.getLong(descAddr + COL_DESC_NAME_OFFSET_OFF);
-            long nameLength = Integer.toUnsignedLong(Unsafe.getInt(descAddr + COL_DESC_NAME_LENGTH_OFF));
-            // nameOffset is signed long from disk; reject negatives explicitly.
-            // nameOffset + nameLength can overflow when nameOffset is large;
-            // compare nameLength against the remaining space instead of
-            // computing the sum.
-            if (nameOffset < headerEndOffset
-                    || nameOffset > parquetMetaFileSize
-                    || nameLength > parquetMetaFileSize - nameOffset) {
-                throw CairoException.critical(0)
-                        .put("invalid _pm column name pointer [columnIndex=").put(i)
-                        .put(", nameOffset=").put(nameOffset)
-                        .put(", nameLength=").put(nameLength)
-                        .put(", headerEndOffset=").put(headerEndOffset)
-                        .put(", parquetMetaFileSize=").put(parquetMetaFileSize)
-                        .put(']');
-            }
-        }
-
-        // All validations passed — commit state.
-        this.footerAddr = footerAddr;
-        this.columnCount = columnCount;
-        this.rowGroupCount = rowGroupCount;
-        this.resolvedFileSize = currentSize;
-        return true;
+    /**
+     * Resolves the physically-last footer (its trailer sits at the mapped tail),
+     * bypassing MVCC matching, then validates and commits it exactly as
+     * {@link #resolveFooter(long)} does. Use only when no committed parquet size
+     * is available to match on and no rolled-back in-place update can have left
+     * an orphaned dead footer at the tail -- e.g. a freshly staged or read-only
+     * {@code _pm}. Otherwise prefer {@link #resolveFooter(long)}.
+     *
+     * @return true once the footer is resolved (throws rather than returning false)
+     * @throws CairoException if the format is unsupported or corrupt
+     */
+    public boolean resolveLastFooter() {
+        final long addr = this.addr;
+        final long currentSize = this.fileSize;
+        final long currentFooterLength = Integer.toUnsignedLong(
+                Unsafe.getInt(addr + currentSize - FOOTER_TRAILER_SIZE));
+        final long currentOffset = currentSize - FOOTER_TRAILER_SIZE - currentFooterLength;
+        checkFooterOffset(currentOffset, currentFooterLength, currentSize);
+        return validateAndCommitFooter(currentSize, currentOffset, currentFooterLength);
     }
 
     private static native boolean canSkipRowGroup0(
@@ -937,6 +753,19 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
      */
     private static native void verifyChecksum0(long addr, long fileSize);
 
+    private void checkFooterOffset(long currentOffset, long currentFooterLength, long currentSize) {
+        // Bound the footer within currentSize -- the chain step's committed size,
+        // not the mapping size: an intermediate footer owns only its own bytes,
+        // and FOOTER_FIXED_SIZE covers the fixed-field reads that follow.
+        if (currentOffset < HEADER_FIXED_SIZE
+                || currentOffset + FOOTER_FIXED_SIZE > currentSize) {
+            throw CairoException.critical(0)
+                    .put("invalid _pm footer offset [footerLength=").put(currentFooterLength)
+                    .put(", parquetMetaFileSize=").put(currentSize)
+                    .put(']');
+        }
+    }
+
     /**
      * Computes the absolute memory address of a column chunk within a row group block.
      * Column chunks start after the row group block header (NUM_ROWS) and are 64 bytes each.
@@ -962,6 +791,153 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
         long entryAddr = footerAddr + FOOTER_FIXED_SIZE + (long) rowGroupIndex * ROW_GROUP_ENTRY_SIZE;
         int stored = Unsafe.getInt(entryAddr);
         return addr + (Integer.toUnsignedLong(stored) << BLOCK_ALIGNMENT_SHIFT);
+    }
+
+    /**
+     * Validates the footer located at {@code currentOffset} (whose committed
+     * head is {@code currentSize}) and, on success, commits {@code footerAddr},
+     * {@code columnCount}, {@code rowGroupCount} and {@code resolvedFileSize}.
+     * Shared by {@link #resolveFooter(long)} and {@link #resolveLastFooter()}.
+     */
+    private boolean validateAndCommitFooter(long currentSize, long currentOffset, long currentFooterLength) {
+        final long addr = this.addr;
+        final long parquetMetaFileSize = this.fileSize;
+
+        // CRC-verify the resolved footer (keyed on currentSize) before trusting
+        // its bytes: the physically-last footer can be an orphaned rolled-back
+        // one, so only the resolved footer is guaranteed committed. Cached after
+        // the first open; verifyChecksum0 throws on a mismatch or bad file.
+        if (!checksumVerified) {
+            verifyChecksum0(addr, currentSize);
+            checksumVerified = true;
+        }
+
+        // Validate into locals and assign fields only at the end, so a failure
+        // leaves isOpen()==false (no double-munmap in a caller's catch block).
+        // Read columnCount/rowGroupCount as u32: a negative signed value would
+        // make the descriptor-size arithmetic negative and slip past the bounds.
+        long footerAddr = addr + currentOffset;
+        long columnCountLong = Integer.toUnsignedLong(Unsafe.getInt(addr + HEADER_COLUMN_COUNT_OFF));
+        if (columnCountLong > Integer.MAX_VALUE) {
+            throw CairoException.critical(0)
+                    .put("invalid _pm columnCount [count=").put(columnCountLong)
+                    .put(", parquetMetaFileSize=").put(parquetMetaFileSize)
+                    .put(']');
+        }
+        int columnCount = (int) columnCountLong;
+        long headerEndOffset = HEADER_FIXED_SIZE + columnCountLong * COLUMN_DESCRIPTOR_SIZE;
+        if (headerEndOffset > parquetMetaFileSize) {
+            throw CairoException.critical(0)
+                    .put("invalid _pm columnCount [count=").put(columnCount)
+                    .put(", parquetMetaFileSize=").put(parquetMetaFileSize)
+                    .put(']');
+        }
+        long rowGroupCountLong = Integer.toUnsignedLong(Unsafe.getInt(footerAddr + FOOTER_ROW_GROUP_COUNT_OFF));
+        if (rowGroupCountLong > Integer.MAX_VALUE) {
+            throw CairoException.critical(0)
+                    .put("invalid _pm rowGroupCount [count=").put(rowGroupCountLong)
+                    .put(", footerOffset=").put(currentOffset)
+                    .put(", parquetMetaFileSize=").put(parquetMetaFileSize)
+                    .put(']');
+        }
+        int rowGroupCount = (int) rowGroupCountLong;
+        final long baseFooterLength = FOOTER_FIXED_SIZE + rowGroupCountLong * ROW_GROUP_ENTRY_SIZE + Integer.BYTES;
+        if (currentOffset + baseFooterLength > parquetMetaFileSize) {
+            throw CairoException.critical(0)
+                    .put("invalid _pm footer length [rowGroupCount=").put(rowGroupCount)
+                    .put(", footerOffset=").put(currentOffset)
+                    .put(", parquetMetaFileSize=").put(parquetMetaFileSize)
+                    .put(']');
+        }
+        // Designated timestamp index must be -1 (unset) or a valid column index;
+        // any other value would alias unrelated columns downstream.
+        int dtsIndex = Unsafe.getInt(addr + HEADER_DESIGNATED_TS_OFF);
+        if (dtsIndex < -1 || dtsIndex >= columnCount) {
+            throw CairoException.critical(0)
+                    .put("invalid _pm designated timestamp column index [dtsIndex=").put(dtsIndex)
+                    .put(", columnCount=").put(columnCount)
+                    .put(']');
+        }
+        long featureFlags = Unsafe.getLong(addr + HEADER_FEATURE_FLAGS_OFF);
+        long unknownRequired = featureFlags & REQUIRED_FEATURE_MASK;
+        if (unknownRequired != 0) {
+            throw CairoException.critical(0)
+                    .put("unsupported required _pm feature flags [flags=0x")
+                    .put(Long.toHexString(unknownRequired))
+                    .put(']');
+        }
+        if ((featureFlags & SORTING_IS_DTS_ASC_FEATURE_FLAG) == 0) {
+            long sortingColumnCountLong = Integer.toUnsignedLong(Unsafe.getInt(addr + HEADER_SORTING_COL_CNT_OFF));
+            if (headerEndOffset + sortingColumnCountLong * Integer.BYTES > parquetMetaFileSize) {
+                throw CairoException.critical(0)
+                        .put("invalid _pm sorting column count [count=").put(sortingColumnCountLong)
+                        .put(", parquetMetaFileSize=").put(parquetMetaFileSize)
+                        .put(']');
+            }
+        }
+        long footerFeatureFlags = Unsafe.getLong(footerAddr + FOOTER_FEATURE_FLAGS_OFF);
+        long unknownRequiredFooter = footerFeatureFlags & REQUIRED_FEATURE_MASK;
+        if (unknownRequiredFooter != 0) {
+            throw CairoException.critical(0)
+                    .put("unsupported required _pm footer feature flags [flags=0x")
+                    .put(Long.toHexString(unknownRequiredFooter))
+                    .put(']');
+        }
+
+        // Cross-check the footer's actual length against its base size: extra
+        // bytes with no optional feature flag (header or footer) to justify them
+        // signal corruption. baseFooterLength already includes the trailing CRC.
+        long knownOptionalFeatureFlags = featureFlags & OPTIONAL_FEATURE_MASK;
+        long knownOptionalFooterFeatureFlags = footerFeatureFlags & OPTIONAL_FEATURE_MASK;
+        if (knownOptionalFeatureFlags == 0
+                && knownOptionalFooterFeatureFlags == 0
+                && currentFooterLength != baseFooterLength) {
+            throw CairoException.critical(0)
+                    .put("unexpected _pm footer feature bytes [expected=").put(baseFooterLength)
+                    .put(", actual=").put(currentFooterLength)
+                    .put(']');
+        }
+
+        long minBlockSize = ROW_GROUP_BLOCK_HEADER_SIZE + (long) columnCount * COLUMN_CHUNK_SIZE;
+        for (int i = 0; i < rowGroupCount; i++) {
+            long entryAddr = footerAddr + FOOTER_FIXED_SIZE + (long) i * ROW_GROUP_ENTRY_SIZE;
+            int stored = Unsafe.getInt(entryAddr);
+            long blockOffset = Integer.toUnsignedLong(stored) << BLOCK_ALIGNMENT_SHIFT;
+            if (blockOffset + minBlockSize > parquetMetaFileSize) {
+                throw CairoException.critical(0)
+                        .put("invalid _pm row group block offset [rowGroup=").put(i)
+                        .put(", offset=").put(blockOffset)
+                        .put(", parquetMetaFileSize=").put(parquetMetaFileSize)
+                        .put(']');
+            }
+        }
+
+        // Validate column-name pointers: an unchecked (nameOffset, nameLength)
+        // would let getColumnName build a flyweight over arbitrary memory.
+        // Compare length against the remaining space to avoid offset+length wrap.
+        for (int i = 0; i < columnCount; i++) {
+            long descAddr = addr + HEADER_FIXED_SIZE + (long) i * COLUMN_DESCRIPTOR_SIZE;
+            long nameOffset = Unsafe.getLong(descAddr + COL_DESC_NAME_OFFSET_OFF);
+            long nameLength = Integer.toUnsignedLong(Unsafe.getInt(descAddr + COL_DESC_NAME_LENGTH_OFF));
+            if (nameOffset < headerEndOffset
+                    || nameOffset > parquetMetaFileSize
+                    || nameLength > parquetMetaFileSize - nameOffset) {
+                throw CairoException.critical(0)
+                        .put("invalid _pm column name pointer [columnIndex=").put(i)
+                        .put(", nameOffset=").put(nameOffset)
+                        .put(", nameLength=").put(nameLength)
+                        .put(", headerEndOffset=").put(headerEndOffset)
+                        .put(", parquetMetaFileSize=").put(parquetMetaFileSize)
+                        .put(']');
+            }
+        }
+
+        // All checks passed; commit state.
+        this.footerAddr = footerAddr;
+        this.columnCount = columnCount;
+        this.rowGroupCount = rowGroupCount;
+        this.resolvedFileSize = currentSize;
+        return true;
     }
 
     static {

@@ -111,6 +111,15 @@ public class PartitionUpdater implements QuietCloseable {
         return getResultUnusedBytes(ptr);
     }
 
+    /**
+     * Binds this updater to the source/target fds and sizes for an in-place
+     * {@code _pm} update. Three easily-confused sizes: {@code parquetMetaFileSize}
+     * is the parse anchor (the committed head from {@code _txn}, not the raw
+     * header a rolled-back update may leave ahead); {@code appendBase} is the
+     * header offset where new footer bytes land (equals the anchor outside the
+     * crash window); {@code existingParquetFileSize} is the {@code data.parquet}
+     * size, with {@code <= 0} selecting the full-create path.
+     */
     public void of(
             @Transient LPSZ srcPath,
             int readerFd,
@@ -126,7 +135,7 @@ public class PartitionUpdater implements QuietCloseable {
             double bloomFilterFpp,
             double minCompressionRatio,
             int parquetMetaFd,
-            long parquetFileSize,
+            long parquetMetaFileSize,
             long appendBase,
             long existingParquetFileSize
     ) {
@@ -149,7 +158,7 @@ public class PartitionUpdater implements QuietCloseable {
                 bloomFilterFpp,
                 minCompressionRatio,
                 parquetMetaFd,
-                parquetFileSize,
+                parquetMetaFileSize,
                 appendBase,
                 existingParquetFileSize
         );
@@ -242,7 +251,7 @@ public class PartitionUpdater implements QuietCloseable {
             double bloomFilterFpp,
             double minCompressionRatio,
             int parquetMetaFd,
-            long parquetFileSize,
+            long parquetMetaFileSize,
             long appendBase,
             long existingParquetFileSize
     ) throws CairoException;

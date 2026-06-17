@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.parquet;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
@@ -3211,6 +3212,112 @@ public class ParquetWriteTest extends AbstractCairoTest {
                             8\t2020-01-01T07:00:00.000000Z
                             100\t2020-01-02T00:00:00.000000Z
                             """);
+        });
+    }
+
+    @Test
+    public void testRollbackFsyncFailureStillSuspends() throws Exception {
+        // C2 regression guard. The rollback fsync of the leftover _pm tail
+        // (ff.fsyncAndClose) can throw; the fix swallows it so o3BumpErrorCount
+        // still runs and the table suspends. Without the swallow, the failed
+        // update would commit as a success. This injects the fault and checks it.
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "1.0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, Long.MAX_VALUE);
+
+        AtomicBoolean armed = new AtomicBoolean(false);
+        AtomicInteger openROCount = new AtomicInteger(0);
+        // Set when the 2nd data.parquet openRO fails (the update is about to
+        // roll back). The rollback's _pm fsyncAndClose is the next such call.
+        AtomicBoolean rollingBack = new AtomicBoolean(false);
+        AtomicInteger rollbackFsyncFailures = new AtomicInteger(0);
+        FilesFacade dodgyFacade = new TestFilesFacadeImpl() {
+            @Override
+            public void fsyncAndClose(long fd) {
+                if (rollingBack.compareAndSet(true, false)) {
+                    // Mirror the real fsyncAndClose: close the fd even on fsync
+                    // failure (so it never leaks), then throw -- the exact hazard
+                    // C2 guards against.
+                    rollbackFsyncFailures.incrementAndGet();
+                    super.close(fd);
+                    throw CairoException.critical(5).put("injected _pm rollback fsync failure");
+                }
+                super.fsyncAndClose(fd);
+            }
+
+            @Override
+            public long openRO(LPSZ name) {
+                if (armed.get() && Utf8s.endsWithAscii(name, "data.parquet")) {
+                    // 2nd openRO (updateParquetIndexes) fails: the in-place update
+                    // rolls back, after updateFileMetadata grew _pm.
+                    if (openROCount.incrementAndGet() == 2) {
+                        rollingBack.set(true);
+                        return -1;
+                    }
+                }
+                return super.openRO(name);
+            }
+        };
+
+        assertMemoryLeak(dodgyFacade, () -> {
+            execute(
+                    """
+                            CREATE TABLE x (x INT, ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(x, ts) VALUES
+                            (1, '2020-01-01T00:00:00.000Z'),
+                            (2, '2020-01-01T01:00:00.000Z'),
+                            (3, '2020-01-01T02:00:00.000Z'),
+                            (4, '2020-01-01T03:00:00.000Z'),
+                            (5, '2020-01-01T04:00:00.000Z'),
+                            (6, '2020-01-01T05:00:00.000Z'),
+                            (7, '2020-01-01T06:00:00.000Z'),
+                            (8, '2020-01-01T07:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(x, ts) VALUES (100, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            TableToken tableToken = engine.verifyTableName("x");
+
+            armed.set(true);
+            execute(
+                    """
+                            INSERT INTO x(x, ts) VALUES
+                            (9, '2020-01-01T00:30:00.000Z'),
+                            (10, '2020-01-01T01:30:00.000Z')
+                            """
+            );
+            drainWalQueue();
+            armed.set(false);
+
+            // The rollback fsync fault fired, yet the table still suspended: the
+            // swallowed exception did not skip o3BumpErrorCount.
+            Assert.assertEquals("rollback fsync fault must have fired once", 1, rollbackFsyncFailures.get());
+            Assert.assertTrue(
+                    "table must suspend despite the rollback fsync failure",
+                    engine.getTableSequencerAPI().isSuspended(tableToken)
+            );
+
+            // Recovery still works once the fault is disarmed: the retried update
+            // overwrites the dead tail from the committed head.
+            execute("ALTER TABLE x RESUME WAL");
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+
+            assertQuery("SELECT count() FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n11\n");
         });
     }
 
