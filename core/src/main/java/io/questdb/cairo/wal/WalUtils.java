@@ -55,9 +55,11 @@ public class WalUtils {
     public static final int METADATA_WALID = -1;
     public static final int MIN_WAL_ID = DROP_TABLE_WAL_ID;
     // Per-table marker file written on the freshly-created table of an ALTER TABLE ... REBASE WAL. Lives
-    // in the table dir and is permanent (survives restart, never removed). getReplicationStatus reports
-    // REBASE_NEW so the uploader skips the empty first txn and records it in the replication index, and a
-    // replica stalls instead of building the table from empty until a physical copy arrives.
+    // in the table dir and is permanent (survives restart, never removed). When the uploader first records
+    // the table in the replication index it stats this marker and, if present, skips the empty seed txn and
+    // records first_txn=2; a replica stalls instead of building the table from empty until a physical copy
+    // arrives. This is handled entirely via the marker + first_txn, not via a getReplicationStatus byte
+    // (that callback only ever returns ACTIVE/SUSPENDED/DISABLED).
     public static final String REBASE_NEW_FILE_NAME = "_rebase_new";
     // Per-table marker written on the OLD (source) dir of an ALTER TABLE ... REBASE WAL. The uploader
     // stats it as the source dir winds down and records the table in the replication index with the

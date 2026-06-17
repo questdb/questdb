@@ -1511,9 +1511,11 @@ public class CairoEngine implements Closeable, WriterSource {
 
     /**
      * Durably marks the table rebased on this node ({@code ALTER TABLE ... REBASE WAL}). No-op in OSS,
-     * which has no replication; the enterprise engine overrides it to write a per-table marker so
-     * getReplicationStatus reports REBASED (the uploader records it in the replication index instead of a
-     * drop, the downloader keeps the data and stops following the table). Must be idempotent.
+     * which has no replication; the enterprise engine overrides it to write a permanent per-table marker
+     * ({@code _rebase_new}). When the uploader first records the table in the replication index it stats
+     * the marker and, if present, skips the empty seed txn and records {@code first_txn=2}. This is handled
+     * via the marker + first_txn, not via a getReplicationStatus byte (that callback only ever returns
+     * ACTIVE/SUSPENDED/DISABLED). Must be idempotent.
      */
     public void markRebaseNew(TableToken tableToken) {
         // no-op in OSS
@@ -1521,11 +1523,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public boolean notifyDropped(TableToken tableToken) {
         if (tableNameRegistry.dropTable(tableToken)) {
-            readerPool.notifyDropped(tableToken, false);
-            walWriterPool.notifyDropped(tableToken, false);
-            viewWalWriterPool.notifyDropped(tableToken, false);
-            tableMetadataPool.notifyDropped(tableToken, false);
-            sequencerMetadataPool.notifyDropped(tableToken, false);
+            notifyPoolsTableDropped(tableToken, false);
             final MatViewRefreshTask matViewRefreshTask = tlMatViewRefreshTask.get();
             matViewRefreshTask.clear();
             matViewRefreshTask.baseTableToken = tableToken;
@@ -1599,8 +1597,8 @@ public class CairoEngine implements Closeable, WriterSource {
     /**
      * Rebases a hard-suspended WAL table ({@code ALTER TABLE ... REBASE WAL}): clones the applied data
      * into a new dir with a new tableId and a brand-new sequencer (seqTxn reset to 0), discarding all
-     * non-applied WAL (including pending structural changes), marks the new table rebased and seeds an
-     * empty first transaction (so real data starts at seqTxn 2), then repoints the logical name to the
+     * non-applied WAL (including pending structural changes), marks the new table rebased and seeds two
+     * empty transactions (so real data starts at seqTxn 3), then repoints the logical name to the
      * new dir and drops the old one. On the replica, the rebased new table is recorded in the replication
      * index so it stalls (keeps no empty data) until a physical copy of the table arrives.
      * <p>
@@ -1621,9 +1619,9 @@ public class CairoEngine implements Closeable, WriterSource {
      * reconstructs the table into {@code targetDirName} - the dir the primary already chose for its rebase
      * - so the replica follows the primary's rebase (e.g. past a poison-pill WAL transaction that stalls
      * apply at the same seqTxn on both nodes) without a full physical copy. It does NOT mark the new table
-     * rebased, so the replica keeps following replication into this dir; the empty seed it commits is
-     * local-only (never uploaded) and only advances the new sequencer to seqTxn 1 so the downloader
-     * resumes from the primary's seqTxn 2 instead of stalling. Valid only on a read-only replica
+     * rebased, so the replica keeps following replication into this dir; the empty seeds it commits are
+     * local-only (never uploaded) and only advance the new sequencer to seqTxn 2 so the downloader
+     * resumes from the primary's seqTxn 3 instead of stalling. Valid only on a read-only replica
      * (enforced by {@link #assertRebaseRole(boolean)}).
      *
      * @return the new table token
@@ -1688,11 +1686,7 @@ public class CairoEngine implements Closeable, WriterSource {
     public void removeTableToken(TableToken tableToken) {
         tableNameRegistry.purgeToken(tableToken);
         tableSequencerAPI.purgeTxnTracker(tableToken.getDirName());
-        readerPool.notifyDropped(tableToken, true);
-        walWriterPool.notifyDropped(tableToken, true);
-        viewWalWriterPool.notifyDropped(tableToken, true);
-        tableMetadataPool.notifyDropped(tableToken, true);
-        sequencerMetadataPool.notifyDropped(tableToken, true);
+        notifyPoolsTableDropped(tableToken, true);
         PoolListener listener = getPoolListener();
         if (listener != null) {
             listener.onEvent(
@@ -2250,6 +2244,14 @@ public class CairoEngine implements Closeable, WriterSource {
         return state.getViewMetadata();
     }
 
+    private void notifyPoolsTableDropped(TableToken tableToken, boolean fullDropped) {
+        readerPool.notifyDropped(tableToken, fullDropped);
+        walWriterPool.notifyDropped(tableToken, fullDropped);
+        viewWalWriterPool.notifyDropped(tableToken, fullDropped);
+        tableMetadataPool.notifyDropped(tableToken, fullDropped);
+        sequencerMetadataPool.notifyDropped(tableToken, fullDropped);
+    }
+
     private void notifyViewStoresAboutDrop(TableToken droppedToken) {
         viewGraph.removeView(droppedToken);
         viewStateStore.removeViewState(droppedToken);
@@ -2378,7 +2380,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 // Mark the new table rebased BEFORE it becomes observable to the uploader: registerTable
                 // below creates the sequencer and notifies the uploader, whose very first poll records the
                 // index entry. If the _rebase_new marker is not yet present at that poll, getReplicationStatus
-                // returns ACTIVE and the uploader locks first_txn=0 instead of 2 (the empty seed would then
+                // returns ACTIVE and the uploader locks first_txn=0 instead of 2 (the empty seeds would then
                 // be uploaded and a replica would build the table from an incomplete baseline). The replica
                 // variant follows the primary's dir, so it must NOT mark rebased (it keeps following).
                 if (!replicaVariant) {
@@ -2405,10 +2407,13 @@ public class CairoEngine implements Closeable, WriterSource {
                 tableNameRegistry.rebaseSwap(oldToken, newToken);
                 swapped = true;
 
-                // Seed an empty first transaction so real data starts at seqTxn 2 (the uploader skips
-                // seqTxn 1). On a replica this seed is local-only (never uploaded): it advances the new
-                // sequencer to seqTxn 1 so the downloader resumes from the primary's seqTxn 2 rather than
-                // stalling on the missing baseline below first_txn.
+                // Seed two empty transactions so real data starts at seqTxn 3 (the uploader skips seqTxn 1
+                // and records seqTxn 2 as first_txn=2). The second seed is what stops an idle rebased table
+                // busy-spinning the uploader: it ensures max_txn >= 2 so the uploader has a seqTxn 2 to
+                // settle on even when no data follows (see WalWriter.commitRebaseSeed). On a replica these
+                // seeds are local-only (never uploaded): they advance the new sequencer to seqTxn 2 so the
+                // downloader resumes from the primary's seqTxn 3 rather than stalling on the missing
+                // baseline below first_txn.
                 try (WalWriter walWriter = getWalWriter(newToken)) {
                     walWriter.commitRebaseSeed();
                 }
@@ -2492,7 +2497,14 @@ public class CairoEngine implements Closeable, WriterSource {
                 ff.removeQuiet(p.trimTo(len).concat(TableUtils.META_FILE_NAME).$());
             }
             tableSequencerAPI.dropTable(oldToken, false);
-            removeTableToken(oldToken);
+            // Keep the old dir's reverse-map entry in the dropped state rebaseSwap already set, and only
+            // evict its pooled resources (exactly what a normal WAL drop does). Calling removeTableToken
+            // here would purgeToken the entry, but WalPurgeJob enumerates tables solely via the reverse
+            // map (forAllWalTables); with the entry gone it would never visit the dir and never reclaim
+            // it, leaking the dir - txn_seq, _rebase_source marker, symbol maps - forever. Leaving the
+            // dropped entry lets WalPurgeJob sweep the dir like any dropped table (and it is WalPurgeJob
+            // that calls removeTableToken once the dir is actually deleted).
+            notifyPoolsTableDropped(oldToken, false);
             if (oldToken.isMatView()) {
                 // Drop the old mat view's graph/state entries (keyed by the old dir name).
                 matViewStateStore.removeViewState(oldToken);

@@ -59,6 +59,7 @@ import io.questdb.cairo.wal.WalDataRecord;
 import io.questdb.cairo.wal.WalDirectoryPolicy;
 import io.questdb.cairo.wal.WalEventCursor;
 import io.questdb.cairo.wal.WalEventReader;
+import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalReader;
 import io.questdb.cairo.wal.WalTxnDetails;
 import io.questdb.cairo.wal.WalTxnType;
@@ -5123,6 +5124,72 @@ public class WalWriterTest extends AbstractCairoTest {
             // Only the applied row survives; the pending insert AND the structural add-column are discarded.
             assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n1\n");
             assertQuery("select count() from table_columns('t')").noLeakCheck().expectSize().noRandomAccess().returns("count\n2\n");
+        });
+    }
+
+    @Test
+    public void testRebaseWalReclaimsOldTableDirAfterPurge() throws Exception {
+        // Regression test for M1 [OSS]: REBASE WAL must NOT leak the old table dir. The teardown leaves the
+        // old dir's reverse-map entry in the dropped state rebaseSwap set (it does not purgeToken it), so
+        // WalPurgeJob - which enumerates tables solely via forAllWalTables (the reverse map) - still visits
+        // the dir and reclaims it like any dropped table. Before the fix the teardown called
+        // removeTableToken, which erased the entry, so the purge job never visited the dir and it leaked
+        // forever (txn_seq, _rebase_source marker, symbol maps) - exactly the oversized log the operator
+        // rebased to shed.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x int) timestamp(ts) partition by day wal");
+            execute("insert into t values" +
+                    " ('2024-01-01T00:00:00.000000Z', 1)," +
+                    " ('2024-01-02T00:00:00.000000Z', 2)," +
+                    " ('2024-01-03T00:00:00.000000Z', 3)");
+            drainWalQueue();
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n3\n");
+
+            final TableToken oldToken = engine.verifyTableName("t");
+
+            // Rebase requires the table to be hard-suspended first.
+            execute("alter table t suspend wal");
+            execute("alter table t rebase wal");
+            drainWalQueue();
+
+            // The rebase swapped to a fresh dir; the old dir's entry is kept but marked dropped (so it no
+            // longer resolves by dir name, yet WalPurgeJob can still enumerate it via includeDropped).
+            final TableToken newToken = engine.verifyTableName("t");
+            Assert.assertNotEquals(oldToken.getDirName(), newToken.getDirName());
+            Assert.assertNull(engine.getTableTokenByDirName(oldToken.getDirName()));
+            Assert.assertTrue("old dir entry must be kept as dropped, not purged", engine.isTableDropped(oldToken));
+
+            // Close inactive readers/writers/sequencers, drain the WAL queue, then run WalPurgeJob to
+            // completion - the reclamation path that deletes dropped table dirs.
+            engine.releaseInactive();
+            drainWalQueue();
+            try (WalPurgeJob job = new WalPurgeJob(
+                    engine,
+                    configuration.getFilesFacade(),
+                    configuration.getMicrosecondClock())
+            ) {
+                //noinspection StatementWithEmptyBody
+                while (job.run(0)) {
+                }
+            }
+
+            // The old table dir (with its _rebase_source marker and txn_seq log) is gone, and the purge job
+            // removed the reverse-map entry too - no permanent leak.
+            final FilesFacade ff = configuration.getFilesFacade();
+            try (Path p = new Path()) {
+                Assert.assertFalse(
+                        "M1: the old table dir must be reclaimed by WalPurgeJob",
+                        ff.exists(p.of(configuration.getDbRoot()).concat(oldToken.getDirName()).$())
+                );
+            }
+            Assert.assertFalse("old dir entry must be fully removed after purge", engine.isTableDropped(oldToken));
+
+            // The rebased table is unaffected: still queryable and writable.
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n3\n");
+            execute("insert into t values ('2024-01-04T00:00:00.000000Z', 4)");
+            drainWalQueue();
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n4\n");
         });
     }
 
