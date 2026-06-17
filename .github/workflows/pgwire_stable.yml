@@ -42,7 +42,7 @@ jobs:
       - name: Setup golang toolchain
         uses: actions/setup-go@v6
         with:
-          go-version: '1.24'
+          go-version: '1.25'
           cache-dependency-path: compat/src/test/golang/go.sum
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
