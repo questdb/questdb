@@ -49,7 +49,7 @@ public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeS
     }
 
     public static void run(
-            int workerId,
+            int carrierId,
             GroupByMergeShardTask task,
             Sequence subSeq,
             long cursor,
@@ -68,7 +68,7 @@ public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeS
 
         final boolean owner = stealingCtx != null && stealingCtx == ctx;
         try {
-            final int slotId = ctx.maybeAcquire(workerId, owner, circuitBreaker);
+            final int slotId = ctx.maybeAcquire(carrierId, owner, circuitBreaker);
             try {
                 if (circuitBreaker.checkIfTripped()) {
                     return;
@@ -86,9 +86,9 @@ public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeS
     }
 
     @Override
-    protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
+    protected boolean doRun(long cursor, WorkerContext workerContext) {
         final GroupByMergeShardTask task = queue.get(cursor);
-        run(workerId, task, subSeq, cursor, null);
+        run(workerContext.carrierId(), task, subSeq, cursor, null);
         return true;
     }
 }

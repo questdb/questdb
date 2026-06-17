@@ -5170,7 +5170,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     configuration.getMicrosecondClock())
             ) {
                 //noinspection StatementWithEmptyBody
-                while (job.run(0)) {
+                while (job.run()) {
                 }
             }
 

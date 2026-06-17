@@ -35,11 +35,11 @@ import java.util.Arrays;
 public final class Misc {
     public static final int CACHE_LINE_SIZE = 64;
     public static final String EOL = "\r\n";
-    private static final ThreadLocal<Decimal128> tlDecimal128 = new ThreadLocal<>(Decimal128::new);
-    private static final ThreadLocal<Decimal256> tlDecimal256 = new ThreadLocal<>(Decimal256::new);
-    private static final ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);
-    private static final ThreadLocal<Utf8StringSink> tlUtf8Sink = new ThreadLocal<>(Utf8StringSink::new);
-    private static final ThreadLocal<Utf8SinkPool> tlUtf8SinkPool = new ThreadLocal<>(Utf8SinkPool::new);
+    private static final CarrierLocal<Decimal128> tlDecimal128 = new CarrierLocal<>(Decimal128::new);
+    private static final CarrierLocal<Decimal256> tlDecimal256 = new CarrierLocal<>(Decimal256::new);
+    private static final CarrierLocal<StringSink> tlSink = new CarrierLocal<>(StringSink::new);
+    private static final CarrierLocal<Utf8StringSink> tlUtf8Sink = new CarrierLocal<>(Utf8StringSink::new);
+    private static final CarrierLocal<Utf8SinkPool> tlUtf8SinkPool = new CarrierLocal<>(Utf8SinkPool::new);
 
     private Misc() {
     }

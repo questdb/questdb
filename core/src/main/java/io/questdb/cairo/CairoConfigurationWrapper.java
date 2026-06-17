@@ -839,6 +839,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getQueryContinuationWakeIntervalMillis() {
+        return getDelegate().getQueryContinuationWakeIntervalMillis();
+    }
+
+    @Override
     public int getQueryRegistryPoolSize() {
         return getDelegate().getQueryRegistryPoolSize();
     }
@@ -1366,6 +1371,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public @NotNull TextConfiguration getTextConfiguration() {
         return getDelegate().getTextConfiguration();
+    }
+
+    @Override
+    public int getTimerShardCount() {
+        return getDelegate().getTimerShardCount();
     }
 
     @Override

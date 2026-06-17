@@ -522,21 +522,21 @@ public class WalPurgeJobTest extends AbstractCairoTest {
                 counter.set(0);
 
                 walPurgeJob.delayByHalfInterval();
-                walPurgeJob.run(0);
+                walPurgeJob.run();
                 Assert.assertEquals(0, counter.get());
                 setCurrentMicros(currentMicros + interval / 2 + 1);
-                walPurgeJob.run(0);
+                walPurgeJob.run();
                 Assert.assertEquals(1, counter.get());
                 setCurrentMicros(currentMicros + interval / 2 + 1);
-                walPurgeJob.run(0);
-                walPurgeJob.run(0);
-                walPurgeJob.run(0);
+                walPurgeJob.run();
+                walPurgeJob.run();
+                walPurgeJob.run();
                 Assert.assertEquals(1, counter.get());
                 setCurrentMicros(currentMicros + interval);
-                walPurgeJob.run(0);
+                walPurgeJob.run();
                 Assert.assertEquals(2, counter.get());
                 setCurrentMicros(currentMicros + 10 * interval);
-                walPurgeJob.run(0);
+                walPurgeJob.run();
                 Assert.assertEquals(3, counter.get());
             }
         });

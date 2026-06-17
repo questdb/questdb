@@ -129,7 +129,7 @@ public class AbstractTest {
 
     @SuppressWarnings("StatementWithEmptyBody")
     protected static void drainMatViewQueue(MatViewRefreshJob refreshJob) {
-        while (refreshJob.run(0)) ;
+        while (refreshJob.run()) ;
     }
 
     protected static void drainMatViewQueue(CairoEngine engine) {
@@ -140,12 +140,12 @@ public class AbstractTest {
 
     @SuppressWarnings("StatementWithEmptyBody")
     protected static void drainMatViewTimerQueue(MatViewTimerJob timerJob) {
-        while (timerJob.run(0)) ;
+        while (timerJob.run()) ;
     }
 
     @SuppressWarnings("StatementWithEmptyBody")
     protected static void drainViewQueue(ViewCompilerJob compilerJob) {
-        while (compilerJob.run(0)) ;
+        while (compilerJob.run()) ;
     }
 
     protected static void drainViewQueue(CairoEngine engine) {
@@ -180,9 +180,9 @@ public class AbstractTest {
     @SuppressWarnings("StatementWithEmptyBody")
     protected static void drainWalQueue(ApplyWal2TableJob walApplyJob, CairoEngine engine) {
         CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
-        while (walApplyJob.run(0)) ;
-        if (checkWalTransactionsJob.run(0)) {
-            while (walApplyJob.run(0)) ;
+        while (walApplyJob.run()) ;
+        if (checkWalTransactionsJob.run()) {
+            while (walApplyJob.run()) ;
         }
     }
 
