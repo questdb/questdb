@@ -81,6 +81,11 @@ public final class PerQueryMemoryTrackerProvider implements MemoryTrackerProvide
     public void close() {
         closed = true;
         drainPool();
+        // A release() that read closed==false just before the flag flip above can still
+        // push() its tracker after the first drain. Engine shutdown joins every worker
+        // before close(), so this is unreachable today, but a second drain closes the
+        // lost-update window cheaply rather than leaking that tracker's native block.
+        drainPool();
     }
 
     @TestOnly

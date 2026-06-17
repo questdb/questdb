@@ -95,6 +95,11 @@ public class GroupByMapFragment implements QuietCloseable {
 
     @Override
     public void close() {
+        // Free the map and shards under the still-bound per-query tracker (setMemoryTracker()
+        // is never nulled here): each free debits the same tracker that charged the matching
+        // (re)open, so the per-query counter balances. The owning atom closes this fragment
+        // while that tracker is live; it nulls only its pooled allocators, whose backing
+        // outlives the query, before their final free.
         sharded = false;
         totalFunctionCardinality = 0;
         map.close();

@@ -54,6 +54,7 @@ impl ColumnChunkBuffers {
             page_buffers_size: 0,
             page_buffers: Vec::new(),
             page_buffers_charged: 0,
+            page_buffers_counted: 0,
         }
     }
 
@@ -75,7 +76,19 @@ impl ColumnChunkBuffers {
         self.aux_ptr = self.aux_vec.as_mut_ptr();
 
         // Sum of decompressed page/dict buffer bytes referenced by VarcharSlice aux entries.
-        self.page_buffers_size = self.page_buffers.iter().map(Vec::len).sum();
+        // Appends only grow page_buffers (a multi-row-group decode concatenates into the same
+        // buffers without resetting), and already-counted entries are immutable, so add only
+        // the buffers appended since the last refresh instead of re-summing the whole vector
+        // -- otherwise a run of N row groups costs O(N^2). A shrink (truncate/partial drain)
+        // falls back to a full recompute; reset() zeroes both fields.
+        if self.page_buffers.len() < self.page_buffers_counted {
+            self.page_buffers_size = self.page_buffers.iter().map(Vec::len).sum();
+        } else {
+            for buf in &self.page_buffers[self.page_buffers_counted..] {
+                self.page_buffers_size += buf.len();
+            }
+        }
+        self.page_buffers_counted = self.page_buffers.len();
 
         // Reconcile the per-query tracker charge to the retained payload. A net
         // growth is checked against the limit and may breach; a net shrink is
@@ -131,6 +144,7 @@ impl ColumnChunkBuffers {
         self.release_page_buffers_charge();
         self.page_buffers_size = 0;
         self.page_buffers.clear();
+        self.page_buffers_counted = 0;
     }
 }
 

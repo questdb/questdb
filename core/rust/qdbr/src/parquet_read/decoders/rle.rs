@@ -434,6 +434,7 @@ mod tests {
             page_buffers_size: 0,
             page_buffers: Vec::new(),
             page_buffers_charged: 0,
+            page_buffers_counted: 0,
         }
     }
 

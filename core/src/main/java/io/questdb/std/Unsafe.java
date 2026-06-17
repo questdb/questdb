@@ -202,7 +202,7 @@ public final class Unsafe {
             UNSAFE.freeMemory(ptr);
             incrFreeCount();
             recordMemAlloc(-size, memoryTag);
-            recordPerQueryMemAlloc(-size, tracker);
+            recordPerQueryMemAlloc(-size, tracker.nativeAddress());
         }
         return 0;
     }
@@ -408,11 +408,15 @@ public final class Unsafe {
         }
         try {
             assert memoryTag >= MemoryTag.NATIVE_PATH;
+            // Resolve the tracker's native {used, limit} block once and share it between the
+            // pre-alloc check and the post-alloc record, instead of re-reading it through
+            // getLimit()/getUsed()/nativeAddress().
+            final long trackerBase = tracker.nativeAddress();
             checkAllocLimit(size, memoryTag);
-            checkPerQueryAllocLimit(size, memoryTag, tracker);
+            checkPerQueryAllocLimit(size, memoryTag, trackerBase, tracker);
             long ptr = UNSAFE.allocateMemory(size);
             recordMemAlloc(size, memoryTag);
-            recordPerQueryMemAlloc(size, tracker);
+            recordPerQueryMemAlloc(size, trackerBase);
             incrMallocCount();
             return ptr;
         } catch (OutOfMemoryError oom) {
@@ -537,11 +541,13 @@ public final class Unsafe {
         try {
             assert memoryTag >= MemoryTag.NATIVE_PATH;
             final long delta = newSize - oldSize;
+            // Resolve the tracker's native {used, limit} block once; see malloc() above.
+            final long trackerBase = tracker.nativeAddress();
             checkAllocLimit(delta, memoryTag);
-            checkPerQueryAllocLimit(delta, memoryTag, tracker);
+            checkPerQueryAllocLimit(delta, memoryTag, trackerBase, tracker);
             long ptr = UNSAFE.reallocateMemory(address, newSize);
             recordMemAlloc(delta, memoryTag);
-            recordPerQueryMemAlloc(delta, tracker);
+            recordPerQueryMemAlloc(delta, trackerBase);
             incrReallocCount();
             return ptr;
         } catch (OutOfMemoryError oom) {
@@ -606,13 +612,13 @@ public final class Unsafe {
         }
     }
 
-    private static void checkPerQueryAllocLimit(long size, int memoryTag, MemoryTracker tracker) {
-        if (size <= 0) {
+    private static void checkPerQueryAllocLimit(long size, int memoryTag, long trackerBase, MemoryTracker tracker) {
+        if (size <= 0 || trackerBase == 0) {
             return;
         }
-        final long limit = tracker.getLimit();
+        final long limit = getLongVolatile(trackerBase + MEMORY_TRACKER_LIMIT_OFFSET);
         if (limit > 0) {
-            final long used = tracker.getUsed();
+            final long used = getLongVolatile(trackerBase + MEMORY_TRACKER_USED_OFFSET);
             if (used + size > limit) {
                 throw CairoException.nonCritical().setOutOfMemory(true)
                         .put("query memory limit exceeded [workload=").put(tracker.getWorkload().name())
@@ -652,12 +658,11 @@ public final class Unsafe {
     // Updates the per-query counter on every tracked alloc/free, with no
     // limit > 0 gate (unlike checkPerQueryAllocLimit), so query_activity
     // reports live usage even for unlimited queries. See QueryRegistry.register().
-    private static void recordPerQueryMemAlloc(long size, MemoryTracker tracker) {
-        final long addr = tracker.nativeAddress();
-        if (addr == 0) {
+    private static void recordPerQueryMemAlloc(long size, long trackerBase) {
+        if (trackerBase == 0) {
             return;
         }
-        final long usedAddr = addr + MEMORY_TRACKER_USED_OFFSET;
+        final long usedAddr = trackerBase + MEMORY_TRACKER_USED_OFFSET;
         final long mem = UNSAFE.getAndAddLong(null, usedAddr, size) + size;
         assert mem >= 0 : "unexpected per-query mem: " + mem + ", size: " + size;
         if (mem < 0) {

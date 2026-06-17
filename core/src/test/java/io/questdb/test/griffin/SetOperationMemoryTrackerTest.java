@@ -282,6 +282,7 @@ public class SetOperationMemoryTrackerTest extends AbstractCairoTest {
                 } catch (CairoException e) {
                     Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
                     TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "workload=QUERY");
                 }
             }
         }

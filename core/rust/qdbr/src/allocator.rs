@@ -242,19 +242,11 @@ impl QdbAllocator {
         unsafe { &(*self.mem_tracking).rss_mem_limit }
     }
 
-    fn tracker_used(&self) -> Option<&AtomicUsize> {
+    fn memory_tracker(&self) -> Option<&MemoryTracker> {
         if self.memory_tracker.is_null() {
             None
         } else {
-            Some(unsafe { &(*self.memory_tracker).used })
-        }
-    }
-
-    fn tracker_limit(&self) -> Option<&AtomicUsize> {
-        if self.memory_tracker.is_null() {
-            None
-        } else {
-            Some(unsafe { &(*self.memory_tracker).limit })
+            Some(unsafe { &*self.memory_tracker })
         }
     }
 
@@ -285,12 +277,8 @@ impl QdbAllocator {
         &self.mem_tracking.rss_mem_limit
     }
 
-    fn tracker_used(&self) -> Option<&AtomicUsize> {
-        self.memory_tracker.as_ref().map(|t| &t.used)
-    }
-
-    fn tracker_limit(&self) -> Option<&AtomicUsize> {
-        self.memory_tracker.as_ref().map(|t| &t.limit)
+    fn memory_tracker(&self) -> Option<&MemoryTracker> {
+        self.memory_tracker.as_deref()
     }
 
     fn malloc_count(&self) -> &AtomicUsize {
@@ -340,13 +328,12 @@ impl QdbAllocator {
                 return Err(AllocError);
             }
         }
-        // Per-workload limit, only when a tracker is bound.
-        if let (Some(tracker_limit), Some(tracker_used)) =
-            (self.tracker_limit(), self.tracker_used())
-        {
-            let limit = tracker_limit.load(RSS_ORDERING);
+        // Per-workload limit, only when a tracker is bound. Resolve the tracker once
+        // rather than null-checking it twice for its two counter words.
+        if let Some(tracker) = self.memory_tracker() {
+            let limit = tracker.limit.load(RSS_ORDERING);
             if limit > 0 {
-                let used = tracker_used.load(RSS_ORDERING);
+                let used = tracker.used.load(RSS_ORDERING);
                 if used.saturating_add(requested_size) > limit {
                     ALLOC_ERROR.with(|error| {
                         *error.borrow_mut() = Some(AllocFailure::MemoryLimitExceeded {
@@ -378,8 +365,8 @@ impl QdbAllocator {
             .fetch_add(requested_size, COUNTER_ORDERING);
         self.rss_mem_used()
             .fetch_add(requested_size, COUNTER_ORDERING);
-        if let Some(tracker_used) = self.tracker_used() {
-            tracker_used.fetch_add(requested_size, COUNTER_ORDERING);
+        if let Some(tracker) = self.memory_tracker() {
+            tracker.used.fetch_add(requested_size, COUNTER_ORDERING);
         }
         self.malloc_count().fetch_add(1, COUNTER_ORDERING);
     }
@@ -387,8 +374,8 @@ impl QdbAllocator {
     fn track_grow(&self, delta: usize) {
         self.tagged_used().fetch_add(delta, COUNTER_ORDERING);
         self.rss_mem_used().fetch_add(delta, COUNTER_ORDERING);
-        if let Some(tracker_used) = self.tracker_used() {
-            tracker_used.fetch_add(delta, COUNTER_ORDERING);
+        if let Some(tracker) = self.memory_tracker() {
+            tracker.used.fetch_add(delta, COUNTER_ORDERING);
         }
         self.realloc_count().fetch_add(1, COUNTER_ORDERING);
     }
@@ -396,8 +383,8 @@ impl QdbAllocator {
     fn track_shrink(&self, delta: usize) {
         self.tagged_used().fetch_sub(delta, COUNTER_ORDERING);
         self.rss_mem_used().fetch_sub(delta, COUNTER_ORDERING);
-        if let Some(tracker_used) = self.tracker_used() {
-            let prev = Self::saturating_decrement(tracker_used, delta);
+        if let Some(tracker) = self.memory_tracker() {
+            let prev = Self::saturating_decrement(&tracker.used, delta);
             debug_assert!(
                 prev >= delta,
                 "per-query memory underflow on shrink: used={prev}, delta={delta}"
@@ -409,8 +396,8 @@ impl QdbAllocator {
     fn track_deallocate(&self, freed_size: usize) {
         self.tagged_used().fetch_sub(freed_size, COUNTER_ORDERING);
         self.rss_mem_used().fetch_sub(freed_size, COUNTER_ORDERING);
-        if let Some(tracker_used) = self.tracker_used() {
-            let prev = Self::saturating_decrement(tracker_used, freed_size);
+        if let Some(tracker) = self.memory_tracker() {
+            let prev = Self::saturating_decrement(&tracker.used, freed_size);
             debug_assert!(
                 prev >= freed_size,
                 "per-query memory underflow on deallocate: used={prev}, delta={freed_size}"
@@ -463,8 +450,8 @@ impl QdbAllocator {
             return Ok(());
         }
         self.check_alloc_limit(bytes)?;
-        if let Some(tracker_used) = self.tracker_used() {
-            tracker_used.fetch_add(bytes, COUNTER_ORDERING);
+        if let Some(tracker) = self.memory_tracker() {
+            tracker.used.fetch_add(bytes, COUNTER_ORDERING);
         }
         Ok(())
     }
@@ -477,8 +464,8 @@ impl QdbAllocator {
         if bytes == 0 {
             return;
         }
-        if let Some(tracker_used) = self.tracker_used() {
-            Self::saturating_decrement(tracker_used, bytes);
+        if let Some(tracker) = self.memory_tracker() {
+            Self::saturating_decrement(&tracker.used, bytes);
         }
     }
 }

@@ -138,6 +138,11 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
 
     @Override
     public void close() {
+        // Free the fragments and destination shards under the still-bound per-query tracker
+        // (setMemoryTracker() is never nulled here): each map free debits the same tracker
+        // that charged its (re)open, so the per-query counter balances. AsyncGroupByAtom.close()
+        // frees this context before it nulls and frees its pooled allocators, preserving that
+        // ordering.
         Misc.free(ownerFragment);
         Misc.freeObjList(perWorkerFragments);
         Misc.freeObjList(destShards);

@@ -165,7 +165,7 @@ public class LatestByLightRecordCursorFactory extends AbstractRecordCursorFactor
         public void close() {
             if (isOpen) {
                 isOpen = false;
-                Misc.free(baseCursor);
+                baseCursor = Misc.free(baseCursor);
                 Misc.free(mapCursor);
                 Misc.free(latestByMap);
             }
@@ -209,6 +209,11 @@ public class LatestByLightRecordCursorFactory extends AbstractRecordCursorFactor
         }
 
         public void of(RecordCursor baseCursor, SqlExecutionCircuitBreaker circuitBreaker, MemoryTracker memoryTracker) {
+            // of() rebinds the tracker and reopens the map unconditionally (see below). A second
+            // of() without an intervening close() would rebind onto a still-open, still-charged
+            // map and underflow the per-query counter on free. close() nulls baseCursor, so a
+            // null field here means fresh-or-closed.
+            assert this.baseCursor == null : "of() without intervening close(): rebinding the memory tracker would underflow the per-query counter";
             this.baseCursor = baseCursor;
             baseRecord = baseCursor.getRecord();
             this.circuitBreaker = circuitBreaker;

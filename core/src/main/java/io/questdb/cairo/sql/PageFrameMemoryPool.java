@@ -535,6 +535,16 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         }
     }
 
+    /**
+     * Binds the per-query tracker propagated to each decode buffer on reopen.
+     * Owners set it at per-query init (before the first {@link #navigateTo});
+     * context-less owners leave it null for global-only accounting. A null
+     * tracker is valid and matches pre-tracker behavior.
+     */
+    public void setMemoryTracker(MemoryTracker memoryTracker) {
+        this.memoryTracker = memoryTracker;
+    }
+
     public void setParquetDecodeHint(ParquetDecodeHint hint) {
         this.decodeHint = hint;
         this.effectiveBudgetBytes = hint.applyTo(maxCacheBytes);
@@ -668,16 +678,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         byFrameIndex.put(frameIndex, buffers);
         setBound(usageBit, buffers);
         return buffers;
-    }
-
-    /**
-     * Binds the per-query tracker propagated to each decode buffer on reopen.
-     * Owners set it at per-query init (before the first {@link #navigateTo});
-     * context-less owners leave it null for global-only accounting. A null
-     * tracker is valid and matches pre-tracker behavior.
-     */
-    public void setMemoryTracker(MemoryTracker memoryTracker) {
-        this.memoryTracker = memoryTracker;
     }
 
     private void activateDecoder(int frameIndex) {
