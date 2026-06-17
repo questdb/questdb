@@ -434,6 +434,21 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     frameMemory.clear();
                     throw th;
                 }
+            } else {
+                // Full cache hit, no decode needed, but the lazy-conversion metadata
+                // (the pool's hasTypeCasts / sourceColumnTypes, surfaced through
+                // PageFrameMemoryImpl.hasColumnTypeCasts() / getSourceColumnType()) still
+                // reflects whichever frame openParquet() last ran for. A later
+                // record.init(frameMemory) reads that metadata, so it must be rebuilt for
+                // THIS frame or the record inherits another frame's mapping and reads a
+                // converted column with the wrong source type. Mirrors the cache-hit refresh
+                // in navigateTo(int, PageFrameMemoryRecord).
+                try {
+                    openParquet(frameIndex);
+                } catch (Throwable th) {
+                    frameMemory.clear();
+                    throw th;
+                }
             }
             frameMemory.currentRowGroupBuffer = parquetBuffers;
             frameMemory.pageAddresses = parquetBuffers.pageAddresses;
@@ -483,6 +498,18 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     decodeAndAccount(frameIndex, parquetBuffers);
                 } catch (Throwable th) {
                     // Same hazard as the record fast path; drop frameMemory's stale binding.
+                    frameMemory.clear();
+                    throw th;
+                }
+            } else {
+                // Full cache hit, no decode needed, but the lazy-conversion metadata
+                // (the pool's hasTypeCasts / sourceColumnTypes) still reflects whichever
+                // frame openParquet() last ran for. Rebuild it for THIS frame so a later
+                // record.init(frameMemory) does not inherit another frame's mapping. Mirrors
+                // the cache-hit refresh in navigateTo(int, PageFrameMemoryRecord).
+                try {
+                    openParquet(frameIndex, columnIndexes, true);
+                } catch (Throwable th) {
                     frameMemory.clear();
                     throw th;
                 }
