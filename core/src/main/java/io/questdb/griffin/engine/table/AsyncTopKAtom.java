@@ -321,6 +321,11 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
         if (isEncoded) {
             keyType = ownerEncoder.init(symbolTableSource);
             assert keyType != SortKeyType.UNSUPPORTED;
+            // Bind the tracker before of() presizes entryMem, else the alloc is
+            // uncharged while close() still debits it: the counter goes negative and,
+            // under -ea, the assert aborts the JVM mid-free (double free). reopen()
+            // binds too late - it no-ops once entryMem is allocated.
+            ownerTopK.setMemoryTracker(memoryTracker);
             ownerTopK.of(keyType, true, lo);
             // Fixed-width keys encode inline; variable-length keys spill into a
             // per-buffer key heap that the encoder must write into.
@@ -334,6 +339,7 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
                 final SortKeyEncoder workerEncoder = perWorkerEncoders.getQuick(i);
                 final EncodedTopKBuffer workerTopK = perWorkerTopK.getQuick(i);
                 workerEncoder.initFrom(ownerEncoder);
+                workerTopK.setMemoryTracker(memoryTracker);
                 workerTopK.of(keyType, true, lo);
                 if (isVariable) {
                     workerEncoder.setKeyHeap(workerTopK.getKeyHeap());
