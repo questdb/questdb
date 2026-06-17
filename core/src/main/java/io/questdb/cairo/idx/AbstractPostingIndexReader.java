@@ -813,6 +813,13 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     ) {
         int plen = path.size();
         try {
+            // A rowid-only reader (null metadata) can't map writer indices to dense
+            // columns, so it serves no covered reads: skip sidecar setup and leave
+            // coverCount at 0. Otherwise denseIndexFromWriter() NPEs on the null
+            // metadata and the propagating catch below fails the query.
+            if (metadata == null) {
+                return;
+            }
             LPSZ pciFile = PostingIndexUtils.coverInfoFileName(path, columnName, columnNameTxn);
             if (!ff.exists(pciFile)) {
                 return;
