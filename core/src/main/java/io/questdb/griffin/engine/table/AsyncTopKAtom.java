@@ -317,42 +317,52 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         memoryTracker = executionContext.getMemoryTracker();
-        filterCtx.initFilters(symbolTableSource, executionContext);
-        if (isEncoded) {
-            keyType = ownerEncoder.init(symbolTableSource);
-            assert keyType != SortKeyType.UNSUPPORTED;
-            // Bind the tracker before of() presizes entryMem, else the alloc is
-            // uncharged while close() still debits it: the counter goes negative and,
-            // under -ea, the assert aborts the JVM mid-free (double free). reopen()
-            // binds too late - it no-ops once entryMem is allocated.
-            ownerTopK.setMemoryTracker(memoryTracker);
-            ownerTopK.of(keyType, true, lo);
-            // Fixed-width keys encode inline; variable-length keys spill into a
-            // per-buffer key heap that the encoder must write into.
-            final boolean isVariable = keyType.isVariable();
-            if (isVariable) {
-                ownerEncoder.setKeyHeap(ownerTopK.getKeyHeap());
-            }
-            for (int i = 0; i < workerCount; i++) {
-                // Rank map building sorts the whole symbol dictionary; workers
-                // borrow the owner's maps instead of rebuilding identical ones.
-                final SortKeyEncoder workerEncoder = perWorkerEncoders.getQuick(i);
-                final EncodedTopKBuffer workerTopK = perWorkerTopK.getQuick(i);
-                workerEncoder.initFrom(ownerEncoder);
-                workerTopK.setMemoryTracker(memoryTracker);
-                workerTopK.of(keyType, true, lo);
+        try {
+            filterCtx.initFilters(symbolTableSource, executionContext);
+            if (isEncoded) {
+                keyType = ownerEncoder.init(symbolTableSource);
+                assert keyType != SortKeyType.UNSUPPORTED;
+                // Bind the tracker before of() presizes entryMem, else the alloc is
+                // uncharged while close() still debits it: the counter goes negative and,
+                // under -ea, the assert aborts the JVM mid-free (double free). reopen()
+                // binds too late - it no-ops once entryMem is allocated.
+                ownerTopK.setMemoryTracker(memoryTracker);
+                ownerTopK.of(keyType, true, lo);
+                // Fixed-width keys encode inline; variable-length keys spill into a
+                // per-buffer key heap that the encoder must write into.
+                final boolean isVariable = keyType.isVariable();
                 if (isVariable) {
-                    workerEncoder.setKeyHeap(workerTopK.getKeyHeap());
+                    ownerEncoder.setKeyHeap(ownerTopK.getKeyHeap());
                 }
+                for (int i = 0; i < workerCount; i++) {
+                    // Rank map building sorts the whole symbol dictionary; workers
+                    // borrow the owner's maps instead of rebuilding identical ones.
+                    final SortKeyEncoder workerEncoder = perWorkerEncoders.getQuick(i);
+                    final EncodedTopKBuffer workerTopK = perWorkerTopK.getQuick(i);
+                    workerEncoder.initFrom(ownerEncoder);
+                    workerTopK.setMemoryTracker(memoryTracker);
+                    workerTopK.of(keyType, true, lo);
+                    if (isVariable) {
+                        workerEncoder.setKeyHeap(workerTopK.getKeyHeap());
+                    }
+                }
+            } else {
+                buildRankMaps(symbolTableSource);
             }
-        } else {
-            buildRankMaps(symbolTableSource);
-        }
 
-        ownerRecordA.of(symbolTableSource);
-        ownerRecordB.of(symbolTableSource);
-        for (int i = 0; i < workerCount; i++) {
-            perWorkerRecordsB.getQuick(i).of(symbolTableSource);
+            ownerRecordA.of(symbolTableSource);
+            ownerRecordB.of(symbolTableSource);
+            for (int i = 0; i < workerCount; i++) {
+                perWorkerRecordsB.getQuick(i).of(symbolTableSource);
+            }
+        } catch (Throwable th) {
+            // A per-query limit breach while presizing the buffers leaves some allocated and
+            // charged and the rest not. getCursor() guards only cursor.of()/reopen(), so an
+            // init-time throw escapes that close(): the partial allocations would leak and the
+            // next open would free buffers the new tracker never charged, underflowing it into
+            // a double free. Roll back here, mirroring the ctor, to keep the counter symmetric.
+            clear();
+            throw th;
         }
     }
 
