@@ -1012,8 +1012,10 @@ public interface CairoConfiguration {
      * it neither refreshes nor invalidates them. This is an operator escape hatch for a view whose
      * refresh keeps crashing the database: blocking it lets the database start and stay up. Because a
      * blocked view never advances its last refreshed base txn, it can pin the base table's WAL
-     * retention (most acutely for immediate views, which do not otherwise cache refresh intervals)
-     * until it is dropped or removed from the block list.
+     * retention until it is dropped or removed from the block list. This applies equally to all
+     * refresh types: the block skip in the refresh job short-circuits before the refresh-intervals
+     * caching bump, so blocked timer and manual views stop caching intervals just like immediate
+     * views, and the base WAL is pinned just as hard.
      */
     default boolean isMatViewRefreshBlocked(CharSequence viewName) {
         return false;
