@@ -14,6 +14,7 @@ use parquet2::schema::types::{
 };
 use parquet2::schema::Repetition;
 use qdb_core::col_type::{ColumnType, ColumnTypeTag, QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG};
+use qdb_parquet_meta::SeqTxn;
 
 /// Bit 30 of the JNI `column_type` integer marks the designated-timestamp column
 /// as carrying a 16-byte-strided merge index (`(i64 ts, i64 rowId)` per entry)
@@ -517,6 +518,7 @@ pub fn to_parquet_schema(
     partition: &Partition,
     raw_array_encoding: bool,
     squash_tracker: i64,
+    seq_txn: SeqTxn,
 ) -> ParquetResult<(SchemaDescriptor, Vec<KeyValue>)> {
     let parquet_types = partition
         .columns
@@ -568,6 +570,7 @@ pub fn to_parquet_schema(
     }
 
     qdb_meta.squash_tracker = squash_tracker;
+    qdb_meta.seq_txn = seq_txn.get();
 
     let encoded_qdb_meta = qdb_meta.serialize()?;
     let questdb_keyval = KeyValue::new(QDB_META_KEY.to_string(), encoded_qdb_meta);

@@ -28,17 +28,17 @@ use crate::allocator::QdbAllocator;
 use crate::parquet::error::parquet_meta_err;
 use crate::parquet::error::{fmt_err, ParquetError, ParquetErrorExt, ParquetResult};
 use crate::parquet::io::FromRawFdI32Ext;
-use crate::parquet::qdb_metadata::{QdbMeta, QDB_META_KEY};
-use crate::parquet_metadata::convert::{
-    convert_from_parquet, detect_designated_timestamp, resolve_sorting_columns, TsStatsBackfill,
-};
-use crate::parquet_metadata::error::ParquetMetaErrorKind;
+use crate::parquet::qdb_metadata::extract_qdb_meta;
 use crate::parquet_read::decode_column::{decode_single_timestamp_value, reconstruct_descriptor};
 use jni::objects::JClass;
 use jni::JNIEnv;
 use memmap2::Mmap;
 use parquet2::metadata::FileMetaData;
 use parquet2::read::read_metadata_with_size;
+use qdb_parquet_meta::convert::{
+    convert_from_parquet, physical_type_to_u8, SliceBloomFilterSource, TsStatsBackfill,
+};
+use qdb_parquet_meta::error::{ParquetMetaError, ParquetMetaErrorKind};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::mem::ManuallyDrop;
@@ -115,14 +115,13 @@ fn generate_parquet_meta(
         })?;
 
     // mmap the parquet file so the converter can: (1) inline parquet bloom
-    // filter bitsets into `_pm`, and (2) backfill missing inline min/max ts
-    // stats for the designated timestamp column. Both are pay-only-when-used
-    // by `convert_from_parquet`; the mmap is paid up front but the lookups
-    // run only when the converter actually needs them.
+    // bitsets into `_pm`, and (2) backfill missing inline min/max ts stats
+    // for the designated timestamp column. mmap overhead is negligible on
+    // the migration path; both lookups are invoked only when needed.
     //
     // Safety: we hold an exclusive ManuallyDrop borrow on `parquet_file` for
     // the duration of the mmap, and the file is not truncated or written to
-    // concurrently because Mig941 and TableSnapshotRestore open it read-only.
+    // concurrently because Mig940/snapshot-restore open it read-only.
     let file_data = unsafe { Mmap::map(&*parquet_file) }.map_err(|e| {
         parquet_meta_err!(
             ParquetMetaErrorKind::InvalidValue,
@@ -130,24 +129,35 @@ fn generate_parquet_meta(
             e
         )
     })?;
-    let parquet_bytes: &[u8] = &file_data;
+    let bloom_source = SliceBloomFilterSource::new(&file_data);
 
-    let sorting_cols = resolve_sorting_columns(&metadata, qdb_meta.as_ref())?;
-    let designated_ts = detect_designated_timestamp(&metadata, qdb_meta.as_ref(), &sorting_cols);
+    let sorting_cols =
+        qdb_parquet_meta::convert::resolve_sorting_columns(&metadata, qdb_meta.as_ref())
+            .map_err(ParquetError::from)?;
+    let designated_ts = qdb_parquet_meta::convert::detect_designated_timestamp(
+        &metadata,
+        qdb_meta.as_ref(),
+        &sorting_cols,
+    );
 
     let backfill: Option<Box<TsStatsBackfill<'_>>> = if designated_ts >= 0 {
         let ts_col = designated_ts as usize;
+        let allocator_ptr = allocator;
         let metadata_ref = &metadata;
+        let file_data_ref: &[u8] = &file_data;
         Some(Box::new(move |rg_idx, row_lo, row_hi| {
             decode_single_ts_value_from_parquet(
-                allocator,
-                parquet_bytes,
+                allocator_ptr,
+                file_data_ref,
                 metadata_ref,
                 rg_idx,
                 ts_col,
                 row_lo,
                 row_hi,
             )
+            .map_err(|e| {
+                ParquetMetaError::with_descr(ParquetMetaErrorKind::Conversion, e.to_string())
+            })
         }))
     } else {
         None
@@ -158,8 +168,8 @@ fn generate_parquet_meta(
         qdb_meta.as_ref(),
         parquet_footer_offset,
         footer_length,
+        &bloom_source,
         backfill.as_deref(),
-        Some(parquet_bytes),
     )
     .context("could not convert parquet metadata to parquet meta file")?;
 
@@ -218,16 +228,13 @@ pub(crate) fn decode_single_ts_value_from_parquet(
     let field_info = &col_desc.descriptor.primitive_type.field_info;
     let column_name = field_info.name.clone();
     let descriptor = reconstruct_descriptor(
-        super::super::convert::physical_type_to_u8(
-            col_desc.descriptor.primitive_type.physical_type,
-        ),
+        physical_type_to_u8(col_desc.descriptor.primitive_type.physical_type),
         match col_desc.descriptor.primitive_type.physical_type {
             parquet2::schema::types::PhysicalType::FixedLenByteArray(len) => len as i32,
             _ => 0,
         },
         col_desc.descriptor.max_rep_level.try_into().unwrap_or(0),
         col_desc.descriptor.max_def_level.try_into().unwrap_or(0),
-        &column_name,
         field_info.repetition,
     );
     decode_single_timestamp_value(
@@ -243,20 +250,6 @@ pub(crate) fn decode_single_ts_value_from_parquet(
         row_lo,
         row_hi,
     )
-}
-
-fn extract_qdb_meta(metadata: &parquet2::metadata::FileMetaData) -> ParquetResult<Option<QdbMeta>> {
-    let Some(kvs) = metadata.key_value_metadata.as_ref() else {
-        return Ok(None);
-    };
-    let Some(kv) = kvs.iter().find(|kv| kv.key == QDB_META_KEY) else {
-        return Ok(None);
-    };
-    let Some(json) = kv.value.as_deref() else {
-        return Ok(None);
-    };
-    let meta = QdbMeta::deserialize(json)?;
-    Ok(Some(meta))
 }
 
 fn read_parquet_footer_length(file: &mut File, file_size: u64) -> ParquetResult<u32> {

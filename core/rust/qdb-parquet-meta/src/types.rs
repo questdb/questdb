@@ -68,6 +68,46 @@ pub const FOOTER_PREV_PARQUET_META_FILE_SIZE_OFF: usize = 24;
 /// Byte offset within the footer where footer_feature_flags is stored.
 pub const FOOTER_FEATURE_FLAGS_OFF: usize = 32;
 
+/// Number of footer-flag-gated section offsets `Footer` tracks. Indexed by
+/// the gating flag's bit position; grow when adding sections at higher
+/// bit positions.
+pub const SUPPORTED_FOOTER_SECTIONS: usize = 2;
+
+/// Hard cap on the total scratchpad payload (4-byte count + 8 bytes per entry
+/// header + entry contents) per footer. Real entries are tens to hundreds of
+/// bytes; the cap is a defensive guard against a malformed/malicious `_pm`
+/// forcing a multi-gigabyte allocation.
+pub const MAX_SCRATCHPAD_SIZE: usize = 1 << 20;
+
+/// Apply-time `seqTxn` stamped into the `_pm` footer's SEQ_TXN section.
+/// `-1` is the unset sentinel; any other value (including other negative
+/// values) is a real `seqTxn`.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+#[repr(transparent)]
+pub struct SeqTxn(i64);
+
+impl SeqTxn {
+    pub const UNSET: SeqTxn = SeqTxn(-1);
+
+    pub const fn new(value: i64) -> Self {
+        Self(value)
+    }
+
+    pub const fn is_set(self) -> bool {
+        self.0 != Self::UNSET.0
+    }
+
+    pub const fn get(self) -> i64 {
+        self.0
+    }
+}
+
+impl Default for SeqTxn {
+    fn default() -> Self {
+        Self::UNSET
+    }
+}
+
 // ── Feature flags ─────────────────────────────────────────────────────
 
 /// Required flag bits occupy the upper 32 bits (bits 32-63).
@@ -191,6 +231,15 @@ impl HeaderFeatureFlags {
 pub struct FooterFeatureFlags(pub u64);
 
 impl FooterFeatureFlags {
+    /// Per-footer `seqTxn` (`i64`) is stored in the footer feature sections.
+    /// Omitted when the value is `-1`. Consumed by the enterprise build.
+    pub const SEQ_TXN_BIT: u64 = 1 << 0;
+
+    /// Opaque TLV scratchpad payload is stored in the footer feature sections.
+    /// Variable size: `[entry_count u32][(code u32, length u32, content [u8;
+    /// length])*]`.
+    pub const SCRATCHPAD_BIT: u64 = 1 << 1;
+
     pub const fn new() -> Self {
         Self(0)
     }
@@ -201,6 +250,22 @@ impl FooterFeatureFlags {
 
     pub const fn to_le_bytes(self) -> [u8; 8] {
         self.0.to_le_bytes()
+    }
+
+    pub const fn has_seq_txn(self) -> bool {
+        self.0 & Self::SEQ_TXN_BIT != 0
+    }
+
+    pub const fn with_seq_txn(self) -> Self {
+        Self(self.0 | Self::SEQ_TXN_BIT)
+    }
+
+    pub const fn has_scratchpad(self) -> bool {
+        self.0 & Self::SCRATCHPAD_BIT != 0
+    }
+
+    pub const fn with_scratchpad(self) -> Self {
+        Self(self.0 | Self::SCRATCHPAD_BIT)
     }
 
     /// Returns the unknown required bits given a mask of known required bits.
@@ -970,5 +1035,18 @@ mod tests {
     fn bloom_filter_no_bits_valid() {
         let f = HeaderFeatureFlags::new();
         assert!(f.validate_bit_dependencies().is_ok());
+    }
+
+    #[test]
+    fn seq_txn_bit_is_optional() {
+        // SEQ_TXN must live in the optional range so old readers tolerate it.
+        let flags = FooterFeatureFlags(FooterFeatureFlags::SEQ_TXN_BIT);
+        assert_eq!(flags.unknown_required(0), 0);
+    }
+
+    #[test]
+    fn scratchpad_bit_is_optional() {
+        let flags = FooterFeatureFlags(FooterFeatureFlags::SCRATCHPAD_BIT);
+        assert_eq!(flags.unknown_required(0), 0);
     }
 }

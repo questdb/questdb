@@ -26,6 +26,7 @@ use crate::parquet::error::{
     fmt_err, ParquetError, ParquetErrorExt, ParquetErrorReason, ParquetResult,
 };
 use crate::parquet::qdb_metadata::{QdbMeta, QdbMetaCol, QdbMetaColFormat, QDB_META_KEY};
+use crate::parquet_metadata::types::SeqTxn;
 use crate::parquet_write::file::{create_row_group, WriteOptions};
 use crate::parquet_write::schema::{to_compressions, to_encodings, to_parquet_schema, Partition};
 use parquet2::compression::CompressionOptions;
@@ -44,6 +45,7 @@ use parquet_format_safe::{
     Type,
 };
 use qdb_core::col_type::{ColumnType, ColumnTypeTag};
+use qdb_parquet_meta::convert::resolve_column_id;
 use rapidhash::RapidHashMap;
 use std::collections::HashSet;
 use std::fs::File;
@@ -131,6 +133,8 @@ pub struct ParquetUpdater {
     // incremental gate in end(). It is not a `_pm` size.
     existing_parquet_file_size: i64,
     result_parquet_meta_size: i64,
+    /// Apply-time `seqTxn` for the new `_pm` snapshot.
+    seq_txn: SeqTxn,
     // Per-VARCHAR-column "still all-ASCII" tracker, keyed by parquet field_id.
     // Seeded at construction from the old qdb_meta's ascii flag:
     //   old.ascii == Some(true)  -> initial value `true`  (scan new aux to verify)
@@ -170,6 +174,7 @@ impl ParquetUpdater {
         parquet_meta_file_size: u64,
         append_base: u64,
         existing_parquet_file_size: i64,
+        seq_txn: SeqTxn,
     ) -> ParquetResult<Self> {
         fn version_from(value: i32) -> ParquetResult<Version> {
             match value {
@@ -386,6 +391,7 @@ impl ParquetUpdater {
             append_base,
             existing_parquet_file_size,
             result_parquet_meta_size: -1,
+            seq_txn,
             varchar_all_ascii,
         })
     }
@@ -636,7 +642,8 @@ impl ParquetUpdater {
     /// metadata. Format hints (e.g. `LocalKeyIsGlobal` for SYMBOL columns)
     /// are preserved from the old schema for columns that still exist.
     pub fn set_target_schema(&mut self, partition: &Partition) -> ParquetResult<()> {
-        let (schema, _kv) = to_parquet_schema(partition, self.raw_array_encoding, -1)?;
+        let (schema, _kv) =
+            to_parquet_schema(partition, self.raw_array_encoding, -1, SeqTxn::UNSET)?;
         self.parquet_file.set_schema(schema);
 
         // Build column_id → old schema index from the old file's parquet field_ids.
@@ -931,6 +938,8 @@ impl ParquetUpdater {
             meta
         };
 
+        qdb_meta.seq_txn = self.seq_txn.get();
+
         // Emit the VARCHAR column-level ascii flag from the tracker built
         // during writes. Each tracker entry started life as `true` for an
         // old column whose old.ascii was Some(true) or for a fresh ADD
@@ -1034,6 +1043,7 @@ impl ParquetUpdater {
                     bloom_bitsets,
                     self.result_unused_bytes,
                     qdb_meta.squash_tracker,
+                    self.seq_txn,
                 )?;
                 self.result_parquet_meta_size = parquet_meta_bytes.len() as i64;
                 parquet_meta_file
@@ -1078,6 +1088,7 @@ impl ParquetUpdater {
                     footer_length,
                     bloom_bitsets,
                     self.result_unused_bytes,
+                    self.seq_txn,
                 )?;
 
                 // Write the new snapshot at the append base. The header still
@@ -1731,10 +1742,7 @@ fn build_column_infos_from_qdb_meta<'a>(
                 col_type_code,
                 // Prefer QuestDB's authoritative id from QdbMeta over the parquet
                 // field_id, matching the convert path's `_pm` generation.
-                id: crate::parquet_read::meta::resolve_column_id(
-                    cm.and_then(|c| c.id),
-                    field_info.id,
-                ),
+                id: resolve_column_id(cm.and_then(|c| c.id), field_info.id),
                 flags,
                 fixed_byte_len: match phys_type {
                     parquet2::schema::types::PhysicalType::FixedLenByteArray(len) => len as i32,
@@ -1750,11 +1758,13 @@ fn build_column_infos_from_qdb_meta<'a>(
 
 #[cfg(test)]
 mod tests {
+    use super::SeqTxn;
     use crate::parquet::tests::ColumnTypeTagExt;
     use bytes::Bytes;
     use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
     use parquet2::compression::CompressionOptions;
     use parquet2::write::{ParquetFile, Version};
+    use qdb_parquet_meta::NoBloomFilterSource;
     use std::collections::HashSet;
     use std::env;
     use std::error::Error;
@@ -1864,8 +1874,8 @@ mod tests {
             table: "t".to_string(),
             columns: vec![make_column_with_id(0, "s", symbol_type, &[1i32])],
         };
-        let (int_schema, _) = to_parquet_schema(&int_partition, false, -1)?;
-        let (symbol_schema, _) = to_parquet_schema(&symbol_partition, false, -1)?;
+        let (int_schema, _) = to_parquet_schema(&int_partition, false, -1, SeqTxn::UNSET)?;
+        let (symbol_schema, _) = to_parquet_schema(&symbol_partition, false, -1, SeqTxn::UNSET)?;
 
         let (_, int_chunk) =
             super::generate_null_column_chunk_bytes(&int_schema.fields()[0], int_type, 10, 100)?;
@@ -1938,7 +1948,7 @@ mod tests {
         let orig_offset = buf.position();
         let metadata = read_metadata_with_size(&mut buf, orig_offset)?;
 
-        let (schema, _) = to_parquet_schema(&new_partition, false, -1)?;
+        let (schema, _) = to_parquet_schema(&new_partition, false, -1, SeqTxn::UNSET)?;
 
         let foptions = WriteOptions {
             write_statistics: true,
@@ -2102,6 +2112,7 @@ mod tests {
                 0,                              // parquet_meta_file_size
                 0,                              // append_base
                 -1,                             // existing_parquet_file_size
+                SeqTxn::UNSET,                  // seq_txn
             )?;
 
             updater.insert_row_group(&new_partition, 1)?;
@@ -2163,6 +2174,7 @@ mod tests {
                 0,    // parquet_meta_file_size
                 0,    // append_base
                 -1,   // existing_parquet_file_size
+                SeqTxn::UNSET,
             )?;
 
             updater.insert_row_group(&new_partition, 1)?;
@@ -2225,8 +2237,9 @@ mod tests {
             0.0,  // min_compression_ratio
             None, // parquet_meta_fd
             0,    // parquet_meta_file_size
-            0,    // append_base
-            -1,   // existing_parquet_file_size
+            0,
+            -1, // existing_parquet_file_size
+            SeqTxn::UNSET,
         )?;
 
         // Append a second row group, then re-read the footer.
@@ -2308,9 +2321,10 @@ mod tests {
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
             None,
-            0,  // parquet_meta_file_size
-            0,  // append_base
-            -1, // existing_parquet_file_size
+            0,
+            0,
+            -1,
+            SeqTxn::UNSET,
         )?;
         let o3_ts = [5i64, 6, 7];
         let o3_val = [50i32, 60, 70];
@@ -2533,9 +2547,10 @@ mod tests {
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
             None,
-            0,  // parquet_meta_file_size
-            0,  // append_base
-            -1, // existing_parquet_file_size
+            0,
+            0,
+            -1,
+            SeqTxn::UNSET,
         )?;
         updater.copy_row_group(0)?; // raw-copied: source index rebased
         updater.insert_row_group(&ts_val_partition(&[5, 6, 7], &[50, 60, 70]), 1)?; // fresh
@@ -2598,9 +2613,10 @@ mod tests {
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
             None,
-            0,  // parquet_meta_file_size
-            0,  // append_base
-            -1, // existing_parquet_file_size
+            0,
+            0,
+            -1,
+            SeqTxn::UNSET,
         )?;
         updater.copy_row_group(0)?; // raw-copied: source DESCENDING index rebased verbatim
         updater.end(None)?;
@@ -2656,9 +2672,10 @@ mod tests {
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
             None,
-            0,  // parquet_meta_file_size
-            0,  // append_base
-            -1, // existing_parquet_file_size
+            0,
+            0,
+            -1,
+            SeqTxn::UNSET,
         )?;
         updater.insert_row_group(&ts_val_partition(&[5, 6, 7], &[50, 60, 70]), 1)?;
         updater.end(None)?;
@@ -2722,9 +2739,10 @@ mod tests {
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
             None,
-            0,  // parquet_meta_file_size
-            0,  // append_base
-            -1, // existing_parquet_file_size
+            0,
+            0,
+            -1,
+            SeqTxn::UNSET,
         )?;
         updater.copy_row_group(0)?; // source has no index -> not indexable
         updater.insert_row_group(&ts_val_partition(&[5, 6, 7], &[50, 60, 70]), 1)?;
@@ -2788,9 +2806,10 @@ mod tests {
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
             None,
-            0,  // parquet_meta_file_size
-            0,  // append_base
-            -1, // existing_parquet_file_size
+            0,
+            0,
+            -1,
+            SeqTxn::UNSET,
         )?;
         updater.insert_row_group(&ts_val_partition(&[5, 6, 7], &[50, 60, 70]), 1)?;
         updater.end(None)?;
@@ -2850,9 +2869,10 @@ mod tests {
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
             None,
-            0,  // parquet_meta_file_size
-            0,  // append_base
-            -1, // existing_parquet_file_size
+            0,
+            0,
+            -1,
+            SeqTxn::UNSET,
         )?;
         updater.copy_row_group(0)?; // source has an OffsetIndex but no ColumnIndex
         updater.insert_row_group(&ts_val_partition(&[5, 6, 7], &[50, 60, 70]), 1)?;
@@ -2928,9 +2948,10 @@ mod tests {
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
             None,
-            0,  // parquet_meta_file_size
-            0,  // append_base
-            -1, // existing_parquet_file_size
+            0,
+            0,
+            -1,
+            SeqTxn::UNSET,
         )?;
         updater.copy_row_group(0)?; // copied group has an OffsetIndex but no ColumnIndex
         updater.insert_row_group(&ts_val_partition(&[5, 6, 7], &[50, 60, 70]), 1)?;
@@ -3006,9 +3027,10 @@ mod tests {
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
             None,
-            0,  // parquet_meta_file_size
-            0,  // append_base
-            -1, // existing_parquet_file_size
+            0,
+            0,
+            -1,
+            SeqTxn::UNSET,
         )?;
         updater.insert_row_group(&ts_val_partition(&[5, 6, 7], &[50, 60, 70]), 1)?;
         updater.end(None)?;
@@ -3066,9 +3088,10 @@ mod tests {
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
             None,
-            0,  // parquet_meta_file_size
-            0,  // append_base
-            -1, // existing_parquet_file_size
+            0,
+            0,
+            -1,
+            SeqTxn::UNSET,
         )?;
         updater.insert_row_group(&ts_val_partition(&[5, 6, 7], &[50, 60, 70]), 1)?;
         updater.end(None)?;
@@ -3215,6 +3238,7 @@ mod tests {
             0,  // parquet_meta_file_size
             0,  // append_base
             -1, // existing_parquet_file_size
+            SeqTxn::UNSET,
         )?;
         updater.insert_row_group(&app_partition, 1)?;
         updater.end(None)?;
@@ -3293,6 +3317,7 @@ mod tests {
             0,
             0,
             -1,
+            SeqTxn::UNSET,
         )?;
         let target = Partition {
             table: "t".to_string(),
@@ -3353,6 +3378,7 @@ mod tests {
             0,
             0,
             -1,
+            SeqTxn::UNSET,
         )?;
         updater.insert_row_group(&app, 1)?;
         updater.end(None)?;
@@ -3402,8 +3428,12 @@ mod tests {
             ],
         };
 
-        let (schema, _) =
-            crate::parquet_write::schema::to_parquet_schema(&partition_rg0, false, -1)?;
+        let (schema, _) = crate::parquet_write::schema::to_parquet_schema(
+            &partition_rg0,
+            false,
+            -1,
+            SeqTxn::UNSET,
+        )?;
         let encodings = to_encodings(&partition_rg0);
 
         let mut bloom_cols = HashSet::new();
@@ -3776,6 +3806,7 @@ mod tests {
             0,
             0,
             -1,
+            SeqTxn::UNSET,
         )?;
 
         // 3. Copy the existing row group, then append a fresh O3 row group.
@@ -3872,6 +3903,7 @@ mod tests {
             0,
             0,
             -1,
+            SeqTxn::UNSET,
         )?;
 
         // 3. Copy the existing row group, then append a fresh O3 row group.
@@ -3968,6 +4000,7 @@ mod tests {
             0,
             0,
             -1,
+            SeqTxn::UNSET,
         )?;
 
         // 3. Target schema drops the leading column and adds a trailing one:
@@ -4078,6 +4111,7 @@ mod tests {
             0,
             0,
             -1,
+            SeqTxn::UNSET,
         )?;
 
         // 3. Copy the existing row group and append a fresh O3 group, same schema.
@@ -4164,6 +4198,7 @@ mod tests {
             0,
             0,
             -1,
+            SeqTxn::UNSET,
         )?;
 
         // Append a fresh O3 row group, then finish.
@@ -4202,8 +4237,9 @@ mod tests {
             .and_then(|kv| kv.value.as_ref())
             .expect("updated file must carry qdb_meta");
         let qdb_meta = QdbMeta::deserialize(qdb_raw)?;
-        let (pm_bytes, pm_size) = convert_from_parquet(&md, Some(&qdb_meta), 0, 0, None, None)
-            .expect("migration must tolerate the update-mode footer via qdb_meta");
+        let (pm_bytes, pm_size) =
+            convert_from_parquet(&md, Some(&qdb_meta), 0, 0, &NoBloomFilterSource, None)
+                .expect("migration must tolerate the update-mode footer via qdb_meta");
         let reader = ParquetMetaReader::from_file_size(&pm_bytes, pm_size).unwrap();
         assert_eq!(reader.designated_timestamp(), Some(0));
         assert_eq!(reader.sorting_column_count(), 1);
@@ -4255,9 +4291,10 @@ mod tests {
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
             None,
-            0,  // parquet_meta_file_size
-            0,  // append_base
-            -1, // existing_parquet_file_size
+            0,
+            0,
+            -1,
+            SeqTxn::UNSET,
         )?;
 
         // Physical output order (rewrite ignores the insert position):
@@ -4337,9 +4374,10 @@ mod tests {
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
             Some(pm.reopen()?), // real _pm fd exercises the id-resolution path
-            0,                  // parquet_meta_file_size
-            0,                  // append_base
-            -1,                 // existing_parquet_file_size
+            0,
+            0,
+            -1, // no existing _pm -> full-create branch
+            SeqTxn::UNSET,
         )?;
         updater.copy_row_group(0)?;
         updater.end(None)?;

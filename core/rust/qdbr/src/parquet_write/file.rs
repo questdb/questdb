@@ -11,6 +11,7 @@ use parquet2::write::{
     Compressor, DynIter, DynStreamingIterator, FileWriter, RowGroupIter, Version,
     WriteOptions as FileWriteOptions,
 };
+use qdb_parquet_meta::SeqTxn;
 
 use crate::parquet_write::encode::encode_column_chunk;
 use crate::parquet_write::schema::{
@@ -83,6 +84,9 @@ pub struct ParquetWriter<W: Write> {
     min_compression_ratio: f64,
     /// Partition squash tracker value to embed in QdbMeta footer (-1 = not set)
     squash_tracker: i64,
+    /// Apply-time `seqTxn` embedded in the `questdb` parquet footer KV's
+    /// QdbMeta blob (-1 = not set). There is no separate `questdb.seqtxn` KV.
+    seq_txn: SeqTxn,
 }
 
 impl<W: Write> ParquetWriter<W> {
@@ -105,6 +109,7 @@ impl<W: Write> ParquetWriter<W> {
             bloom_filter_fpp: DEFAULT_BLOOM_FILTER_FPP,
             min_compression_ratio: 0.0,
             squash_tracker: -1,
+            seq_txn: SeqTxn::UNSET,
         }
     }
 
@@ -185,6 +190,11 @@ impl<W: Write> ParquetWriter<W> {
         self
     }
 
+    pub fn with_seq_txn(mut self, seq_txn: SeqTxn) -> Self {
+        self.seq_txn = seq_txn;
+        self
+    }
+
     fn write_options(&self) -> WriteOptions {
         WriteOptions {
             write_statistics: self.statistics,
@@ -242,8 +252,12 @@ impl<W: Write> ParquetWriter<W> {
 
     /// Write the given `Partition` with the writer `W`. Returns the total size of the file.
     pub fn finish(self, partition: Partition) -> ParquetResult<u64> {
-        let (schema, additional_meta) =
-            to_parquet_schema(&partition, self.raw_array_encoding, self.squash_tracker)?;
+        let (schema, additional_meta) = to_parquet_schema(
+            &partition,
+            self.raw_array_encoding,
+            self.squash_tracker,
+            self.seq_txn,
+        )?;
         let encodings = to_encodings(&partition);
         let compressions = to_compressions(&partition);
         let mut chunked = self.chunked_with_compressions(schema, encodings, compressions)?;

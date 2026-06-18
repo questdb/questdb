@@ -24,7 +24,7 @@ use common::{
 
 use parquet2::read::read_metadata_with_size;
 use questdbr::parquet::qdb_metadata::QdbMeta;
-use questdbr::parquet_metadata::convert::convert_from_parquet;
+use questdbr::parquet_metadata::convert::{convert_from_parquet, NoBloomFilterSource};
 use questdbr::parquet_metadata::row_group::RowGroupBlockBuilder;
 use questdbr::parquet_metadata::types::ColumnFlags;
 use questdbr::parquet_metadata::writer::ParquetMetaWriter;
@@ -82,7 +82,7 @@ fn make_pm_bytes(parquet_bytes: &[u8]) -> Vec<u8> {
         qdb_meta.as_ref(),
         footer_offset,
         footer_length,
-        None,
+        &NoBloomFilterSource,
         None,
     )
     .expect("convert_from_parquet");

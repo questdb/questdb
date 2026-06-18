@@ -31,9 +31,41 @@ use crate::header::{ColumnDescriptorRaw, FileHeader};
 use crate::parquet_meta_err;
 use crate::row_group::RowGroupBlockReader;
 use crate::types::{
-    FooterFeatureFlags, HeaderFeatureFlags, FOOTER_CHECKSUM_SIZE, FOOTER_FIXED_SIZE,
+    FooterFeatureFlags, HeaderFeatureFlags, SeqTxn, FOOTER_CHECKSUM_SIZE, FOOTER_FIXED_SIZE,
     FOOTER_TRAILER_SIZE, HEADER_CRC_AREA_OFF, ROW_GROUP_ENTRY_SIZE,
 };
+
+/// Bloom section size in bytes, derived from header info + the footer's
+/// row_group_count (peeked at offset 12 of `footer_data`). Returns 0 when
+/// the BLOOM_FILTERS bit isn't set. The caller passes this into
+/// `Footer::new` so the footer-flag walker knows where bloom ends.
+fn compute_bloom_section_size(header: &FileHeader, footer_data: &[u8]) -> ParquetMetaResult<usize> {
+    if !header.feature_flags().has_bloom_filters() {
+        return Ok(0);
+    }
+    if footer_data.len() < 16 {
+        return Err(parquet_meta_err!(
+            ParquetMetaErrorKind::Truncated,
+            "footer too small to read row_group_count"
+        ));
+    }
+    let rg_count = u32::from_le_bytes(footer_data[12..16].try_into().unwrap()) as usize;
+    let bloom_col_count = header.bloom_filter_column_count() as usize;
+    let entry_size = if header.feature_flags().has_bloom_filters_external() {
+        16
+    } else {
+        4
+    };
+    rg_count
+        .checked_mul(bloom_col_count)
+        .and_then(|n| n.checked_mul(entry_size))
+        .ok_or_else(|| {
+            parquet_meta_err!(
+                ParquetMetaErrorKind::Truncated,
+                "bloom filter footer section size overflow"
+            )
+        })
+}
 
 /// Main reader for a `_pm` metadata file.
 ///
@@ -154,7 +186,8 @@ impl<'a> ParquetMetaReader<'a> {
                 .expect("slice is 4 bytes"),
         );
 
-        let footer = Footer::new(footer_data, footer_length)?;
+        let bloom_section_size = compute_bloom_section_size(&header, footer_data)?;
+        let footer = Footer::new(footer_data, footer_length, bloom_section_size)?;
 
         // Reject footers that carry unknown required flag bits. The currently
         // selected footer may be newer than this reader understands, in which
@@ -168,42 +201,17 @@ impl<'a> ParquetMetaReader<'a> {
             ));
         }
 
-        // Parse bloom filter footer section if the feature flag is set.
-        let bloom_filter_section = if header.feature_flags().has_bloom_filters() {
-            let bloom_col_count = header.bloom_filter_column_count() as usize;
-            let is_external = header.feature_flags().has_bloom_filters_external();
-            let entry_size = if is_external { 16 } else { 4 };
-            let rg_count = footer.row_group_count() as usize;
-            let section_size = rg_count
-                .checked_mul(bloom_col_count)
-                .and_then(|n| n.checked_mul(entry_size))
-                .ok_or_else(|| {
-                    parquet_meta_err!(
-                        ParquetMetaErrorKind::Truncated,
-                        "bloom filter footer section size overflow"
-                    )
-                })?;
-            let section_start = FOOTER_FIXED_SIZE + rg_count * ROW_GROUP_ENTRY_SIZE;
-            let section_end = section_start.checked_add(section_size).ok_or_else(|| {
-                parquet_meta_err!(
-                    ParquetMetaErrorKind::Truncated,
-                    "bloom filter footer section_end overflow: {} + {}",
-                    section_start,
-                    section_size
-                )
-            })?;
+        // Bloom section: [entries_end, entries_end + bloom_section_size).
+        let bloom_filter_section = if bloom_section_size > 0 {
+            let section_start =
+                FOOTER_FIXED_SIZE + (footer.row_group_count() as usize) * ROW_GROUP_ENTRY_SIZE;
+            let section_end = section_start + bloom_section_size;
             if section_end > footer.crc_offset() {
                 return Err(parquet_meta_err!(
                     ParquetMetaErrorKind::Truncated,
                     "bloom filter footer section exceeds CRC offset: {} > {}",
                     section_end,
                     footer.crc_offset()
-                ));
-            }
-            if section_end > footer_data.len() {
-                return Err(parquet_meta_err!(
-                    ParquetMetaErrorKind::Truncated,
-                    "bloom filter footer section exceeds footer data"
                 ));
             }
             Some(&footer_data[section_start..section_end])
@@ -315,6 +323,14 @@ impl<'a> ParquetMetaReader<'a> {
         self.header.feature_flags()
     }
 
+    /// Returns the parsed footer (already constructed with bloom info).
+    /// Use this instead of calling `Footer::new` again — the section
+    /// offsets the footer stamps depend on `bloom_section_size`, which
+    /// requires header info.
+    pub fn footer(&self) -> &Footer<'a> {
+        &self.footer
+    }
+
     /// Returns the feature flags stored in the currently selected footer.
     pub fn footer_feature_flags(&self) -> FooterFeatureFlags {
         self.footer.feature_flags()
@@ -324,6 +340,19 @@ impl<'a> ParquetMetaReader<'a> {
     /// set. Consumed by the enterprise build; OSS does not read it today.
     pub fn squash_tracker(&self) -> Option<i64> {
         self.header.squash_tracker()
+    }
+
+    /// Latest footer's `seqTxn`, or `None` when `SEQ_TXN_BIT` is unset.
+    /// Consumed by the enterprise build; OSS does not read it.
+    pub fn seq_txn(&self) -> Option<SeqTxn> {
+        self.footer.seq_txn()
+    }
+
+    /// First scratchpad entry matching `code` on the latest footer, or
+    /// `None`. Opaque to OSS; enterprise consumers pick `code` values
+    /// privately.
+    pub fn scratchpad_entry(&self, code: u32) -> Option<&'a [u8]> {
+        self.footer.scratchpad_entry(code)
     }
 
     /// Returns the raw file data slice.
@@ -364,6 +393,9 @@ impl<'a> ParquetMetaReader<'a> {
         parquet_meta_file_size: u64,
         target_parquet_size: u64,
     ) -> ParquetMetaResult<(u64, Footer<'a>)> {
+        // Header read once for the whole walk; bloom_section_size is derived
+        // per-step since older footers may have a different row_group_count.
+        let header = FileHeader::new(data)?;
         // Cap MVCC chain walk to bound DoS impact on a crafted _pm. 1M
         // snapshots is several orders of magnitude beyond any real workload
         // (one snapshot per legitimate update), and at 64 B per footer
@@ -429,7 +461,8 @@ impl<'a> ParquetMetaReader<'a> {
                         current_size
                     )
                 })?;
-            let footer = Footer::new(footer_data, footer_length)?;
+            let bloom_section_size = compute_bloom_section_size(&header, footer_data)?;
+            let footer = Footer::new(footer_data, footer_length, bloom_section_size)?;
 
             let pq_size =
                 footer.parquet_footer_offset() + footer.parquet_footer_length() as u64 + 8;
@@ -662,8 +695,9 @@ mod tests {
         w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
         let (mut bytes, parquet_meta_file_size) = w.finish().unwrap();
 
-        // Patch footer feature flags to set an unknown optional bit (bit 5).
-        // Readers must accept the file and ignore the unknown bit.
+        // Set an unknown optional bit (bit 5). The forward-compat contract is
+        // accept-and-ignore for the optional range (bits 0-31); the negative
+        // mirror is `unknown_required_footer_flags_rejected`.
         let footer_offset = footer_offset_of(&bytes, parquet_meta_file_size);
         let flags_off = footer_offset as usize + FOOTER_FEATURE_FLAGS_OFF;
         let optional_bit: u64 = 1 << 5;

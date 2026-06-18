@@ -108,6 +108,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             TableWriter tableWriter,
             long srcNameTxn,
             long txn,
+            long seqTxn,
             long partitionUpdateSinkAddr,
             long dedupColSinkAddr,
             long o3TimestampMin,
@@ -130,7 +131,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         FilesFacade ff = tableWriter.getFilesFacade();
         final O3ParquetMergeContext ctx = PARQUET_MERGE_CONTEXT.get();
         ctx.clear();
-        final ParquetPartitionDecoder partitionDecoder = ctx.getPartitionDecoder();
+        final ParquetPartitionDecoder partitionDecoder = ctx.getPartitionDecoder(cairoConfiguration);
         final RowGroupBuffers rowGroupBuffers = ctx.getRowGroupBuffers();
         final DirectIntList parquetColumns = ctx.getParquetColumns();
         final ParquetMetaFileReader parquetMetaReader = ctx.getParquetMetaReader();
@@ -348,7 +349,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         parquetMetaFdOs,
                         updaterParquetMetaFileSize, // parse anchor (committed head from _txn)
                         parquetMetaReader.getFileSize(), // append base (_pm header at offset 0)
-                        parquetFileSize // existing parquet data-file size (gates first-time vs incremental)
+                        parquetFileSize, // existing parquet data-file size (gates first-time vs incremental)
+                        seqTxn
                 );
 
                 if (hasSchemaChange) {
@@ -747,6 +749,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long srcNameTxn,
             boolean last,
             long txn,
+            long seqTxn,
             long sortedTimestampsAddr,
             TableWriter tableWriter,
             AtomicInteger columnCounter,
@@ -783,6 +786,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         sortedTimestampsAddr,
                         tableWriter,
                         txn,
+                        seqTxn,
                         partitionUpdateSinkAddr,
                         o3Basket,
                         newPartitionSize
@@ -801,6 +805,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     tableWriter,
                     srcNameTxn,
                     txn,
+                    seqTxn,
                     partitionUpdateSinkAddr,
                     dedupColSinkAddr,
                     o3TimestampMin,
@@ -1620,6 +1625,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final long srcNameTxn = task.getSrcNameTxn();
         final boolean last = task.isLast();
         final long txn = task.getTxn();
+        final long seqTxn = task.getSeqTxn();
         final long sortedTimestampsAddr = task.getSortedTimestampsAddr();
         final TableWriter tableWriter = task.getTableWriter();
         final AtomicInteger columnCounter = task.getColumnCounter();
@@ -1649,6 +1655,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 srcNameTxn,
                 last,
                 txn,
+                seqTxn,
                 sortedTimestampsAddr,
                 tableWriter,
                 columnCounter,
@@ -3727,6 +3734,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long sortedTimestampsAddr,
             TableWriter tableWriter,
             long txn,
+            long seqTxn,
             long partitionUpdateSinkAddr,
             O3Basket o3Basket,
             long newPartitionSize
@@ -3833,7 +3841,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     configuration.getPartitionEncoderParquetBloomFilterFpp(),
                     minCompressionRatio,
                     Files.toOsFd(parquetMetaFd),
-                    -1L
+                    -1L,
+                    seqTxn
             );
 
             parquetFileSize = ff.length(parquetPath.$());
@@ -3869,7 +3878,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     pathToTable,
                     parquetPath,
                     ff,
-                    ctx.getPartitionDecoder(),
+                    ctx.getPartitionDecoder(configuration),
                     metadata,
                     ctx.getParquetColumns(),
                     ctx.getRowGroupBuffers(),

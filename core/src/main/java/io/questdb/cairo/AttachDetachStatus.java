@@ -27,6 +27,7 @@ package io.questdb.cairo;
 public enum AttachDetachStatus {
     OK(false),
     DETACH_ERR_ACTIVE(false),
+    DETACH_ERR_REMOTE(false),
     DETACH_ERR_MISSING_PARTITION(false),
     DETACH_ERR_MISSING_PARTITION_DIR,
     DETACH_ERR_COPY_META,
@@ -38,6 +39,7 @@ public enum AttachDetachStatus {
     ATTACH_ERR_RENAME,
     ATTACH_ERR_COPY,
     ATTACH_ERR_MISSING_PARTITION(false),
+    ATTACH_ERR_MISSING_PARQUET_DATA(false),
     ATTACH_ERR_DIR_EXISTS(false),
     ATTACH_ERR_EMPTY_PARTITION(false),
     ATTACH_ERR_READ_PARTITION,
