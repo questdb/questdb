@@ -3216,6 +3216,110 @@ public class ParquetWriteTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRollbackDataTruncateFailureStillSuspends() throws Exception {
+        // M1 regression guard, symmetric with testRollbackFsyncFailureStillSuspends.
+        // The rollback opens data.parquet via TableUtils.openRW to truncate it back
+        // to the pre-merge size; openRW throws on an FS fault. The fix swallows it so
+        // o3BumpErrorCount still runs and the table suspends. Without the swallow the
+        // throw escapes the catch before o3BumpErrorCount and the failed update would
+        // commit as a success. This injects the openRW fault on the rollback path.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "1.0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, Long.MAX_VALUE);
+
+        AtomicBoolean armed = new AtomicBoolean(false);
+        AtomicInteger openROCount = new AtomicInteger(0);
+        // Set when the 2nd data.parquet openRO fails (the update is about to roll
+        // back). The rollback's data.parquet truncate openRW is the next such call.
+        AtomicBoolean rollingBack = new AtomicBoolean(false);
+        AtomicInteger dataTruncateFailures = new AtomicInteger(0);
+        FilesFacade dodgyFacade = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (armed.get() && Utf8s.endsWithAscii(name, "data.parquet")) {
+                    // 2nd openRO (updateParquetIndexes) fails: the in-place update
+                    // rolls back, after updateFileMetadata grew _pm.
+                    if (openROCount.incrementAndGet() == 2) {
+                        rollingBack.set(true);
+                        return -1;
+                    }
+                }
+                return super.openRO(name);
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                // Fail only the rollback's data.parquet truncate openRW, exactly once.
+                if (Utf8s.endsWithAscii(name, "data.parquet") && rollingBack.compareAndSet(true, false)) {
+                    dataTruncateFailures.incrementAndGet();
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+
+        assertMemoryLeak(dodgyFacade, () -> {
+            execute(
+                    """
+                            CREATE TABLE x (x INT, ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(x, ts) VALUES
+                            (1, '2020-01-01T00:00:00.000Z'),
+                            (2, '2020-01-01T01:00:00.000Z'),
+                            (3, '2020-01-01T02:00:00.000Z'),
+                            (4, '2020-01-01T03:00:00.000Z'),
+                            (5, '2020-01-01T04:00:00.000Z'),
+                            (6, '2020-01-01T05:00:00.000Z'),
+                            (7, '2020-01-01T06:00:00.000Z'),
+                            (8, '2020-01-01T07:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(x, ts) VALUES (100, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            TableToken tableToken = engine.verifyTableName("x");
+
+            armed.set(true);
+            execute(
+                    """
+                            INSERT INTO x(x, ts) VALUES
+                            (9, '2020-01-01T00:30:00.000Z'),
+                            (10, '2020-01-01T01:30:00.000Z')
+                            """
+            );
+            drainWalQueue();
+            armed.set(false);
+
+            // The rollback truncate openRW fault fired, yet the table still
+            // suspended: the swallowed exception did not skip o3BumpErrorCount.
+            Assert.assertEquals("rollback data.parquet truncate fault must have fired once", 1, dataTruncateFailures.get());
+            Assert.assertTrue(
+                    "table must suspend despite the rollback data.parquet truncate failure",
+                    engine.getTableSequencerAPI().isSuspended(tableToken)
+            );
+
+            // Recovery still works once the fault is disarmed: the retried update
+            // overwrites the dead tail from the committed head.
+            execute("ALTER TABLE x RESUME WAL");
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+
+            assertQuery("SELECT count() FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n11\n");
+        });
+    }
+
+    @Test
     public void testRollbackFsyncFailureStillSuspends() throws Exception {
         // C2 regression guard. The rollback fsync of the leftover _pm tail
         // (ff.fsyncAndClose) can throw; the fix swallows it so o3BumpErrorCount
