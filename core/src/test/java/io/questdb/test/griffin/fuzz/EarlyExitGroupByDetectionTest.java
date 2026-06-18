@@ -32,15 +32,54 @@ import org.junit.Test;
 import static org.junit.Assert.assertEquals;
 
 /**
- * Locks in the early-exit non-keyed group-by detection the query fuzzer's
- * swallow oracle relies on (see {@link QueryRunner#factoryHasEarlyExitGroupBy}).
- * A {@code count_distinct} over a constant compiles to the serial
- * {@link GroupByNotKeyedRecordCursorFactory} with an early-exit cursor, which
+ * Locks in the two factory-shape predicates the query fuzzer's swallow oracle
+ * relies on to decide when a fired-but-not-surfaced fault is legitimate.
+ * <p>
+ * {@link QueryRunner#factoryHasEarlyExitGroupBy} recognises a
+ * {@code count_distinct} over a constant, which compiles to the serial
+ * {@link GroupByNotKeyedRecordCursorFactory} with an early-exit cursor that
  * stops at the first matching row; under the eager parallel filter beneath it a
- * fired {@code test_fault()} can land on a discarded frame, and the oracle must
- * recognise the shape rather than report it as a swallowed error.
+ * fired {@code test_fault()} can land on a discarded frame, so the oracle must
+ * tolerate the shape rather than report it as a swallowed error.
+ * <p>
+ * {@link QueryRunner#factoryHasBlockingAggregation} recognises the opposite: a
+ * {@code count()} / {@code sum()} / keyed or non-keyed {@code GROUP BY} that
+ * drains every frame before a downstream {@code LIMIT} can apply. A fault fired
+ * under such an aggregate is always pulled and must surface, so the oracle must
+ * NOT tolerate a swallow there even though the SQL text carries a {@code LIMIT}.
  */
 public class EarlyExitGroupByDetectionTest extends AbstractCairoTest {
+
+    @Test
+    public void testBlockingAggregationDetection() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL, s VARCHAR, l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t SELECT rnd_symbol('a','b'), rnd_varchar(1, 4, 1), x, " +
+                    "timestamp_sequence(0, 1000000L) FROM long_sequence(10)");
+
+            // A LIMIT over a blocking aggregate does not stop the scan: the aggregate
+            // drains every frame before the LIMIT can apply, so a fault fired on any
+            // frame must surface. count(*) routes to CountRecordCursorFactory; the
+            // keyless and keyed aggregates route to the async group bys; count_distinct
+            // over a column is a non-early-exit aggregate. All are blocking.
+            assertBlockingAggregation("SELECT count(*) FROM t WHERE l > 0 LIMIT 5", true);
+            assertBlockingAggregation("SELECT sum(l) FROM t WHERE l > 0 LIMIT 5", true);
+            assertBlockingAggregation("SELECT avg(l) FROM t WHERE l > 0 LIMIT 1", true);
+            assertBlockingAggregation("SELECT sym, count() FROM t WHERE l > 0 GROUP BY sym LIMIT 5", true);
+            assertBlockingAggregation("SELECT count_distinct(s) FROM t WHERE l > 0 LIMIT 5", true);
+
+            // An early-exit non-keyed group by (count_distinct over a constant) stops
+            // before draining, so it is not blocking -- the swallow oracle tolerates it
+            // through factoryHasEarlyExitGroupBy instead.
+            assertBlockingAggregation("SELECT count_distinct('B') FROM t WHERE l > 0 LIMIT 5", false);
+
+            // Streaming consumers a LIMIT genuinely stops early are not blocking: a
+            // window function and a bare projection both abandon the eager scan once
+            // the LIMIT is met, so a fault on a discarded frame is legitimate.
+            assertBlockingAggregation("SELECT l, max(l) OVER (ORDER BY ts) FROM t WHERE l > 0 LIMIT 5", false);
+            assertBlockingAggregation("SELECT * FROM t WHERE l > 0 LIMIT 5", false);
+        });
+    }
 
     @Test
     public void testCountDistinctConstantIsEarlyExit() throws Exception {
@@ -59,6 +98,18 @@ public class EarlyExitGroupByDetectionTest extends AbstractCairoTest {
             assertEarlyExit("SELECT count(*) FROM t WHERE l > 0", false);
             assertEarlyExit("SELECT count_distinct(s) FROM t WHERE l > 0", false);
         });
+    }
+
+    private static void assertBlockingAggregation(String sql, boolean expected) throws Exception {
+        // engine.select wraps the plan in a QueryProgress factory, so the aggregation
+        // is reached through getBaseFactory; the oracle walks that chain.
+        try (RecordCursorFactory factory = engine.select(sql, sqlExecutionContext)) {
+            assertEquals(
+                    "blocking-aggregation detection for: " + sql,
+                    expected,
+                    QueryRunner.factoryHasBlockingAggregation(factory)
+            );
+        }
     }
 
     private static void assertEarlyExit(String sql, boolean expected) throws Exception {

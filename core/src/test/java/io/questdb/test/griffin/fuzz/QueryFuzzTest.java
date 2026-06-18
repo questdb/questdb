@@ -227,10 +227,19 @@ public class QueryFuzzTest extends AbstractCairoTest {
 
             // Aggregates that keep a real aggregation step have no pushed limit, so a
             // fired fault must surface and the oracle must not be relaxed for them.
+            // This includes a LIMIT over a row-count-changing aggregate: the LIMIT is
+            // trivially satisfied by the single aggregate row and pushes no scan limit,
+            // so the async filter still scans every frame and a fired fault must
+            // surface. Since the SQL text does carry "limit", the swallow oracle keeps
+            // these from being silently tolerated through factoryHasBlockingAggregation
+            // rather than the pushed-limit marker.
             String[] notPushed = {
                     "SELECT max(c0) AS a0 FROM t WHERE test_fault() ORDER BY a0",
                     "SELECT max(ts) AS a0, count() AS a1 FROM t WHERE test_fault()",
                     "SELECT count() AS a0 FROM t WHERE test_fault()",
+                    "SELECT count() AS a0 FROM t WHERE test_fault() LIMIT 5",
+                    "SELECT sum(c0) AS a0 FROM t WHERE test_fault() LIMIT 5",
+                    "SELECT avg(c0) AS a0 FROM t WHERE test_fault() LIMIT 1",
             };
             for (String sql : notPushed) {
                 Assert.assertFalse("unexpected pushed-down limit in plan: " + sql,
