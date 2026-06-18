@@ -238,6 +238,7 @@ fn build_case_ascii(
         page,
         dict,
         col_info: QdbMetaCol {
+            id: None,
             column_type,
             column_top: 0,
             format,

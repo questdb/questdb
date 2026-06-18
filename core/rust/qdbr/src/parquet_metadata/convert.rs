@@ -128,7 +128,13 @@ pub fn convert_from_parquet(
     for (i, col_desc) in columns.iter().enumerate() {
         let field_info = col_desc.base_type.get_field_info();
         let name = &field_info.name;
-        let id = field_info.id.unwrap_or(-1);
+        // Prefer QuestDB's authoritative id from QdbMeta over the parquet
+        // field_id, so a `_pm` rebuilt from a file with no field_id still
+        // recovers the column id.
+        let id = crate::parquet_read::meta::resolve_column_id(
+            qdb_meta.and_then(|m| m.schema.get(i)).and_then(|c| c.id),
+            field_info.id,
+        );
 
         let col_type_code = if let Some(meta) = qdb_meta {
             let col_meta = &meta.schema[i];
@@ -973,6 +979,36 @@ mod tests {
     }
 
     #[test]
+    fn convert_prefers_qdb_meta_id_over_field_id() {
+        let parquet_data = write_test_parquet(10, CompressionOptions::Uncompressed);
+        let mut cursor = Cursor::new(&parquet_data);
+        let metadata = read_metadata_with_size(&mut cursor, parquet_data.len() as u64).unwrap();
+
+        // The written parquet has field_id == QdbMeta id == 0 for its single
+        // column. Diverge the QdbMeta id; the _pm must then carry the QdbMeta id,
+        // proving it is preferred over the parquet field_id.
+        let mut qdb_meta = extract_qdb_meta_from(&metadata).expect("test parquet has qdb meta");
+        assert_eq!(qdb_meta.schema.len(), 1);
+        qdb_meta.schema[0].id = Some(77);
+        let (bytes, size) =
+            convert_from_parquet(&metadata, Some(&qdb_meta), 0, 0, None, None).unwrap();
+        let reader = ParquetMetaReader::from_file_size(&bytes, size).unwrap();
+        assert_eq!(reader.column_descriptor(0).unwrap().id, 77);
+
+        // An absent QdbMeta id falls back to the field_id (0).
+        qdb_meta.schema[0].id = None;
+        let (bytes, size) =
+            convert_from_parquet(&metadata, Some(&qdb_meta), 0, 0, None, None).unwrap();
+        let reader = ParquetMetaReader::from_file_size(&bytes, size).unwrap();
+        assert_eq!(reader.column_descriptor(0).unwrap().id, 0);
+
+        // Without QdbMeta, the id comes straight from the parquet field_id (0).
+        let (bytes, size) = convert_from_parquet(&metadata, None, 0, 0, None, None).unwrap();
+        let reader = ParquetMetaReader::from_file_size(&bytes, size).unwrap();
+        assert_eq!(reader.column_descriptor(0).unwrap().id, 0);
+    }
+
+    #[test]
     fn convert_with_compression() {
         let parquet_data = write_test_parquet(1000, CompressionOptions::Snappy);
         let mut cursor = Cursor::new(&parquet_data);
@@ -1064,6 +1100,7 @@ mod tests {
         bad_meta
             .schema
             .push(crate::parquet::qdb_metadata::QdbMetaCol {
+                id: None,
                 column_type: ColumnTypeTag::Int.into_type(),
                 column_top: 0,
                 format: None,
@@ -1072,6 +1109,7 @@ mod tests {
         bad_meta
             .schema
             .push(crate::parquet::qdb_metadata::QdbMetaCol {
+                id: None,
                 column_type: ColumnTypeTag::Long.into_type(),
                 column_top: 0,
                 format: None,
@@ -1739,6 +1777,7 @@ mod tests {
         // Build QdbMeta with LocalKeyIsGlobal and ascii flags.
         let mut meta = QdbMeta::new(1);
         meta.schema.push(crate::parquet::qdb_metadata::QdbMetaCol {
+            id: None,
             column_type: ColumnTypeTag::Symbol.into_type(),
             column_top: 42,
             format: Some(QdbMetaColFormat::LocalKeyIsGlobal),
@@ -3157,6 +3196,7 @@ mod tests {
 
         let mut qdb_meta = QdbMeta::new(1);
         qdb_meta.schema.push(QdbMetaCol {
+            id: None,
             column_type: ColumnTypeTag::Timestamp
                 .into_type()
                 .into_designated()

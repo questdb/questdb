@@ -210,6 +210,7 @@ mod tests {
         qdb_meta.schema.insert(
             0,
             QdbMetaCol {
+                id: None,
                 column_type: ColumnTypeTag::Symbol.into_type(),
                 column_top: 0,
                 format: None, // It should error because this is missing.
@@ -249,6 +250,7 @@ mod tests {
         qdb_meta.schema.insert(
             0,
             QdbMetaCol {
+                id: None,
                 column_type: ColumnTypeTag::Symbol.into_type(),
                 column_top: 0,
                 format: None, // Missing format makes the page decode fail mid-chunk.
@@ -303,6 +305,7 @@ mod tests {
         qdb_meta.schema.insert(
             0,
             QdbMetaCol {
+                id: None,
                 column_type: ColumnTypeTag::Symbol.into_type(),
                 column_top: 0,
                 format: None, // Missing format makes the page decode fail mid-chunk.

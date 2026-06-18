@@ -341,6 +341,7 @@ fn bench_decode_rle(c: &mut Criterion) {
             );
 
             let col_info = QdbMetaCol {
+                id: None,
                 column_type: ColumnType::new(ColumnTypeTag::Long, 0),
                 column_top: 0,
                 format: None,

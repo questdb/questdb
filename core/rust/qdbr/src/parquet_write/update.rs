@@ -658,9 +658,13 @@ impl ParquetUpdater {
                 col.data_type
             };
 
-            qdb_meta
-                .schema
-                .push(QdbMetaCol { column_type, column_top: 0, format, ascii: None });
+            qdb_meta.schema.push(QdbMetaCol {
+                column_type,
+                column_top: 0,
+                format,
+                ascii: None,
+                id: Some(col.id),
+            });
         }
 
         // Cache column_id → target schema position map for use during
@@ -1545,7 +1549,12 @@ fn build_column_infos_from_qdb_meta<'a>(
             crate::parquet_metadata::ParquetMetaColumnInfo {
                 name: &field_info.name,
                 col_type_code,
-                id: field_info.id.unwrap_or(-1),
+                // Prefer QuestDB's authoritative id from QdbMeta over the parquet
+                // field_id, matching the convert path's `_pm` generation.
+                id: crate::parquet_read::meta::resolve_column_id(
+                    cm.and_then(|c| c.id),
+                    field_info.id,
+                ),
                 flags,
                 fixed_byte_len: match phys_type {
                     parquet2::schema::types::PhysicalType::FixedLenByteArray(len) => len as i32,
@@ -2187,6 +2196,7 @@ mod tests {
         qdb_meta
             .schema
             .push(crate::parquet::qdb_metadata::QdbMetaCol {
+                id: None,
                 column_type: ColumnTypeTag::Int.into_type(),
                 column_top: 0,
                 format: None,
@@ -2195,6 +2205,7 @@ mod tests {
         qdb_meta
             .schema
             .push(crate::parquet::qdb_metadata::QdbMetaCol {
+                id: None,
                 column_type: ColumnTypeTag::Float.into_type(),
                 column_top: 0,
                 format: None,

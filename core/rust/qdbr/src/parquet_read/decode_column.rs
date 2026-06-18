@@ -71,6 +71,7 @@ pub fn decode_single_timestamp_value(
     row_hi: usize,
 ) -> ParquetResult<i64> {
     let col_info = QdbMetaCol {
+        id: None,
         column_type: ColumnType::new(ColumnTypeTag::Timestamp, 0),
         column_top: 0,
         format: None,
@@ -691,6 +692,7 @@ mod tests {
         let num_values = chunk.num_values();
 
         let col_info = QdbMetaCol {
+            id: None,
             column_type: ColumnType::new(ColumnTypeTag::Long, 0),
             column_top: 0,
             format: None,
@@ -935,6 +937,7 @@ mod tests {
         let num_values = chunk.num_values();
 
         let col_info = QdbMetaCol {
+            id: None,
             column_type: ColumnType::new(ColumnTypeTag::Long, 0),
             column_top: 0,
             format: None,
