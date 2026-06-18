@@ -1925,7 +1925,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     throw new RuntimeException("Test failure");
                 } catch (Exception e) {
                     final StackTraceElement[] stackTrace = e.getStackTrace();
-                    if (stackTrace[1].getClassName().endsWith("TableSequencerImpl") && stackTrace[1].getMethodName().equals("createSequencerDir")) {
+                    if (stackTrace[1].getClassName().endsWith("TableSequencerImpl") && stackTrace[1].getMethodName().equals("createSequencerFiles")) {
                         return 1;
                     }
                 }
