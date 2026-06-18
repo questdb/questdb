@@ -1506,7 +1506,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     engine.attachReader(baseTableReader);
                 }
             } catch (Throwable th) {
-                if (periodRefresh && tryScheduleRetry(viewState, viewToken, th)) {
+                // The !viewState.isInvalid() guard mirrors the outer catch: a prior refreshFailState
+                // inside insertAsSelect may have marked the view invalid in-memory and then had its
+                // WAL write (resetMatViewState) throw a retriable error that propagates here. Never
+                // arm a retry on an already-invalid view.
+                if (periodRefresh && !viewState.isInvalid() && tryScheduleRetry(viewState, viewToken, th)) {
                     // Transient error (base table reader pool exhausted or out-of-memory) on a
                     // period refresh: defer instead of invalidating. MatViewTimerJob re-drives an
                     // incremental refresh once the backoff elapses; that incremental refresh
@@ -1612,7 +1616,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                 ? Math.min(minExaminedToTxn, examinedBaseTxn)
                                 : examinedBaseTxn;
                     } catch (Throwable th) {
-                        if (!tryScheduleRetry(viewState, viewToken, th)) {
+                        // Never arm a retry on an already-invalid view: a prior refreshFailState
+                        // (e.g. inside insertAsSelect) may have marked it invalid in-memory and then
+                        // had its WAL write (resetMatViewState) throw a retriable error that
+                        // propagates here. The isInvalid() short-circuit mirrors the outer catch's
+                        // !isInvalid() guard, so such a retriable error fails the state instead of
+                        // arming a retry on an invalid view.
+                        if (viewState.isInvalid() || !tryScheduleRetry(viewState, viewToken, th)) {
                             refreshFailState(viewDefinition, viewState, walWriter, th);
                         }
                     }
@@ -1734,7 +1744,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 final long result = refreshIncremental0(baseTableToken, viewDefinition, viewState, walWriter, refreshTriggerTimestamp);
                 return (result & 1L) != 0;
             } catch (Throwable th) {
-                if (tryScheduleRetry(viewState, viewToken, th)) {
+                // Never arm a retry on an already-invalid view (see refreshDependentViewsIncremental):
+                // a prior refreshFailState inside insertAsSelect may have marked it invalid in-memory
+                // and then had its WAL write (resetMatViewState) throw a retriable error that
+                // propagates here. The !isInvalid() guard mirrors the outer catch.
+                if (!viewState.isInvalid() && tryScheduleRetry(viewState, viewToken, th)) {
                     return false;
                 }
                 LOG.error()

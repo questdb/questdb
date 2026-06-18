@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewTimerJob;
 import io.questdb.cairo.wal.WalWriter;
@@ -68,6 +69,11 @@ public class MatViewRefreshBusyRetryTest extends AbstractCairoTest {
     // Stage 2 of the m3 scenario: make WalWriter.resetMatViewState throw a RETRIABLE error so the
     // failure inside refreshFailState propagates to the dependent-view loop's outer catch.
     private static final AtomicBoolean failViewResetMatViewState = new AtomicBoolean(false);
+    // m3 inner-catch sub-path: make WalWriter.newRow throw a NON-retriable error from INSIDE
+    // insertAsSelect (after getReader succeeds). insertAsSelect then calls refreshFailState (marking
+    // the view invalid in-memory); its resetMatViewState WAL write throws a RETRIABLE error that
+    // propagates back to the refresh method's INNER catch (not the outer catch).
+    private static final AtomicBoolean failViewInsertNonRetriable = new AtomicBoolean(false);
     private static final AtomicBoolean failViewWalWriter = new AtomicBoolean(false);
     private static volatile String baseTableName;
     private static volatile String viewWalWriterName;
@@ -120,6 +126,18 @@ public class MatViewRefreshBusyRetryTest extends AbstractCairoTest {
                                 getTelemetryWal()
                         ) {
                             @Override
+                            public TableWriter.Row newRow(long timestamp) {
+                                if (failViewInsertNonRetriable.get()) {
+                                    // Fail NON-retriably from inside insertAsSelect's row loop, after
+                                    // getReader already succeeded, so the failure is handled by
+                                    // insertAsSelect (which calls refreshFailState) rather than by the
+                                    // refresh method's outer catch.
+                                    throw CairoException.nonCritical().put("injected non-retriable refresh failure during insert");
+                                }
+                                return super.newRow(timestamp);
+                            }
+
+                            @Override
                             public void resetMatViewState(
                                     long lastRefreshBaseTxn,
                                     long lastRefreshTimestamp,
@@ -129,7 +147,23 @@ public class MatViewRefreshBusyRetryTest extends AbstractCairoTest {
                                     LongList refreshIntervals,
                                     long refreshIntervalsBaseTxn
                             ) {
-                                throw EntryUnavailableException.instance("wal writer busy during resetMatViewState");
+                                if (invalid) {
+                                    // Only fail the invalid-state write done by refreshFailState
+                                    // (invalid=true), not the happy-path intervals-cache write in
+                                    // getRefreshIntervals (invalid=false). This makes the retriable
+                                    // error land AFTER refreshFail() has already marked the view
+                                    // invalid in-memory, which is exactly the m3 scenario.
+                                    throw EntryUnavailableException.instance("wal writer busy during resetMatViewState");
+                                }
+                                super.resetMatViewState(
+                                        lastRefreshBaseTxn,
+                                        lastRefreshTimestamp,
+                                        invalid,
+                                        invalidationReason,
+                                        lastPeriodHi,
+                                        refreshIntervals,
+                                        refreshIntervalsBaseTxn
+                                );
                             }
                         };
                     }
@@ -148,6 +182,7 @@ public class MatViewRefreshBusyRetryTest extends AbstractCairoTest {
         failBaseReader.set(false);
         failBaseReaderOom.set(false);
         failBaseReaderNonRetriable.set(false);
+        failViewInsertNonRetriable.set(false);
         failViewResetMatViewState.set(false);
         failViewWalWriter.set(false);
         baseTableName = null;
@@ -752,6 +787,124 @@ public class MatViewRefreshBusyRetryTest extends AbstractCairoTest {
             drainMatViewQueue(engine);
 
             // The view is invalid (refreshFail ran). It must NOT carry a pending refresh retry.
+            final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
+            Assert.assertNotNull(state);
+            Assert.assertTrue("view must be invalid after the refresh failure", state.isInvalid());
+            Assert.assertEquals(
+                    "an invalid view must not carry a pending refresh-retry deadline",
+                    Numbers.LONG_NULL,
+                    state.getRefreshRetryAfterMicros()
+            );
+            Assert.assertEquals(
+                    "an invalid view must not carry a bumped refresh-retry count",
+                    0,
+                    state.getRefreshRetryCount()
+            );
+        });
+    }
+
+    @Test
+    public void testInsertFailureRetriableResetDoesNotScheduleRetryOnInvalidView() throws Exception {
+        // m3 INNER-catch sub-path (not reached by the getReader-injected tests above). A NON-retriable
+        // error is raised from INSIDE insertAsSelect (after getReader already succeeded), so
+        // insertAsSelect itself calls refreshFailState, which marks the view invalid in-memory and
+        // then has its WAL write (resetMatViewState) throw a RETRIABLE error. That retriable error
+        // propagates out of refreshIncremental0 into the dependent-view loop's INNER catch, whose
+        // tryScheduleRetry must NOT arm a retry on the now-invalid view.
+        //
+        // RED before the fix (the inner catch armed a retry on the invalid view); GREEN once the
+        // inner-catch tryScheduleRetry is gated on !viewState.isInvalid().
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_BUSY_RETRY_TIMEOUT, 1000);
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_BUSY_RETRY_LIMIT, 10);
+        baseTableName = "base_price";
+        viewWalWriterName = "price_1h";
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL;"
+            );
+            execute("insert into base_price values('a', 1.0, '2020-01-01T00:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+
+            execute(
+                    "create materialized view price_1h as (" +
+                            "  select ts, avg(price) as avg_price from base_price sample by 1h" +
+                            ") partition by day"
+            );
+            drainWalAndMatViewQueues();
+            assertViewStatus("valid");
+            assertViewRowCount(1);
+
+            // A second bucket lands; committing it enqueues the dependent-view refresh.
+            execute("insert into base_price values('a', 2.0, '2020-01-01T01:00:00.000000Z')");
+            drainWalQueue();
+
+            // The base read succeeds, but the row write inside insertAsSelect fails NON-retriably, so
+            // insertAsSelect calls refreshFailState (marking the view invalid), whose resetMatViewState
+            // WAL write throws a RETRIABLE error that lands in the dependent-view loop's inner catch.
+            failViewInsertNonRetriable.set(true);
+            failViewResetMatViewState.set(true);
+            drainMatViewQueue(engine);
+
+            final TableToken viewToken = engine.getTableTokenIfExists("price_1h");
+            Assert.assertNotNull(viewToken);
+            final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
+            Assert.assertNotNull(state);
+            Assert.assertTrue("view must be invalid after the refresh failure", state.isInvalid());
+            Assert.assertEquals(
+                    "an invalid view must not carry a pending refresh-retry deadline",
+                    Numbers.LONG_NULL,
+                    state.getRefreshRetryAfterMicros()
+            );
+            Assert.assertEquals(
+                    "an invalid view must not carry a bumped refresh-retry count",
+                    0,
+                    state.getRefreshRetryCount()
+            );
+        });
+    }
+
+    @Test
+    public void testInsertFailureRetriableResetDoesNotScheduleRetryOnInvalidViewSingleViewPath() throws Exception {
+        // Same m3 inner-catch sub-path as the dependent-view test, but on the single-view
+        // (timer/enqueue-driven) refresh path: refreshIncremental(view)'s inner catch must not arm a
+        // retry on a view that insertAsSelect's refreshFailState already marked invalid in-memory.
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_BUSY_RETRY_TIMEOUT, 1000);
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_BUSY_RETRY_LIMIT, 10);
+        baseTableName = "base_price";
+        viewWalWriterName = "price_1h";
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL;"
+            );
+            execute("insert into base_price values('a', 1.0, '2020-01-01T00:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+
+            execute(
+                    "create materialized view price_1h as (" +
+                            "  select ts, avg(price) as avg_price from base_price sample by 1h" +
+                            ") partition by day"
+            );
+            drainWalAndMatViewQueues();
+            assertViewStatus("valid");
+            assertViewRowCount(1);
+
+            // A second bucket lands so the view has work to refresh, but commit it WITHOUT driving the
+            // mat view queue, so no dependent-view refresh runs yet.
+            execute("insert into base_price values('a', 2.0, '2020-01-01T01:00:00.000000Z')");
+            drainWalQueue();
+
+            // Drive the SINGLE-VIEW path directly by enqueuing a view-targeted incremental refresh.
+            final TableToken viewToken = engine.getTableTokenIfExists("price_1h");
+            Assert.assertNotNull(viewToken);
+            failViewInsertNonRetriable.set(true);
+            failViewResetMatViewState.set(true);
+            engine.getMatViewStateStore().enqueueIncrementalRefresh(viewToken);
+            drainMatViewQueue(engine);
+
             final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
             Assert.assertNotNull(state);
             Assert.assertTrue("view must be invalid after the refresh failure", state.isInvalid());
