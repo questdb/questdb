@@ -1330,10 +1330,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     /**
      * Returns true if the materialized view is in the configured refresh block list
      * ({@code cairo.mat.view.refresh.block.list}). Blocked views are skipped by every refresh path -
-     * incremental, full, and range - without being invalidated. This is an operator escape hatch for
-     * a view whose refresh keeps crashing the database: blocking it lets the database start and stay
-     * up. The tradeoff is that a blocked view never advances its last refreshed base txn, so it can
-     * pin the base table's WAL retention until it is dropped or removed from the block list.
+     * incremental, full, and range. They may still be invalidated by a base-table/parent cascade or
+     * an explicit INVALIDATE; this is safe because invalidation runs no view SQL (so it can't trigger
+     * the crash the block list guards against) and it releases the base table's WAL retention. This
+     * is an operator escape hatch for a view whose refresh keeps crashing the database: blocking it
+     * lets the database start and stay up. The tradeoff is that a blocked view that is never
+     * invalidated never advances its last refreshed base txn, so it can pin the base table's WAL
+     * retention until it is dropped or removed from the block list.
      */
     private boolean isRefreshBlocked(TableToken viewToken) {
         return configuration.isMatViewRefreshBlocked(viewToken.getTableName());
