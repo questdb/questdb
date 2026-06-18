@@ -25,6 +25,11 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.VarcharTypeDriver;
+import io.questdb.cairo.arr.ArrayTypeDriver;
+import io.questdb.cairo.idx.CoveringRowCursor;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.griffin.engine.table.parquet.ParquetDecoder;
 import io.questdb.griffin.engine.table.parquet.ParquetFileDecoder;
 import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
@@ -43,6 +48,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Rows;
+import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -114,6 +120,17 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     private final IntLongHashMap recordAtSlices = new IntLongHashMap();
     private ParquetDecoder activeDecoder;
     private PageFrameAddressCache addressCache;
+    // Per-worker covered (posting-index sidecar) decode buffers, keyed by frame
+    // index. A covered frame's decoded native buffers must live for the WHOLE
+    // query, not just one navigateTo: covered frames report NATIVE, so a record
+    // read of a covered VARCHAR/STRING is "stable" and zero-copy aggregates
+    // (first/last) STORE the raw buffer pointer for the merge phase. Reusing one
+    // slot across frames (or freeing it per frame in releaseParquetBuffers) would
+    // dangle those pointers. So we cache one CoveringBuffers per frame and free
+    // them all only at a query boundary (of / clear / close), mirroring the
+    // eager production path, which allocates fresh per-frame buffers and frees
+    // them at cursor close. The pool is per reduce slot, owned by one worker.
+    private final IntObjHashMap<CoveringBuffers> coveringByFrame = new IntObjHashMap<>();
     // Bumped whenever the pool closes buffers that bound records may still alias
     // (failed decode, bulk release). Records capture it on bind; a mismatch fails
     // the navigateTo() fast path and forces a safe rebind.
@@ -167,6 +184,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         recordAtRows = Misc.free(recordAtRows);
         recordAtSlices.clear();
         releaseParquetBuffers();
+        releaseCoveringBuffers();
     }
 
     @Override
@@ -179,6 +197,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         recordAtRows = Misc.free(recordAtRows);
         recordAtSlices.clear();
         releaseParquetBuffers();
+        releaseCoveringBuffers();
         Misc.freeObjListAndClear(freeParquetBufferShells);
         addressCache = null;
     }
@@ -195,6 +214,11 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     @TestOnly
     public int getCachedFrameCount() {
         return byFrameIndex.size();
+    }
+
+    @TestOnly
+    public int getCoveredFrameCount() {
+        return coveringByFrame.size();
     }
 
     @TestOnly
@@ -215,6 +239,14 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     public void navigateTo(int frameIndex, PageFrameMemoryRecord record) {
         final byte format = addressCache.getFrameFormat(frameIndex);
         if (format == PartitionFormat.NATIVE) {
+            // A covered frame reports NATIVE but is served by this pool's per-frame
+            // CoveringBuffers, NOT the query-stable address-cache arrays, so it must
+            // take the parquet-style guarded bind below -- never the frame-index-only
+            // fast-return, which would leave the record pointing at recycled buffers
+            // of a different generation. Detect and handle it before that fast-return.
+            if (navigateCoveredRecord(frameIndex, record)) {
+                return;
+            }
             // Native page addresses come from the address cache and stay valid for the whole
             // query, so a matching frame index proves the record is already positioned here.
             if (record.getFrameIndex() == frameIndex) {
@@ -351,6 +383,18 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             frameMemory.auxPageSizes = addressCache.getAuxPageSizes();
             frameMemory.columnOffset = addressCache.toColumnOffset(frameIndex);
             frameMemory.currentRowGroupBuffer = null;
+            // Covered frame: decode its covered columns on this worker and rebind
+            // the frame memory to the decoded buffers (overriding the eager flat
+            // addresses just rebound above). A covered frame always reports
+            // NATIVE, so it always lands here.
+            try {
+                patchCoveredFrameMemory(frameIndex);
+            } catch (Throwable th) {
+                // Mirror the PARQUET arm: drop frameMemory's stale binding so a
+                // subsequent fast-return does not serve the half-bound state.
+                frameMemory.clear();
+                throw th;
+            }
         } else if (format == PartitionFormat.PARQUET) {
             final int rowGroupLo = addressCache.getParquetRowGroupLo(frameIndex);
             final int rowGroupHi = addressCache.getParquetRowGroupHi(frameIndex);
@@ -431,6 +475,16 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             frameMemory.auxPageSizes = addressCache.getAuxPageSizes();
             frameMemory.columnOffset = addressCache.toColumnOffset(frameIndex);
             frameMemory.currentRowGroupBuffer = null;
+            // Covered frame: decode covered columns on this worker and rebind. See
+            // the matching arm in navigateTo(int, int, int). The columnIndexes hint
+            // is irrelevant to a covered frame -- its whole row is sidecar-decoded.
+            try {
+                patchCoveredFrameMemory(frameIndex);
+            } catch (Throwable th) {
+                // Mirror the PARQUET arm: drop frameMemory's stale binding on failure.
+                frameMemory.clear();
+                throw th;
+            }
         } else if (format == PartitionFormat.PARQUET) {
             ParquetBuffers parquetBuffers = tryHit(frameIndex, FRAME_MEMORY_MASK);
             if (parquetBuffers != null && parquetBuffers.isRowFiltered) {
@@ -464,12 +518,140 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         return frameMemory;
     }
 
+    /**
+     * Worker-side covered decode arm. When {@code frameIndex} is a covered frame
+     * with a single resolved key, decode its covered columns from the posting
+     * sidecar into this pool's per-worker {@link CoveringBuffers} and rebind
+     * {@code frameMemory} to those buffers (a covered frame's whole row is
+     * sidecar-decoded, so every column is rebound). This OVERRIDES the flat
+     * addresses just rebound by the NATIVE arm, so the result is correct
+     * regardless of what those addresses hold -- single-key covered frames are
+     * produced metadata-only (those addresses are PLACEHOLDER zeroes), and this
+     * is their SOLE decoder. No-op for non-covered frames.
+     * <p>
+     * Multi-key covered frames ({@code key == VALUE_NOT_FOUND}) interleave several
+     * keys per row in a merge order a single detached cursor cannot reproduce, so
+     * they are left on the eager flat addresses (still produced eagerly at frame
+     * production -- see {@code fillMergedFrame}).
+     */
+    private void patchCoveredFrameMemory(int frameIndex) {
+        final CoveringBuffers buffers = decodeCoveredFrame(frameIndex);
+        if (buffers == null) {
+            // Non-covered or multi-key frame: keep the eager flat addresses the
+            // NATIVE arm bound.
+            return;
+        }
+        frameMemory.currentRowGroupBuffer = null;
+        frameMemory.pageAddresses = buffers.getPageAddresses();
+        frameMemory.auxPageAddresses = buffers.getAuxPageAddresses();
+        frameMemory.pageSizes = buffers.getPageSizes();
+        frameMemory.auxPageSizes = buffers.getAuxPageSizes();
+        frameMemory.columnOffset = 0;
+    }
+
+    /**
+     * Worker-side covered decode arm for the RECORD fast-path (row filters,
+     * {@link PageFrameFilteredMemoryRecord} late materialization /
+     * {@code recordAt}, negative-limit, {@code AbstractPageFrameRecordCursor}).
+     * Mirrors {@link #patchCoveredFrameMemory} but binds a {@link Record} instead
+     * of the flyweight: when {@code frameIndex} is a single-key covered frame,
+     * decode its covered columns into this pool's per-frame {@link CoveringBuffers}
+     * and point {@code record} at them.
+     * <p>
+     * The bind uses the SAME guard as the parquet record arm -- {@code boundPool ==
+     * this} and {@code boundGeneration == bindGeneration} -- because a covered
+     * record points at per-pool buffers that a bulk release recycles or a different
+     * generation may own, exactly like parquet buffers and UNLIKE the query-stable
+     * address-cache arrays a plain native record uses. Stamping the pool/generation
+     * lets {@link #navigateTo(int, PageFrameMemoryRecord)} take the cheap
+     * fast-return on a repeat visit while rejecting a stale binding, and ensures a
+     * covered record never takes the frame-index-only NATIVE fast-return.
+     * <p>
+     * Returns {@code true} when the frame was handled as covered (the record is now
+     * bound), {@code false} for a non-covered or multi-key frame (the caller falls
+     * through to the normal native bind, keeping the eager flat addresses).
+     */
+    private boolean navigateCoveredRecord(int frameIndex, PageFrameMemoryRecord record) {
+        // Fast-return: the record already points at THIS pool's live covered
+        // buffers for this frame. The pool/generation guard distinguishes "still
+        // ours and live" from "bound elsewhere or recycled", mirroring the parquet
+        // record arm; a bulk release (releaseParquetBuffers) bumps bindGeneration so
+        // a stale covered binding rebinds instead of reading recycled buffers.
+        if (record.getFrameIndex() == frameIndex && record.getBoundPool() == this && record.getBoundGeneration() == bindGeneration) {
+            // Only covered frames stamp boundPool == this; a non-covered native
+            // record leaves boundPool null, so reaching here proves this frame is
+            // the covered one the record is bound to.
+            return true;
+        }
+        final CoveringBuffers buffers = decodeCoveredFrame(frameIndex);
+        if (buffers == null) {
+            return false;
+        }
+        record.init(
+                frameIndex,
+                PartitionFormat.NATIVE,
+                addressCache.getRowIdOffset(frameIndex),
+                buffers.getPageAddresses(),
+                buffers.getAuxPageAddresses(),
+                buffers.getPageSizes(),
+                buffers.getAuxPageSizes(),
+                0
+        );
+        record.setBoundPool(this, bindGeneration);
+        return true;
+    }
+
+    /**
+     * Acquire (or reuse) this pool's per-frame {@link CoveringBuffers} for a
+     * single-key covered frame and decode its covered columns into them, returning
+     * the buffers; returns {@code null} for a non-covered frame or a multi-key
+     * (merged) covered frame, which cannot be reproduced from a single detached
+     * cursor and stays on the eager flat addresses. Shared by the flyweight
+     * ({@link #patchCoveredFrameMemory}) and record ({@link #navigateCoveredRecord})
+     * arms so both decode identically.
+     */
+    @Nullable
+    private CoveringBuffers decodeCoveredFrame(int frameIndex) {
+        if (!addressCache.isFrameCovered(frameIndex)) {
+            return null;
+        }
+        final int key = addressCache.getCoveredKey(frameIndex);
+        if (key == SymbolTable.VALUE_NOT_FOUND) {
+            // Multi-key (merged) covered frame: cannot be reproduced from a single
+            // detached cursor.
+            return null;
+        }
+        final IndexReader reader = addressCache.getCoveredIndexReader(frameIndex);
+        final long rowLo = addressCache.getCoveredRowLo(frameIndex);
+        final long rowHi = addressCache.getCoveredRowHi(frameIndex);
+        final int[] includeIndices = addressCache.getCoveredIncludeIndices(frameIndex);
+        // The frame's declared size is the covered (matched) row count, NOT the
+        // base range width: see CoveringPageFrameCursor#finalizeFrame, which sets
+        // partitionHi = count.
+        final int rowCount = (int) addressCache.getFrameSize(frameIndex);
+        // One CoveringBuffers per frame, retained for the query (see coveringByFrame).
+        final int keyIndex = coveringByFrame.keyIndex(frameIndex);
+        CoveringBuffers buffers = coveringByFrame.valueAt(keyIndex);
+        if (buffers == null) {
+            buffers = new CoveringBuffers();
+            coveringByFrame.putAt(keyIndex, frameIndex, buffers);
+        }
+        // Idempotent: decode() is a no-op once this frame has been decoded, so a
+        // repeat navigate to the same frame reuses the live buffers (and keeps any
+        // pointers stable aggregates stored into them).
+        buffers.decode(frameIndex, reader, key, rowLo, rowHi, includeIndices, rowCount);
+        return buffers;
+    }
+
     public void of(PageFrameAddressCache addressCache) {
         of(addressCache, ParquetDecodeHint.MONOTONIC);
     }
 
     public void of(PageFrameAddressCache addressCache, ParquetDecodeHint hint) {
         releaseParquetBuffers();
+        // A new query (or the same query's next address cache) invalidates any
+        // covered buffers retained for stable-string aggregates of the prior one.
+        releaseCoveringBuffers();
         this.addressCache = addressCache;
         this.decodeHint = hint;
         this.effectiveBudgetBytes = hint.applyTo(maxCacheBytes);
@@ -525,6 +707,35 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         if (frameMemory != null) {
             frameMemory.clear();
         }
+        // NOTE: covered (CoveringBuffers) buffers are deliberately NOT freed here.
+        // The async reduce paths call this per frame, but a covered frame's native
+        // buffers must outlive a single frame -- zero-copy first()/last() over a
+        // covered NATIVE varchar/string stores a raw pointer into them for the
+        // merge phase. They are freed only at a query boundary by
+        // releaseCoveringBuffers() (of / clear / close).
+    }
+
+    /**
+     * Frees every per-frame covered decode buffer. Called only at query
+     * boundaries ({@link #of}, {@link #clear}, {@link #close}); see
+     * {@link #coveringByFrame} for why covered buffers are query-lifetime rather
+     * than per-frame.
+     */
+    private void releaseCoveringBuffers() {
+        if (coveringByFrame.size() == 0) {
+            return;
+        }
+        final int[] keys = coveringByFrame.getKeys();
+        final int noEntry = coveringByFrame.getNoEntryKey();
+        for (int i = 0, n = keys.length; i < n; i++) {
+            if (keys[i] != noEntry) {
+                final CoveringBuffers b = coveringByFrame.get(keys[i]);
+                if (b != null) {
+                    b.close();
+                }
+            }
+        }
+        coveringByFrame.clear();
     }
 
     public void setParquetDecodeHint(ParquetDecodeHint hint) {
@@ -1162,6 +1373,352 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 return true;
             }
             return false;
+        }
+    }
+
+    /**
+     * Per-worker decoded buffers for a single covered (posting-index sidecar)
+     * frame. It owns native column buffers and the four published address/size
+     * lists that the navigateTo covered arm rebinds the frame memory to. There is
+     * one instance PER FRAME (keyed in {@link #coveringByFrame}), retained for the
+     * whole query, because a covered frame reports NATIVE and so a record read of
+     * a covered VARCHAR/STRING is stable: zero-copy first()/last() aggregates
+     * store the raw buffer pointer for the merge phase, so the buffer must not be
+     * reused for another frame or freed mid-query. The eager production path has
+     * the same lifetime (fresh per-frame buffers, freed at cursor close).
+     * <p>
+     * {@link #decode} opens a DETACHED covering cursor that this worker owns
+     * outright (see {@code PostingIndexFwdReader#getDetachedCursor}), drains it
+     * fully into the native buffers, and closes it within the call -- so the
+     * cursor never outlives a single decode and the buffers, once filled, no
+     * longer depend on the reader's mmaps. Concurrent same-reader safety during
+     * the drain comes from the reader being frozen (reload is a no-op) and warm
+     * (no gen-load mutates shared state); the covering pipeline establishes both
+     * before any worker decodes. {@link #decode} is idempotent: a repeat navigate
+     * to the already-decoded frame reuses the live buffers untouched.
+     */
+    private class CoveringBuffers implements QuietCloseable, CoveredColumnDecoder.VarDataSink {
+        private final DirectLongList auxPageAddresses;
+        private final DirectLongList auxPageSizes;
+        private final DirectLongList pageAddresses;
+        private final DirectLongList pageSizes;
+        // Per query column primary native buffer: the fixed-width data vector, or
+        // the aux (offsets/headers) vector for a var-size column. The symbol-key
+        // column shares symAddr instead. 0 when unallocated. Lazily sized to the
+        // query's column count on first decode.
+        private long[] colAddr;
+        private long[] colCap;
+        // Per query column size (bytes) for fixed-width columns; type tag; full
+        // type; and the sidecar include index (>= 0 covered, -1 symbol key).
+        // Query-constant, built once with the column buffers.
+        private int[] columnSizeBytes;
+        private int[] columnTypeTags;
+        private int[] columnTypes;
+        private int[] coveredIncludeIdx;
+        private int frameIndex = -1;
+        // Synthesized symbol-key column (broadcast int), shared by every DIRECT
+        // (indexed key) column of the covered frame. 0 when unallocated.
+        private long symAddr;
+        private int symCap;
+        // Per query column var-size data vector (VARCHAR/STRING/BINARY/ARRAY). 0
+        // for fixed-width columns and the symbol key.
+        private long[] varDataAddr;
+        private int[] varDataCap;
+        private int[] varDataPos;
+
+        CoveringBuffers() {
+            DirectLongList auxPageAddresses = null;
+            DirectLongList auxPageSizes = null;
+            DirectLongList pageAddresses = null;
+            DirectLongList pageSizes = null;
+            try {
+                auxPageAddresses = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
+                auxPageSizes = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
+                pageAddresses = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
+                pageSizes = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
+            } catch (Throwable th) {
+                Misc.free(auxPageAddresses);
+                Misc.free(auxPageSizes);
+                Misc.free(pageAddresses);
+                Misc.free(pageSizes);
+                throw th;
+            }
+            this.auxPageAddresses = auxPageAddresses;
+            this.auxPageSizes = auxPageSizes;
+            this.pageAddresses = pageAddresses;
+            this.pageSizes = pageSizes;
+        }
+
+        @Override
+        public void advance(int q, int written) {
+            varDataPos[q] += written;
+        }
+
+        @Override
+        public void close() {
+            freeColumnBuffers();
+            Misc.free(pageAddresses);
+            Misc.free(pageSizes);
+            Misc.free(auxPageAddresses);
+            Misc.free(auxPageSizes);
+        }
+
+        /**
+         * Decode the covered columns of {@code frameIndex} (resolved single key
+         * {@code key} over base range {@code [rowLo, rowHi)}) into native buffers
+         * and publish their addresses. Idempotent per frame: a repeat call for the
+         * already-decoded frame is a no-op. Returns after the detached cursor has
+         * been fully drained and closed.
+         */
+        void decode(int frameIndex, IndexReader reader, int key, long rowLo, long rowHi, int[] includeIndices, int rowCount) {
+            if (this.frameIndex == frameIndex) {
+                return;
+            }
+            ensureColumnBuffers(frameIndex, rowCount);
+            // Open a detached cursor this worker owns; drain it fully, then close
+            // it so it never outlives the decode. rowHi is exclusive at the frame
+            // API; the index cursor's maxValue is inclusive, hence rowHi - 1.
+            final RowCursor rowCursor = reader.getDetachedCursor(TableUtils.toIndexKey(key), rowLo, rowHi - 1, includeIndices);
+            try {
+                int count = 0;
+                if (rowCursor instanceof CoveringRowCursor crc) {
+                    while (crc.hasNext()) {
+                        crc.next();
+                        // The frame's declared size caps the cursor; the buffers are
+                        // sized for exactly rowCount rows. Defensive guard only.
+                        assert count < rowCount : "covered cursor yielded more rows than the frame's declared size";
+                        if (count >= rowCount) {
+                            break;
+                        }
+                        CoveredColumnDecoder.writeCoveredRow(
+                                colAddr, this, count, crc, queryColCount(), coveredIncludeIdx, columnTypeTags, columnTypes);
+                        count++;
+                    }
+                }
+                // Single resolved key per covered frame: broadcast it across the
+                // synthesized symbol column.
+                CoveredColumnDecoder.fillSymbolKey(symAddr, key, count);
+                publishAddresses(count);
+                this.frameIndex = frameIndex;
+            } finally {
+                Misc.free(rowCursor);
+            }
+        }
+
+        @Override
+        public long ensureCapacity(int q, int needed) {
+            if (varDataPos[q] + needed > varDataCap[q]) {
+                int newCap = Math.max(Math.max(varDataCap[q] * 2, varDataPos[q] + needed), 32);
+                varDataAddr[q] = Unsafe.realloc(varDataAddr[q], varDataCap[q], newCap, MemoryTag.NATIVE_INDEX_READER);
+                varDataCap[q] = newCap;
+            }
+            return varDataAddr[q];
+        }
+
+        DirectLongList getAuxPageAddresses() {
+            return auxPageAddresses;
+        }
+
+        DirectLongList getAuxPageSizes() {
+            return auxPageSizes;
+        }
+
+        DirectLongList getPageAddresses() {
+            return pageAddresses;
+        }
+
+        DirectLongList getPageSizes() {
+            return pageSizes;
+        }
+
+        @Override
+        public long position(int q) {
+            return varDataPos[q];
+        }
+
+        // Allocate / grow the per-column native buffers to hold rowCount rows, and
+        // (re)resolve the per-column type / include metadata from the address cache.
+        // colAddr[q] is the fixed-width data vector (rowCount * sizeOf) or the
+        // var-size aux vector; var-size columns additionally get an initial data
+        // vector grown on demand via ensureCapacity. STRING/BINARY aux carries a
+        // trailing sentinel offset, so it is sized rowCount + 1.
+        private void ensureColumnBuffers(int frameIndex, int rowCount) {
+            final int queryColCount = queryColCount();
+            if (colAddr == null) {
+                colAddr = new long[queryColCount];
+                colCap = new long[queryColCount];
+                varDataAddr = new long[queryColCount];
+                varDataCap = new int[queryColCount];
+                varDataPos = new int[queryColCount];
+                columnTypes = new int[queryColCount];
+                columnTypeTags = new int[queryColCount];
+                columnSizeBytes = new int[queryColCount];
+                coveredIncludeIdx = new int[queryColCount];
+                final IntList types = addressCache.getColumnTypes();
+                for (int q = 0; q < queryColCount; q++) {
+                    final int type = types.getQuick(q);
+                    columnTypes[q] = type;
+                    columnTypeTags[q] = ColumnType.tagOf(type);
+                    columnSizeBytes[q] = ColumnType.sizeOf(type);
+                }
+            }
+            // The covered include mapping is query-constant across a query's covered
+            // frames, but resolve it per decode so the slot stays correct even if a
+            // pool is reused across address caches.
+            for (int q = 0; q < queryColCount; q++) {
+                coveredIncludeIdx[q] = addressCache.getCoveredIncludeIndex(frameIndex, q);
+            }
+            // Guard against a theoretical int overflow in initDataCap = rowCount * 32
+            // (var-size initial data cap). In practice a covered frame is bounded by
+            // the table's page-frame row cap (order of thousands), but the assert makes
+            // any future pathological rowCount loud in -ea mode.
+            assert (long) rowCount * 32 <= Integer.MAX_VALUE : "rowCount too large for int varDataCap init: " + rowCount;
+            for (int q = 0; q < queryColCount; q++) {
+                varDataPos[q] = 0;
+                if (coveredIncludeIdx[q] < 0) {
+                    continue; // symbol key column uses symAddr
+                }
+                final long auxBytes;
+                final int initDataCap;
+                switch (columnTypeTags[q]) {
+                    case ColumnType.VARCHAR -> {
+                        auxBytes = (long) rowCount * VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES;
+                        initDataCap = rowCount * 32;
+                    }
+                    case ColumnType.STRING, ColumnType.BINARY -> {
+                        auxBytes = (long) (rowCount + 1) * Long.BYTES;
+                        initDataCap = rowCount * 32;
+                    }
+                    case ColumnType.ARRAY -> {
+                        auxBytes = (long) rowCount * ArrayTypeDriver.ARRAY_AUX_WIDTH_BYTES;
+                        initDataCap = rowCount * 32;
+                    }
+                    default -> {
+                        auxBytes = (long) rowCount * columnSizeBytes[q];
+                        initDataCap = 0;
+                    }
+                }
+                if (colCap[q] < auxBytes) {
+                    colAddr[q] = growNative(colAddr[q], colCap[q], auxBytes);
+                    colCap[q] = auxBytes;
+                }
+                if (initDataCap > 0 && varDataCap[q] < initDataCap) {
+                    varDataAddr[q] = growNative(varDataAddr[q], varDataCap[q], initDataCap);
+                    varDataCap[q] = initDataCap;
+                }
+            }
+            final long symBytes = (long) rowCount * Integer.BYTES;
+            if (symCap < symBytes) {
+                // Only ever grow: symCap must stay the true allocation size so the
+                // matching Unsafe.free() in freeColumnBuffers() accounts the right
+                // number of bytes (a smaller frame must not shrink it).
+                symAddr = growNative(symAddr, symCap, symBytes);
+                symCap = (int) symBytes;
+            }
+        }
+
+        private void freeColumnBuffers() {
+            if (colAddr != null) {
+                for (int q = 0, n = colAddr.length; q < n; q++) {
+                    if (colAddr[q] != 0) {
+                        Unsafe.free(colAddr[q], colCap[q], MemoryTag.NATIVE_INDEX_READER);
+                        colAddr[q] = 0;
+                        colCap[q] = 0;
+                    }
+                    if (varDataAddr[q] != 0) {
+                        Unsafe.free(varDataAddr[q], varDataCap[q], MemoryTag.NATIVE_INDEX_READER);
+                        varDataAddr[q] = 0;
+                        varDataCap[q] = 0;
+                    }
+                }
+            }
+            if (symAddr != 0) {
+                Unsafe.free(symAddr, symCap, MemoryTag.NATIVE_INDEX_READER);
+                symAddr = 0;
+                symCap = 0;
+            }
+        }
+
+        // Grow a native buffer to newBytes when it is too small, preserving no
+        // content (each decode rewrites every row). Reuses the existing allocation
+        // when it already covers newBytes so a steady-state frame size never
+        // reallocs. oldBytes == 0 means unallocated.
+        private long growNative(long addr, long oldBytes, long newBytes) {
+            if (newBytes <= 0) {
+                return addr;
+            }
+            if (addr != 0 && oldBytes >= newBytes) {
+                return addr;
+            }
+            return Unsafe.realloc(addr, oldBytes, newBytes, MemoryTag.NATIVE_INDEX_READER);
+        }
+
+        // Fan the decoded native buffers out to the four published per-column
+        // address/size lists, exactly mirroring CoveringPageFrameCursor#finalizeFrame
+        // so a downstream native reader sees the same layout the eager production
+        // path produces. Covered var-size columns publish aux+data (with the
+        // STRING/BINARY trailing sentinel offset); covered fixed-width columns
+        // publish data only; the symbol key column publishes the broadcast ints.
+        private void publishAddresses(int count) {
+            final int queryColCount = queryColCount();
+            ensureListCapacity(pageAddresses, queryColCount);
+            ensureListCapacity(pageSizes, queryColCount);
+            ensureListCapacity(auxPageAddresses, queryColCount);
+            ensureListCapacity(auxPageSizes, queryColCount);
+            for (int q = 0; q < queryColCount; q++) {
+                final int includeIdx = coveredIncludeIdx[q];
+                if (includeIdx < 0) {
+                    // Indexed symbol key column.
+                    pageAddresses.set(q, symAddr);
+                    pageSizes.set(q, (long) count * Integer.BYTES);
+                    auxPageAddresses.set(q, 0);
+                    auxPageSizes.set(q, 0);
+                    continue;
+                }
+                switch (columnTypeTags[q]) {
+                    case ColumnType.VARCHAR -> {
+                        auxPageAddresses.set(q, colAddr[q]);
+                        auxPageSizes.set(q, (long) count * VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES);
+                        pageAddresses.set(q, varDataAddr[q]);
+                        pageSizes.set(q, varDataPos[q]);
+                    }
+                    case ColumnType.STRING, ColumnType.BINARY -> {
+                        // Trailing sentinel offset at slot [count]. Guard colAddr[q] != 0:
+                        // covered frames currently always have rowCount >= 1 so the buffer
+                        // is always allocated, but the check makes this robust against a
+                        // hypothetical zero-row covered frame (which would leave colAddr[q] == 0).
+                        if (colAddr[q] != 0) {
+                            Unsafe.putLong(colAddr[q] + (long) count * Long.BYTES, varDataPos[q]);
+                        }
+                        auxPageAddresses.set(q, colAddr[q]);
+                        auxPageSizes.set(q, (long) (count + 1) * Long.BYTES);
+                        pageAddresses.set(q, varDataAddr[q]);
+                        pageSizes.set(q, varDataPos[q]);
+                    }
+                    case ColumnType.ARRAY -> {
+                        auxPageAddresses.set(q, colAddr[q]);
+                        auxPageSizes.set(q, (long) count * ArrayTypeDriver.ARRAY_AUX_WIDTH_BYTES);
+                        pageAddresses.set(q, varDataAddr[q]);
+                        pageSizes.set(q, varDataPos[q]);
+                    }
+                    default -> {
+                        pageAddresses.set(q, colAddr[q]);
+                        pageSizes.set(q, (long) count * columnSizeBytes[q]);
+                        auxPageAddresses.set(q, 0);
+                        auxPageSizes.set(q, 0);
+                    }
+                }
+            }
+        }
+
+        private void ensureListCapacity(DirectLongList list, int size) {
+            list.setCapacity(size);
+            list.zero();
+            list.setPos(size);
+        }
+
+        private int queryColCount() {
+            return addressCache.getColumnCount();
         }
     }
 

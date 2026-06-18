@@ -423,6 +423,49 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
+        public byte getColumnSource(int columnIndex) {
+            // Per-column source must be remapped through the projection so that a
+            // projected covered column still reports COVERED (and a non-covered
+            // base column reports DIRECT). Without this the projection wrapper
+            // would report the PageFrame default (DIRECT) for every column and
+            // PageFrameAddressCache.add would record the frame as non-covered,
+            // no-op'ing the worker covered-decode arm.
+            return baseFrame.getColumnSource(columnCrossIndex.getQuick(columnIndex));
+        }
+
+        @Override
+        public int getCoveredIncludeIndex(int columnIndex) {
+            // PER-COLUMN remap: the include (sidecar) index a covered column
+            // decodes from must follow the projected column space so the
+            // worker-decoded covered buffers line up with the projected columns.
+            return baseFrame.getCoveredIncludeIndex(columnCrossIndex.getQuick(columnIndex));
+        }
+
+        @Override
+        public int[] getCoveredIncludeIndices() {
+            // Per-frame set of sidecar columns to decode -- pass through.
+            return baseFrame.getCoveredIncludeIndices();
+        }
+
+        @Override
+        public int getCoveredKey() {
+            // Per-frame resolved WHERE symbol key -- pass through.
+            return baseFrame.getCoveredKey();
+        }
+
+        @Override
+        public long getCoveredRowHi() {
+            // Per-frame base row range -- pass through.
+            return baseFrame.getCoveredRowHi();
+        }
+
+        @Override
+        public long getCoveredRowLo() {
+            // Per-frame base row range -- pass through.
+            return baseFrame.getCoveredRowLo();
+        }
+
+        @Override
         public byte getFormat() {
             return baseFrame.getFormat();
         }

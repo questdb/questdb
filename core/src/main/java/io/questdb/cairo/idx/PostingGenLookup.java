@@ -96,6 +96,16 @@ public class PostingGenLookup implements Closeable {
         return (int) (packedSlot >>> 32);
     }
 
+    /**
+     * True iff the active snapshot has at least one sparse gen. Mirrors the gate
+     * {@link #cacheLookup} and {@link #putCacheEntries} apply: when no sparse gen
+     * exists the cache can never hold an entry, so callers (e.g. the O(genCount)
+     * cache-warm primitive) can skip the walk entirely.
+     */
+    public boolean anySparseGen() {
+        return active.anySparseGen;
+    }
+
     public long cacheEntryAt(int idx) {
         return cacheEntries.get(idx);
     }

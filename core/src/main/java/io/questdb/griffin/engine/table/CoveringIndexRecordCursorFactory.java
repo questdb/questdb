@@ -34,9 +34,11 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.idx.AbstractPostingIndexReader;
 import io.questdb.cairo.idx.CoveringRowCursor;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.ColumnMapping;
+import io.questdb.cairo.sql.DataSource;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
@@ -169,6 +171,23 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     @TestOnly
     public static void setMaxRowsPerFrameForTesting(int newCap) {
         CoveringPageFrameCursor.maxRowsPerFrameOverride = newCap;
+    }
+
+    /**
+     * Test-only count of covered rows EAGERLY materialized at frame production
+     * (via the cursor's {@code writeCoveredRow}). The single-key path is
+     * metadata-only (decode runs on the workers), so this stays 0 for a
+     * single-key-only query; the multi-key merge still materializes eagerly, so
+     * it is &gt; 0 there. Reset with {@link #resetCoveredRowsWrittenForTesting()}.
+     */
+    @TestOnly
+    public static long getCoveredRowsWrittenForTesting() {
+        return CoveringPageFrameCursor.coveredRowsWrittenForTesting;
+    }
+
+    @TestOnly
+    public static void resetCoveredRowsWrittenForTesting() {
+        CoveringPageFrameCursor.coveredRowsWrittenForTesting = 0;
     }
 
     @Override
@@ -696,12 +715,35 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         private final int columnCount;
         private final long[] pageAddresses;
         private final long[] pageSizes;
+        // Query-column -> include-index mapping (>= 0 covered include column,
+        // -1 indexed symbol key). Used to report per-column DataSource.
+        private final int[] queryColToIncludeIdx;
+        // The include (sidecar) indices this frame's covered columns decode
+        // from. Carried for later tasks (worker-side covered decode); set in
+        // finalizeFrame. Same set every frame, so it points at the cursor's
+        // requiredIncludeIndices.
+        private int[] coveredIncludeIndices;
+        // Base partition format of this frame's partition (NATIVE or PARQUET),
+        // learned the same way the standard page-frame cursor does it -- from
+        // PartitionFrame.getPartitionFormat().
+        private byte format = PartitionFormat.NATIVE;
         private long partitionHi;
         private int partitionIndex;
         private long partitionLo;
+        // Per-partition posting (index) reader the production code already
+        // opened to decode covered values. Carried so the worker-side covered
+        // arm (later tasks) can warm/checkout from it; null until set in
+        // finalizeFrame.
+        private IndexReader postingReader;
+        // The resolved WHERE symbol key these rows belong to, and the base
+        // partition row range. Carried for later tasks; set in finalizeFrame.
+        private int rawSymbolKey = SymbolTable.VALUE_NOT_FOUND;
+        private long rowHi;
+        private long rowLo;
 
-        CoveringPageFrame(int columnCount) {
+        CoveringPageFrame(int columnCount, int[] queryColToIncludeIdx) {
             this.columnCount = columnCount;
+            this.queryColToIncludeIdx = queryColToIncludeIdx;
             this.pageAddresses = new long[columnCount];
             this.pageSizes = new long[columnCount];
             this.auxPageAddresses = new long[columnCount];
@@ -724,13 +766,64 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         }
 
         @Override
+        public byte getColumnSource(int columnIndex) {
+            // INCLUDE-mapped columns (>= 0) decode from the posting-index
+            // sidecar on the worker; the symbol key (-1) and any non-covered
+            // column decode from the base partition.
+            return queryColToIncludeIdx[columnIndex] >= 0 ? DataSource.COVERED : DataSource.DIRECT;
+        }
+
+        @Override
+        public int getCoveredIncludeIndex(int columnIndex) {
+            // INCLUDE-mapped columns (>= 0) decode from this sidecar index; the
+            // symbol key (-1) and any non-covered column have no include index.
+            return queryColToIncludeIdx[columnIndex];
+        }
+
+        @Override
+        public int[] getCoveredIncludeIndices() {
+            return coveredIncludeIndices;
+        }
+
+        @Override
+        public int getCoveredKey() {
+            return rawSymbolKey;
+        }
+
+        @Override
+        public long getCoveredRowHi() {
+            return rowHi;
+        }
+
+        @Override
+        public long getCoveredRowLo() {
+            return rowLo;
+        }
+
+        @Override
         public byte getFormat() {
-            return PartitionFormat.NATIVE;
+            // A covered frame's data is sidecar-decoded native output: covered
+            // INCLUDE columns are materialized into native buffers (eagerly at
+            // production, and on the worker via PageFrameMemoryPool's covered
+            // arm) and the symbol key is synthesized as a native int column.
+            // There is no base/parquet column read for a covered frame, so its
+            // page-frame format is PERMANENTLY NATIVE regardless of the base
+            // partition's on-disk format. PageFrameMemoryPool.navigateTo /
+            // PageFrameAddressCache.add consume getFormat() to choose
+            // native-vs-parquet handling; reporting PARQUET while the buffers
+            // are native would break covered-over-parquet queries. `format`
+            // still records the genuine base format for diagnostics, but a
+            // PARQUET base is clamped to NATIVE here. (Task 12, which would have
+            // flipped this to PARQUET, was dropped.)
+            return format == PartitionFormat.PARQUET ? PartitionFormat.NATIVE : format;
         }
 
         @Override
         public IndexReader getIndexReader(int columnIndex, int direction) {
-            return null;
+            // The covered frame carries a single per-partition posting reader
+            // (forward); column/direction are advisory here -- the worker-side
+            // covered arm checks out per-key cursors from this reader.
+            return postingReader;
         }
 
         @Override
@@ -776,6 +869,18 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
     private static abstract class CoveringPageFrameCursor implements TablePageFrameCursor {
         private static final int INITIAL_CAPACITY = 4096;
+        // Identity sentinel returned by fillFrameForKeyCheap to mean "this layout is
+        // MIXED / not metadata-resolvable -- fall back to the traverse", as distinct
+        // from a genuine null ("(key, partition) exhausted"). Never escapes
+        // fillFrameForKey; never finalized / iterated.
+        private static final PageFrame SENTINEL_FALLBACK = new CoveringPageFrame(0, new int[0]);
+        // Test-only count of rows EAGERLY materialized at production via
+        // writeCoveredRow. Single-key frame production is metadata-only (decode
+        // happens on the workers), so this must stay 0 for a single-key-only
+        // query; the multi-key merge still materializes eagerly, so it is > 0
+        // there. See setMaxRowsPerFrameForTesting for the override convention.
+        @TestOnly
+        static volatile long coveredRowsWrittenForTesting;
         private static int maxRowsPerFrameOverride = -1;
         protected int maxRowsPerFrame;
         // Tracks all native allocations as (addr, size) pairs for bulk cleanup.
@@ -801,16 +906,60 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         // When true, emit frames in descending timestamp order (DESC partition
         // iteration, high row-range sub-frames first) to serve a negative LIMIT.
         protected boolean descending;
+        // Base format of the partition the current frame is being produced for,
+        // captured from PartitionFrame.getPartitionFormat() when the partition
+        // frame is taken; copied onto the frame in finalizeFrame.
+        protected byte framePartitionFormat = PartitionFormat.NATIVE;
+        // Per-partition posting reader the current frame is being produced from,
+        // captured when the covering cursor's index reader is opened; copied
+        // onto the frame in finalizeFrame.
+        protected IndexReader framePostingReader;
+        // minValue the current covering row cursor was opened with. The cursor's
+        // next() returns row ids RELATIVE to this (PostingIndexFwdReader.Cursor#next
+        // returns next - minValue), so the absolute base row id of a posting is
+        // next() + this. Set when a cursor is opened and preserved across parked
+        // resume (which keeps the same cursor and minValue). Used to record each
+        // frame's ABSOLUTE covered row range, which the worker-side covered arm
+        // hands to getDetachedCursor to reproduce the frame.
+        protected long framePostingCursorMinValue;
         protected PartitionFrameCursor frameCursor;
         protected boolean isExhausted;
         // Resume state for chunked fillFrameForKey. When a key+partition
         // has more rows than maxRowsPerFrame, the open RowCursor is
         // kept here and the next fillFrameForKey call continues from
         // where the previous returned. pendingRowCursor == null means
-        // no fill is in progress.
+        // no fill (via the MIXED/fallback traverse) is in progress.
         protected CoveringRowCursor pendingCoveringCursor;
         protected int pendingPartitionIndex = -1;
         protected RowCursor pendingRowCursor;
+        // Fresh-cursor prep slots. openOrContinueCoveringCursor opens a cursor here
+        // (for reader prep: valueMem extend + sidecar open) WITHOUT parking it; the
+        // cheap path frees it (freePrepCursor) after taking its size()/metadata, and
+        // the traverse path promotes it to the parked cursor (parkPrepCursor) only if
+        // it breaks at the row cap. Exactly one of {prepRowCursor, pendingRowCursor}
+        // is non-null for a given (key, partition) at a time.
+        protected CoveringRowCursor prepCoveringCursor;
+        protected RowCursor prepRowCursor;
+        // Cheap-path (O(genCount)) resume state, replacing the parked cursor for
+        // the common non-MIXED forward single-key fill. When a (key, partition)
+        // has more matches than maxRowsPerFrame the metadata is emitted in
+        // chunks: chunkBase counts the postings already emitted, and the
+        // partition's selectKthMatch arguments (minValue == rowLo, the inclusive
+        // clamp, and the cached total) are held so each resume slices the next
+        // chunk without re-opening or re-counting. cheapChunkActive == true means
+        // a cheap fill is mid-partition; it is mutually exclusive with
+        // pendingRowCursor (the fallback parks instead). Keyed by the SAME
+        // pendingSymbolKey / pendingPartitionIndex guard as the parked cursor.
+        protected boolean cheapChunkActive;
+        protected int cheapChunkBase;
+        protected long cheapClampedMax;
+        // UNCLAMPED inclusive caller max for the implicit-null prefix bound (rowHi - 1),
+        // held alongside cheapClampedMax so a chunk resume passes selectKthMatch /
+        // countMatchesClamped the SAME null bound the first chunk used. Distinct from
+        // cheapClampedMax because nulls are clamped by columnTop only, not entryMaxValue.
+        protected long cheapNullMax;
+        protected long cheapRowLo;
+        protected long cheapTotal;
         protected int pendingSymbolKey = -1;
         protected TableReader tableReader;
 
@@ -826,7 +975,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             this.requiredIncludeIndices = requiredIncludeIndices;
             this.queryColCount = queryColToIncludeIdx.length;
             this.columnIndexes = columnIndexes;
-            this.frame = new CoveringPageFrame(queryColCount);
+            this.frame = new CoveringPageFrame(queryColCount, queryColToIncludeIdx);
             this.columnSizeBytes = new int[queryColCount];
             this.columnTypeTags = new int[queryColCount];
             this.columnTypes = new int[queryColCount];
@@ -1110,6 +1259,11 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
         protected void writeCoveredRow(long[] addrs, long[] varDataAddrs, int[] varDataPos, int[] varDataCap,
                                        int count, CoveringRowCursor crc) {
+            // Test-only: one row materialized eagerly at production. Single-key
+            // production no longer calls this (metadata-only), so a non-zero
+            // value means the multi-key eager merge ran. See
+            // getCoveredRowsWrittenForTesting.
+            assert (coveredRowsWrittenForTesting++) >= 0;
             for (int q = 0; q < queryColCount; q++) {
                 int includeIdx = queryColToIncludeIdx[q];
                 if (includeIdx < 0) continue;
@@ -1227,18 +1381,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             }
         }
 
-        protected static void fillSymbolKey(long addr, int rawSymbolKey, int count) {
-            long longKey = Integer.toUnsignedLong(rawSymbolKey) | ((long) rawSymbolKey << 32);
-            int i = 0;
-            int pairs = count & ~1; // round down to even
-            for (; i < pairs; i += 2) {
-                Unsafe.putLong(addr + (long) i * Integer.BYTES, longKey);
-            }
-            if (i < count) {
-                Unsafe.putInt(addr + (long) i * Integer.BYTES, rawSymbolKey);
-            }
-        }
-
         /**
          * Allocate the per-frame column and symbol buffers at
          * {@link #INITIAL_CAPACITY} and reset var-data positions. Returns the
@@ -1289,25 +1431,208 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
          * {@link SingleKeyCoveringPageFrameCursor#nextImpl} /
          * {@link MultiKeyCoveringPageFrameCursor#nextImpl} drive that loop.
          * <p>
-         * Each call allocates a fresh set of frame buffers via
-         * {@link #allocFrameBuffers()}; very large keys produce multiple frames
-         * instead of one GiB-sized frame.
+         * Single-key frame production is METADATA-ONLY: it traverses the covering
+         * cursor (to count the chunk's rows, record its absolute posting span, and
+         * -- critically -- WARM the per-key genLookup cache on natural exhaustion,
+         * so the workers' detached cursors run read-only under the freeze) but does
+         * NOT materialize covered values. The covered columns and the symbol key
+         * are decoded on the async workers
+         * ({@link PageFrameMemoryPool#patchCoveredFrameMemory}); the frame's covered
+         * page addresses are emitted as placeholders ({@link #finalizeFrame} with
+         * {@code materialized == false}), which the worker arm overrides. No
+         * per-frame value buffers are allocated. (The multi-key merge still
+         * materializes eagerly -- see {@code fillMergedFrame}.)
          */
-        protected @Nullable PageFrame fillFrameForKey(int rawSymbolKey, int partitionIndex, long rowLo, long rowHi, int rowCap) {
+        protected @Nullable PageFrame fillFrameForKey(int rawSymbolKey, int partitionIndex, long rowLo, long rowHi, int rowCap, boolean cheapEligible) {
+            // Open (or continue) the covering cursor. KEEPING this is load-bearing
+            // even on the cheap path: getCursor -> reloadConditionally pre-extends
+            // valueMem and openRequiredSidecars opens the sidecars, BOTH of which the
+            // async workers' detached cursors depend on once the reader is frozen.
+            // It also pins framePostingReader / framePostingCursorMinValue.
             final CoveringRowCursor coveringCursor = openOrContinueCoveringCursor(rawSymbolKey, partitionIndex, rowLo, rowHi);
             if (coveringCursor == null) {
                 return null;
             }
-            int capacity = allocFrameBuffers();
+            // prepRowCursor != null => this is a FRESH cursor (not a resumed parked
+            // traverse). The cheap O(genCount) path only engages on a fresh forward
+            // single-key cursor; once a (key, partition) has fallen back to the
+            // parked traverse it stays there (prepRowCursor == null on resume).
+            if (cheapEligible && prepRowCursor != null) {
+                final AbstractPostingIndexReader reader = (AbstractPostingIndexReader) framePostingReader;
+                final PageFrame cheap;
+                try {
+                    cheap = fillFrameForKeyCheap(reader, rawSymbolKey, partitionIndex, rowLo, rowHi, rowCap);
+                } catch (Throwable t) {
+                    // Free the prep cursor (and any partial state) so a throw out of the
+                    // metadata primitives cannot orphan the open cursor.
+                    closePendingCursor();
+                    throw t;
+                }
+                if (cheap != SENTINEL_FALLBACK) {
+                    // Cheap path owned this frame (a real frame, or null = exhausted).
+                    // It used the cursor only for reader prep + countMatchesClamped; free
+                    // it. Any cheap chunk-resume state + the (key, partition) guard survive.
+                    freePrepCursor();
+                    return cheap;
+                }
+                // MIXED (countMatchesClamped sentinel) or a clipped selectKthMatch
+                // sentinel: drop the cheap chunk scalars (the (key, partition) guard the
+                // fresh open set is left intact) and fall through to the traverse, which
+                // parks the prep cursor under that guard and owns this (key, partition).
+                clearCheapChunkState();
+            }
+            return fillFrameByTraverse(coveringCursor, rawSymbolKey, partitionIndex, rowCap);
+        }
+
+        /**
+         * Cheap, O(genCount) replacement for the per-chunk traverse on the FORWARD
+         * single-key path. Produces metadata IDENTICAL to {@link #fillFrameByTraverse}
+         * -- same count, same absolute first/last posting span, and the same per-key
+         * genLookup cache side effect -- using only the posting-reader metadata
+         * primitives ({@link AbstractPostingIndexReader#getEntryMaxValue},
+         * {@link AbstractPostingIndexReader#countMatchesClamped},
+         * {@link AbstractPostingIndexReader#selectKthMatch},
+         * {@link AbstractPostingIndexReader#populateCacheForKey}), with NO O(rows) walk.
+         * <p>
+         * Returns {@link #SENTINEL_FALLBACK} when the layout is genuinely MIXED
+         * ({@code countMatchesClamped} sentinel) or a chunk's boundary posting cannot be
+         * resolved by metadata alone (a {@code selectKthMatch} sentinel) -- the caller
+         * then traverses. Returns {@code null} when the (key, partition) is exhausted, or
+         * a finalized metadata-only frame otherwise. {@code reader == framePostingReader}
+         * and {@code framePostingCursorMinValue == rowLo} are established by the
+         * just-completed {@code openOrContinueCoveringCursor}.
+         */
+        private @Nullable PageFrame fillFrameForKeyCheap(
+                AbstractPostingIndexReader reader,
+                int rawSymbolKey, int partitionIndex, long rowLo, long rowHi, int rowCap
+        ) {
+            final int key = TableUtils.toIndexKey(rawSymbolKey);
+            final boolean resume = cheapChunkActive
+                    && pendingSymbolKey == rawSymbolKey
+                    && pendingPartitionIndex == partitionIndex;
+            final long clampedMax;
+            final long nullMax;
+            final long total;
+            final int chunkBase;
+            if (resume) {
+                clampedMax = cheapClampedMax;
+                nullMax = cheapNullMax;
+                total = cheapTotal;
+                chunkBase = cheapChunkBase;
+            } else {
+                // The production cursor clamps the INDEX-walked inclusive upper bound to
+                // min(callerHi - 1, entryMaxValue); reproduce it exactly so the gen walk
+                // sees the identical maxValueClamped. The implicit-null prefix, however,
+                // is independent of the index and clamped by columnTop only -- the cursor's
+                // NullCursor uses nullCount = min(columnTop, callerHi). So the null bound
+                // must be the UNCLAMPED callerHiInclusive, NOT clampedMax; otherwise a
+                // partition with entryMaxValue < columnTop and rowHi-1 > entryMaxValue would
+                // under-count the null prefix for a sym IS NULL (key 0) covered query.
+                final long callerHiInclusive = rowHi - 1;
+                final long entryMax = reader.getEntryMaxValue();
+                clampedMax = entryMax >= 0 ? Math.min(callerHiInclusive, entryMax) : callerHiInclusive;
+                nullMax = callerHiInclusive;
+                // EXACT O(genCount) clamped match count == the count the traverse reaches
+                // at natural exhaustion, or the sentinel on a genuinely MIXED gen (=> bail
+                // to the traverse). Uses the EXACT per-gen coverage check (true first/last
+                // posting), so it does NOT false-bail when the encoding's slack max bound
+                // straddles the clamp while the true max is within it (the common
+                // freshly-resealed partition) -- which coveringCursor.size() would.
+                total = reader.countMatchesClamped(key, rowLo, nullMax, clampedMax);
+                if (total == Numbers.LONG_NULL) {
+                    return SENTINEL_FALLBACK;
+                }
+                chunkBase = 0;
+            }
+
+            final int count = (int) Math.min((long) rowCap, total - chunkBase);
+            if (count <= 0) {
+                // This (key, partition) is exhausted. Clear resume state; the caller
+                // advances to the next partition.
+                clearCheapChunkState();
+                return null;
+            }
+
+            // Boundary postings of this chunk, ABSOLUTE row ids (selectKthMatch returns
+            // absolute, matching the traverse's firstRowId + framePostingCursorMinValue).
+            final long firstAbs = reader.selectKthMatch(key, rowLo, nullMax, clampedMax, chunkBase);
+            final long lastAbs = reader.selectKthMatch(key, rowLo, nullMax, clampedMax, chunkBase + count - 1);
+            if (firstAbs == Numbers.LONG_NULL || lastAbs == Numbers.LONG_NULL) {
+                // Defensive: unreachable for chunk 0, because countMatchesClamped already
+                // proved full coverage of the [chunkBase=0, count) prefix on this very call
+                // (it returned a non-sentinel total >= count) and shares selectKthMatch's
+                // EXACT per-gen coverage predicate -- so every k in [0, count) is resolvable.
+                // (On a later chunk a concurrent invariant break could in principle surface
+                // here; keeping the guard makes such a future break loud rather than wrong.)
+                return SENTINEL_FALLBACK;
+            }
+
+            if (chunkBase == 0) {
+                // FIRST chunk of this (key, partition): warm the per-key genLookup
+                // cache exactly as the traverse's natural-exhaustion putCacheEntries
+                // would, BEFORE the pipeline freezes the reader and dispatches workers.
+                // No-op for single-gen-dense; gated on multi-gen + sparse inside.
+                reader.populateCacheForKey(key, clampedMax);
+            }
+
+            final long nextBase = chunkBase + count;
+            if (nextBase < total) {
+                // More chunks remain for this (key, partition): record resume state
+                // (keyed by pendingSymbolKey / pendingPartitionIndex, same guard the
+                // parked cursor used) instead of parking a cursor.
+                cheapChunkActive = true;
+                cheapChunkBase = (int) nextBase;
+                cheapClampedMax = clampedMax;
+                cheapNullMax = nullMax;
+                cheapRowLo = rowLo;
+                cheapTotal = total;
+                pendingSymbolKey = rawSymbolKey;
+                pendingPartitionIndex = partitionIndex;
+            } else {
+                clearCheapChunkState();
+            }
+            // Metadata-only frame: placeholder page addresses, decoded on the worker.
+            return finalizeFrame(count, partitionIndex, rawSymbolKey, firstAbs, lastAbs + 1, false);
+        }
+
+        /**
+         * The original O(rows) traverse, now the fallback / equivalence oracle for the
+         * cheap path and the sole path for descending and for MIXED layouts. Advances
+         * {@code coveringCursor} to {@code rowCap} (parking it) or to natural
+         * exhaustion (warming the genLookup cache), recording the chunk's count and
+         * absolute posting span. Value-decode stays lazy (workers decode), so this is
+         * row-id-only.
+         */
+        private @Nullable PageFrame fillFrameByTraverse(CoveringRowCursor coveringCursor, int rawSymbolKey, int partitionIndex, int rowCap) {
+            // Promote a freshly-opened prep cursor to the parked cursor so the
+            // chunk-break-at-rowCap / natural-exhaustion lifecycle below (and
+            // closePendingCursor at exhaustion) behaves exactly as it did when
+            // openOrContinueCoveringCursor parked unconditionally. No-op on a
+            // traverse resume (the cursor is already parked).
+            parkPrepCursor();
             int count = 0;
+            // Track the base row-id range of the postings this frame actually
+            // covers. A partition whose matched rows exceed maxRowsPerFrame is
+            // emitted as several chunk frames over the SAME parked cursor, so the
+            // partition [rowLo, rowHi) is NOT this chunk's range; the worker-side
+            // covered arm reproduces the chunk by opening a detached cursor over
+            // exactly [firstRowId, lastRowId]. Postings are row-id ascending, so
+            // first is the chunk's first next() and last is its last.
+            long firstRowId = -1;
+            long lastRowId = -1;
             boolean cursorExhausted = true;
             try {
+                // Traverse-only: advancing the cursor to NATURAL exhaustion is what
+                // fires the posting reader's putCacheEntries (warming the per-key
+                // genLookup cache); it is NOT replaced by a size()-only count. The
+                // chunk break at rowCap parks the cursor and resumes on the next
+                // call, which still reaches natural exhaustion eventually.
                 while (coveringCursor.hasNext()) {
-                    coveringCursor.next();
-                    if (count >= capacity) {
-                        capacity = growFrameBuffers(frameAddrs, count, capacity);
+                    final long rowId = coveringCursor.next();
+                    if (count == 0) {
+                        firstRowId = rowId;
                     }
-                    writeCoveredRow(frameAddrs, frameVarDataAddrs, frameVarDataPos, frameVarDataCap, count, coveringCursor);
+                    lastRowId = rowId;
                     count++;
                     if (count >= rowCap) {
                         cursorExhausted = false;
@@ -1327,23 +1652,62 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             if (count == 0) {
                 return null;
             }
-            // Single key per frame: fill the symbol column uniformly.
-            fillSymbolKey(frameAddrs[queryColCount], rawSymbolKey, count);
-            return finalizeFrame(count, partitionIndex);
+            // firstRowId / lastRowId are relative to the cursor's minValue; shift to
+            // absolute base row ids so the worker's detached cursor reproduces this
+            // exact posting span [firstAbs, lastAbs + 1).
+            final long firstAbs = firstRowId + framePostingCursorMinValue;
+            final long lastAbs = lastRowId + framePostingCursorMinValue;
+            // Single-key frames are metadata-only: no value buffers were
+            // allocated, so emit placeholder (zero) page addresses. The worker
+            // covered arm overrides them after decoding from the sidecar.
+            return finalizeFrame(count, partitionIndex, rawSymbolKey, firstAbs, lastAbs + 1, false);
         }
 
         /**
-         * Point the reusable {@link #frame} at the filled buffers for {@code count}
-         * rows in {@code partitionIndex}. The symbol buffer
-         * ({@code frameAddrs[queryColCount]}) must already be populated -- uniformly
-         * by {@link #fillSymbolKey} for a single-key frame, or per row by the
-         * multi-key merge.
+         * Zero the cheap-path chunk scalars. The shared (key, partition) guard is
+         * NOT touched: it is meaningful only while {@link #cheapChunkActive} or a
+         * parked / prep cursor is live, and is overwritten by the next
+         * {@code openOrContinueCoveringCursor}; only {@link #closePendingCursor} (the
+         * lifecycle reset) clears it. Both the cheap-exhausted / last-chunk
+         * transitions and the SENTINEL->traverse handoff use this, so a subsequent
+         * {@code parkPrepCursor()} keeps the guard the fresh open established.
          */
-        protected PageFrame finalizeFrame(int count, int partitionIndex) {
+        protected final void clearCheapChunkState() {
+            cheapChunkActive = false;
+            cheapChunkBase = 0;
+            cheapClampedMax = 0;
+            cheapNullMax = 0;
+            cheapRowLo = 0;
+            cheapTotal = 0;
+        }
+
+        /**
+         * Point the reusable {@link #frame} at {@code count} rows in
+         * {@code partitionIndex} and record the covered-decode metadata (key, base
+         * row range, posting reader, include indices) the worker arm consumes.
+         * <p>
+         * When {@code materialized} is true (the multi-key merge), the frame's
+         * covered + symbol page addresses point at the eagerly filled buffers
+         * (the symbol buffer {@code frameAddrs[queryColCount]} must already be
+         * populated per row by the merge). When false (single-key, metadata-only
+         * production), no buffers were allocated, so every covered + symbol page
+         * address/size is emitted as a PLACEHOLDER (0): the worker-side covered
+         * arm ({@link PageFrameMemoryPool#patchCoveredFrameMemory}) decodes the
+         * values and overrides these addresses. The non-address metadata below is
+         * set identically in both cases.
+         */
+        protected PageFrame finalizeFrame(int count, int partitionIndex, int rawSymbolKey, long rowLo, long rowHi, boolean materialized) {
             long symAddr = frameAddrs[queryColCount];
             for (int q = 0; q < queryColCount; q++) {
                 int includeIdx = queryColToIncludeIdx[q];
-                if (includeIdx >= 0 && columnTypeTags[q] == ColumnType.VARCHAR) {
+                if (!materialized) {
+                    // Metadata-only single-key frame: placeholder addresses for
+                    // covered columns AND the symbol key. Decoded on the worker.
+                    frame.pageAddresses[q] = 0;
+                    frame.pageSizes[q] = 0;
+                    frame.auxPageAddresses[q] = 0;
+                    frame.auxPageSizes[q] = 0;
+                } else if (includeIdx >= 0 && columnTypeTags[q] == ColumnType.VARCHAR) {
                     frame.auxPageAddresses[q] = frameAddrs[q];
                     frame.auxPageSizes[q] = (long) count * VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES;
                     frame.pageAddresses[q] = frameVarDataAddrs[q];
@@ -1375,24 +1739,44 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             frame.partitionLo = 0;
             frame.partitionHi = count;
             frame.partitionIndex = partitionIndex;
+            // Decorator surface (consumed by later tasks): base format, the
+            // per-partition posting reader, the resolved symbol key + base
+            // row range, and the covered include indices. framePartitionFormat
+            // / framePostingReader were captured when this partition's frame
+            // and index reader were taken.
+            frame.format = framePartitionFormat;
+            frame.postingReader = framePostingReader;
+            frame.rawSymbolKey = rawSymbolKey;
+            frame.rowLo = rowLo;
+            frame.rowHi = rowHi;
+            frame.coveredIncludeIndices = requiredIncludeIndices;
             return frame;
         }
 
         abstract @Nullable PageFrame nextImpl();
 
         /**
-         * Either return the already-open {@link CoveringRowCursor} parked
-         * across a previous fillFrameForKey call, or open a new one for the
-         * given key + partition range. The caller MUST advance the (key,
-         * partition, rowLo, rowHi) tuple atomically with this call --
-         * {@link #pendingPartitionIndex} / {@link #pendingSymbolKey} are
-         * consulted to confirm the cached cursor matches; a mismatch means
-         * the caller advanced past the parked cursor without draining it
-         * (a bug in nextImpl), and we defensively close + re-open.
+         * Either return the already-open {@link CoveringRowCursor} parked across a
+         * previous traverse fillFrameForKey call (the MIXED/fallback or descending
+         * resume), or open a FRESH one for the given key + partition range. A fresh
+         * cursor is NOT parked here: the cheap path uses it only for the reader prep
+         * its open performs (valueMem extend + sidecar open) and frees it directly,
+         * while the traverse path parks it ({@link #parkPrepCursor}) only if it breaks
+         * at the row cap.
+         * {@link #pendingPartitionIndex} / {@link #pendingSymbolKey} confirm a parked
+         * cursor matches; a mismatch means the caller advanced past it without
+         * draining (a bug in nextImpl), so we defensively close + re-open. The
+         * returned cursor is the parked one iff {@code pendingRowCursor != null}
+         * after this call and it equals the result -- callers detect "resumed parked"
+         * via {@code pendingRowCursor}.
          */
         private CoveringRowCursor openOrContinueCoveringCursor(int rawSymbolKey, int partitionIndex, long rowLo, long rowHi) {
             if (pendingRowCursor != null) {
                 if (pendingSymbolKey == rawSymbolKey && pendingPartitionIndex == partitionIndex) {
+                    // Resume path: same (key, partition) as the parked cursor, so the
+                    // framePostingReader captured on this partition's first frame is still
+                    // the correct per-partition reader -- no re-assignment needed. (Holds
+                    // only while parking never crosses partitions; see the mismatch branch.)
                     return pendingCoveringCursor;
                 }
                 // Defensive: parked cursor doesn't match. Close and re-open.
@@ -1403,6 +1787,12 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     indexColumnIndex,
                     IndexReader.DIR_FORWARD
             );
+            // Carry the per-partition posting reader onto the frame (Task 6
+            // surface; the worker-side covered arm consumes it later).
+            framePostingReader = indexReader;
+            // The cursor's next() yields row ids relative to this minValue; record
+            // it so fillFrameForKey can recover absolute base row ids.
+            framePostingCursorMinValue = rowLo;
             RowCursor rowCursor = indexReader.getCursor(
                     TableUtils.toIndexKey(rawSymbolKey),
                     rowLo,
@@ -1415,25 +1805,75 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 Misc.free(rowCursor);
                 return null;
             }
-            pendingRowCursor = rowCursor;
-            pendingCoveringCursor = coveringCursor;
+            // Stash the fresh cursor + its identity in the prep slots, but DO NOT
+            // mark it parked (pendingRowCursor stays null). The cheap path frees it
+            // via freePrepCursor(); the traverse path promotes it to a parked cursor
+            // via parkPrepCursor() only when it breaks at the row cap.
+            prepRowCursor = rowCursor;
+            prepCoveringCursor = coveringCursor;
             pendingSymbolKey = rawSymbolKey;
             pendingPartitionIndex = partitionIndex;
             return coveringCursor;
         }
 
         /**
-         * Close and clear the parked cursor. Safe to call when no cursor
-         * is parked (no-op).
+         * Promote the fresh prep cursor opened by {@link #openOrContinueCoveringCursor}
+         * to the parked traverse cursor (the MIXED/fallback or descending chunk-resume
+         * shape). No-op when the cursor is already parked (a traverse resume re-uses it).
+         */
+        private void parkPrepCursor() {
+            if (prepRowCursor != null) {
+                pendingRowCursor = prepRowCursor;
+                pendingCoveringCursor = prepCoveringCursor;
+                prepRowCursor = null;
+                prepCoveringCursor = null;
+            }
+        }
+
+        /**
+         * Free the fresh prep cursor opened by {@link #openOrContinueCoveringCursor}
+         * once the cheap path has taken its metadata from it. Clears only the prep
+         * slots; the (key, partition) guard + any cheap chunk-resume state survive.
+         * No-op when the cursor was a resumed parked one (prepRowCursor == null).
+         */
+        private void freePrepCursor() {
+            if (prepRowCursor != null) {
+                Misc.free(prepRowCursor);
+                prepRowCursor = null;
+                prepCoveringCursor = null;
+            }
+        }
+
+        /**
+         * Close and clear the parked traverse cursor AND any cheap-path chunk
+         * resume state, returning iteration to a clean "no fill in progress"
+         * baseline. Safe to call when neither is active (no-op). Drives the
+         * shared (key, partition) guard reset from a single place, so toTop() /
+         * of() / close() / exhaustion all converge here.
          */
         protected final void closePendingCursor() {
             if (pendingRowCursor != null) {
                 Misc.free(pendingRowCursor);
                 pendingRowCursor = null;
                 pendingCoveringCursor = null;
-                pendingSymbolKey = -1;
-                pendingPartitionIndex = -1;
             }
+            // A prep cursor can be live if a throw landed between opening it and the
+            // cheap-free / traverse-park handoff; free it so it is never orphaned.
+            if (prepRowCursor != null) {
+                Misc.free(prepRowCursor);
+                prepRowCursor = null;
+                prepCoveringCursor = null;
+            }
+            // Cheap-path resume state shares the pendingSymbolKey /
+            // pendingPartitionIndex guard; clear both unconditionally here.
+            cheapChunkActive = false;
+            cheapChunkBase = 0;
+            cheapClampedMax = 0;
+            cheapNullMax = 0;
+            cheapRowLo = 0;
+            cheapTotal = 0;
+            pendingSymbolKey = -1;
+            pendingPartitionIndex = -1;
         }
 
         void of(PartitionFrameCursor frameCursor, int configMaxRows, boolean descending) {
@@ -2065,6 +2505,11 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         // state persists across nextImpl() calls so a partition that exceeds
         // maxRowsPerFrame resumes in the next frame.
         private int mergePartitionIndex = -1;
+        // Base row range of the partition currently being merged. Carried onto
+        // each emitted frame (Task 6 surface); persists across nextImpl()
+        // re-entry alongside mergePartitionIndex.
+        private long mergeRowHi;
+        private long mergeRowLo;
 
         MultiKeyCoveringPageFrameCursor(
                 int indexColumnIndex,
@@ -2151,6 +2596,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             int capacity = allocFrameBuffers();
             long symAddr = frameAddrs[queryColCount];
             int count = 0;
+            // Posting span of this frame, ascending across the merge (see the
+            // single-key fillFrameForKey for why the partition range is not it).
+            long firstRowId = -1;
+            long lastRowId = -1;
             while (count < rowCap) {
                 // Two keys never share a row id, so the smallest head is unique.
                 int best = -1;
@@ -2169,6 +2618,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     capacity = growFrameBuffers(frameAddrs, count, capacity);
                     symAddr = frameAddrs[queryColCount]; // the symbol buffer may have moved
                 }
+                if (count == 0) {
+                    firstRowId = bestRow;
+                }
+                lastRowId = bestRow;
                 final CoveringRowCursor c = mergeCursors[best];
                 writeCoveredRow(frameAddrs, frameVarDataAddrs, frameVarDataPos, frameVarDataCap, count, c);
                 Unsafe.putInt(symAddr + (long) count * Integer.BYTES, multiKeys.getQuick(best));
@@ -2180,7 +2633,18 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             if (count == 0) {
                 return null;
             }
-            return finalizeFrame(count, partitionIndex);
+            // Multi-key frames interleave keys per row, so there is no single
+            // resolved symbol key for the frame; report VALUE_NOT_FOUND. The
+            // per-key merge cursors were opened over the partition [rowLo, rowHi)
+            // (minValue == mergeRowLo), so shift the relative heads to absolute
+            // base row ids for the covered span [firstAbs, lastAbs + 1). (The
+            // worker arm skips multi-key frames; this keeps the metadata coherent.)
+            final long firstAbs = firstRowId + mergeRowLo;
+            final long lastAbs = lastRowId + mergeRowLo;
+            // materialized == true: the worker arm SKIPS multi-key (VALUE_NOT_FOUND)
+            // frames, so these eagerly filled buffers are the only decode. Their
+            // real page addresses MUST be published.
+            return finalizeFrame(count, partitionIndex, SymbolTable.VALUE_NOT_FOUND, firstAbs, lastAbs + 1, true);
         }
 
         /**
@@ -2198,6 +2662,13 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             final int partitionIndex = partFrame.getPartitionIndex();
             final long rowLo = partFrame.getRowLo();
             final long rowHi = partFrame.getRowHi();
+            // Capture the base format + row range for this partition's frames.
+            // The per-partition posting reader is shared across keys; grab the
+            // (cached) forward reader so the frame carries it too.
+            framePartitionFormat = partFrame.getPartitionFormat();
+            framePostingReader = tableReader.getIndexReader(partitionIndex, indexColumnIndex, IndexReader.DIR_FORWARD);
+            mergeRowLo = rowLo;
+            mergeRowHi = rowHi;
             boolean any = false;
             for (int i = 0; i < n; i++) {
                 CoveringRowCursor c = openForwardCoveringCursor(
@@ -2344,17 +2815,20 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             if (descending) {
                 return nextImplDescending();
             }
-            // If a previous fillFrameForKey parked a partially-drained cursor,
-            // resume it before advancing the partition iterator. The row
-            // range we pass is unused on the resume path (the parked cursor
-            // already owns the range), but we keep them in agreement so a
-            // mismatch-detection fallback inside openOrContinueCoveringCursor
-            // would re-open with the correct range.
-            if (pendingRowCursor != null) {
+            // If a previous fillFrameForKey left this (key, partition) mid-drain,
+            // resume it before advancing the partition iterator. Two resume shapes:
+            // the cheap O(genCount) path (cheapChunkActive, no parked cursor) and the
+            // MIXED/fallback traverse (pendingRowCursor parked). For the parked-cursor
+            // shape the row range is unused (the cursor owns it); for the cheap shape
+            // the cursor opened here is for reader prep only and the stored rowLo/clamp
+            // drive selectKthMatch -- pass cheapRowLo so the prep cursor's minValue
+            // matches and a defensive re-open would use the correct range.
+            if (cheapChunkActive || pendingRowCursor != null) {
+                final long resumeRowLo = cheapChunkActive ? cheapRowLo : 0L;
                 PageFrame result = fillFrameForKey(
                         pendingSymbolKey,
                         pendingPartitionIndex,
-                        0L, 0L, maxRowsPerFrame);
+                        resumeRowLo, resumeRowLo, maxRowsPerFrame, true);
                 if (result != null) {
                     return result;
                 }
@@ -2365,12 +2839,14 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     isExhausted = true;
                     return null;
                 }
+                framePartitionFormat = partFrame.getPartitionFormat();
                 PageFrame result = fillFrameForKey(
                         resolvedKey,
                         partFrame.getPartitionIndex(),
                         partFrame.getRowLo(),
                         partFrame.getRowHi(),
-                        maxRowsPerFrame
+                        maxRowsPerFrame,
+                        true
                 );
                 if (result != null) {
                     return result;
@@ -2404,12 +2880,19 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                         // Math.max(1, ...) keeps each sub-frame at least one row wide
                         // so a (test-only) cap of 0 cannot stall the loop.
                         long subLo = Math.max(descPartitionLo, descSubHi - Math.max(1, maxRowsPerFrame));
+                        // Descending stays on the traverse (cheapEligible == false):
+                        // it fills repeated sub-ranges of the SAME (key, partition),
+                        // which would collide with the cheap path's (key, partition)-
+                        // keyed chunk-resume state. The forward path is where the win
+                        // matters; descending serves only negative LIMIT (<= one
+                        // maxRowsPerFrame-wide sub-frame of matches, never parks).
                         PageFrame result = fillFrameForKey(
                                 resolvedKey,
                                 descPartitionIndex,
                                 subLo,
                                 descSubHi,
-                                Integer.MAX_VALUE
+                                Integer.MAX_VALUE,
+                                false
                         );
                         descSubHi = subLo;
                         if (result != null) {
@@ -2423,6 +2906,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     isExhausted = true;
                     return null;
                 }
+                framePartitionFormat = partFrame.getPartitionFormat();
                 descPartitionIndex = partFrame.getPartitionIndex();
                 descPartitionLo = partFrame.getRowLo();
                 descSubHi = partFrame.getRowHi();
