@@ -553,8 +553,8 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
                         t.start();
                     }
 
-                    // Hard upper bound: 12 threads * 25 iters * worst-case ~600ms = ~3 min.
-                    // Allow plenty of headroom; the test timeout still bounds the run.
+                    // Hard upper bound with plenty of headroom for slow CI scheduling;
+                    // the test timeout still bounds the run.
                     Assert.assertTrue(
                             "fuzz did not complete in time, seeds=" + seed0 + "L, " + seed1 + "L, clientThreads="
                                     + clientThreads + ", iterationsPerThread=" + iterationsPerThread,
@@ -609,8 +609,8 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
                             .$(", seeds=").$(seed0).$("L, ").$(seed1).$("L")
                             .$(']').$();
 
-                    // Did we actually exercise each path? Probabilistic but at 12*25=300
-                    // iterations with 8 buckets we should hit each at least a few times.
+                    // Did we actually exercise each path? Probabilistic but at >=512
+                    // scenario selections with 8 buckets we should hit each at least a few times.
                     Assert.assertTrue("no happy sleeps ran (seeds=" + seed0 + "L, " + seed1 + "L)", happyCount.get() > 0);
                     Assert.assertTrue("no statement cancel attempts ran (seeds=" + seed0 + "L, " + seed1 + "L)", cancelAttemptCount.get() > 0);
                     Assert.assertTrue("no dropped sleeps ran (seeds=" + seed0 + "L, " + seed1 + "L)", droppedCount.get() > 0);
