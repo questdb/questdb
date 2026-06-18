@@ -1008,63 +1008,137 @@ public class MatViewRefreshBusyRetryTest extends AbstractCairoTest {
         });
     }
 
-    private void assertPeriodRangeRefreshTransientErrorDefers(AtomicBoolean faultSwitch) throws Exception {
-        // 0 backoff so the timer sweep re-drives the deferred refresh on the very next tick.
-        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_BUSY_RETRY_TIMEOUT, 0);
-        baseTableName = "base_price";
+    @Test
+    public void testTimerClearRefreshRetryDoesNotClobberConcurrentReArm() throws Exception {
+        // Regression guard for the off-latch clear/re-arm race on refreshRetryAfterMicros.
+        // MatViewTimerJob.processRefreshRetries clears the retry deadline OFF-latch, while
+        // MatViewRefreshJob arms/re-arms it UNDER the view latch. The clear must be a CAS on the
+        // exact deadline the timer observed due, so a fresher backoff armed concurrently by a refresh
+        // is never clobbered (which would skip that backoff window). We can't deterministically hit
+        // the real cross-thread window, so we drive the interleaving on a single thread by ordering
+        // the state mutations and assert the clear-conditional contract the CAS fix introduces.
         assertMemoryLeak(() -> {
             execute(
                     "create table base_price (" +
                             "sym varchar, price double, ts timestamp" +
                             ") timestamp(ts) partition by DAY WAL;"
             );
-            // Anchor the clock so period P1 (2020-01-01) is already complete at creation, while
-            // period P2 (2020-01-02) is still open. An immediate period view registers ONLY a period
-            // timer, so the sole timer-driven refresh path is the range path.
-            currentMicros = parseFloorPartialTimestamp("2020-01-02T00:00:00.000000Z");
+            execute("insert into base_price values('a', 1.0, '2020-01-01T00:00:00.000000Z')");
             execute(
-                    "create materialized view price_1h refresh immediate period (length 1d) as (" +
+                    "create materialized view price_1h as (" +
                             "  select ts, avg(price) as avg_price from base_price sample by 1h" +
                             ") partition by day"
             );
-            // One row in P1 and one row in P2. P2's row stays unrefreshed until P2 closes.
-            execute(
-                    "insert into base_price values('a', 1.0, '2020-01-01T00:00:00.000000Z')" +
-                            ",('a', 2.0, '2020-01-02T12:00:00.000000Z')"
+            drainWalAndMatViewQueues();
+            assertViewStatus("valid");
+
+            final TableToken viewToken = engine.getTableTokenIfExists("price_1h");
+            Assert.assertNotNull(viewToken);
+            final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
+            Assert.assertNotNull(state);
+
+            final long d1 = 1_700_000_000_000_000L;
+            final long d2 = d1 + 60_000_000L; // a fresher backoff, 60s later
+
+            // The refresh job arms the first backoff; the timer observes that deadline as due.
+            state.scheduleRefreshRetry(d1);
+            final long observed = state.getRefreshRetryAfterMicros();
+            Assert.assertEquals(d1, observed);
+
+            // RACE: a concurrent under-latch refresh re-arms a fresher backoff before the timer clears.
+            state.scheduleRefreshRetry(d2);
+
+            // The timer clears only the deadline it observed (d1). The CAS must fail and leave d2
+            // intact, so the fresh backoff window survives and this stale entry does NOT re-drive the
+            // view early -- d2's own RETRY heap entry will re-drive it when due.
+            Assert.assertFalse(
+                    "clear must not succeed against a concurrently re-armed deadline",
+                    state.clearRefreshRetry(observed)
+            );
+            Assert.assertEquals(
+                    "a fresher backoff armed under the latch must survive the off-latch clear",
+                    d2,
+                    state.getRefreshRetryAfterMicros()
             );
 
-            // Baseline: drain everything so P1 is refreshed (via the immediate incremental path) and
-            // the view is valid with no pending tasks.
-            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
-            drainMatViewTimerQueue(timerJob);
-            drainWalAndMatViewQueues();
-            assertViewStatus("valid");
-            assertViewRowCount(1);
+            // No concurrent re-arm: the timer observes d2 and clears it. The CAS succeeds and the
+            // view becomes eligible for an immediate re-drive.
+            Assert.assertTrue(
+                    "clear must succeed when the observed deadline is unchanged",
+                    state.clearRefreshRetry(d2)
+            );
+            Assert.assertEquals(
+                    "a matched clear must reset the deadline to LONG_NULL",
+                    Numbers.LONG_NULL,
+                    state.getRefreshRetryAfterMicros()
+            );
 
-            // P2 closes. No new base data, so the only refresh trigger is the period timer, i.e. the
-            // range path. Inject the transient error and let the range refresh run.
-            currentMicros = parseFloorPartialTimestamp("2020-01-03T00:00:01.000000Z");
-            faultSwitch.set(true);
-            drainMatViewTimerQueue(timerJob); // period timer -> enqueueRangeRefresh(P2)
-            drainMatViewQueue(engine);        // rangeRefresh -> getReader throws -> defer
-            // Apply any state transaction the refresh wrote. Without the fix the range path calls
-            // refreshFailState here, so this applies the invalidation and assertNoInvalidViews() below
-            // fails -- demonstrating the bug. With the fix nothing is written (the refresh is deferred).
-            drainWalQueue();
+            // The clear must never touch the consecutive-failure counter.
+            Assert.assertEquals("clearRefreshRetry must not mutate the retry counter", 0, state.getRefreshRetryCount());
+        });
+    }
 
-            // The transient failure must NOT invalidate the period view (it reports "retrying"), and
-            // the view must not have caught up yet (still P1's single bucket).
-            assertNoInvalidViews();
-            assertViewStatus("retrying");
-            assertViewRowCount(1);
+    private void assertPeriodRangeRefreshTransientErrorDefers(AtomicBoolean faultSwitch) throws Exception {
+        // 0 backoff so the timer sweep re-drives the deferred refresh on the very next tick.
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_BUSY_RETRY_TIMEOUT, 0);
+        baseTableName = "base_price";
+        assertMemoryLeak(() -> {
+            try {
+                execute(
+                        "create table base_price (" +
+                                "sym varchar, price double, ts timestamp" +
+                                ") timestamp(ts) partition by DAY WAL;"
+                );
+                // Anchor the clock so period P1 (2020-01-01) is already complete at creation, while
+                // period P2 (2020-01-02) is still open. An immediate period view registers ONLY a period
+                // timer, so the sole timer-driven refresh path is the range path.
+                setCurrentMicros(parseFloorPartialTimestamp("2020-01-02T00:00:00.000000Z"));
+                execute(
+                        "create materialized view price_1h refresh immediate period (length 1d) as (" +
+                                "  select ts, avg(price) as avg_price from base_price sample by 1h" +
+                                ") partition by day"
+                );
+                // One row in P1 and one row in P2. P2's row stays unrefreshed until P2 closes.
+                execute(
+                        "insert into base_price values('a', 1.0, '2020-01-01T00:00:00.000000Z')" +
+                                ",('a', 2.0, '2020-01-02T12:00:00.000000Z')"
+                );
 
-            // Clear the failure; the timer re-drives the deferred refresh (as an incremental refresh,
-            // which re-includes the now-complete P2) and the view catches up.
-            faultSwitch.set(false);
-            drainMatViewTimerQueue(timerJob);
-            drainWalAndMatViewQueues();
-            assertViewStatus("valid");
-            assertViewRowCount(2);
+                // Baseline: drain everything so P1 is refreshed (via the immediate incremental path) and
+                // the view is valid with no pending tasks.
+                final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
+                drainMatViewTimerQueue(timerJob);
+                drainWalAndMatViewQueues();
+                assertViewStatus("valid");
+                assertViewRowCount(1);
+
+                // P2 closes. No new base data, so the only refresh trigger is the period timer, i.e. the
+                // range path. Inject the transient error and let the range refresh run.
+                setCurrentMicros(parseFloorPartialTimestamp("2020-01-03T00:00:01.000000Z"));
+                faultSwitch.set(true);
+                drainMatViewTimerQueue(timerJob); // period timer -> enqueueRangeRefresh(P2)
+                drainMatViewQueue(engine);        // rangeRefresh -> getReader throws -> defer
+                // Apply any state transaction the refresh wrote. Without the fix the range path calls
+                // refreshFailState here, so this applies the invalidation and assertNoInvalidViews() below
+                // fails -- demonstrating the bug. With the fix nothing is written (the refresh is deferred).
+                drainWalQueue();
+
+                // The transient failure must NOT invalidate the period view (it reports "retrying"), and
+                // the view must not have caught up yet (still P1's single bucket).
+                assertNoInvalidViews();
+                assertViewStatus("retrying");
+                assertViewRowCount(1);
+
+                // Clear the failure; the timer re-drives the deferred refresh (as an incremental refresh,
+                // which re-includes the now-complete P2) and the view catches up.
+                faultSwitch.set(false);
+                drainMatViewTimerQueue(timerJob);
+                drainWalAndMatViewQueues();
+                assertViewStatus("valid");
+                assertViewRowCount(2);
+            } finally {
+                setCurrentMicros(-1);
+            }
         });
     }
 

@@ -326,10 +326,17 @@ public class MatViewTimerJob extends SynchronizedJob {
             }
             if (nowMicros >= retryAfter) {
                 // Clear before enqueue so a refresh that fails busy again can re-arm a fresh backoff.
-                state.clearRefreshRetry();
-                matViewStateStore.enqueueIncrementalRefresh(viewToken);
-                LOG.info().$("re-driving deferred materialized view refresh [view=").$(viewToken).I$();
-                ran = true;
+                // CAS on the exact deadline we observed due: if a concurrent under-latch refresh
+                // re-armed a fresher backoff (a different deadline) since we read it, the CAS fails
+                // and we leave that deadline intact -- the re-arm queued its own RETRY heap entry,
+                // which re-drives the view when it comes due. This closes the off-latch clobber
+                // window without ever taking the view latch in the timer.
+                if (state.clearRefreshRetry(retryAfter)) {
+                    matViewStateStore.enqueueIncrementalRefresh(viewToken);
+                    LOG.info().$("re-driving deferred materialized view refresh [view=").$(viewToken).I$();
+                    ran = true;
+                }
+                // else: a concurrent re-arm won the race; its newer heap entry will re-drive the view.
             }
             // else: the deadline was pushed out by a later re-arm queued after this entry; the newer
             // entry is already in the heap, so this stale one is simply dropped.
@@ -387,8 +394,9 @@ public class MatViewTimerJob extends SynchronizedJob {
             }
             ran = true;
         }
-        ran |= processExpiredTimers(clock.getTicks());
-        ran |= processRefreshRetries(clock.getTicks());
+        final long now = clock.getTicks();
+        ran |= processExpiredTimers(now);
+        ran |= processRefreshRetries(now);
         return ran;
     }
 

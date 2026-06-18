@@ -39,6 +39,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicLongFieldUpdater;
 
 import static io.questdb.TelemetryEvent.*;
 
@@ -72,6 +73,11 @@ public class MatViewState implements QuietCloseable {
     // single outlier (GC pause, O3 partition rewrite) from poisoning the EMA
     // for the next several refreshes.
     static final int EMA_OUTLIER_MULTIPLIER = 5;
+    // Enables an off-latch CAS on refreshRetryAfterMicros so MatViewTimerJob can clear only the
+    // exact deadline it observed due, without clobbering a fresh backoff a concurrent under-latch
+    // refresh may have just armed. See clearRefreshRetry(long).
+    private static final AtomicLongFieldUpdater<MatViewState> REFRESH_RETRY_AFTER_UPDATER =
+            AtomicLongFieldUpdater.newUpdater(MatViewState.class, "refreshRetryAfterMicros");
     // Used to avoid concurrent refresh runs.
     private final AtomicBoolean latch = new AtomicBoolean(false);
     // Protected by this.latch.
@@ -519,12 +525,20 @@ public class MatViewState implements QuietCloseable {
     }
 
     /**
-     * Clears any pending transient-refresh retry deadline, marking the view eligible for refresh now.
-     * Keeps the consecutive-failure counter so a re-driven refresh that fails again still counts
-     * toward the retry limit. {@link MatViewTimerJob} calls this just before re-enqueueing a refresh.
+     * Clears the pending transient-refresh retry deadline <em>iff</em> it still equals
+     * {@code observedDeadline}, marking the view eligible for refresh now. This is an off-latch CAS:
+     * {@link MatViewTimerJob} passes the deadline it observed due, so if a concurrent under-latch
+     * refresh re-armed a fresher backoff (a different deadline) in the meantime, the CAS fails and
+     * the fresh deadline is left intact (that re-arm queued its own RETRY heap entry to re-drive the
+     * view later). Keeps the consecutive-failure counter so a re-driven refresh that fails again
+     * still counts toward the retry limit. {@link MatViewTimerJob} calls this just before
+     * re-enqueueing a refresh and only enqueues when this returns true.
+     *
+     * @param observedDeadline the retry deadline the caller observed due
+     * @return true if this call cleared the deadline; false if it was concurrently changed
      */
-    public void clearRefreshRetry() {
-        this.refreshRetryAfterMicros = Numbers.LONG_NULL;
+    public boolean clearRefreshRetry(long observedDeadline) {
+        return REFRESH_RETRY_AFTER_UPDATER.compareAndSet(this, observedDeadline, Numbers.LONG_NULL);
     }
 
     /**
