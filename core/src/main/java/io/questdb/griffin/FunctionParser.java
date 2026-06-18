@@ -36,6 +36,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.RuntimeConstFunction;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.cast.CastByteToDecimalFunctionFactory;
@@ -376,6 +377,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             mutableArgs.setPos(argCount);
             mutableArgPositions.clear();
             mutableArgPositions.setPos(argCount);
+            // The function about to be created is runtime constant iff every arg is constant or
+            // runtime constant and at least one is runtime constant (mirrors the function base
+            // classes). Used below to fold runtime-constant subtrees at boundaries only.
+            boolean allConstOrRuntimeConst = true;
+            boolean anyRuntimeConst = false;
             for (int n = 0; n < argCount; n++) {
                 Function arg = functionStack.poll();
                 final int pos = positionStack.pop();
@@ -396,6 +402,23 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 if (arg instanceof GroupByFunction) {
                     Misc.freeObjList(mutableArgs);
                     throw SqlException.position(pos).put("Aggregate function cannot be passed as an argument");
+                }
+
+                if (arg == null || (!arg.isConstant() && !arg.isRuntimeConstant())) {
+                    allConstOrRuntimeConst = false;
+                } else if (arg.isRuntimeConstant() && !arg.isConstant()) {
+                    anyRuntimeConst = true;
+                }
+            }
+            // At a boundary (the new function is not runtime constant), each runtime-constant arg is
+            // a maximal runtime-constant subtree: wrap it so it evaluates once per cursor, not per
+            // row. Skipped when the parent is runtime constant, so only the topmost node is wrapped.
+            if (!(allConstOrRuntimeConst && anyRuntimeConst)) {
+                for (int n = 0; n < argCount; n++) {
+                    final Function arg = mutableArgs.getQuick(n);
+                    if (RuntimeConstFunction.isFoldable(arg)) {
+                        mutableArgs.setQuick(n, new RuntimeConstFunction(arg));
+                    }
                 }
             }
             functionStack.push(createFunction(node, mutableArgs, mutableArgPositions));
