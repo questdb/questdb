@@ -782,6 +782,79 @@ public class MatViewRefreshBusyRetryTest extends AbstractCairoTest {
         assertPeriodRangeRefreshTransientErrorDefers(failBaseReader);
     }
 
+    @Test
+    public void testUserRangeRefreshReaderPoolExhaustionInvalidatesInsteadOfDeferring() throws Exception {
+        // The "false" half of rangeRefresh's periodRefresh conditional. A user-initiated
+        // REFRESH ... RANGE FROM .. TO .. sets rangeFrom, so periodRefresh == false and the inner
+        // catch must KEEP the legacy invalidate-on-transient-error behaviour instead of deferring.
+        // (The period "true" half defers - see testPeriodRangeRefreshReaderPoolExhaustionDefers...).
+        // A re-driven incremental refresh would NOT recompute the user's arbitrary window, so silently
+        // deferring it would drop the requested range; the view is invalidated instead.
+        assertUserRangeRefreshTransientErrorInvalidates(failBaseReader);
+    }
+
+    @Test
+    public void testUserRangeRefreshOutOfMemoryInvalidatesInsteadOfDeferring() throws Exception {
+        // Same user-range (periodRefresh == false) inner-catch path as above, but the transient error
+        // is a retriable out-of-memory rather than base-table reader pool exhaustion. It must still
+        // invalidate, mirroring the legacy behaviour, even though the period half defers on OOM.
+        assertUserRangeRefreshTransientErrorInvalidates(failBaseReaderOom);
+    }
+
+    @Test
+    public void testUserRangeRefreshWalWriterPoolExhaustionInvalidatesInsteadOfDeferring() throws Exception {
+        // The OUTER-catch arm of rangeRefresh's periodRefresh conditional. getWalWriter(view) throws
+        // (the view's own WAL writer pool is exhausted). On a period range refresh the
+        // "periodRefresh && !isInvalid && tryScheduleRetry" guard would defer; on a user range refresh
+        // (periodRefresh == false) that guard is skipped and the view is invalidated in-memory.
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_BUSY_RETRY_TIMEOUT, 0);
+        viewWalWriterName = "price_1h";
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL;"
+            );
+            execute("insert into base_price values('a', 1.0, '2020-01-01T00:00:00.000000Z')");
+            // A plain immediate view (no period). Drain to a clean valid state with no pending tasks,
+            // so the ONLY refresh we subsequently drive is the user-initiated range refresh.
+            execute(
+                    "create materialized view price_1h as (" +
+                            "  select ts, avg(price) as avg_price from base_price sample by 1h" +
+                            ") partition by day"
+            );
+            drainWalAndMatViewQueues();
+            assertViewStatus("valid");
+            assertViewRowCount(1);
+
+            // User range refresh over the existing data. The view's WAL writer pool is exhausted as
+            // rangeRefresh tries to acquire a writer, so the outer catch runs.
+            failViewWalWriter.set(true);
+            execute("refresh materialized view price_1h range from '2020-01-01' to '2020-01-02';");
+            drainMatViewQueue(engine); // rangeRefresh -> getWalWriter throws -> outer catch -> invalidate
+
+            // refreshFailState ran with a null WAL writer (none could be acquired), so the invalidation
+            // is marked in-memory only - it is NOT persisted, hence materialized_views.view_status still
+            // reads "valid". Assert the in-memory state directly: invalid, and crucially NOT armed for a
+            // retry (the user-range path must not defer).
+            final TableToken viewToken = engine.getTableTokenIfExists("price_1h");
+            Assert.assertNotNull(viewToken);
+            final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
+            Assert.assertNotNull(state);
+            Assert.assertTrue("user range refresh must invalidate the view in-memory", state.isInvalid());
+            Assert.assertEquals(
+                    "user range refresh must NOT arm a refresh-retry deadline (no deferral)",
+                    Numbers.LONG_NULL,
+                    state.getRefreshRetryAfterMicros()
+            );
+            Assert.assertEquals(
+                    "user range refresh must NOT bump the refresh-retry count (no deferral)",
+                    0,
+                    state.getRefreshRetryCount()
+            );
+        });
+    }
+
     private void assertPeriodRangeRefreshTransientErrorDefers(AtomicBoolean faultSwitch) throws Exception {
         // 0 backoff so the timer sweep re-drives the deferred refresh on the very next tick.
         setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_BUSY_RETRY_TIMEOUT, 0);
@@ -839,6 +912,65 @@ public class MatViewRefreshBusyRetryTest extends AbstractCairoTest {
             drainWalAndMatViewQueues();
             assertViewStatus("valid");
             assertViewRowCount(2);
+        });
+    }
+
+    private void assertUserRangeRefreshTransientErrorInvalidates(AtomicBoolean faultSwitch) throws Exception {
+        // 0 backoff: irrelevant to the invalidate path (no retry is armed); kept for parity with the
+        // defer tests so the only behavioural difference under test is period vs. user range.
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_BUSY_RETRY_TIMEOUT, 0);
+        baseTableName = "base_price";
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL;"
+            );
+            execute("insert into base_price values('a', 1.0, '2020-01-01T00:00:00.000000Z')");
+            // A plain immediate view (no period). Drain to a clean valid state with no pending tasks,
+            // so the ONLY refresh we subsequently drive is the user-initiated range refresh.
+            execute(
+                    "create materialized view price_1h as (" +
+                            "  select ts, avg(price) as avg_price from base_price sample by 1h" +
+                            ") partition by day"
+            );
+            drainWalAndMatViewQueues();
+            assertViewStatus("valid");
+            assertViewRowCount(1);
+
+            // User-initiated REFRESH ... RANGE FROM .. TO .. over the existing data sets rangeFrom, so
+            // rangeRefresh sees periodRefresh == false. Inject the transient error: getReader throws.
+            faultSwitch.set(true);
+            execute("refresh materialized view price_1h range from '2020-01-01' to '2020-01-02';");
+            drainMatViewQueue(engine); // rangeRefresh -> getReader throws -> inner catch -> invalidate
+            drainWalQueue();           // apply the persisted invalidation transaction
+
+            // Unlike the period path, the user range refresh must INVALIDATE (not defer): the view is
+            // invalid (persisted, so visible via SQL) and reports neither a retry deadline nor count.
+            assertViewStatus("invalid");
+            final TableToken viewToken = engine.getTableTokenIfExists("price_1h");
+            Assert.assertNotNull(viewToken);
+            final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
+            Assert.assertNotNull(state);
+            Assert.assertTrue("user range refresh must invalidate on a transient error", state.isInvalid());
+            Assert.assertEquals(
+                    "user range refresh must NOT arm a refresh-retry deadline (no deferral)",
+                    Numbers.LONG_NULL,
+                    state.getRefreshRetryAfterMicros()
+            );
+            Assert.assertEquals(
+                    "user range refresh must NOT bump the refresh-retry count (no deferral)",
+                    0,
+                    state.getRefreshRetryCount()
+            );
+
+            // The failed refresh left no partial data and the view is recoverable: with the fault
+            // cleared, an explicit full refresh restores it to valid.
+            faultSwitch.set(false);
+            execute("refresh materialized view price_1h full;");
+            drainWalAndMatViewQueues();
+            assertViewStatus("valid");
+            assertViewRowCount(1);
         });
     }
 
