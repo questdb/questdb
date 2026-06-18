@@ -1160,7 +1160,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 } catch (Throwable th) {
                     factory = Misc.free(factory);
                     walWriter.rollback();
-                    if (th instanceof CairoException && CairoException.isCairoOomError(th) && i < maxRetries && refreshContext.naturalStep > 1) {
+                    if (th instanceof CairoException ce && CairoException.isCairoOomError(ce) && i < maxRetries && refreshContext.naturalStep > 1) {
                         refreshContext.naturalStep /= 2;
                         computePerClusterSteps(
                                 refreshContext.refreshIntervals,
@@ -1170,7 +1170,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         );
                         LOG.info().$("query failed with out-of-memory, retrying with a reduced step [view=").$(viewTableToken)
                                 .$(", intervalStep=").$(refreshContext.naturalStep)
-                                .$(", error=").$safe(((CairoException) th).getFlyweightMessage())
+                                .$(", error=").$safe(ce.getFlyweightMessage())
                                 .I$();
                         // Step reduction is the actual OOM mitigation; retry immediately without
                         // sleeping the refresh worker (which drains the whole queue on one thread).
@@ -1587,7 +1587,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         // Incremental refresh is re-scheduled.
                         continue;
                     }
-                    if (tryScheduleRetry(viewState, viewToken, th)) {
+                    // Don't arm a retry on a view that a prior refreshFailState already marked invalid
+                    // in-memory (e.g. its WAL write threw a retriable error after refreshFail ran): the
+                    // retry would be scheduled on an already-invalid view and only dropped later by the
+                    // timer job's isInvalid() guard, after needlessly bumping the retry counter.
+                    if (!viewState.isInvalid() && tryScheduleRetry(viewState, viewToken, th)) {
                         // The view's WAL writer pool was exhausted; retry later instead of invalidating.
                         continue;
                     }
@@ -1712,7 +1716,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 // Incremental refresh is re-scheduled.
                 return false;
             }
-            if (tryScheduleRetry(viewState, viewToken, th)) {
+            // Don't arm a retry on a view that a prior refreshFailState already marked invalid
+            // in-memory (e.g. its WAL write threw a retriable error after refreshFail ran): the retry
+            // would be scheduled on an already-invalid view and only dropped later by the timer job's
+            // isInvalid() guard, after needlessly bumping the retry counter.
+            if (!viewState.isInvalid() && tryScheduleRetry(viewState, viewToken, th)) {
                 // The view's WAL writer pool was exhausted; retry later instead of invalidating.
                 return false;
             }

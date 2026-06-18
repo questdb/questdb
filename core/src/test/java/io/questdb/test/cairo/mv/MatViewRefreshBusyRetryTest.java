@@ -26,12 +26,18 @@ package io.questdb.test.cairo.mv;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewTimerJob;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.std.LongList;
+import io.questdb.std.Numbers;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.Assert;
+import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
@@ -53,6 +59,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class MatViewRefreshBusyRetryTest extends AbstractCairoTest {
 
     private static final AtomicBoolean failBaseReader = new AtomicBoolean(false);
+    // Stage 1 of the m3 scenario: make the base read fail NON-retriably so the dependent-view loop's
+    // inner catch routes to refreshFailState (which marks the view invalid in-memory).
+    private static final AtomicBoolean failBaseReaderNonRetriable = new AtomicBoolean(false);
+    // Stage 2 of the m3 scenario: make WalWriter.resetMatViewState throw a RETRIABLE error so the
+    // failure inside refreshFailState propagates to the dependent-view loop's outer catch.
+    private static final AtomicBoolean failViewResetMatViewState = new AtomicBoolean(false);
     private static final AtomicBoolean failViewWalWriter = new AtomicBoolean(false);
     private static volatile String baseTableName;
     private static volatile String viewWalWriterName;
@@ -65,8 +77,15 @@ public class MatViewRefreshBusyRetryTest extends AbstractCairoTest {
             @Override
             public TableReader getReader(TableToken tableToken) {
                 final String prefix = baseTableName;
-                if (failBaseReader.get() && prefix != null && tableToken.getTableName().startsWith(prefix)) {
-                    throw EntryUnavailableException.instance("pool size exceeded");
+                if (prefix != null && tableToken.getTableName().startsWith(prefix)) {
+                    if (failBaseReaderNonRetriable.get()) {
+                        // A NON-retriable refresh failure: the inner catch in the dependent-view loop
+                        // calls refreshFailState, which marks the view invalid in-memory.
+                        throw CairoException.nonCritical().put("injected non-retriable refresh failure");
+                    }
+                    if (failBaseReader.get()) {
+                        throw EntryUnavailableException.instance("pool size exceeded");
+                    }
                 }
                 return super.getReader(tableToken);
             }
@@ -76,13 +95,56 @@ public class MatViewRefreshBusyRetryTest extends AbstractCairoTest {
             @Override
             public WalWriter getWalWriter(TableToken tableToken) {
                 final String prefix = viewWalWriterName;
-                if (failViewWalWriter.get() && prefix != null && tableToken.getTableName().startsWith(prefix)) {
-                    throw EntryUnavailableException.instance("wal writer pool size exceeded");
+                if (prefix != null && tableToken.getTableName().startsWith(prefix)) {
+                    if (failViewWalWriter.get()) {
+                        throw EntryUnavailableException.instance("wal writer pool size exceeded");
+                    }
+                    if (failViewResetMatViewState.get()) {
+                        // A real WAL writer whose resetMatViewState() throws a RETRIABLE error,
+                        // simulating the WAL write inside refreshFailState failing transiently AFTER
+                        // refreshFail() already marked the view invalid in-memory.
+                        return new WalWriter(
+                                getConfiguration(),
+                                tableToken,
+                                getTableSequencerAPI(),
+                                getDdlListener(tableToken),
+                                getWalDirectoryPolicy(),
+                                getWalLocker(),
+                                getRecentWriteTracker(),
+                                getTelemetryWal()
+                        ) {
+                            @Override
+                            public void resetMatViewState(
+                                    long lastRefreshBaseTxn,
+                                    long lastRefreshTimestamp,
+                                    boolean invalid,
+                                    CharSequence invalidationReason,
+                                    long lastPeriodHi,
+                                    LongList refreshIntervals,
+                                    long refreshIntervalsBaseTxn
+                            ) {
+                                throw EntryUnavailableException.instance("wal writer busy during resetMatViewState");
+                            }
+                        };
+                    }
                 }
                 return super.getWalWriter(tableToken);
             }
         };
         AbstractCairoTest.setUpStatic();
+    }
+
+    @Before
+    @Override
+    public void setUp() {
+        super.setUp();
+        // Reset all fault-injection switches so they never leak between tests regardless of order.
+        failBaseReader.set(false);
+        failBaseReaderNonRetriable.set(false);
+        failViewResetMatViewState.set(false);
+        failViewWalWriter.set(false);
+        baseTableName = null;
+        viewWalWriterName = null;
     }
 
     @Test
@@ -569,6 +631,133 @@ public class MatViewRefreshBusyRetryTest extends AbstractCairoTest {
             drainWalAndMatViewQueues();
             assertViewStatus("valid");
             assertViewRowCount(2);
+        });
+    }
+
+    @Test
+    public void testResetStateRetriableErrorDoesNotScheduleRetryOnInvalidView() throws Exception {
+        // m3 regression - stale-invalid retry scheduling window. When the WAL write inside
+        // refreshFailState (WalWriter.resetMatViewState) throws a RETRIABLE error AFTER refreshFail()
+        // has already marked the view invalid in-memory, the failure propagates to the dependent-view
+        // loop's OUTER catch, whose tryScheduleRetry() then arms a refresh retry on an already-invalid
+        // view. The retry is later dropped by the timer job's isInvalid() guard, so it is harmless,
+        // but an invalid view must not carry a pending retry deadline.
+        //
+        // RED on current code (a retry is armed on the invalid view); GREEN once the outer-catch
+        // tryScheduleRetry is gated on !viewState.isInvalid().
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_BUSY_RETRY_TIMEOUT, 1000);
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_BUSY_RETRY_LIMIT, 10);
+        failBaseReader.set(false);
+        failViewWalWriter.set(false);
+        failBaseReaderNonRetriable.set(false);
+        failViewResetMatViewState.set(false);
+        baseTableName = "base_price";
+        viewWalWriterName = "price_1h";
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL;"
+            );
+            execute("insert into base_price values('a', 1.0, '2020-01-01T00:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+
+            execute(
+                    "create materialized view price_1h as (" +
+                            "  select ts, avg(price) as avg_price from base_price sample by 1h" +
+                            ") partition by day"
+            );
+            drainWalAndMatViewQueues();
+            assertViewStatus("valid");
+            assertViewRowCount(1);
+
+            // A second bucket lands; committing it enqueues the dependent-view refresh.
+            execute("insert into base_price values('a', 2.0, '2020-01-01T01:00:00.000000Z')");
+            drainWalQueue();
+
+            // Stage 1: the base read fails NON-retriably -> refreshIncremental0 throws -> the inner
+            //          catch calls refreshFailState, which marks the view invalid in-memory.
+            // Stage 2: resetMatViewState (the WAL write inside refreshFailState) throws a RETRIABLE
+            //          error -> propagates to the dependent-view loop's outer catch.
+            failBaseReaderNonRetriable.set(true);
+            failViewResetMatViewState.set(true);
+            drainMatViewQueue(engine);
+
+            // The view is invalid (refreshFail ran). It must NOT carry a pending refresh retry.
+            final TableToken viewToken = engine.getTableTokenIfExists("price_1h");
+            Assert.assertNotNull(viewToken);
+            final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
+            Assert.assertNotNull(state);
+            Assert.assertTrue("view must be invalid after the refresh failure", state.isInvalid());
+            Assert.assertEquals(
+                    "an invalid view must not carry a pending refresh-retry deadline",
+                    Numbers.LONG_NULL,
+                    state.getRefreshRetryAfterMicros()
+            );
+            Assert.assertEquals(
+                    "an invalid view must not carry a bumped refresh-retry count",
+                    0,
+                    state.getRefreshRetryCount()
+            );
+        });
+    }
+
+    @Test
+    public void testResetStateRetriableErrorDoesNotScheduleRetryOnInvalidViewSingleViewPath() throws Exception {
+        // Same m3 stale-invalid retry window as the dependent-view test, but on the single-view
+        // (timer/enqueue-driven) refresh path: refreshIncremental(view)'s inner catch calls
+        // refreshFailState (marking the view invalid in-memory), whose WAL write throws a RETRIABLE
+        // error that propagates to that method's OUTER catch. The outer-catch tryScheduleRetry must
+        // not arm a retry on the now-invalid view.
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_BUSY_RETRY_TIMEOUT, 1000);
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_BUSY_RETRY_LIMIT, 10);
+        baseTableName = "base_price";
+        viewWalWriterName = "price_1h";
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL;"
+            );
+            execute("insert into base_price values('a', 1.0, '2020-01-01T00:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+
+            execute(
+                    "create materialized view price_1h as (" +
+                            "  select ts, avg(price) as avg_price from base_price sample by 1h" +
+                            ") partition by day"
+            );
+            drainWalAndMatViewQueues();
+            assertViewStatus("valid");
+            assertViewRowCount(1);
+
+            // A second bucket lands so the view has work to refresh, but commit it WITHOUT driving the
+            // mat view queue, so no dependent-view refresh runs yet.
+            execute("insert into base_price values('a', 2.0, '2020-01-01T01:00:00.000000Z')");
+            drainWalQueue();
+
+            // Drive the SINGLE-VIEW path directly by enqueuing a view-targeted incremental refresh.
+            final TableToken viewToken = engine.getTableTokenIfExists("price_1h");
+            Assert.assertNotNull(viewToken);
+            failBaseReaderNonRetriable.set(true);
+            failViewResetMatViewState.set(true);
+            engine.getMatViewStateStore().enqueueIncrementalRefresh(viewToken);
+            drainMatViewQueue(engine);
+
+            // The view is invalid (refreshFail ran). It must NOT carry a pending refresh retry.
+            final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
+            Assert.assertNotNull(state);
+            Assert.assertTrue("view must be invalid after the refresh failure", state.isInvalid());
+            Assert.assertEquals(
+                    "an invalid view must not carry a pending refresh-retry deadline",
+                    Numbers.LONG_NULL,
+                    state.getRefreshRetryAfterMicros()
+            );
+            Assert.assertEquals(
+                    "an invalid view must not carry a bumped refresh-retry count",
+                    0,
+                    state.getRefreshRetryCount()
+            );
         });
     }
 
