@@ -546,6 +546,131 @@ public class PostingReaderSelectKthMatchTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * Regression for the populateCacheForKey cache-poisoning bug. For a key in a sparse gen's
+     * [minKey, maxKey] range but ABSENT from it (a "hole"), the cursor's loadSparseGenByPrefixSum
+     * records NO cache entry because start == prefixSum[k] == prefixSum[k+1] == end. The buggy
+     * predicate counts[start] > 0 instead records a spurious entry whenever the gen's SBBF
+     * false-positives the absent key (counts[start] is then the NEXT key's count, pointing at a
+     * different key's postings). With many in-range holes across several gens an SBBF
+     * false-positive is deterministic and effectively certain, so populateCacheForKey must stay
+     * byte-identical to a full traverse for EVERY in-range key -- present and absent -- and an
+     * absent key must warm to an EMPTY hit, never a spurious entry.
+     */
+    @Test
+    public void testPopulateCacheForKeyMatchesTraverseForAbsentInRangeKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final String name = "skm_cache_holes";
+                final int plen = path.size();
+                final int activeKeys = 128;              // even keys 0,2,...,254 present
+                final int gens = 8;                      // 8 sparse gens -> an FP across some gen is certain
+                final int maxKey = 2 * (activeKeys - 1); // 254; odd keys 1..253 are in-range holes
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    int row = 0;
+                    for (int g = 0; g < gens; g++) {
+                        for (int e = 0; e < activeKeys; e++) {
+                            writer.add(2 * e, row++); // even key only -> odd keys are holes
+                        }
+                        writer.setMaxValue(row - 1);
+                        writer.commit();
+                    }
+                    // No seal: keep the multi-gen sparse head so every gen carries an SBBF.
+                }
+
+                for (int key = 0; key <= maxKey; key++) {
+                    try (PostingIndexFwdReader a = new PostingIndexFwdReader(
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 0, 0);
+                         PostingIndexFwdReader b = new PostingIndexFwdReader(
+                                 configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 0, 0)) {
+                        a.reloadConditionally();
+                        b.reloadConditionally();
+                        PostingGenLookup la = genLookupOf(a);
+                        PostingGenLookup lb = genLookupOf(b);
+
+                        drain(a, key, 0, Long.MAX_VALUE);            // traverse-warm (fires putCacheEntries)
+                        b.populateCacheForKey(key, Long.MAX_VALUE);   // metadata-warm
+
+                        long slotA = la.cacheLookup(key);
+                        long slotB = lb.cacheLookup(key);
+                        int cntA = PostingGenLookup.unpackEntryCount(slotA);
+                        assertEquals("cache entry count mismatch for key " + key,
+                                cntA, PostingGenLookup.unpackEntryCount(slotB));
+                        int sA = PostingGenLookup.unpackEntryStart(slotA);
+                        int sB = PostingGenLookup.unpackEntryStart(slotB);
+                        for (int i = 0; i < cntA; i++) {
+                            assertEquals("cache entry " + i + " mismatch for key " + key,
+                                    la.cacheEntryAt(sA + i), lb.cacheEntryAt(sB + i));
+                        }
+                        if ((key & 1) == 1) {
+                            // Absent (odd, in-range) key: must warm to an EMPTY hit, never a spurious entry.
+                            assertEquals("absent in-range key " + key + " must cache zero entries", 0, cntA);
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    /**
+     * Regression for the single-sparse-gen cache-warm gap (the parallel-decode race fix). Before
+     * the fix populateCacheForKey bailed when genCount <= 1, leaving a single SPARSE gen cold --
+     * a worker's detached cursor would then write the shared cache concurrently. It must now warm
+     * a single sparse gen byte-identically to the traverse, so workers replay (read-only).
+     */
+    @Test
+    public void testPopulateCacheForKeyWarmsSingleSparseGen() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final String name = "skm_single_sparse";
+                final int plen = path.size();
+                // ONE clearly-sparse gen: keys {0, 50, 100} over range [0,100] (single commit, no
+                // seal) -> anySparseGen && genCount == 1, the exact case the old bail skipped.
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    int row = 0;
+                    for (int rep = 0; rep < 4; rep++) {
+                        writer.add(0, row++);
+                        writer.add(50, row++);
+                        writer.add(100, row++);
+                    }
+                    writer.setMaxValue(row - 1);
+                    writer.commit();
+                }
+                try (PostingIndexFwdReader a = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 0, 0);
+                     PostingIndexFwdReader b = new PostingIndexFwdReader(
+                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 0, 0)) {
+                    a.reloadConditionally();
+                    b.reloadConditionally();
+                    PostingGenLookup la = genLookupOf(a);
+                    PostingGenLookup lb = genLookupOf(b);
+                    assertTrue("layout must be a single sparse gen", lb.anySparseGen());
+
+                    final int key = 50; // present in the single sparse gen
+                    assertEquals(CACHE_NOT_PRESENT, lb.cacheLookup(key));
+                    drain(a, key, 0, Long.MAX_VALUE);            // traverse warms
+                    b.populateCacheForKey(key, Long.MAX_VALUE);   // must now ALSO warm (was a no-op)
+
+                    long slotA = la.cacheLookup(key);
+                    long slotB = lb.cacheLookup(key);
+                    assertNotEquals("single sparse gen must now be warmed by populateCacheForKey",
+                            CACHE_NOT_PRESENT, slotB);
+                    int cnt = PostingGenLookup.unpackEntryCount(slotA);
+                    assertTrue("present key in single sparse gen must cache an entry", cnt > 0);
+                    assertEquals("populate-warm must be byte-identical to traverse-warm (count)",
+                            cnt, PostingGenLookup.unpackEntryCount(slotB));
+                    int sA = PostingGenLookup.unpackEntryStart(slotA);
+                    int sB = PostingGenLookup.unpackEntryStart(slotB);
+                    for (int i = 0; i < cnt; i++) {
+                        assertEquals("cache entry " + i, la.cacheEntryAt(sA + i), lb.cacheEntryAt(sB + i));
+                    }
+                }
+            }
+        });
+    }
+
     // ---- helpers ----
 
     private static void assertSelectMatchesCursor(PostingIndexFwdReader reader, int key, long minValue, long callerMax) {

@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
@@ -168,11 +169,10 @@ public final class CoveredColumnDecoder {
             Unsafe.setMemory(dst, prePad, (byte) 0);
             dst += prePad;
         }
-        if (cardinality > 0 && value.isVanilla() && elemType == ColumnType.DOUBLE) {
-            value.flatView().appendPlainDoubleValue(dst, value.getFlatViewOffset(), value.getFlatViewLength());
-        } else if (dataBytes > 0) {
-            Unsafe.setMemory(dst, dataBytes, (byte) 0);
-        }
+        // Copy the real element data (bulk for a vanilla DOUBLE array, strided for a non-vanilla
+        // slice/transpose) via the shared primitive — never zero-fill — so a non-vanilla covered
+        // array decodes correctly and the worker and eager covered paths stay byte-identical.
+        ArrayTypeDriver.appendArrayData(dst, value);
         dst += dataBytes;
         if (postPad > 0) {
             Unsafe.setMemory(dst, postPad, (byte) 0);
@@ -192,7 +192,14 @@ public final class CoveredColumnDecoder {
             varData.advance(q, Long.BYTES);
         } else {
             long len = value.length();
-            int totalBytes = (int) (Long.BYTES + len);
+            // The var-data sink is int-addressed, so a value whose framed size overflows int
+            // cannot be stored; guard before the (int) cast so a pathological >2GB BINARY fails
+            // loud rather than truncating the size and writing past the under-allocated buffer.
+            long totalBytesLong = Long.BYTES + len;
+            if (totalBytesLong > Integer.MAX_VALUE) {
+                throw CairoException.nonCritical().put("covered BINARY value too large [len=").put(len).put(']');
+            }
+            int totalBytes = (int) totalBytesLong;
             long base = varData.ensureCapacity(q, totalBytes);
             long dst = base + varData.position(q);
             Unsafe.putLong(dst, len);
@@ -213,7 +220,14 @@ public final class CoveredColumnDecoder {
             varData.advance(q, Integer.BYTES);
         } else {
             int charCount = value.length();
-            int totalBytes = Integer.BYTES + charCount * Character.BYTES;
+            // charCount * 2 can overflow int for a multi-GB STRING; compute in long and guard
+            // before the cast so an oversized value fails loud rather than under-allocating and
+            // writing the UTF-16 body past the buffer.
+            long totalBytesLong = Integer.BYTES + (long) charCount * Character.BYTES;
+            if (totalBytesLong > Integer.MAX_VALUE) {
+                throw CairoException.nonCritical().put("covered STRING value too large [chars=").put(charCount).put(']');
+            }
+            int totalBytes = (int) totalBytesLong;
             long base = varData.ensureCapacity(q, totalBytes);
             long dst = base + varData.position(q);
             Unsafe.putInt(dst, charCount);

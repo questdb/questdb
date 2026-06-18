@@ -484,16 +484,16 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
      * reader replays the cache instead of re-walking the SBBF/prefix-sum path, exactly as if a
      * full traverse had warmed it.
      * <p>
-     * The cache only ever holds sparse-gen hits, so this is gated on a multi-gen layout with at
-     * least one sparse gen ({@code genCount > 1 && anySparseGen}); the single-gen-dense fast path
+     * The cache only ever holds sparse-gen hits, so this is gated on a layout with at
+     * least one sparse gen ({@code anySparseGen}); an all-dense layout (incl. single-gen-dense)
      * never touches the cache, and dense gens are never cached. The entry list is emitted in
      * ascending gen order — the canonical form: the forward traverse commits ascending, and the
      * backward traverse builds descending then {@code reverse()}s, so both converge on ascending.
      * <p>
      * Byte-for-byte equivalent to the traverse: it applies the SAME per-gen predicates the
      * traverse's {@code advanceTo*RelevantGen} applies — gen-key-range, SBBF {@code notContainKey},
-     * and {@code counts[start] > 0} (NOT {@code start != end}) — and packs the SAME
-     * {@code packCacheEntry(gen, start)} values. {@code putCacheEntries} itself is idempotent and
+     * and {@code start != end} (the key is genuinely present in the sparse gen) — and packs the
+     * SAME {@code packCacheEntry(gen, start)} values. {@code putCacheEntries} itself is idempotent and
      * budget-guarded, so a redundant call (or one over budget) is a safe no-op.
      *
      * @param key             column key (>= 0)
@@ -502,7 +502,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
      *                        so it does not currently affect which gens are cached
      */
     public void populateCacheForKey(int key, long maxValueClamped) {
-        if (key < 0 || genCount <= 1 || !genLookup.anySparseGen()) {
+        if (key < 0 || !genLookup.anySparseGen()) {
             return;
         }
         cacheBuilderEntries.clear();
@@ -516,16 +516,16 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             if (genLookup.notContainKey(valueMem, g, key)) {
                 continue;
             }
-            int activeKeyCount = -genLookup.getGenKeyCount(g);
-            long genFileOffset = genLookup.getGenFileOffset(g);
             long prefixSumAddr = valueMem.addressOf(genLookup.getGenPrefixSumOffset(g, valueMem));
-            int start = Unsafe.getInt(prefixSumAddr + (long) (key - genLookup.getGenMinKey(g)) * Integer.BYTES);
-            long countsBase = valueMem.addressOf(genFileOffset) + (long) activeKeyCount * Integer.BYTES;
-            int cnt = Unsafe.getInt(countsBase + (long) start * Integer.BYTES);
-            // EXACT traverse predicate: advanceTo*RelevantGen records an entry iff the
-            // gen actually decoded values for the key (totalValueCount/encodedBlockCount
-            // > 0), which reduces to counts[start] > 0 here — NOT start != end.
-            if (cnt <= 0) {
+            int minKey = genLookup.getGenMinKey(g);
+            int start = Unsafe.getInt(prefixSumAddr + (long) (key - minKey) * Integer.BYTES);
+            int end = Unsafe.getInt(prefixSumAddr + (long) (key - minKey + 1) * Integer.BYTES);
+            // EXACT traverse predicate: the cursor's loadSparseGenByPrefixSum (and
+            // selectSparseKeyCount) record an entry for the key iff start != end. counts[start] > 0
+            // is NOT equivalent: for a key in [minKey, maxKey] but ABSENT from this gen (an SBBF
+            // false-positive that reaches here) start == end, yet counts[start] is the NEXT active
+            // key's count (> 0) — caching a spurious entry that points at a different key's postings.
+            if (start == end) {
                 continue;
             }
             cacheBuilderEntries.add(PostingGenLookup.packCacheEntry(g, start));
@@ -732,6 +732,11 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     @Override
     public void setFrozen(boolean frozen) {
         this.frozen = frozen;
+        // Defence-in-depth for parallel decode: while frozen, no cursor may mutate the shared
+        // genLookup cache (workers run concurrently against this one reader). putCacheEntries
+        // asserts on a frozen write so any future regression of the read-only-worker invariant
+        // fails loud in tests rather than racing.
+        genLookup.setFrozen(frozen);
     }
 
     @TestOnly

@@ -402,7 +402,12 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 currentGen++;
             }
             // Reached the end naturally. Commit accumulated entries iff we built them ourselves.
-            if (!isCacheReplayMode && requestedKey >= 0) {
+            // A detached (per-worker) cursor must NEVER mutate the shared reader's genLookup cache:
+            // many workers run concurrently against one frozen reader, so the dispatch-thread warm
+            // (populateCacheForKey, before freeze) is the only thing allowed to populate it. A
+            // detached cursor that reaches here simply re-walked the gen read-only — correct, just
+            // not memoized — so it must not race on putCacheEntries.
+            if (!isCacheReplayMode && requestedKey >= 0 && !isDetached) {
                 genLookup.putCacheEntries(requestedKey, builderEntries);
             }
             return false;

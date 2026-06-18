@@ -406,7 +406,10 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 }
                 currentGen--;
             }
-            if (!isCacheReplayMode && requestedKey >= 0) {
+            // A detached (per-worker) cursor must NEVER mutate the shared reader's genLookup cache
+            // (see PostingIndexFwdReader): the dispatch-thread warm populates it before freeze; a
+            // detached cursor that reaches here re-walked read-only and must not race on the write.
+            if (!isCacheReplayMode && requestedKey >= 0 && !isDetached) {
                 builderEntries.reverse();
                 genLookup.putCacheEntries(requestedKey, builderEntries);
             }

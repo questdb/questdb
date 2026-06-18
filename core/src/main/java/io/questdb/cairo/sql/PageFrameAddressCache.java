@@ -112,6 +112,12 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
             return;
         }
 
+        // Covered-frame stash (mirrors the parquet stash below) built in the SAME pass as the
+        // native page addresses, so a plain (non-covered) frame pays no second per-column loop.
+        // A covered frame always reports NATIVE, so only the native branch can populate this; for
+        // a parquet (or any non-covered) frame covered stays null and we store sentinels below.
+        boolean[] covered = null;
+        int[] columnInclude = null;
         final byte format = frame.getFormat();
         if (format == PartitionFormat.NATIVE) {
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
@@ -123,6 +129,15 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
                 } else {
                     auxPageAddresses.add(0);
                     auxPageSizes.add(0);
+                }
+                if (frame.getColumnSource(columnIndex) == DataSource.COVERED) {
+                    if (covered == null) {
+                        covered = new boolean[columnCount];
+                        columnInclude = new int[columnCount];
+                        Arrays.fill(columnInclude, -1);
+                    }
+                    covered[columnIndex] = true;
+                    columnInclude[columnIndex] = frame.getCoveredIncludeIndex(columnIndex);
                 }
             }
         } else {
@@ -147,31 +162,11 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         parquetRowGroupHis.add(frame.getParquetRowGroupHi());
         rowIdOffsets.add(Rows.toRowID(frame.getPartitionIndex(), frame.getPartitionLo()));
 
-        // Additive covered-frame stash (mirrors the parquet stash above).
-        // A covered frame is one with at least one DataSource.COVERED column.
-        // We probe per column to build the covered-column descriptor; for a
-        // plain frame this stays all-false and we store sentinels. NOTE: a
-        // covered frame reports NATIVE, so it took the native branch above and
-        // its flat page addresses are stored verbatim from frame.getPageAddress.
-        // Single-key covered frames are now metadata-only at production
-        // (CoveringPageFrameCursor#finalizeFrame emits PLACEHOLDER zero
-        // addresses), so those entries are 0 and the worker covered arm
-        // (PageFrameMemoryPool#patchCoveredFrameMemory) re-decodes and rebinds.
-        // Multi-key (VALUE_NOT_FOUND) covered frames still carry real eager
-        // addresses, which the worker arm leaves in place.
-        boolean[] covered = null;
-        int[] columnInclude = null;
-        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-            if (frame.getColumnSource(columnIndex) == DataSource.COVERED) {
-                if (covered == null) {
-                    covered = new boolean[columnCount];
-                    columnInclude = new int[columnCount];
-                    Arrays.fill(columnInclude, -1);
-                }
-                covered[columnIndex] = true;
-                columnInclude[columnIndex] = frame.getCoveredIncludeIndex(columnIndex);
-            }
-        }
+        // Covered-frame stash populated in the native pass above. Single-key covered frames are
+        // metadata-only at production (CoveringPageFrameCursor#finalizeFrame emits PLACEHOLDER
+        // zero addresses), so those flat entries are 0 and the worker covered arm
+        // (PageFrameMemoryPool#patchCoveredFrameMemory) re-decodes and rebinds; multi-key
+        // (VALUE_NOT_FOUND) covered frames carry real eager addresses the worker arm leaves alone.
         coveredColumns.add(covered);
         coveredColumnIncludes.add(columnInclude);
         if (covered != null) {

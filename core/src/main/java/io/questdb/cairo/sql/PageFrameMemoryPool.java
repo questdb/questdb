@@ -1415,6 +1415,10 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         private int[] columnTypeTags;
         private int[] columnTypes;
         private int[] coveredIncludeIdx;
+        // Per query column: true iff served by the covered-decode arm (a covered INCLUDE
+        // or the synthesized symbol key). False for a non-covered column introduced by a
+        // null-pad / projection wrapper over the covered frame — published as a NULL column.
+        private boolean[] coveredColumn;
         private int frameIndex = -1;
         // Synthesized symbol-key column (broadcast int), shared by every DIRECT
         // (indexed key) column of the covered frame. 0 when unallocated.
@@ -1554,6 +1558,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 columnTypeTags = new int[queryColCount];
                 columnSizeBytes = new int[queryColCount];
                 coveredIncludeIdx = new int[queryColCount];
+                coveredColumn = new boolean[queryColCount];
                 final IntList types = addressCache.getColumnTypes();
                 for (int q = 0; q < queryColCount; q++) {
                     final int type = types.getQuick(q);
@@ -1567,6 +1572,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             // pool is reused across address caches.
             for (int q = 0; q < queryColCount; q++) {
                 coveredIncludeIdx[q] = addressCache.getCoveredIncludeIndex(frameIndex, q);
+                coveredColumn[q] = addressCache.isColumnCovered(frameIndex, q);
             }
             // Guard against a theoretical int overflow in initDataCap = rowCount * 32
             // (var-size initial data cap). In practice a covered frame is bounded by
@@ -1575,8 +1581,10 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             assert (long) rowCount * 32 <= Integer.MAX_VALUE : "rowCount too large for int varDataCap init: " + rowCount;
             for (int q = 0; q < queryColCount; q++) {
                 varDataPos[q] = 0;
-                if (coveredIncludeIdx[q] < 0) {
-                    continue; // symbol key column uses symAddr
+                if (!coveredColumn[q] || coveredIncludeIdx[q] < 0) {
+                    // Non-covered column (published as NULL) or the symbol key column
+                    // (broadcast via symAddr) — neither needs a per-column decode buffer.
+                    continue;
                 }
                 final long auxBytes;
                 final int initDataCap;
@@ -1667,8 +1675,22 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             ensureListCapacity(auxPageSizes, queryColCount);
             for (int q = 0; q < queryColCount; q++) {
                 final int includeIdx = coveredIncludeIdx[q];
+                if (!coveredColumn[q]) {
+                    // Non-covered column in a covered frame (e.g. a null-pad synthetic added by
+                    // a wrapper above the covering frame). The covered-decode arm owns only the
+                    // covered includes and the symbol key; a non-covered column has no decoded
+                    // data, so publish it as a NULL column (address 0) — matching how the address
+                    // cache already stores such a column — rather than mis-binding it to the
+                    // 4-byte symbol-key buffer (which would read the key int and, for a wider
+                    // type, run past it). Today the only such columns are null-pad synthetics.
+                    pageAddresses.set(q, 0);
+                    pageSizes.set(q, 0);
+                    auxPageAddresses.set(q, 0);
+                    auxPageSizes.set(q, 0);
+                    continue;
+                }
                 if (includeIdx < 0) {
-                    // Indexed symbol key column.
+                    // Indexed symbol key column (covered: synthesized broadcast).
                     pageAddresses.set(q, symAddr);
                     pageSizes.set(q, (long) count * Integer.BYTES);
                     auxPageAddresses.set(q, 0);

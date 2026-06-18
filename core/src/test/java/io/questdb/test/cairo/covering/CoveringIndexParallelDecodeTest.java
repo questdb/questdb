@@ -201,6 +201,13 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
         // harness is run.
         LOG.advisory().$safe(rpt).$();
         System.out.println(rpt);
+
+        // The gated perf run is the only automated check of the headline claim. Assert the verdict
+        // so a regression that loses parallelism or scan-parity FAILS the explicit -Dcovering.perf
+        // run instead of only printing. covered_agg must both parallelize and reach scan parity;
+        // residual must at least parallelize (its A/C is ~parity and noisier).
+        assertParallelVerdict("covered_agg", aAgg, bAgg, cAgg, warmup, true);
+        assertParallelVerdict("residual", aRes, bRes, cRes, warmup, false);
     }
 
     @Test
@@ -291,6 +298,106 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
                     configuration,
                     LOG
             );
+        });
+    }
+
+    @Test
+    public void testParallelCoveredDecodeAllTypesMatchReference() throws Exception {
+        // CRITICAL coverage: the worker covered-decode must be byte-equivalent to a direct read
+        // for ALL covered column types, not just DOUBLE/LONG. Build a covering table whose INCLUDE
+        // covers a wide type matrix (fixed-width + UUID/LONG256/IPv4 + var-size STRING/VARCHAR/
+        // BINARY/ARRAY), insert with per-type NULLs and longish var values, then under 4 workers
+        // and a small frame cap (so each partition splits into several worker-decoded frames)
+        // compare a projecting residual filter (record fast-path) and first/last aggregates
+        // (stable-pointer path) against a non-indexed twin. `ref` is INSERT...SELECT * FROM cov so
+        // the rnd-generated values match exactly.
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 200);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(pool, (engine, compiler, ctx) -> {
+                final String cols =
+                        "  a_long LONG, a_int INT, a_short SHORT, a_byte BYTE, a_bool BOOLEAN," +
+                                "  a_float FLOAT, a_date DATE, a_uuid UUID, a_l256 LONG256, a_ip IPV4," +
+                                "  a_str STRING, a_vc VARCHAR, a_bin BINARY, a_arr DOUBLE[]";
+                engine.execute(
+                        "CREATE TABLE cov (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE " +
+                                "(a_long, a_int, a_short, a_byte, a_bool, a_float, a_date, a_uuid, a_l256, a_ip, a_str, a_vc, a_bin, a_arr)," +
+                                cols + ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
+                engine.execute("CREATE TABLE ref (ts TIMESTAMP, sym SYMBOL," + cols +
+                        ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
+                final int rows = 20_000; // ~5 daily partitions; >>200-row frame cap => many frames/partition
+                engine.execute("INSERT INTO cov SELECT" +
+                        " ('2024-01-01'::TIMESTAMP + (x-1)*60_000_000L)::timestamp," +
+                        " ('S' || ((x-1) % 4))::symbol," +
+                        " case when x%7=0 then null else (x%1000)::long end," +
+                        " case when x%7=0 then null else (x%500)::int end," +
+                        " case when x%7=0 then null else (x%200)::short end," +
+                        " case when x%7=0 then null else (x%100)::byte end," +
+                        " (x%2=0)," +
+                        " case when x%7=0 then null else (x%50)::float end," +
+                        " case when x%7=0 then null else (x*100000)::long::date end," +
+                        " case when x%7=0 then null else rnd_uuid4() end," +
+                        " case when x%7=0 then null else rnd_long256() end," +
+                        " case when x%7=0 then null else rnd_ipv4() end," +
+                        " case when x%7=0 then null else ('str-value-longish-' || (x%300)) end," +
+                        " case when x%7=0 then null else ('vc-value-longish-' || (x%400))::varchar end," +
+                        " case when x%7=0 then null else rnd_bin(4, 24, 0) end," +
+                        " ARRAY[(x%5)::double, ((x+1)%5)::double, ((x+2)%5)::double]" +
+                        " FROM long_sequence(" + rows + ")", ctx);
+                engine.execute("INSERT INTO ref SELECT * FROM cov", ctx);
+                engine.releaseAllWriters();
+
+                for (String sym : new String[]{"S0", "S2"}) {
+                    // Record fast-path: project EVERY covered type through a residual filter.
+                    final String proj = "SELECT a_long,a_int,a_short,a_byte,a_bool,a_float,a_date,a_uuid,a_l256,a_ip,a_str,a_vc,a_bin,a_arr " +
+                            "FROM %s WHERE sym = '" + sym + "' AND a_long > 100";
+                    TestUtils.assertSqlCursors(compiler, ctx, String.format(proj, "ref"), String.format(proj, "cov"), LOG);
+                    // Stable-pointer (first/last) path across scalar + var covered types.
+                    final String fl = "SELECT first(a_long), last(a_int), first(a_short), last(a_byte)," +
+                            " first(a_float), last(a_date), first(a_str), last(a_vc), first(a_uuid), last(a_l256), count() " +
+                            "FROM %s WHERE sym = '" + sym + "'";
+                    TestUtils.assertSqlCursors(compiler, ctx, String.format(fl, "ref"), String.format(fl, "cov"), LOG);
+                }
+            }, configuration, LOG);
+        });
+    }
+
+    @Test
+    public void testParallelCoveredDecodeIsNullMatchesReference() throws Exception {
+        // The implicit-null (sym IS NULL, key 0) covered path under parallel decode. The single-key
+        // cheap path computes the null prefix with the UNCLAMPED caller max (columnTop only),
+        // distinct from the entryMaxValue-clamped data bound; a covered `sym IS NULL` aggregation
+        // and residual must match a non-indexed twin under 4 workers. A non-null key on the same
+        // table locks the other branch.
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 200);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(pool, (engine, compiler, ctx) -> {
+                engine.execute("CREATE TABLE cov (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (px), px DOUBLE) " +
+                        "TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
+                engine.execute("CREATE TABLE ref (ts TIMESTAMP, sym SYMBOL, px DOUBLE) " +
+                        "TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
+                final int rows = 40_000;
+                // ~1/3 NULL sym (the implicit-null key), the rest spread over 4 symbols.
+                engine.execute("INSERT INTO cov SELECT" +
+                        " ('2024-01-01'::TIMESTAMP + (x-1)*60_000_000L)::timestamp," +
+                        " case when x % 3 = 0 then null else ('S' || (x % 4))::symbol end," +
+                        " (x % 997)::double" +
+                        " FROM long_sequence(" + rows + ")", ctx);
+                engine.execute("INSERT INTO ref SELECT * FROM cov", ctx);
+                engine.releaseAllWriters();
+
+                // IS NULL: aggregation (vectorized async group-by) + residual + projection (record path).
+                final String agg = "SELECT sum(px), count() FROM %s WHERE sym IS NULL";
+                final String residual = "SELECT sum(px), count() FROM %s WHERE sym IS NULL AND px > 0.5";
+                final String proj = "SELECT ts, px FROM %s WHERE sym IS NULL AND px > 0.5";
+                TestUtils.assertSqlCursors(compiler, ctx, String.format(agg, "ref"), String.format(agg, "cov"), LOG);
+                TestUtils.assertSqlCursors(compiler, ctx, String.format(residual, "ref"), String.format(residual, "cov"), LOG);
+                TestUtils.assertSqlCursors(compiler, ctx, String.format(proj, "ref"), String.format(proj, "cov"), LOG);
+                // Non-null key on the same table: locks the data (non-null-prefix) branch.
+                final String aggS1 = "SELECT sum(px), count() FROM %s WHERE sym = 'S1'";
+                TestUtils.assertSqlCursors(compiler, ctx, String.format(aggS1, "ref"), String.format(aggS1, "cov"), LOG);
+            }, configuration, LOG);
         });
     }
 
@@ -807,11 +914,12 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
         // Task 6 decorator surface: over NATIVE partitions, the covering page
         // frame must report its base partition format (NATIVE), carry the
         // per-partition posting reader, and report per-column source: COVERED
-        // for the INCLUDE-mapped column, DIRECT for the symbol key.
+        // for BOTH the INCLUDE-mapped column and the symbol key — both are served
+        // by the covering frame (the key via broadcast). Only a genuinely external
+        // column added by a wrapper above the frame is DIRECT.
         //
-        // Projection "sym, payload": query col 0 is the indexed symbol key
-        // (mapping -1 -> DIRECT), query col 1 is the covered INCLUDE column
-        // (mapping >= 0 -> COVERED).
+        // Projection "sym, payload": query col 0 is the indexed symbol key, query
+        // col 1 is the covered INCLUDE column; both report COVERED.
         final int symbolColumnIndex = 0;
         final int coveredColumnIndex = 1;
         assertMemoryLeak(() -> {
@@ -844,8 +952,8 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
                             f.getIndexReader(symbolColumnIndex, IndexReader.DIR_FORWARD));
                     assertEquals("covered INCLUDE column must report COVERED",
                             DataSource.COVERED, f.getColumnSource(coveredColumnIndex));
-                    assertEquals("symbol key column must report DIRECT",
-                            DataSource.DIRECT, f.getColumnSource(symbolColumnIndex));
+                    assertEquals("symbol key column is served by the covering frame (broadcast), so COVERED",
+                            DataSource.COVERED, f.getColumnSource(symbolColumnIndex));
                 }
                 assertTrue("expected at least one covering page frame", frames > 0);
             }
@@ -909,7 +1017,8 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
         // reader, and which columns are covered (matching getColumnSource).
         //
         // Projection "sym, payload": query col 0 is the indexed symbol key
-        // (DIRECT), query col 1 is the covered INCLUDE column (COVERED).
+        // (COVERED — served by the covering frame via broadcast), query col 1 is
+        // the covered INCLUDE column (COVERED).
         final int symbolColumnIndex = 0;
         final int coveredColumnIndex = 1;
         assertMemoryLeak(() -> {
@@ -960,11 +1069,11 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
                             f.getIndexReader(symbolColumnIndex, IndexReader.DIR_FORWARD),
                             addressCache.getCoveredIndexReader(frameCount));
                     // Covered-column descriptor must match getColumnSource.
-                    assertTrue("symbol key column NOT covered",
-                            !addressCache.isColumnCovered(frameCount, symbolColumnIndex));
+                    assertTrue("symbol key column IS covered (served by the covering frame)",
+                            addressCache.isColumnCovered(frameCount, symbolColumnIndex));
                     assertTrue("INCLUDE column IS covered",
                             addressCache.isColumnCovered(frameCount, coveredColumnIndex));
-                    assertEquals(DataSource.DIRECT, f.getColumnSource(symbolColumnIndex));
+                    assertEquals(DataSource.COVERED, f.getColumnSource(symbolColumnIndex));
                     assertEquals(DataSource.COVERED, f.getColumnSource(coveredColumnIndex));
 
                     frameCount++;
@@ -1515,9 +1624,12 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
                                 DataSource.COVERED, f.getColumnSource(coveredColumnIndex));
                         assertTrue("covered base column keeps a real sidecar include index (>= 0) through ExtraNullColumn",
                                 f.getCoveredIncludeIndex(coveredColumnIndex) >= 0);
-                        // symbol key column below the split is DIRECT (delegated 1:1).
-                        assertEquals("symbol-key base column reports DIRECT through ExtraNullColumn",
-                                DataSource.DIRECT, f.getColumnSource(symbolColumnIndex));
+                        // symbol key column below the split is COVERED (served by the covering
+                        // frame); delegated 1:1 through the wrapper. This is what distinguishes it
+                        // from the synthetic null column above the split (DIRECT), which the worker
+                        // decode publishes as NULL instead of mis-binding it to the symbol-key buffer.
+                        assertEquals("symbol-key base column reports COVERED through ExtraNullColumn",
+                                DataSource.COVERED, f.getColumnSource(symbolColumnIndex));
                         // (b) per-frame covered metadata passes through.
                         assertNotNull("covered frame's posting reader passes through ExtraNullColumn",
                                 f.getIndexReader(symbolColumnIndex, IndexReader.DIR_FORWARD));
@@ -1865,6 +1977,18 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
         final boolean reachesParity = parity <= 1.5;  // A/C ~ 1 (within 1.5x of scan)
         return String.format("  VERDICT [%s]: parallelizes=%s (B/A=%.2fx)  scan-parity=%s (A/C=%.2fx)  [median]%n",
                 label, parallelizes, speedup, reachesParity, parity);
+    }
+
+    // Recompute the verdict() booleans and ASSERT them, so the gated perf run fails on a
+    // parallelism / scan-parity regression instead of only printing a verdict.
+    private static void assertParallelVerdict(String label, long[] a, long[] b, long[] c, int warmup, boolean requireParity) {
+        final double am = medianTail(a, warmup), bm = medianTail(b, warmup), cm = medianTail(c, warmup);
+        final double speedup = bm / am;
+        final double parity = am / cm;
+        assertTrue(label + " must parallelize: B/A=" + String.format("%.2f", speedup) + " (>= 1.5)", speedup >= 1.5);
+        if (requireParity) {
+            assertTrue(label + " must reach scan parity: A/C=" + String.format("%.2f", parity) + " (<= 1.5)", parity <= 1.5);
+        }
     }
 
     private static void assertCovParallelEqualsSingle(

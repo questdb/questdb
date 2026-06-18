@@ -767,10 +767,15 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
         @Override
         public byte getColumnSource(int columnIndex) {
-            // INCLUDE-mapped columns (>= 0) decode from the posting-index
-            // sidecar on the worker; the symbol key (-1) and any non-covered
-            // column decode from the base partition.
-            return queryColToIncludeIdx[columnIndex] >= 0 ? DataSource.COVERED : DataSource.DIRECT;
+            // Every column of a covering frame is served by the covered-decode arm:
+            // INCLUDE-mapped columns (>= 0) decode from the posting-index sidecar, and the
+            // symbol key (-1) is synthesized (broadcast) from the resolved key. Both are
+            // COVERED. A genuinely non-covered column never appears in a covering frame
+            // directly — it can only be introduced above by a null-pad / projection wrapper,
+            // which reports DIRECT for it. The covered-decode consumer relies on exactly this
+            // to tell the symbol key (COVERED, includeIdx < 0) apart from such a synthetic
+            // column (not covered) — see PageFrameMemoryPool#publishAddresses.
+            return DataSource.COVERED;
         }
 
         @Override
@@ -951,7 +956,11 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         // pendingRowCursor (the fallback parks instead). Keyed by the SAME
         // pendingSymbolKey / pendingPartitionIndex guard as the parked cursor.
         protected boolean cheapChunkActive;
-        protected int cheapChunkBase;
+        // long (not int): a single (key, partition) match set — most reachably the implicit-null
+        // prefix of a sym IS NULL covered query — can exceed Integer.MAX_VALUE rows, so the
+        // across-chunk "postings already emitted" accumulator must not overflow (the traverse
+        // fallback has no such accumulator). selectKthMatch's k argument is already long.
+        protected long cheapChunkBase;
         protected long cheapClampedMax;
         // UNCLAMPED inclusive caller max for the implicit-null prefix bound (rowHi - 1),
         // held alongside cheapClampedMax so a chunk resume passes selectKthMatch /
@@ -1218,15 +1227,11 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 Unsafe.setMemory(dst, prePad, (byte) 0);
                 dst += prePad;
             }
-            if (cardinality > 0 && value.isVanilla() && elemType == ColumnType.DOUBLE) {
-                value.flatView().appendPlainDoubleValue(dst, value.getFlatViewOffset(), value.getFlatViewLength());
-            } else if (dataBytes > 0) {
-                // Fallback for non-vanilla or non-double element types: zero the
-                // data section. Shape is preserved so consumers see a same-shaped
-                // array. The covering page-frame path is currently only reached
-                // for vanilla DOUBLE arrays in production planner output.
-                Unsafe.setMemory(dst, dataBytes, (byte) 0);
-            }
+            // Copy the real element data (bulk for a vanilla DOUBLE array, strided for a
+            // non-vanilla slice/transpose) via the shared primitive — never zero-fill — so a
+            // non-vanilla covered array stays correct and the eager and worker
+            // (PageFrameMemoryPool) covered paths agree byte-for-byte.
+            ArrayTypeDriver.appendArrayData(dst, value);
             dst += dataBytes;
             if (postPad > 0) {
                 Unsafe.setMemory(dst, postPad, (byte) 0);
@@ -1513,7 +1518,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             final long clampedMax;
             final long nullMax;
             final long total;
-            final int chunkBase;
+            final long chunkBase;
             if (resume) {
                 clampedMax = cheapClampedMax;
                 nullMax = cheapNullMax;
@@ -1581,7 +1586,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 // (keyed by pendingSymbolKey / pendingPartitionIndex, same guard the
                 // parked cursor used) instead of parking a cursor.
                 cheapChunkActive = true;
-                cheapChunkBase = (int) nextBase;
+                cheapChunkBase = nextBase;
                 cheapClampedMax = clampedMax;
                 cheapNullMax = nullMax;
                 cheapRowLo = rowLo;

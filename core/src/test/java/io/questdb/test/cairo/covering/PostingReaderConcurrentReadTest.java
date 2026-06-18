@@ -472,6 +472,134 @@ public class PostingReaderConcurrentReadTest extends AbstractCairoTest {
     }
 
     /**
+     * CRITICAL parallel-decode race (single sparse gen). The old populateCacheForKey bailed when
+     * genCount &lt;= 1, leaving a single SPARSE gen cold, so concurrent detached worker cursors
+     * raced on the shared genLookup putCacheEntries. This reproduces the PRODUCTION path -- warm via
+     * populateCacheForKey (NOT the test-only warmForKeys), freeze, then hammer the frozen reader
+     * with many detached cursors across many iterations. The fix (a) warms the single sparse gen so
+     * workers replay read-only, and (b) forbids detached cursors from writing the cache; the
+     * frozen-write assert turns any regression into a loud, deterministic failure. Every pass must
+     * equal the cold reference and the cursor pool must never be touched.
+     */
+    @Test
+    public void testConcurrentDetachedCursorsSingleSparseGenProductionWarm() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final String name = "conc_single_sparse";
+                final int plen = path.size();
+                // ONE clearly-sparse gen: keys {0,50,100} over [0,100] (single commit, no seal).
+                final int[] sparseKeys = {0, 50, 100};
+                final int rowsPerKey = 40;
+                final int totalRows = sparseKeys.length * rowsPerKey;
+                final long colBytes = (long) totalRows * Long.BYTES;
+                final long colAddr = Unsafe.malloc(colBytes, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    for (int i = 0; i < totalRows; i++) {
+                        Unsafe.putLong(colAddr + (long) i * Long.BYTES, 1000L + i);
+                    }
+                    try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                        writer.configureCovering(
+                                new long[]{colAddr}, new long[]{0}, new int[]{3}, new int[]{1}, new int[]{ColumnType.LONG}, 1);
+                        int row = 0;
+                        for (int r = 0; r < rowsPerKey; r++) {
+                            for (int sk : sparseKeys) {
+                                writer.add(sk, row++);
+                            }
+                        }
+                        writer.setMaxValue(row - 1);
+                        writer.commit(); // single commit -> single sparse gen
+                    }
+
+                    final RecordMetadata md = coveringMetadata(new int[]{1}, new int[]{ColumnType.LONG});
+                    final int[] required = {0};
+                    final int probeKey = 50;
+
+                    // Cold single-threaded reference for the probe key.
+                    final LongList expRows = new LongList();
+                    final LongList expVals = new LongList();
+                    try (PostingIndexFwdReader cold = new PostingIndexFwdReader(
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0, md, EMPTY_CVR, 0)) {
+                        CoveringRowCursor cc = (CoveringRowCursor) cold.getCursor(probeKey, 0, Long.MAX_VALUE, required);
+                        while (cc.hasNext()) {
+                            expRows.add(cc.next());
+                            expVals.add(cc.getCoveredLong(0));
+                        }
+                        Misc.free(cc);
+                    }
+                    assertTrue("probe key must yield rows", expRows.size() > 0);
+
+                    try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0, md, EMPTY_CVR, 0)) {
+                        reader.reloadConditionally();
+                        // Cheap-path prep: open a pooled cursor to MAP the required covered sidecars
+                        // (production's openOrContinueCoveringCursor maps them before workers run),
+                        // reading one row to force the mapping but NOT draining it -- the cheap path is
+                        // metadata-only and leaves gen-cache warming to populateCacheForKey, so the
+                        // cache stays cold here. Then warm (the single-sparse-gen path under test) + freeze.
+                        CoveringRowCursor prep = (CoveringRowCursor) reader.getCursor(probeKey, 0, Long.MAX_VALUE, required);
+                        if (prep.hasNext()) {
+                            prep.next();
+                            prep.getCoveredLong(0);
+                        }
+                        Misc.free(prep);
+                        reader.populateCacheForKey(probeKey, Long.MAX_VALUE);
+                        reader.setFrozen(true);
+                        final int poolAfterWarm = freeCursorsSize(reader);
+
+                        final int threads = 6;
+                        final int iterations = 300;
+                        final AtomicReference<Throwable> error = new AtomicReference<>();
+                        final CyclicBarrier start = new CyclicBarrier(threads);
+                        final Thread[] ts = new Thread[threads];
+                        for (int t = 0; t < threads; t++) {
+                            ts[t] = new Thread(() -> {
+                                try {
+                                    start.await();
+                                    for (int it = 0; it < iterations && !Thread.interrupted(); it++) {
+                                        CoveringRowCursor cc = (CoveringRowCursor)
+                                                reader.getDetachedCursor(probeKey, 0, Long.MAX_VALUE, required);
+                                        try {
+                                            int i = 0;
+                                            while (cc.hasNext()) {
+                                                long r = cc.next();
+                                                long v = cc.getCoveredLong(0);
+                                                assertTrue("more rows than cold at idx " + i, i < expRows.size());
+                                                assertEquals("row id mismatch at idx " + i, expRows.getQuick(i), r);
+                                                assertEquals("covered value mismatch at idx " + i, expVals.getQuick(i), v);
+                                                i++;
+                                            }
+                                            assertEquals("fewer rows than cold", expRows.size(), i);
+                                        } finally {
+                                            cc.close();
+                                        }
+                                    }
+                                } catch (Throwable e) {
+                                    error.compareAndSet(null, e);
+                                }
+                            }, "sparse-worker-" + t);
+                        }
+                        for (Thread th : ts) {
+                            th.start();
+                        }
+                        for (Thread th : ts) {
+                            th.join();
+                        }
+
+                        Throwable e = error.get();
+                        if (e != null) {
+                            throw new AssertionError("concurrent single-sparse-gen detached decode failure", e);
+                        }
+                        assertEquals("detached cursors must not push to freeCursors", poolAfterWarm, freeCursorsSize(reader));
+                        reader.setFrozen(false);
+                    }
+                } finally {
+                    Unsafe.free(colAddr, colBytes, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    /**
      * Freeze guard: while a reader is frozen, {@code reloadConditionally()} must be a
      * complete no-op so the value mmap (and everything keyed off it) stays put for
      * in-flight worker cursors holding raw page addresses. We:
