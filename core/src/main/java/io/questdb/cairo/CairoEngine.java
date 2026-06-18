@@ -162,7 +162,6 @@ import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
-import io.questdb.std.ThreadLocal;
 import io.questdb.std.Transient;
 import io.questdb.std.str.MutableCharSink;
 import io.questdb.std.str.Path;
@@ -194,7 +193,7 @@ public class CairoEngine implements Closeable, WriterSource {
     // metadata/token mismatch into a silent infinite hang (see PR #7031 CI timeout).
     private static final int MAX_EXECUTE_RETRIES = 1000;
     private static final int MAX_SLEEP_MILLIS = 250;
-    private static final ThreadLocal<ObjList<LiveViewInstance>> tlInvalidateSink = new ThreadLocal<>(ObjList::new);
+    private static final CarrierLocal<ObjList<LiveViewInstance>> tlInvalidateSink = new CarrierLocal<>(ObjList::new);
     private static final CarrierLocal<MatViewRefreshTask> tlMatViewRefreshTask = new CarrierLocal<>(MatViewRefreshTask::new);
     protected final CairoConfiguration configuration;
     private final AtomicLong asyncCommandCorrelationId = new AtomicLong();

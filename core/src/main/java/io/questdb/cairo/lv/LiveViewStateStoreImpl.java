@@ -27,8 +27,8 @@ package io.questdb.cairo.lv;
 import io.questdb.cairo.TableToken;
 import io.questdb.mp.ConcurrentQueue;
 import io.questdb.mp.Queue;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.ConcurrentHashMap;
-import io.questdb.std.ThreadLocal;
 
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Function;
@@ -41,7 +41,7 @@ public class LiveViewStateStoreImpl implements LiveViewStateStore {
     // next notification. Entries are never removed (grow-only, bounded by distinct
     // base tables that ever had a live view).
     private final ConcurrentHashMap<AtomicLong> lastNotifiedTxnByTableName = new ConcurrentHashMap<>(false);
-    private final ThreadLocal<LiveViewRefreshTask> taskHolder = new ThreadLocal<>(LiveViewRefreshTask::new);
+    private final CarrierLocal<LiveViewRefreshTask> taskHolder = new CarrierLocal<>(LiveViewRefreshTask::new);
     private final Queue<LiveViewRefreshTask> taskQueue = ConcurrentQueue.createConcurrentQueue(LiveViewRefreshTask::new);
 
     public LiveViewStateStoreImpl() {
