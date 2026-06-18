@@ -73,16 +73,16 @@ import org.junit.Test;
  */
 public class LiveViewFuzzTest extends AbstractCairoTest {
 
-    // Variants 0..AGG_VARIANTS-1 are ORDER BY ts bounded-frame aggregates: their
+    // Variants 0..variantCount()-2 are ORDER BY ts bounded-frame aggregates: their
     // output is a total deterministic function of the (unique-ts) row set, so the
     // recompute oracle holds under any ingestion order, including O3 and restart.
-    // The remaining variant is ranking row_number() OVER () with no ORDER BY,
-    // whose output order is unspecified; under in-order ingestion processing
-    // order equals ts order so the oracle still holds, but under O3 the
-    // incrementally-maintained order legitimately diverges from a batch recompute
-    // (the no-partition row_number sequence counter is not reset on head-miss
-    // replay). It is therefore fuzzed in in-order mode only.
-    private static final int AGG_VARIANTS = 5;
+    // The last variant is ranking row_number() OVER () with no ORDER BY. Its
+    // numbering follows scan order; the incremental engine always (re)scans the
+    // base in ts-ascending order - forward-append in ts order, head-miss replay
+    // from the lower bound, head-hit replay continuing from the checkpoint's
+    // ts-ordered count - so the numbering matches a batch recompute (which also
+    // scans the designated timestamp ascending). It is therefore fuzzed under all
+    // modes, including O3 and restart.
     // FLUSH EVERY rate-limits LV commits by wall clock: a refresh within
     // flushEveryMicros of the previous commit is deferred. Tests drive a
     // controllable clock (currentMicros) and advance it past this interval
@@ -96,14 +96,19 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
         // Pre-CREATE history captured by BACKFILL, an ACTIVE-phase restart, then
         // in-order ACTIVE inserts. Post-CREATE ingestion is kept in-order here:
         // BACKFILL + O3 drives the head-miss REPLACE_RANGE to re-merge into the
-        // multi-partition backfilled data, which trips a core O3 partition-merge
-        // assertion (mergeDataLo <= mergeDataHi in O3PartitionJob) - a separate
-        // finding from this test, tracked outside it. Non-backfill O3 and O3 +
-        // restart (above) exercise the O3 replay path and stay clean.
+        // multi-partition backfilled data and produces a wrong view - the recompute
+        // oracle diverges (the LV gains duplicate rows). The bad merge surfaces in
+        // O3PartitionJob.processPartition branches 3/4 (mergeDataLo > mergeDataHi)
+        // when the active partition physically holds rows below its partition floor;
+        // under -ea the assertion aborts the partition merge and a later replay
+        // repairs it, but the no-assert path completes the merge and keeps the
+        // mislabeled rows. This is a core REPLACE-mode O3 merge issue, not specific
+        // to live views, tracked separately. Non-backfill O3 and O3 + restart
+        // (above) exercise the O3 replay path and stay clean.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         final Rnd rnd = TestUtils.generateRandom(LOG);
         assertMemoryLeak(() -> {
-            for (int v = 0; v < AGG_VARIANTS; v++) {
+            for (int v = 0; v < variantCount(); v++) {
                 runFuzz(rnd, v, 140, false, true, true, rnd.nextBoolean());
             }
         });
@@ -126,7 +131,7 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
         // so late rows force head replay against already-materialized state.
         final Rnd rnd = TestUtils.generateRandom(LOG);
         assertMemoryLeak(() -> {
-            for (int v = 0; v < AGG_VARIANTS; v++) {
+            for (int v = 0; v < variantCount(); v++) {
                 runFuzz(rnd, v, 160, true, false, false, rnd.nextBoolean());
             }
         });
@@ -139,7 +144,7 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         final Rnd rnd = TestUtils.generateRandom(LOG);
         assertMemoryLeak(() -> {
-            for (int v = 0; v < AGG_VARIANTS; v++) {
+            for (int v = 0; v < variantCount(); v++) {
                 runFuzz(rnd, v, 140, true, true, false, rnd.nextBoolean());
             }
         });
@@ -153,12 +158,13 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1 + rnd.nextInt(4));
         assertMemoryLeak(() -> {
             final boolean o3 = rnd.nextBoolean();
-            // Ranking is sound only under in-order ingestion; restrict to the
-            // aggregate variants when fuzzing O3. Backfill stays mutually
-            // exclusive with O3 (backfill + O3 trips a core O3 merge assertion;
-            // see testFuzzBackfill).
+            // Ranking under O3 is sound (the sequence counter is reset on
+            // head-miss replay), so every variant is fuzzed under O3. Backfill
+            // stays mutually exclusive with O3: backfill + O3 produces a wrong
+            // view through a core REPLACE-mode O3 merge issue (see
+            // testFuzzBackfill).
             final boolean backfill = !o3 && rnd.nextBoolean();
-            final int variant = o3 ? rnd.nextInt(AGG_VARIANTS) : rnd.nextInt(variantCount());
+            final int variant = rnd.nextInt(variantCount());
             runFuzz(rnd, variant, 80 + rnd.nextInt(320), o3, o3 && rnd.nextBoolean(), backfill, rnd.nextBoolean());
         });
     }

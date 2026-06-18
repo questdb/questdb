@@ -1162,7 +1162,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             invalidateHeadOnO3(instance, advanceTo, Numbers.LONG_NULL, Numbers.LONG_NULL);
         }
 
-        final ObjList<WindowFunction> functions = windowFactory.getWindowFunctions();
         final LiveViewWindow anchorWindow = instance.getAnchorWindow();
         final long viewLowerBoundTimestamp = instance.getDefinition().getViewLowerBoundTimestamp();
         TableReader reader = waitForApply(baseToken, advanceTo);
@@ -1210,19 +1209,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
 
             if (hasReplayRow) {
-                // Wipe per-function partition state and the anchor map. The
-                // compiled factory's WindowFunction instances stay live so
-                // the cursor chain below can reuse them; only their
-                // accumulated state resets.
-                for (int i = 0, n = functions.size(); i < n; i++) {
-                    Map m = functions.getQuick(i).getPartitionMap();
-                    if (m != null) {
-                        m.clear();
-                    }
-                }
-                if (anchorWindow != null) {
-                    anchorWindow.toTop();
-                }
+                // Reset per-function accumulator state and the anchor map to
+                // identity. The compiled factory's WindowFunction instances
+                // stay live so the cursor chain below can reuse them; only
+                // their accumulated state resets. clearWindowState rewinds via
+                // toTop(), not a bare partition-map clear, so no-partition
+                // ranking like row_number() OVER () - whose counter lives in a
+                // scalar field with no map - also rewinds; otherwise it would
+                // accumulate across head-miss replays.
+                clearWindowState(windowFactory, anchorWindow);
 
                 try (WalWriter walWriter = engine.getWalWriter(instance.getLiveViewToken())) {
                     RecordToRowCopier copier = ensureCopier(instance, windowFactory, walWriter);
@@ -1335,19 +1330,25 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Clears all live-view window state in place: every window function's
-     * partition map and the anchor map. The compiled factory's
+     * Resets all live-view window state in place to identity: every window
+     * function and the anchor map. The compiled factory's
      * {@code WindowFunction} instances stay live so the cursor chain can reuse
      * them; only the accumulated state resets. Used before a from-scratch
      * re-sweep so a partial or failed checkpoint restore cannot leave drift.
+     * <p>
+     * Each function is rewound via {@link WindowFunction#toTop()} rather than a
+     * bare {@link WindowFunction#getPartitionMap()} clear: a no-partition
+     * ranking function such as {@code row_number() OVER ()} keeps its counter
+     * in a scalar field and has no partition map, so clearing only the map
+     * would leave that counter intact and it would accumulate across replays
+     * (emitting row numbers above the row count). {@code toTop()} is the
+     * canonical full reset every window function already implements for cursor
+     * re-iteration; for partitioned functions it clears the map too.
      */
     private static void clearWindowState(WindowRecordCursorFactory windowFactory, LiveViewWindow anchorWindow) {
         final ObjList<WindowFunction> functions = windowFactory.getWindowFunctions();
         for (int i = 0, n = functions.size(); i < n; i++) {
-            Map m = functions.getQuick(i).getPartitionMap();
-            if (m != null) {
-                m.clear();
-            }
+            functions.getQuick(i).toTop();
         }
         if (anchorWindow != null) {
             anchorWindow.toTop();
