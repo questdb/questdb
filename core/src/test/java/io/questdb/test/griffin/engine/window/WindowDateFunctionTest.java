@@ -68,6 +68,142 @@ public class WindowDateFunctionTest extends AbstractCairoTest {
                     "('2024-01-01T00:03:00', 'b', '2020-01-02T00:00:00.002Z'::date), " +
                     "('2024-01-01T00:04:00', 'a', '2020-01-04T00:00:00.004Z'::date), " +
                     "('2024-01-01T00:05:00', 'b', '2020-01-06T00:00:00.006Z'::date)";
+    // two partitions with NULLs; 'a' (ts 00,02,04) null, 6, 8; 'b' (ts 01,03,05) 4, null, 2
+    private static final String INSERT_6_PART_NULL =
+            "INSERT INTO t VALUES " +
+                    "('2024-01-01T00:00:00', 'a', null), " +
+                    "('2024-01-01T00:01:00', 'b', '2020-01-04T00:00:00.004Z'::date), " +
+                    "('2024-01-01T00:02:00', 'a', '2020-01-06T00:00:00.006Z'::date), " +
+                    "('2024-01-01T00:03:00', 'b', null), " +
+                    "('2024-01-01T00:04:00', 'a', '2020-01-08T00:00:00.008Z'::date), " +
+                    "('2024-01-01T00:05:00', 'b', '2020-01-02T00:00:00.002Z'::date)";
+
+    @Test
+    public void testFirstValueCurrentRow() throws Exception {
+        // ROWS BETWEEN CURRENT ROW AND CURRENT ROW: the value is always the current row
+        assertQuery("SELECT ts, first_value(d) OVER (ORDER BY ts ROWS BETWEEN CURRENT ROW AND CURRENT ROW) f FROM t")
+                .ddl(CREATE_T, INSERT_5)
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tf
+                        2024-01-01T00:00:00.000000Z\t2020-01-06T00:00:00.006Z
+                        2024-01-01T00:01:00.000000Z\t2020-01-04T00:00:00.004Z
+                        2024-01-01T00:02:00.000000Z\t2020-01-08T00:00:00.008Z
+                        2024-01-01T00:03:00.000000Z\t2020-01-02T00:00:00.002Z
+                        2024-01-01T00:04:00.000000Z\t2020-01-10T00:00:00.010Z
+                        """);
+    }
+
+    @Test
+    public void testFirstValueIgnoreNullsOverPartition() throws Exception {
+        // whole-partition frame, IGNORE NULLS: first non-null row (ts order) of each partition
+        assertQuery("SELECT ts, grp, first_value(d) IGNORE NULLS OVER (PARTITION BY grp) f FROM t")
+                .ddl(CREATE_T, INSERT_6_PART_NULL)
+                .timestamp("ts")
+                .expectSize()
+                .returns("""
+                        ts\tgrp\tf
+                        2024-01-01T00:00:00.000000Z\ta\t2020-01-06T00:00:00.006Z
+                        2024-01-01T00:01:00.000000Z\tb\t2020-01-04T00:00:00.004Z
+                        2024-01-01T00:02:00.000000Z\ta\t2020-01-06T00:00:00.006Z
+                        2024-01-01T00:03:00.000000Z\tb\t2020-01-04T00:00:00.004Z
+                        2024-01-01T00:04:00.000000Z\ta\t2020-01-06T00:00:00.006Z
+                        2024-01-01T00:05:00.000000Z\tb\t2020-01-04T00:00:00.004Z
+                        """);
+    }
+
+    @Test
+    public void testFirstValueIgnoreNullsOverWholeResultSet() throws Exception {
+        // IGNORE NULLS over the whole result set: the first non-null value (unit 6 at row 1)
+        assertQuery("SELECT ts, first_value(d) IGNORE NULLS OVER () f FROM t")
+                .ddl(CREATE_T, INSERT_5_WITH_NULL)
+                .timestamp("ts")
+                .expectSize()
+                .returns("""
+                        ts\tf
+                        2024-01-01T00:00:00.000000Z\t2020-01-06T00:00:00.006Z
+                        2024-01-01T00:01:00.000000Z\t2020-01-06T00:00:00.006Z
+                        2024-01-01T00:02:00.000000Z\t2020-01-06T00:00:00.006Z
+                        2024-01-01T00:03:00.000000Z\t2020-01-06T00:00:00.006Z
+                        2024-01-01T00:04:00.000000Z\t2020-01-06T00:00:00.006Z
+                        """);
+    }
+
+    @Test
+    public void testFirstValueIgnoreNullsPartitionRangeFrame() throws Exception {
+        // bounded RANGE frame within each partition, IGNORE NULLS: first non-null row in [ts-2min, ts]
+        assertQuery("SELECT ts, grp, first_value(d) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN '2' MINUTE PRECEDING AND CURRENT ROW) f FROM t")
+                .ddl(CREATE_T, INSERT_6_PART_NULL)
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tgrp\tf
+                        2024-01-01T00:00:00.000000Z\ta\t
+                        2024-01-01T00:01:00.000000Z\tb\t2020-01-04T00:00:00.004Z
+                        2024-01-01T00:02:00.000000Z\ta\t2020-01-06T00:00:00.006Z
+                        2024-01-01T00:03:00.000000Z\tb\t2020-01-04T00:00:00.004Z
+                        2024-01-01T00:04:00.000000Z\ta\t2020-01-06T00:00:00.006Z
+                        2024-01-01T00:05:00.000000Z\tb\t2020-01-02T00:00:00.002Z
+                        """);
+    }
+
+    @Test
+    public void testFirstValueIgnoreNullsPartitionRowsFrame() throws Exception {
+        // bounded ROWS frame within each partition, IGNORE NULLS: first non-null row in [i-1, i]
+        assertQuery("SELECT ts, grp, first_value(d) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) f FROM t")
+                .ddl(CREATE_T, INSERT_6_PART_NULL)
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tgrp\tf
+                        2024-01-01T00:00:00.000000Z\ta\t
+                        2024-01-01T00:01:00.000000Z\tb\t2020-01-04T00:00:00.004Z
+                        2024-01-01T00:02:00.000000Z\ta\t2020-01-06T00:00:00.006Z
+                        2024-01-01T00:03:00.000000Z\tb\t2020-01-04T00:00:00.004Z
+                        2024-01-01T00:04:00.000000Z\ta\t2020-01-06T00:00:00.006Z
+                        2024-01-01T00:05:00.000000Z\tb\t2020-01-02T00:00:00.002Z
+                        """);
+    }
+
+    @Test
+    public void testFirstValueIgnoreNullsRangeFrame() throws Exception {
+        // bounded RANGE frame, IGNORE NULLS: first non-null row in [ts-1min, ts]
+        assertQuery("SELECT ts, first_value(d) IGNORE NULLS OVER (ORDER BY ts RANGE BETWEEN '1' MINUTE PRECEDING AND CURRENT ROW) f FROM t")
+                .ddl(CREATE_T, INSERT_5_WITH_NULL)
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tf
+                        2024-01-01T00:00:00.000000Z\t
+                        2024-01-01T00:01:00.000000Z\t2020-01-06T00:00:00.006Z
+                        2024-01-01T00:02:00.000000Z\t2020-01-06T00:00:00.006Z
+                        2024-01-01T00:03:00.000000Z\t2020-01-08T00:00:00.008Z
+                        2024-01-01T00:04:00.000000Z\t2020-01-08T00:00:00.008Z
+                        """);
+    }
+
+    @Test
+    public void testFirstValueIgnoreNullsRowsFrame() throws Exception {
+        // bounded ROWS frame, IGNORE NULLS: first non-null row in [i-1, i]
+        assertQuery("SELECT ts, first_value(d) IGNORE NULLS OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) f FROM t")
+                .ddl(CREATE_T, INSERT_5_WITH_NULL)
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tf
+                        2024-01-01T00:00:00.000000Z\t
+                        2024-01-01T00:01:00.000000Z\t2020-01-06T00:00:00.006Z
+                        2024-01-01T00:02:00.000000Z\t2020-01-06T00:00:00.006Z
+                        2024-01-01T00:03:00.000000Z\t2020-01-08T00:00:00.008Z
+                        2024-01-01T00:04:00.000000Z\t2020-01-08T00:00:00.008Z
+                        """);
+    }
 
     @Test
     public void testFirstValueIgnoreNullsRunning() throws Exception {
@@ -106,6 +242,62 @@ public class WindowDateFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFirstValuePartitionRangeFrame() throws Exception {
+        // bounded RANGE frame within each partition: first row in [ts-2min, ts]
+        assertQuery("SELECT ts, grp, first_value(d) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN '2' MINUTE PRECEDING AND CURRENT ROW) f FROM t")
+                .ddl(CREATE_T, INSERT_6_PART)
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tgrp\tf
+                        2024-01-01T00:00:00.000000Z\ta\t2020-01-06T00:00:00.006Z
+                        2024-01-01T00:01:00.000000Z\tb\t2020-01-04T00:00:00.004Z
+                        2024-01-01T00:02:00.000000Z\ta\t2020-01-06T00:00:00.006Z
+                        2024-01-01T00:03:00.000000Z\tb\t2020-01-04T00:00:00.004Z
+                        2024-01-01T00:04:00.000000Z\ta\t2020-01-08T00:00:00.008Z
+                        2024-01-01T00:05:00.000000Z\tb\t2020-01-02T00:00:00.002Z
+                        """);
+    }
+
+    @Test
+    public void testFirstValuePartitionRowsFrame() throws Exception {
+        // bounded ROWS frame within each partition: first row in [i-1, i]
+        assertQuery("SELECT ts, grp, first_value(d) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) f FROM t")
+                .ddl(CREATE_T, INSERT_6_PART)
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tgrp\tf
+                        2024-01-01T00:00:00.000000Z\ta\t2020-01-06T00:00:00.006Z
+                        2024-01-01T00:01:00.000000Z\tb\t2020-01-04T00:00:00.004Z
+                        2024-01-01T00:02:00.000000Z\ta\t2020-01-06T00:00:00.006Z
+                        2024-01-01T00:03:00.000000Z\tb\t2020-01-04T00:00:00.004Z
+                        2024-01-01T00:04:00.000000Z\ta\t2020-01-08T00:00:00.008Z
+                        2024-01-01T00:05:00.000000Z\tb\t2020-01-02T00:00:00.002Z
+                        """);
+    }
+
+    @Test
+    public void testFirstValueRangeFrame() throws Exception {
+        // bounded RANGE frame: first row in [ts-1min, ts]
+        assertQuery("SELECT ts, first_value(d) OVER (ORDER BY ts RANGE BETWEEN '1' MINUTE PRECEDING AND CURRENT ROW) f FROM t")
+                .ddl(CREATE_T, INSERT_5)
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tf
+                        2024-01-01T00:00:00.000000Z\t2020-01-06T00:00:00.006Z
+                        2024-01-01T00:01:00.000000Z\t2020-01-06T00:00:00.006Z
+                        2024-01-01T00:02:00.000000Z\t2020-01-04T00:00:00.004Z
+                        2024-01-01T00:03:00.000000Z\t2020-01-08T00:00:00.008Z
+                        2024-01-01T00:04:00.000000Z\t2020-01-02T00:00:00.002Z
+                        """);
+    }
+
+    @Test
     public void testFirstValueRespectNullsRunning() throws Exception {
         // default RESPECT NULLS: first row of the frame is NULL, so every running result is NULL
         assertQuery("SELECT ts, first_value(d) OVER (ORDER BY ts) f FROM t")
@@ -120,6 +312,42 @@ public class WindowDateFunctionTest extends AbstractCairoTest {
                         2024-01-01T00:02:00.000000Z\t
                         2024-01-01T00:03:00.000000Z\t
                         2024-01-01T00:04:00.000000Z\t
+                        """);
+    }
+
+    @Test
+    public void testFirstValueRowsExcludingCurrentRow() throws Exception {
+        // ROWS frame entirely before the current row: [i-2, i-1]
+        assertQuery("SELECT ts, first_value(d) OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND 1 PRECEDING) f FROM t")
+                .ddl(CREATE_T, INSERT_5)
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tf
+                        2024-01-01T00:00:00.000000Z\t
+                        2024-01-01T00:01:00.000000Z\t2020-01-06T00:00:00.006Z
+                        2024-01-01T00:02:00.000000Z\t2020-01-06T00:00:00.006Z
+                        2024-01-01T00:03:00.000000Z\t2020-01-04T00:00:00.004Z
+                        2024-01-01T00:04:00.000000Z\t2020-01-08T00:00:00.008Z
+                        """);
+    }
+
+    @Test
+    public void testFirstValueRowsFrame() throws Exception {
+        // bounded ROWS frame: first row in [i-1, i]
+        assertQuery("SELECT ts, first_value(d) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) f FROM t")
+                .ddl(CREATE_T, INSERT_5)
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tf
+                        2024-01-01T00:00:00.000000Z\t2020-01-06T00:00:00.006Z
+                        2024-01-01T00:01:00.000000Z\t2020-01-06T00:00:00.006Z
+                        2024-01-01T00:02:00.000000Z\t2020-01-04T00:00:00.004Z
+                        2024-01-01T00:03:00.000000Z\t2020-01-08T00:00:00.008Z
+                        2024-01-01T00:04:00.000000Z\t2020-01-02T00:00:00.002Z
                         """);
     }
 
@@ -159,6 +387,115 @@ public class WindowDateFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLastValueIgnoreNullsOverPartition() throws Exception {
+        // whole-partition frame, IGNORE NULLS: last non-null row (ts order) of each partition
+        assertQuery("SELECT ts, grp, last_value(d) IGNORE NULLS OVER (PARTITION BY grp) l FROM t")
+                .ddl(CREATE_T, INSERT_6_PART_NULL)
+                .timestamp("ts")
+                .expectSize()
+                .returns("""
+                        ts\tgrp\tl
+                        2024-01-01T00:00:00.000000Z\ta\t2020-01-08T00:00:00.008Z
+                        2024-01-01T00:01:00.000000Z\tb\t2020-01-02T00:00:00.002Z
+                        2024-01-01T00:02:00.000000Z\ta\t2020-01-08T00:00:00.008Z
+                        2024-01-01T00:03:00.000000Z\tb\t2020-01-02T00:00:00.002Z
+                        2024-01-01T00:04:00.000000Z\ta\t2020-01-08T00:00:00.008Z
+                        2024-01-01T00:05:00.000000Z\tb\t2020-01-02T00:00:00.002Z
+                        """);
+    }
+
+    @Test
+    public void testLastValueIgnoreNullsOverWholeResultSet() throws Exception {
+        // IGNORE NULLS over the whole result set: the last non-null value (unit 8 at row 3)
+        assertQuery("SELECT ts, last_value(d) IGNORE NULLS OVER () l FROM t")
+                .ddl(CREATE_T, INSERT_5_WITH_NULL)
+                .timestamp("ts")
+                .expectSize()
+                .returns("""
+                        ts\tl
+                        2024-01-01T00:00:00.000000Z\t2020-01-08T00:00:00.008Z
+                        2024-01-01T00:01:00.000000Z\t2020-01-08T00:00:00.008Z
+                        2024-01-01T00:02:00.000000Z\t2020-01-08T00:00:00.008Z
+                        2024-01-01T00:03:00.000000Z\t2020-01-08T00:00:00.008Z
+                        2024-01-01T00:04:00.000000Z\t2020-01-08T00:00:00.008Z
+                        """);
+    }
+
+    @Test
+    public void testLastValueIgnoreNullsPartitionRangeFrame() throws Exception {
+        // bounded RANGE frame within each partition, IGNORE NULLS: last non-null row in [ts-2min, ts]
+        assertQuery("SELECT ts, grp, last_value(d) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN '2' MINUTE PRECEDING AND CURRENT ROW) l FROM t")
+                .ddl(CREATE_T, INSERT_6_PART_NULL)
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tgrp\tl
+                        2024-01-01T00:00:00.000000Z\ta\t
+                        2024-01-01T00:01:00.000000Z\tb\t2020-01-04T00:00:00.004Z
+                        2024-01-01T00:02:00.000000Z\ta\t2020-01-06T00:00:00.006Z
+                        2024-01-01T00:03:00.000000Z\tb\t2020-01-04T00:00:00.004Z
+                        2024-01-01T00:04:00.000000Z\ta\t2020-01-08T00:00:00.008Z
+                        2024-01-01T00:05:00.000000Z\tb\t2020-01-02T00:00:00.002Z
+                        """);
+    }
+
+    @Test
+    public void testLastValueIgnoreNullsPartitionRowsFrame() throws Exception {
+        // bounded ROWS frame within each partition, IGNORE NULLS: last non-null row in [i-1, i]
+        assertQuery("SELECT ts, grp, last_value(d) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) l FROM t")
+                .ddl(CREATE_T, INSERT_6_PART_NULL)
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tgrp\tl
+                        2024-01-01T00:00:00.000000Z\ta\t
+                        2024-01-01T00:01:00.000000Z\tb\t2020-01-04T00:00:00.004Z
+                        2024-01-01T00:02:00.000000Z\ta\t2020-01-06T00:00:00.006Z
+                        2024-01-01T00:03:00.000000Z\tb\t2020-01-04T00:00:00.004Z
+                        2024-01-01T00:04:00.000000Z\ta\t2020-01-08T00:00:00.008Z
+                        2024-01-01T00:05:00.000000Z\tb\t2020-01-02T00:00:00.002Z
+                        """);
+    }
+
+    @Test
+    public void testLastValueIgnoreNullsRangeFrame() throws Exception {
+        // bounded RANGE frame, IGNORE NULLS: last non-null row in [ts-1min, ts]
+        assertQuery("SELECT ts, last_value(d) IGNORE NULLS OVER (ORDER BY ts RANGE BETWEEN '1' MINUTE PRECEDING AND CURRENT ROW) l FROM t")
+                .ddl(CREATE_T, INSERT_5_WITH_NULL)
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tl
+                        2024-01-01T00:00:00.000000Z\t
+                        2024-01-01T00:01:00.000000Z\t2020-01-06T00:00:00.006Z
+                        2024-01-01T00:02:00.000000Z\t2020-01-06T00:00:00.006Z
+                        2024-01-01T00:03:00.000000Z\t2020-01-08T00:00:00.008Z
+                        2024-01-01T00:04:00.000000Z\t2020-01-08T00:00:00.008Z
+                        """);
+    }
+
+    @Test
+    public void testLastValueIgnoreNullsRowsFrame() throws Exception {
+        // bounded ROWS frame, IGNORE NULLS: last non-null row in [i-1, i]
+        assertQuery("SELECT ts, last_value(d) IGNORE NULLS OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) l FROM t")
+                .ddl(CREATE_T, INSERT_5_WITH_NULL)
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tl
+                        2024-01-01T00:00:00.000000Z\t
+                        2024-01-01T00:01:00.000000Z\t2020-01-06T00:00:00.006Z
+                        2024-01-01T00:02:00.000000Z\t2020-01-06T00:00:00.006Z
+                        2024-01-01T00:03:00.000000Z\t2020-01-08T00:00:00.008Z
+                        2024-01-01T00:04:00.000000Z\t2020-01-08T00:00:00.008Z
+                        """);
+    }
+
+    @Test
     public void testLastValueIgnoreNullsRunning() throws Exception {
         assertQuery("SELECT ts, last_value(d) IGNORE NULLS OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) l FROM t")
                 .ddl(CREATE_T, INSERT_5_WITH_NULL)
@@ -190,6 +527,99 @@ public class WindowDateFunctionTest extends AbstractCairoTest {
                         2024-01-01T00:03:00.000000Z\tb\t2020-01-06T00:00:00.006Z
                         2024-01-01T00:04:00.000000Z\ta\t2020-01-04T00:00:00.004Z
                         2024-01-01T00:05:00.000000Z\tb\t2020-01-06T00:00:00.006Z
+                        """);
+    }
+
+    @Test
+    public void testLastValueOverWholeResultSet() throws Exception {
+        // last_value over the whole result set: the last row's value (unit 10)
+        assertQuery("SELECT ts, last_value(d) OVER () l FROM t")
+                .ddl(CREATE_T, INSERT_5)
+                .timestamp("ts")
+                .expectSize()
+                .returns("""
+                        ts\tl
+                        2024-01-01T00:00:00.000000Z\t2020-01-10T00:00:00.010Z
+                        2024-01-01T00:01:00.000000Z\t2020-01-10T00:00:00.010Z
+                        2024-01-01T00:02:00.000000Z\t2020-01-10T00:00:00.010Z
+                        2024-01-01T00:03:00.000000Z\t2020-01-10T00:00:00.010Z
+                        2024-01-01T00:04:00.000000Z\t2020-01-10T00:00:00.010Z
+                        """);
+    }
+
+    @Test
+    public void testLastValuePartitionRangeFrame() throws Exception {
+        // bounded RANGE frame within each partition: the frame ends at the current row, so the
+        // last value is the current row's value
+        assertQuery("SELECT ts, grp, last_value(d) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN '2' MINUTE PRECEDING AND CURRENT ROW) l FROM t")
+                .ddl(CREATE_T, INSERT_6_PART)
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tgrp\tl
+                        2024-01-01T00:00:00.000000Z\ta\t2020-01-06T00:00:00.006Z
+                        2024-01-01T00:01:00.000000Z\tb\t2020-01-04T00:00:00.004Z
+                        2024-01-01T00:02:00.000000Z\ta\t2020-01-08T00:00:00.008Z
+                        2024-01-01T00:03:00.000000Z\tb\t2020-01-02T00:00:00.002Z
+                        2024-01-01T00:04:00.000000Z\ta\t2020-01-04T00:00:00.004Z
+                        2024-01-01T00:05:00.000000Z\tb\t2020-01-06T00:00:00.006Z
+                        """);
+    }
+
+    @Test
+    public void testLastValuePartitionRowsExcludingCurrentRow() throws Exception {
+        // ROWS frame entirely before the current row within each partition: [i-2, i-1]
+        assertQuery("SELECT ts, grp, last_value(d) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND 1 PRECEDING) l FROM t")
+                .ddl(CREATE_T, INSERT_6_PART)
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tgrp\tl
+                        2024-01-01T00:00:00.000000Z\ta\t
+                        2024-01-01T00:01:00.000000Z\tb\t
+                        2024-01-01T00:02:00.000000Z\ta\t2020-01-06T00:00:00.006Z
+                        2024-01-01T00:03:00.000000Z\tb\t2020-01-04T00:00:00.004Z
+                        2024-01-01T00:04:00.000000Z\ta\t2020-01-08T00:00:00.008Z
+                        2024-01-01T00:05:00.000000Z\tb\t2020-01-02T00:00:00.002Z
+                        """);
+    }
+
+    @Test
+    public void testLastValueRowsExcludingCurrentRow() throws Exception {
+        // ROWS frame entirely before the current row: [i-2, i-1]
+        assertQuery("SELECT ts, last_value(d) OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND 1 PRECEDING) l FROM t")
+                .ddl(CREATE_T, INSERT_5)
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tl
+                        2024-01-01T00:00:00.000000Z\t
+                        2024-01-01T00:01:00.000000Z\t2020-01-06T00:00:00.006Z
+                        2024-01-01T00:02:00.000000Z\t2020-01-04T00:00:00.004Z
+                        2024-01-01T00:03:00.000000Z\t2020-01-08T00:00:00.008Z
+                        2024-01-01T00:04:00.000000Z\t2020-01-02T00:00:00.002Z
+                        """);
+    }
+
+    @Test
+    public void testLastValueRangeFrame() throws Exception {
+        // bounded RANGE frame: the frame ends at the current row, so the last value is the
+        // current row's value
+        assertQuery("SELECT ts, last_value(d) OVER (ORDER BY ts RANGE BETWEEN '1' MINUTE PRECEDING AND CURRENT ROW) l FROM t")
+                .ddl(CREATE_T, INSERT_5)
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\tl
+                        2024-01-01T00:00:00.000000Z\t2020-01-06T00:00:00.006Z
+                        2024-01-01T00:01:00.000000Z\t2020-01-04T00:00:00.004Z
+                        2024-01-01T00:02:00.000000Z\t2020-01-08T00:00:00.008Z
+                        2024-01-01T00:03:00.000000Z\t2020-01-02T00:00:00.002Z
+                        2024-01-01T00:04:00.000000Z\t2020-01-10T00:00:00.010Z
                         """);
     }
 
