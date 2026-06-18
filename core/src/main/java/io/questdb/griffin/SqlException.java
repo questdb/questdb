@@ -25,8 +25,8 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.CarrierLocal;
+import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
