@@ -417,7 +417,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 for (int n = 0; n < argCount; n++) {
                     final Function arg = mutableArgs.getQuick(n);
                     if (RuntimeConstFunction.isFoldable(arg)) {
-                        mutableArgs.setQuick(n, new RuntimeConstFunction(arg));
+                        mutableArgs.setQuick(n, RuntimeConstFunction.newInstance(arg));
                     }
                 }
             }

@@ -86,6 +86,103 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testFoldedValueReadViaWideningGetters() throws SqlException {
+        // Regression for a query-fuzz divergence. A folded subtree is consumed through whatever getter
+        // the parent expects, which is not always the wrapped type's native getter: numeric promotion
+        // reads a LONG subtree via getDouble()/getFloat(), a CHAR subtree via getInt(), and so on. Each
+        // typed wrapper must convert exactly like a real function of that type, including NULL handling.
+        // The earlier flat-getter wrapper served a separate, never-populated double field, so a folded
+        // LONG read as a double came back as 0 instead of the long's value.
+        {
+            final RuntimeConstFunction f = RuntimeConstFunction.newInstance(new LongFunction() {
+                @Override
+                public long getLong(Record rec) {
+                    return -357_724L;
+                }
+
+                @Override
+                public boolean isRuntimeConstant() {
+                    return true;
+                }
+            });
+            try {
+                f.init(null, sqlExecutionContext);
+                assertEquals(-357_724L, f.getLong(null));
+                assertEquals(-357_724.0, f.getDouble(null), 0.0);
+                assertEquals(-357_724.0f, f.getFloat(null), 0.0f);
+            } finally {
+                f.close();
+            }
+        }
+        // NULL must widen to NaN, matching LongFunction.getDouble().
+        {
+            final RuntimeConstFunction f = RuntimeConstFunction.newInstance(new LongFunction() {
+                @Override
+                public long getLong(Record rec) {
+                    return Numbers.LONG_NULL;
+                }
+
+                @Override
+                public boolean isRuntimeConstant() {
+                    return true;
+                }
+            });
+            try {
+                f.init(null, sqlExecutionContext);
+                assertEquals(Numbers.LONG_NULL, f.getLong(null));
+                assertTrue("NULL long must widen to NaN", Numbers.isNull(f.getDouble(null)));
+            } finally {
+                f.close();
+            }
+        }
+        // INT widening: getDouble()/getLong() must derive from the cached int.
+        {
+            final RuntimeConstFunction f = RuntimeConstFunction.newInstance(new IntFunction() {
+                @Override
+                public int getInt(Record rec) {
+                    return 42;
+                }
+
+                @Override
+                public boolean isRuntimeConstant() {
+                    return true;
+                }
+            });
+            try {
+                f.init(null, sqlExecutionContext);
+                assertEquals(42, f.getInt(null));
+                assertEquals(42L, f.getLong(null));
+                assertEquals(42.0, f.getDouble(null), 0.0);
+            } finally {
+                f.close();
+            }
+        }
+    }
+
+    @Test
+    public void testFoldedSubtreeFedToWiderArithmetic() throws Exception {
+        // End-to-end shape that the query fuzzer hit: a runtime-constant LONG subtree (a bind variable
+        // cast to LONG) feeds DOUBLE arithmetic, so the folded wrapper is read via the widening
+        // getDouble(); the result is then narrowed to CHAR. The bind form must match the literal form,
+        // whose constants fold at compile time.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT rnd_double() c FROM long_sequence(8))");
+            bindVariableService.clear();
+            bindVariableService.setStr("b0", "-357724");
+            // the intermediate DOUBLE, read straight through the widening getter
+            assertSqlCursors(
+                    "SELECT (c - -357724L) e0 FROM t",
+                    "SELECT (c - :b0::LONG) e0 FROM t"
+            );
+            // and narrowed to CHAR, the exact projection the fuzzer flagged
+            assertSqlCursors(
+                    "SELECT (c - -357724L)::CHAR e0 FROM t",
+                    "SELECT (c - :b0::LONG)::CHAR e0 FROM t"
+            );
+        });
+    }
+
+    @Test
     public void testAllFoldableTypesCacheAndRoundTrip() throws SqlException {
         // The wrapper reads its arg once in init() through a type-specific getter, caching it into
         // longValue/doubleValue/longValueHi, then serves the cached primitive every row. Each foldable
@@ -358,7 +455,7 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
             final int[] c = {0};
             final long lo = 0x1122334455667788L;
             final long hi = 0x99AABBCCDDEEFF00L;
-            final RuntimeConstFunction f = new RuntimeConstFunction(new UuidFunction() {
+            final RuntimeConstFunction f = RuntimeConstFunction.newInstance(new UuidFunction() {
                 @Override
                 public long getLong128Hi(Record rec) {
                     c[0]++;
@@ -680,7 +777,7 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
     }
 
     private void assertCachedRoundTrip(Function arg, int[] counter, ValueReader reader, Object expected) throws SqlException {
-        final RuntimeConstFunction f = new RuntimeConstFunction(arg);
+        final RuntimeConstFunction f = RuntimeConstFunction.newInstance(arg);
         try {
             f.init(null, sqlExecutionContext);
             final int afterInit = counter[0];

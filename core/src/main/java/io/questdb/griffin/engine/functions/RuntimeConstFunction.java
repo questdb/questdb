@@ -25,22 +25,12 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.BinarySequence;
-import io.questdb.std.Decimal128;
-import io.questdb.std.Decimal256;
-import io.questdb.std.Interval;
-import io.questdb.std.Long256;
-import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Utf8Sequence;
-import org.jetbrains.annotations.NotNull;
 
 /**
  * Wraps a runtime-constant subtree of a fixed-width scalar type, evaluates it once per cursor in
@@ -49,27 +39,24 @@ import org.jetbrains.annotations.NotNull;
  * runtime constant, yet not compile-time constant - re-runs the timezone lookup and date
  * arithmetic for every row.
  * <p>
- * Transparent in plans ({@link #toPlan(PlanSink)} delegates to the argument). Only fixed-width
- * types are folded (see {@link #isFoldableType(int)}); getters for other types delegate to the arg.
+ * One concrete subclass per foldable type (see {@link #newInstance(Function)}); each extends the
+ * matching typed function base class (e.g. {@link LongFunction}) and overrides only that type's
+ * native getter to return the cached value. The cross-type getters (e.g. reading a long-typed
+ * subtree as a double, as numeric promotion does) are inherited from the base class and route
+ * through the native getter, so every conversion - including NULL handling - matches what a real
+ * function of that type would return. A flat hand-rolled getter table would have to reproduce all
+ * of that by hand, which is exactly where a wrong-field read can sneak in.
+ * <p>
+ * Transparent in plans ({@link #toPlan(PlanSink)} delegates to the argument).
  */
-public final class RuntimeConstFunction implements UnaryFunction {
-    private final Function arg;
-    private final int type;
-    private double doubleValue;
-    private long longValue;
-    private long longValueHi;
-
-    public RuntimeConstFunction(Function arg) {
-        this.arg = arg;
-        this.type = arg.getType();
-    }
+public interface RuntimeConstFunction extends UnaryFunction {
 
     /**
      * True if the function is worth folding: runtime constant (but not compile-time constant), of a
      * fixed-width type, and composite (performs per-row work). Trivial runtime-constant leaves
      * (bind variables, {@code now()}) already cache their value, so wrapping them only adds overhead.
      */
-    public static boolean isFoldable(Function function) {
+    static boolean isFoldable(Function function) {
         return function != null
                 && !function.isConstant()
                 && function.isRuntimeConstant()
@@ -79,7 +66,7 @@ public final class RuntimeConstFunction implements UnaryFunction {
                 && isFoldableType(function.getType());
     }
 
-    public static boolean isFoldableType(int type) {
+    static boolean isFoldableType(int type) {
         switch (ColumnType.tagOf(type)) {
             case ColumnType.BOOLEAN:
             case ColumnType.BYTE:
@@ -103,294 +90,68 @@ public final class RuntimeConstFunction implements UnaryFunction {
         }
     }
 
-    @Override
-    public Function getArg() {
-        return arg;
-    }
-
-    @Override
-    public ArrayView getArray(Record rec) {
-        return arg.getArray(rec);
-    }
-
-    @Override
-    public BinarySequence getBin(Record rec) {
-        return arg.getBin(rec);
-    }
-
-    @Override
-    public long getBinLen(Record rec) {
-        return arg.getBinLen(rec);
-    }
-
-    @Override
-    public boolean getBool(Record rec) {
-        return longValue != 0;
-    }
-
-    @Override
-    public byte getByte(Record rec) {
-        return (byte) longValue;
-    }
-
-    @Override
-    public char getChar(Record rec) {
-        return (char) longValue;
-    }
-
-    @Override
-    public long getDate(Record rec) {
-        return longValue;
-    }
-
-    @Override
-    public void getDecimal128(Record rec, Decimal128 sink) {
-        arg.getDecimal128(rec, sink);
-    }
-
-    @Override
-    public short getDecimal16(Record rec) {
-        return arg.getDecimal16(rec);
-    }
-
-    @Override
-    public void getDecimal256(Record rec, Decimal256 sink) {
-        arg.getDecimal256(rec, sink);
-    }
-
-    @Override
-    public int getDecimal32(Record rec) {
-        return arg.getDecimal32(rec);
-    }
-
-    @Override
-    public long getDecimal64(Record rec) {
-        return arg.getDecimal64(rec);
-    }
-
-    @Override
-    public byte getDecimal8(Record rec) {
-        return arg.getDecimal8(rec);
-    }
-
-    @Override
-    public double getDouble(Record rec) {
-        return doubleValue;
-    }
-
-    @Override
-    public float getFloat(Record rec) {
-        return (float) doubleValue;
-    }
-
-    @Override
-    public byte getGeoByte(Record rec) {
-        return (byte) longValue;
-    }
-
-    @Override
-    public int getGeoInt(Record rec) {
-        return (int) longValue;
-    }
-
-    @Override
-    public long getGeoLong(Record rec) {
-        return longValue;
-    }
-
-    @Override
-    public short getGeoShort(Record rec) {
-        return (short) longValue;
-    }
-
-    @Override
-    public int getIPv4(Record rec) {
-        return (int) longValue;
-    }
-
-    @Override
-    public int getInt(Record rec) {
-        return (int) longValue;
-    }
-
-    @Override
-    public @NotNull Interval getInterval(Record rec) {
-        return arg.getInterval(rec);
-    }
-
-    @Override
-    public long getLong(Record rec) {
-        return longValue;
-    }
-
-    @Override
-    public long getLong128Hi(Record rec) {
-        return longValueHi;
-    }
-
-    @Override
-    public long getLong128Lo(Record rec) {
-        return longValue;
-    }
-
-    @Override
-    public void getLong256(Record rec, CharSink<?> sink) {
-        arg.getLong256(rec, sink);
-    }
-
-    @Override
-    public Long256 getLong256A(Record rec) {
-        return arg.getLong256A(rec);
-    }
-
-    @Override
-    public Long256 getLong256B(Record rec) {
-        return arg.getLong256B(rec);
-    }
-
-    @Override
-    public String getName() {
-        return arg.getName();
-    }
-
-    @Override
-    public RecordCursorFactory getRecordCursorFactory() {
-        return arg.getRecordCursorFactory();
-    }
-
-    @Override
-    public short getShort(Record rec) {
-        return (short) longValue;
-    }
-
-    @Override
-    public CharSequence getStrA(Record rec) {
-        return arg.getStrA(rec);
-    }
-
-    @Override
-    public CharSequence getStrB(Record rec) {
-        return arg.getStrB(rec);
-    }
-
-    @Override
-    public int getStrLen(Record rec) {
-        return arg.getStrLen(rec);
-    }
-
-    @Override
-    public CharSequence getSymbol(Record rec) {
-        return arg.getSymbol(rec);
-    }
-
-    @Override
-    public CharSequence getSymbolB(Record rec) {
-        return arg.getSymbolB(rec);
-    }
-
-    @Override
-    public long getTimestamp(Record rec) {
-        return longValue;
-    }
-
-    @Override
-    public int getType() {
-        return type;
-    }
-
-    @Override
-    public Utf8Sequence getVarcharA(Record rec) {
-        return arg.getVarcharA(rec);
-    }
-
-    @Override
-    public Utf8Sequence getVarcharB(Record rec) {
-        return arg.getVarcharB(rec);
-    }
-
-    @Override
-    public int getVarcharSize(Record rec) {
-        return arg.getVarcharSize(rec);
-    }
-
-    @Override
-    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-        arg.init(symbolTableSource, executionContext);
-        // Runtime constant: after init() the value no longer depends on the record, so read it once.
-        switch (ColumnType.tagOf(type)) {
+    /**
+     * Builds the wrapper for {@code arg}'s type. The caller must have checked {@link #isFoldable}
+     * first, so the type is always one of the cases below.
+     */
+    static RuntimeConstFunction newInstance(Function arg) {
+        switch (ColumnType.tagOf(arg.getType())) {
             case ColumnType.BOOLEAN:
-                longValue = arg.getBool(null) ? 1 : 0;
-                break;
+                return new BooleanRuntimeConstFunction(arg);
             case ColumnType.BYTE:
-                longValue = arg.getByte(null);
-                break;
+                return new ByteRuntimeConstFunction(arg);
             case ColumnType.SHORT:
-                longValue = arg.getShort(null);
-                break;
+                return new ShortRuntimeConstFunction(arg);
             case ColumnType.CHAR:
-                longValue = arg.getChar(null);
-                break;
+                return new CharRuntimeConstFunction(arg);
             case ColumnType.INT:
-                longValue = arg.getInt(null);
-                break;
+                return new IntRuntimeConstFunction(arg);
             case ColumnType.LONG:
-                longValue = arg.getLong(null);
-                break;
+                return new LongRuntimeConstFunction(arg);
             case ColumnType.FLOAT:
-                doubleValue = arg.getFloat(null);
-                break;
+                return new FloatRuntimeConstFunction(arg);
             case ColumnType.DOUBLE:
-                doubleValue = arg.getDouble(null);
-                break;
+                return new DoubleRuntimeConstFunction(arg);
             case ColumnType.DATE:
-                longValue = arg.getDate(null);
-                break;
+                return new DateRuntimeConstFunction(arg);
             case ColumnType.TIMESTAMP:
-                longValue = arg.getTimestamp(null);
-                break;
+                return new TimestampRuntimeConstFunction(arg);
             case ColumnType.IPv4:
-                longValue = arg.getIPv4(null);
-                break;
+                return new IPv4RuntimeConstFunction(arg);
             case ColumnType.GEOBYTE:
-                longValue = arg.getGeoByte(null);
-                break;
+                return new GeoByteRuntimeConstFunction(arg);
             case ColumnType.GEOSHORT:
-                longValue = arg.getGeoShort(null);
-                break;
+                return new GeoShortRuntimeConstFunction(arg);
             case ColumnType.GEOINT:
-                longValue = arg.getGeoInt(null);
-                break;
+                return new GeoIntRuntimeConstFunction(arg);
             case ColumnType.GEOLONG:
-                longValue = arg.getGeoLong(null);
-                break;
+                return new GeoLongRuntimeConstFunction(arg);
             case ColumnType.UUID:
-                longValue = arg.getLong128Lo(null);
-                longValueHi = arg.getLong128Hi(null);
-                break;
+                return new UuidRuntimeConstFunction(arg);
             default:
-                throw new UnsupportedOperationException("not a foldable type: " + ColumnType.nameOf(type));
+                throw new UnsupportedOperationException("not a foldable type: " + ColumnType.nameOf(arg.getType()));
         }
     }
 
     @Override
-    public boolean isConstant() {
+    default boolean isConstant() {
         return false;
     }
 
     @Override
-    public boolean isRuntimeConstant() {
+    default boolean isRuntimeConstant() {
         return true;
     }
 
     @Override
-    public boolean shouldMemoize() {
+    default boolean shouldMemoize() {
         // already cached per cursor; per-row memoization would be pointless
         return false;
     }
 
     @Override
-    public void toPlan(PlanSink sink) {
-        arg.toPlan(sink); // stay transparent in plans
+    default void toPlan(PlanSink sink) {
+        getArg().toPlan(sink); // stay transparent in plans
     }
 
     // Correctness hinges on this gate: only a composite foldable-type function is ever wrapped, and the
@@ -406,5 +167,417 @@ public final class RuntimeConstFunction implements UnaryFunction {
                 || function instanceof TernaryFunction
                 || function instanceof QuaternaryFunction
                 || function instanceof MultiArgFunction;
+    }
+
+    final class BooleanRuntimeConstFunction extends BooleanFunction implements RuntimeConstFunction {
+        private final Function arg;
+        private boolean value;
+
+        BooleanRuntimeConstFunction(Function arg) {
+            this.arg = arg;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return value;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            arg.init(symbolTableSource, executionContext);
+            value = arg.getBool(null);
+        }
+    }
+
+    final class ByteRuntimeConstFunction extends ByteFunction implements RuntimeConstFunction {
+        private final Function arg;
+        private byte value;
+
+        ByteRuntimeConstFunction(Function arg) {
+            this.arg = arg;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public byte getByte(Record rec) {
+            return value;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            arg.init(symbolTableSource, executionContext);
+            value = arg.getByte(null);
+        }
+    }
+
+    final class CharRuntimeConstFunction extends CharFunction implements RuntimeConstFunction {
+        private final Function arg;
+        private char value;
+
+        CharRuntimeConstFunction(Function arg) {
+            this.arg = arg;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public char getChar(Record rec) {
+            return value;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            arg.init(symbolTableSource, executionContext);
+            value = arg.getChar(null);
+        }
+    }
+
+    final class DateRuntimeConstFunction extends DateFunction implements RuntimeConstFunction {
+        private final Function arg;
+        private long value;
+
+        DateRuntimeConstFunction(Function arg) {
+            this.arg = arg;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public long getDate(Record rec) {
+            return value;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            arg.init(symbolTableSource, executionContext);
+            value = arg.getDate(null);
+        }
+    }
+
+    final class DoubleRuntimeConstFunction extends DoubleFunction implements RuntimeConstFunction {
+        private final Function arg;
+        private double value;
+
+        DoubleRuntimeConstFunction(Function arg) {
+            this.arg = arg;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public double getDouble(Record rec) {
+            return value;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            arg.init(symbolTableSource, executionContext);
+            value = arg.getDouble(null);
+        }
+    }
+
+    final class FloatRuntimeConstFunction extends FloatFunction implements RuntimeConstFunction {
+        private final Function arg;
+        private float value;
+
+        FloatRuntimeConstFunction(Function arg) {
+            this.arg = arg;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public float getFloat(Record rec) {
+            return value;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            arg.init(symbolTableSource, executionContext);
+            value = arg.getFloat(null);
+        }
+    }
+
+    final class GeoByteRuntimeConstFunction extends GeoByteFunction implements RuntimeConstFunction {
+        private final Function arg;
+        private byte value;
+
+        GeoByteRuntimeConstFunction(Function arg) {
+            super(arg.getType());
+            this.arg = arg;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public byte getGeoByte(Record rec) {
+            return value;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            arg.init(symbolTableSource, executionContext);
+            value = arg.getGeoByte(null);
+        }
+    }
+
+    final class GeoIntRuntimeConstFunction extends GeoIntFunction implements RuntimeConstFunction {
+        private final Function arg;
+        private int value;
+
+        GeoIntRuntimeConstFunction(Function arg) {
+            super(arg.getType());
+            this.arg = arg;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public int getGeoInt(Record rec) {
+            return value;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            arg.init(symbolTableSource, executionContext);
+            value = arg.getGeoInt(null);
+        }
+    }
+
+    final class GeoLongRuntimeConstFunction extends GeoLongFunction implements RuntimeConstFunction {
+        private final Function arg;
+        private long value;
+
+        GeoLongRuntimeConstFunction(Function arg) {
+            super(arg.getType());
+            this.arg = arg;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public long getGeoLong(Record rec) {
+            return value;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            arg.init(symbolTableSource, executionContext);
+            value = arg.getGeoLong(null);
+        }
+    }
+
+    final class GeoShortRuntimeConstFunction extends GeoShortFunction implements RuntimeConstFunction {
+        private final Function arg;
+        private short value;
+
+        GeoShortRuntimeConstFunction(Function arg) {
+            super(arg.getType());
+            this.arg = arg;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public short getGeoShort(Record rec) {
+            return value;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            arg.init(symbolTableSource, executionContext);
+            value = arg.getGeoShort(null);
+        }
+    }
+
+    final class IPv4RuntimeConstFunction extends IPv4Function implements RuntimeConstFunction {
+        private final Function arg;
+        private int value;
+
+        IPv4RuntimeConstFunction(Function arg) {
+            this.arg = arg;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public int getIPv4(Record rec) {
+            return value;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            arg.init(symbolTableSource, executionContext);
+            value = arg.getIPv4(null);
+        }
+    }
+
+    final class IntRuntimeConstFunction extends IntFunction implements RuntimeConstFunction {
+        private final Function arg;
+        private int value;
+
+        IntRuntimeConstFunction(Function arg) {
+            this.arg = arg;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public int getInt(Record rec) {
+            return value;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            arg.init(symbolTableSource, executionContext);
+            value = arg.getInt(null);
+        }
+    }
+
+    final class LongRuntimeConstFunction extends LongFunction implements RuntimeConstFunction {
+        private final Function arg;
+        private long value;
+
+        LongRuntimeConstFunction(Function arg) {
+            this.arg = arg;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            return value;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            arg.init(symbolTableSource, executionContext);
+            value = arg.getLong(null);
+        }
+    }
+
+    final class ShortRuntimeConstFunction extends ShortFunction implements RuntimeConstFunction {
+        private final Function arg;
+        private short value;
+
+        ShortRuntimeConstFunction(Function arg) {
+            this.arg = arg;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public short getShort(Record rec) {
+            return value;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            arg.init(symbolTableSource, executionContext);
+            value = arg.getShort(null);
+        }
+    }
+
+    final class TimestampRuntimeConstFunction extends TimestampFunction implements RuntimeConstFunction {
+        private final Function arg;
+        private long value;
+
+        TimestampRuntimeConstFunction(Function arg) {
+            super(arg.getType());
+            this.arg = arg;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            return value;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            arg.init(symbolTableSource, executionContext);
+            value = arg.getTimestamp(null);
+        }
+    }
+
+    final class UuidRuntimeConstFunction extends UuidFunction implements RuntimeConstFunction {
+        private final Function arg;
+        private long hi;
+        private long lo;
+
+        UuidRuntimeConstFunction(Function arg) {
+            this.arg = arg;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public long getLong128Hi(Record rec) {
+            return hi;
+        }
+
+        @Override
+        public long getLong128Lo(Record rec) {
+            return lo;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            arg.init(symbolTableSource, executionContext);
+            lo = arg.getLong128Lo(null);
+            hi = arg.getLong128Hi(null);
+        }
     }
 }
