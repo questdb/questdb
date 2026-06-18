@@ -221,7 +221,7 @@ pub fn column_type_to_parquet_type(
                     );
                     if i < dim - 1 {
                         root_type = ParquetType::from_group(
-                            "list".to_string(),
+                            "element".to_string(),
                             Repetition::Required,
                             Some(GroupConvertedType::List),
                             Some(GroupLogicalType::List),
@@ -789,6 +789,40 @@ pub(crate) fn encoding_map(data_type: ColumnType) -> Encoding {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Build the leaf path_in_schema for a single LIST-encoded array column.
+    fn array_leaf_path(dim: i32, name: &str) -> Vec<String> {
+        let col_type =
+            qdb_core::col_type::encode_array_type(ColumnTypeTag::Double, dim).expect("array type");
+        let pt =
+            column_type_to_parquet_type(1, name, col_type, false, false).expect("parquet type");
+        let descr = SchemaDescriptor::new("schema".to_string(), vec![pt]);
+        let cols = descr.columns();
+        assert_eq!(cols.len(), 1, "an array maps to exactly one leaf column");
+        cols[0].path_in_schema.clone()
+    }
+
+    // A nested array's intermediate LIST element node must be named "element",
+    // not "list", so the leaf path matches the canonical 3-level encoding that
+    // name-based tooling (e.g. PyIceberg add_files) expects.
+    #[test]
+    fn array_list_element_nodes_are_named_element() {
+        // 1D is already canonical; the fix must leave it untouched.
+        assert_eq!(array_leaf_path(1, "x"), ["x", "list", "element"]);
+
+        // 2D (order-book bids/asks): the outer list's element node is "element",
+        // giving the canonical bids.list.element.list.element.
+        assert_eq!(
+            array_leaf_path(2, "bids"),
+            ["bids", "list", "element", "list", "element"]
+        );
+
+        // 3D: every intermediate list element node is "element".
+        assert_eq!(
+            array_leaf_path(3, "c"),
+            ["c", "list", "element", "list", "element", "list", "element"]
+        );
+    }
 
     #[test]
     fn test_encoding_default() {
