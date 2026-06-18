@@ -1936,6 +1936,163 @@ mod tests {
         Ok(())
     }
 
+    /// Regression guard for the O3 update/append path. The updater seeds the new
+    /// footer from the existing file via `FileMetaData::into_thrift()`, then merges
+    /// row groups and writes it back unchanged through `end_file_incremental`. If
+    /// `into_thrift()` drops `column_orders`, a partition loses its file-level
+    /// column-order declaration on the first merge, and every spec-conformant
+    /// reader (pyarrow, Spark, DuckDB, Trino, Iceberg) then treats the per-row-group
+    /// min/max as undefined. Reads back with the independent Arrow reader, the way
+    /// external tools observe the footer.
+    #[test]
+    fn appended_file_preserves_column_orders() -> Result<(), Box<dyn Error>> {
+        use crate::allocator::TestAllocatorState;
+        use std::io::Read as _;
+
+        let (tmp, new_partition) = write_initial_zstd_file()?;
+        let file_len = tmp.as_file().metadata()?.len();
+        let reader = tmp.reopen()?;
+        let writer = tmp.reopen()?;
+        let alloc_state = TestAllocatorState::new();
+
+        let mut updater = super::ParquetUpdater::new(
+            alloc_state.allocator(),
+            reader,
+            file_len,
+            writer,
+            file_len, // write_file_size: update (append) mode
+            None,     // sorting_columns
+            true,     // write_statistics
+            false,    // raw_array_encoding
+            CompressionOptions::Zstd(None),
+            None, // row_group_size
+            None, // data_page_size
+            DEFAULT_BLOOM_FILTER_FPP,
+            0.0,  // min_compression_ratio
+            None, // parquet_meta_fd
+            0,    // parquet_meta_file_size
+            -1,   // existing_parquet_meta_file_size
+        )?;
+
+        // Append a second row group, then re-read the footer.
+        updater.insert_row_group(&new_partition, 1)?;
+        updater.end(None)?;
+
+        let mut bytes = Vec::new();
+        tmp.reopen()?.read_to_end(&mut bytes)?;
+        let builder = ParquetRecordBatchReaderBuilder::try_new(Bytes::from(bytes))?;
+        let file_meta = builder.metadata().file_metadata();
+        let leaf_count = file_meta.schema_descr().num_columns();
+        assert_eq!(leaf_count, 2, "expected 2 leaf columns after append");
+
+        let orders = file_meta.column_orders().unwrap_or_else(|| {
+            panic!(
+                "appended file dropped column_orders; into_thrift() must regenerate them \
+                 or external readers ignore min/max after the first O3 merge"
+            )
+        });
+        assert_eq!(
+            orders.len(),
+            leaf_count,
+            "column_orders must have one entry per leaf column"
+        );
+        for (i, order) in orders.iter().enumerate() {
+            assert!(
+                matches!(order, parquet::basic::ColumnOrder::TYPE_DEFINED_ORDER(_)),
+                "leaf column {i} must declare TypeDefinedOrder, got {order:?}"
+            );
+        }
+        Ok(())
+    }
+
+    /// Companion guard for the updater's rewrite mode (write_file_size == 0 -> a
+    /// fresh output file), the path the O3 parquet merge uses. Rewrite mode
+    /// finalizes through `ParquetFile::end` in `Mode::Write`, a different footer
+    /// builder than both the plain writer and the append path, so it needs its own
+    /// guard that `column_orders` is emitted. Reads back with the independent Arrow
+    /// reader.
+    #[test]
+    fn rewritten_file_preserves_column_orders() -> Result<(), Box<dyn Error>> {
+        use crate::allocator::TestAllocatorState;
+        use parquet2::metadata::SortingColumn;
+        use std::io::Read as _;
+
+        let sorting = || Some(vec![SortingColumn::new(0, false, false)]);
+
+        // Source file: designated timestamp at column 0, plus an int value column.
+        let ts = [1i64, 2, 3, 4];
+        let val = [10i32, 20, 30, 40];
+        let partition = Partition {
+            table: "t".to_string(),
+            columns: vec![
+                make_designated_ts_with_id(0, "ts", &ts),
+                make_column("val", ColumnTypeTag::Int.into_type(), &val),
+            ],
+        };
+        let src = NamedTempFile::new()?;
+        ParquetWriter::new(src.reopen()?)
+            .with_sorting_columns(sorting())
+            .finish(partition)?;
+        let src_len = src.as_file().metadata()?.len();
+
+        // Rewrite into a fresh file: copy the existing row group, append a fresh one.
+        let out = NamedTempFile::new()?;
+        let alloc = TestAllocatorState::new();
+        let mut updater = super::ParquetUpdater::new(
+            alloc.allocator(),
+            src.reopen()?, // reader: old file
+            src_len,
+            out.reopen()?, // writer: fresh file
+            0,             // write_file_size == 0 -> rewrite
+            sorting(),
+            true,
+            false,
+            CompressionOptions::Uncompressed,
+            None,
+            None,
+            DEFAULT_BLOOM_FILTER_FPP,
+            0.0,
+            None,
+            0,
+            -1,
+        )?;
+        let o3_ts = [5i64, 6, 7];
+        let o3_val = [50i32, 60, 70];
+        let o3 = Partition {
+            table: "t".to_string(),
+            columns: vec![
+                make_designated_ts_with_id(0, "ts", &o3_ts),
+                make_column("val", ColumnTypeTag::Int.into_type(), &o3_val),
+            ],
+        };
+        updater.copy_row_group(0)?;
+        updater.insert_row_group(&o3, 1)?;
+        updater.end(None)?;
+
+        let mut bytes = Vec::new();
+        out.reopen()?.read_to_end(&mut bytes)?;
+        let builder = ParquetRecordBatchReaderBuilder::try_new(Bytes::from(bytes))?;
+        let file_meta = builder.metadata().file_metadata();
+        let leaf_count = file_meta.schema_descr().num_columns();
+        assert_eq!(leaf_count, 2, "expected 2 leaf columns after rewrite");
+
+        let orders = file_meta.column_orders().unwrap_or_else(|| {
+            panic!("rewritten file dropped column_orders; the Mode::Write footer must declare them")
+        });
+        assert_eq!(
+            orders.len(),
+            leaf_count,
+            "column_orders must have one entry per leaf column"
+        );
+        for (i, order) in orders.iter().enumerate() {
+            assert!(
+                matches!(order, parquet::basic::ColumnOrder::TYPE_DEFINED_ORDER(_)),
+                "leaf column {i} must declare TypeDefinedOrder, got {order:?}"
+            );
+        }
+        Ok(())
+    }
+
     /// After copy_row_group with a non-zero offset shift, the bloom filter
     /// on the last column must still be readable and contain the original
     /// values. This requires either copying the bloom bytes into the new

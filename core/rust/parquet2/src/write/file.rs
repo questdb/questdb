@@ -15,7 +15,7 @@ use crate::{
 use super::footer_cache::FooterCache;
 use super::indexes::{write_column_index, write_offset_index};
 use super::page::PageWriteSpec;
-use super::{row_group::write_row_group, RowGroupIter, WriteOptions};
+use super::{row_group::write_row_group, type_defined_column_orders, RowGroupIter, WriteOptions};
 
 pub use crate::metadata::KeyValue;
 use crate::write::State;
@@ -471,7 +471,7 @@ impl<W: Write> FileWriter<W> {
             self.row_groups.clone(),
             additional_meta,
             self.created_by.clone(),
-            None,
+            Some(type_defined_column_orders(self.schema.columns().len())),
             None,
             None,
         );
@@ -873,7 +873,7 @@ impl<W: Write> ParquetFile<W> {
                     self.row_groups.clone(),
                     key_value_metadata,
                     self.created_by.clone(),
-                    None,
+                    Some(type_defined_column_orders(self.schema.columns().len())),
                     None,
                     None,
                 );

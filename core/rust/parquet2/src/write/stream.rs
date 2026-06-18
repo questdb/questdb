@@ -13,7 +13,9 @@ use crate::{
     FOOTER_SIZE, PARQUET_MAGIC,
 };
 
-use super::{row_group::write_row_group_async, RowGroupIter, WriteOptions};
+use super::{
+    row_group::write_row_group_async, type_defined_column_orders, RowGroupIter, WriteOptions,
+};
 
 async fn start_file<W: AsyncWrite + Unpin>(writer: &mut W) -> Result<u64> {
     writer.write_all(&PARQUET_MAGIC).await?;
@@ -184,7 +186,7 @@ impl<W: AsyncWrite + Unpin + Send> FileStreamer<W> {
             self.row_groups.clone(),
             key_value_metadata,
             self.created_by.clone(),
-            None,
+            Some(type_defined_column_orders(self.schema.columns().len())),
             None,
             None,
         );

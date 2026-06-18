@@ -86,6 +86,7 @@ impl FileMetaData {
 
     /// Serializes itself to thrift's [`parquet_format_safe::FileMetaData`].
     pub fn into_thrift(self) -> parquet_format_safe::FileMetaData {
+        let num_leaf_columns = self.schema_descr.columns().len();
         parquet_format_safe::FileMetaData {
             version: self.version,
             schema: self.schema_descr.into_thrift(),
@@ -97,7 +98,7 @@ impl FileMetaData {
                 .collect(),
             key_value_metadata: self.key_value_metadata,
             created_by: self.created_by,
-            column_orders: None, // todo
+            column_orders: Some(crate::write::type_defined_column_orders(num_leaf_columns)),
             encryption_algorithm: None,
             footer_signing_key_metadata: None,
         }
