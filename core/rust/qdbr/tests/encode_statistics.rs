@@ -192,3 +192,106 @@ fn questdb_parquet_exposes_min_max_and_null_count_to_external_readers() {
         other => panic!("expected Double statistics for double column, got {other:?}"),
     }
 }
+
+/// The UTF-8 truncation bound the writer applies to String/Symbol/Varchar min/max
+/// (mirrors `UTF8_STATS_TRUNCATE_LEN` in `parquet_write::util`). Advancing the last
+/// codepoint of the max can grow its encoding by up to 3 bytes.
+const TEXT_STATS_BOUND: usize = 64;
+
+/// A single multi-megabyte (here multi-kilobyte) text value must NOT bloat the
+/// footer with an equally large min/max. The writer truncates the bounds to
+/// `TEXT_STATS_BOUND` bytes while keeping them a valid byte-wise floor/ceiling, so an
+/// external reader still gets correct (if loose) bounds at a fixed small size.
+#[test]
+fn questdb_parquet_truncates_long_string_statistics() {
+    let value = "x".repeat(5_000);
+    let value_bytes = value.as_bytes();
+    let (vc_data, vc_aux) = build_qdb_varchar_data(&[value.as_str()], &[false]);
+
+    let columns = vec![make_varchar_column(
+        "v",
+        ColumnType::new(ColumnTypeTag::Varchar, 0).code(),
+        vc_data.as_ptr(),
+        vc_data.len(),
+        vc_aux.as_ptr(),
+        vc_aux.len(),
+        1,
+        Encoding::Plain.config(),
+    )];
+    let partition = Partition {
+        table: "compat".to_string(),
+        columns,
+    };
+    let data = write_parquet(partition);
+
+    let metadata = external_metadata(&data);
+    let stats = metadata
+        .row_group(0)
+        .column(0)
+        .statistics()
+        .expect("varchar statistics");
+    let min = stats.min_bytes_opt().expect("min_value present");
+    let max = stats.max_bytes_opt().expect("max_value present");
+
+    assert!(
+        min.len() <= TEXT_STATS_BOUND,
+        "min truncated to the bound, got {} bytes",
+        min.len()
+    );
+    assert!(
+        max.len() <= TEXT_STATS_BOUND + 3,
+        "max stays bounded, got {} bytes",
+        max.len()
+    );
+    assert!(min <= value_bytes, "min must be a byte-wise floor");
+    assert!(max >= value_bytes, "max must be a byte-wise ceiling");
+}
+
+/// When the truncation length falls inside a multi-byte codepoint, the writer must
+/// back off to a codepoint boundary so the stored min/max stay valid UTF-8 (readers
+/// that decode the bounds as strings would otherwise choke), while remaining a valid
+/// byte-wise floor/ceiling.
+#[test]
+fn questdb_parquet_truncates_multibyte_string_on_codepoint_boundary() {
+    // 3-byte euro sign; 30 of them is 90 bytes, so the 64-byte cut lands mid-codepoint.
+    let value = "\u{20ac}".repeat(30);
+    let value_bytes = value.as_bytes();
+    let (vc_data, vc_aux) = build_qdb_varchar_data(&[value.as_str()], &[false]);
+
+    let columns = vec![make_varchar_column(
+        "v",
+        ColumnType::new(ColumnTypeTag::Varchar, 0).code(),
+        vc_data.as_ptr(),
+        vc_data.len(),
+        vc_aux.as_ptr(),
+        vc_aux.len(),
+        1,
+        Encoding::Plain.config(),
+    )];
+    let partition = Partition {
+        table: "compat".to_string(),
+        columns,
+    };
+    let data = write_parquet(partition);
+
+    let metadata = external_metadata(&data);
+    let stats = metadata
+        .row_group(0)
+        .column(0)
+        .statistics()
+        .expect("varchar statistics");
+    let min = stats.min_bytes_opt().expect("min_value present");
+    let max = stats.max_bytes_opt().expect("max_value present");
+
+    assert!(
+        std::str::from_utf8(min).is_ok(),
+        "min must not split a codepoint"
+    );
+    assert!(
+        std::str::from_utf8(max).is_ok(),
+        "max must not split a codepoint"
+    );
+    assert!(min.len() <= TEXT_STATS_BOUND, "min truncated to the bound");
+    assert!(min <= value_bytes, "min must be a byte-wise floor");
+    assert!(max >= value_bytes, "max must be a byte-wise ceiling");
+}
