@@ -941,6 +941,73 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSquashPartitionClearsRemoteAndStampsTarget() throws Exception {
+        assertMemoryLeak(() -> {
+            Overrides overrides = node1.getConfigurationOverrides();
+            overrides.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE x AS (" +
+                            "SELECT" +
+                            " cast(x AS int) i," +
+                            " -x j," +
+                            " rnd_str(5,16,2) AS str," +
+                            " timestamp_sequence('2020-02-03T00', 60 * 1000000L)::#TIMESTAMP ts" +
+                            " FROM long_sequence(1000)" +
+                            ") TIMESTAMP(ts) PARTITION BY DAY WAL",
+                    timestampType.getTypeName()
+            );
+            drainWalQueue();
+
+            executeWithRewriteTimestamp(
+                    "INSERT INTO x " +
+                            "SELECT" +
+                            " cast(x AS int) * 1000000 i," +
+                            " -x - 1000000L AS j," +
+                            " rnd_str(5,16,2) AS str," +
+                            " timestamp_sequence('2020-02-03T13:20', 1000000L)::#TIMESTAMP ts" +
+                            " FROM long_sequence(200)",
+                    timestampType.getTypeName()
+            );
+            drainWalQueue();
+
+            final long lastWriteSeqTxn;
+            try (TableWriter writer = getWriter("x")) {
+                TxWriter tx = writer.getTxWriter();
+                Assert.assertTrue("test setup must create a split partition", tx.getPartitionCount() > 1);
+                Assert.assertFalse(tx.isPartitionParquet(0));
+                lastWriteSeqTxn = tx.getSeqTxn();
+                tx.setPartitionRemote(0, true);
+                tx.setPartitionParquetGenerated(0, true);
+                writer.bumpPartitionTableVersion();
+                writer.commit();
+            }
+
+            execute("ALTER TABLE x SQUASH PARTITIONS");
+            drainWalQueue();
+
+            try (TableReader reader = getReader("x")) {
+                Assert.assertEquals(1, reader.getTxFile().getPartitionCount());
+                Assert.assertFalse(reader.getTxFile().isPartitionParquet(0));
+                Assert.assertFalse("squash appends bytes into the target, so REMOTE must be cleared",
+                        reader.getTxFile().isPartitionRemote(0));
+                Assert.assertFalse("squash invalidates any staged parquet for the old bytes",
+                        reader.getTxFile().isPartitionParquetGenerated(0));
+                Assert.assertEquals("squash stamps max(merged sources) -- the last write's seqTxn, not the squash commit's",
+                        lastWriteSeqTxn, reader.getTxFile().getNativePartitionSeqTxn(0));
+                Assert.assertTrue("the squash commit advanced the table seqTxn past the stamp",
+                        reader.getTxFile().getSeqTxn() > lastWriteSeqTxn);
+            }
+
+            assertQuery("SELECT count(), sum(j) FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\tsum\n1200\t-200520600\n");
+        });
+    }
+
+    @Test
     public void testSplitMidPartitionOpenReader() throws Exception {
         assertMemoryLeak(() -> {
             execute(

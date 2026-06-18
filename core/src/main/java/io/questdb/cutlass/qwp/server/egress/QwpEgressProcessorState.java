@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.qwp.server.egress;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameAddressCache;
@@ -77,6 +78,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     public static volatile int defaultMaxDictHeapBytesOverrideForTest = -1;
     private final QwpResultBatchBuffer batchBuffer = new QwpResultBatchBuffer();
     private final BindVariableServiceImpl bindVariableService;
+    private final CairoConfiguration cairoConfiguration;
     private final ObjList<QwpEgressColumnDef> columnDefsPool = new ObjList<>();
     // Connection-scoped SYMBOL dictionary shared across all queries on this connection.
     // Holds the concatenated UTF-8 bytes of every unique symbol value and a parallel
@@ -283,7 +285,8 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     private long zstdCompressScratchAddr;
     private int zstdCompressScratchCapacity;
 
-    public QwpEgressProcessorState(io.questdb.cairo.CairoConfiguration cairoConfiguration) {
+    public QwpEgressProcessorState(CairoConfiguration cairoConfiguration) {
+        this.cairoConfiguration = cairoConfiguration;
         this.bindVariableService = new BindVariableServiceImpl(cairoConfiguration);
         // Pick up any test-only default overrides active at construction time
         // so tests that need tiny soft caps don't have to reach into every
@@ -426,7 +429,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         }
         if (pageFrameAddressCache == null) {
             pageFrameAddressCache = new PageFrameAddressCache();
-            pageFrameMemoryPool = new PageFrameMemoryPool(0L);
+            pageFrameMemoryPool = new PageFrameMemoryPool(cairoConfiguration, 0L);
             pageFrameMemoryRecord = new PageFrameMemoryRecord();
         }
         pageFrameAddressCache.of(

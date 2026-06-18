@@ -178,14 +178,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                         final long currentRow = Rows.toLocalRowID(rowId);
 
                         if (rowPartitionIndex != partitionIndex) {
-                            if (tableWriter.isPartitionReadOnly(rowPartitionIndex)) {
-                                throw CairoException.critical(0)
-                                        .put("cannot update read-only partition [table=").put(tableToken.getTableName())
-                                        .put(", partitionTimestamp=").ts(
-                                                tableWriter.getTimestampType(),
-                                                tableWriter.getPartitionTimestamp(rowPartitionIndex))
-                                        .put(']');
-                            }
+                            checkPartitionCanUpdate(tableToken, rowPartitionIndex);
                             if (partitionIndex > -1) {
                                 LOG.info()
                                         .$("updating partition [partitionIndex=").$(partitionIndex)
@@ -196,22 +189,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                                         .$(", minRow=").$(minRow)
                                         .I$();
 
-                                copyColumns(
-                                        partitionIndex,
-                                        affectedColumnCount,
-                                        prevRow,
-                                        minRow
-                                );
-
-                                updateEffectiveColumnTops(
-                                        tableWriter,
-                                        partitionIndex,
-                                        updateColumnIndexes,
-                                        affectedColumnCount,
-                                        minRow
-                                );
-
-                                rebuildIndexes(tableWriter.getPartitionTimestamp(partitionIndex), tableMetadata, tableWriter);
+                                finishPartitionUpdate(partitionIndex, affectedColumnCount, prevRow, minRow, tableMetadata);
                             }
 
                             openColumns(srcColumns, rowPartitionIndex, false);
@@ -240,17 +218,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                     }
 
                     if (partitionIndex > -1) {
-                        copyColumns(partitionIndex, affectedColumnCount, prevRow, minRow);
-
-                        updateEffectiveColumnTops(
-                                tableWriter,
-                                partitionIndex,
-                                updateColumnIndexes,
-                                affectedColumnCount,
-                                minRow
-                        );
-
-                        rebuildIndexes(tableWriter.getPartitionTimestamp(partitionIndex), tableMetadata, tableWriter);
+                        finishPartitionUpdate(partitionIndex, affectedColumnCount, prevRow, minRow, tableMetadata);
                     }
                 } finally {
                     Misc.freeObjList(srcColumns);
@@ -321,6 +289,29 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
             return Math.min(firstUpdatedPartitionRowId, columnTop);
         }
         return firstUpdatedPartitionRowId;
+    }
+
+    private void checkPartitionCanUpdate(TableToken tableToken, int rowPartitionIndex) {
+        if (tableWriter.isPartitionReadOnly(rowPartitionIndex)) {
+            // WAL-tolerable: the read-only flag is set only by sequenced operations, so WAL apply
+            // skips this transaction identically on every instance instead of suspending the table
+            // (a retry can never succeed). The parquet check below must stay non-tolerable: the
+            // format flag flips per instance, so a skip keyed on it would diverge across replicas.
+            throw CairoException.partitionManipulationRecoverable()
+                    .put("cannot update read-only partition [table=").put(tableToken.getTableName())
+                    .put(", partitionTimestamp=").ts(
+                            tableWriter.getTimestampType(),
+                            tableWriter.getPartitionTimestamp(rowPartitionIndex))
+                    .put(']');
+        }
+        if (tableWriter.isPartitionParquet(rowPartitionIndex)) {
+            throw CairoException.nonCritical()
+                    .put("cannot update parquet-format partition [table=").put(tableToken.getTableName())
+                    .put(", partitionTimestamp=").ts(
+                            tableWriter.getTimestampType(),
+                            tableWriter.getPartitionTimestamp(rowPartitionIndex))
+                    .put("]; parquet partitions are read-only (e.g. converted by a TO PARQUET storage policy), restrict the UPDATE to native partitions");
+        }
     }
 
     private static void fillUpdatesGapWithNull(
@@ -685,6 +676,25 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                     (rowHi - rowLo) << shl
             );
         }
+    }
+
+    private void finishPartitionUpdate(
+            int partitionIndex,
+            int affectedColumnCount,
+            long prevRow,
+            long minRow,
+            TableRecordMetadata tableMetadata
+    ) {
+        copyColumns(partitionIndex, affectedColumnCount, prevRow, minRow);
+        updateEffectiveColumnTops(
+                tableWriter,
+                partitionIndex,
+                updateColumnIndexes,
+                affectedColumnCount,
+                minRow
+        );
+        rebuildIndexes(tableWriter.getPartitionTimestamp(partitionIndex), tableMetadata, tableWriter);
+        tableWriter.markPartitionDataChanged(partitionIndex);
     }
 
     private void openColumns(ObjList<? extends MemoryCM> columns, int partitionIndex, boolean forWrite) {

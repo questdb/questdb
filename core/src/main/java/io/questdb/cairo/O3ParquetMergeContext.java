@@ -58,6 +58,7 @@ public class O3ParquetMergeContext implements Closeable {
     private Decimal128 decimal128Buf;
     private Decimal256 decimal256Buf;
     private Decimal64 decimal64Buf;
+    private CairoConfiguration configuration;
     // Non-owning descriptor for the O3-only writers (writeFreshParquetFromO3 +
     // copyO3ToRowGroup). Column pointers reference already-sorted/deduped O3
     // source buffers — and the merge index for the designated timestamp — so
@@ -98,7 +99,6 @@ public class O3ParquetMergeContext implements Closeable {
         parquetColumns = new DirectIntList(64, MemoryTag.NATIVE_O3);
         parquetColIdToIdx = new IntIntHashMap();
         parquetMetaReader = new ParquetMetaFileReader();
-        partitionDecoder = new ParquetPartitionDecoder();
         partitionUpdater = new PartitionUpdater();
         rebaseAuxMem = Vm.getCARWInstance(REBASE_AUX_ARENA_PAGE_SIZE, Integer.MAX_VALUE, MemoryTag.NATIVE_O3);
         rgO3Ranges = new LongList();
@@ -143,6 +143,7 @@ public class O3ParquetMergeContext implements Closeable {
         decimal128Buf = null;
         decimal256Buf = null;
         decimal64Buf = null;
+        configuration = null;
         freshPartitionDescriptor = Misc.free(freshPartitionDescriptor);
         gapO3Ranges = null;
         // Each list stores [addr, size, addr, size] per column; the per-row-group
@@ -255,7 +256,12 @@ public class O3ParquetMergeContext implements Closeable {
         return parquetMetaReader;
     }
 
-    public ParquetPartitionDecoder getPartitionDecoder() {
+    public ParquetPartitionDecoder getPartitionDecoder(CairoConfiguration configuration) {
+        if (partitionDecoder == null || this.configuration != configuration) {
+            Misc.free(partitionDecoder);
+            partitionDecoder = configuration.newParquetPartitionDecoder();
+            this.configuration = configuration;
+        }
         return partitionDecoder;
     }
 

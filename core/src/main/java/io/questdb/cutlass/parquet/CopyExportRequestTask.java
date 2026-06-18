@@ -43,6 +43,8 @@ import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
+import io.questdb.griffin.engine.table.parquet.ParquetDecoder;
+import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
@@ -441,6 +443,10 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         private DirectUtf8Sink columnNames = new DirectUtf8Sink(32, false, MemoryTag.NATIVE_PARQUET_EXPORTER);
         private long currentFrameRowCount = 0;
         private long currentPartitionIndex = -1;
+        // Reused per frame whose parquet file is not mapped locally: the [parquetIdx, columnType]
+        // pairs requested from the decoder, and the buffers it decodes the row group into.
+        private DirectIntList decodeColumns = new DirectIntList(32, MemoryTag.NATIVE_PARQUET_EXPORTER, true);
+        private RowGroupBuffers decodeRowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_EXPORTER, true);
         private boolean exportFinished = false;
         // Cumulative count of rows written to Parquet row groups by Rust.
         // Used to determine when partition memory can be safely released.
@@ -457,6 +463,8 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
             Misc.free(columnData);
             Misc.free(columnMetadata);
             Misc.free(bloomFilterColumnIndexes);
+            Misc.free(decodeColumns);
+            Misc.free(decodeRowGroupBuffers);
             closeWriter();
             streamExportCurrentPtr = 0;
             streamExportCurrentSize = 0;
@@ -474,6 +482,8 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
             columnData = Misc.free(columnData);
             columnMetadata = Misc.free(columnMetadata);
             bloomFilterColumnIndexes = Misc.free(bloomFilterColumnIndexes);
+            decodeColumns = Misc.free(decodeColumns);
+            decodeRowGroupBuffers = Misc.free(decodeRowGroupBuffers);
         }
 
         public void finishExport() throws Exception {
@@ -736,32 +746,83 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                     }
                 }
 
-                long allocator = Unsafe.getNativeAllocator(MemoryTag.NATIVE_PARQUET_EXPORTER);
-                long buffer = writeStreamingParquetChunkFromRowGroup(
-                        streamWriter,
-                        allocator,
-                        columnData.getAddress(),
-                        frame.getParquetDecoder().getFileAddr(),
-                        frame.getParquetDecoder().getFileSize(),
-                        frame.getParquetRowGroup(),
-                        frame.getParquetRowGroupLo(),
-                        frame.getParquetRowGroupHi()
-                );
-                while (buffer != 0) {
-                    streamExportCurrentPtr = buffer + BUFFER_HEADER_SIZE;
-                    streamExportCurrentSize = Unsafe.getLong(buffer);
-                    rowsWrittenToRowGroups = Unsafe.getLong(buffer + Long.BYTES);
-                    writeCallback.onWrite(streamExportCurrentPtr, streamExportCurrentSize);
-                    buffer = writeStreamingParquetChunkFromRowGroup(
+                final long allocator = Unsafe.getNativeAllocator(MemoryTag.NATIVE_PARQUET_EXPORTER);
+                final ParquetDecoder parquetDecoder = frame.getParquetDecoder();
+                if (parquetDecoder.getFileAddr() != 0) {
+                    // The parquet file is mapped locally, so fast-copy the row group bytes
+                    // straight from the mmap.
+                    long buffer = writeStreamingParquetChunkFromRowGroup(
                             streamWriter,
                             allocator,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0
+                            columnData.getAddress(),
+                            parquetDecoder.getFileAddr(),
+                            parquetDecoder.getFileSize(),
+                            frame.getParquetRowGroup(),
+                            frame.getParquetRowGroupLo(),
+                            frame.getParquetRowGroupHi()
                     );
+                    while (buffer != 0) {
+                        streamExportCurrentPtr = buffer + BUFFER_HEADER_SIZE;
+                        streamExportCurrentSize = Unsafe.getLong(buffer);
+                        rowsWrittenToRowGroups = Unsafe.getLong(buffer + Long.BYTES);
+                        writeCallback.onWrite(streamExportCurrentPtr, streamExportCurrentSize);
+                        buffer = writeStreamingParquetChunkFromRowGroup(
+                                streamWriter,
+                                allocator,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0
+                        );
+                    }
+                } else {
+                    // The parquet file is not mapped locally (getFileAddr() == 0). Decode the row
+                    // group through the decoder, which acquires and pins a decode resource, then
+                    // encode from the decoded buffers. The native side copies them into
+                    // encoder-owned storage, so the decode resource can be released as soon as
+                    // decode returns.
+                    final int rowLo = frame.getParquetRowGroupLo();
+                    final int rowHi = frame.getParquetRowGroupHi();
+                    final int rowCount = rowHi - rowLo;
+                    if (rowCount > 0) {
+                        decodeColumns.reopen();
+                        decodeColumns.clear();
+                        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                            // Materialized column types only (never VARCHAR_SLICE) so the decoded
+                            // buffers are self-owned and survive the decode-resource release below.
+                            decodeColumns.add(i);
+                            decodeColumns.add(metadata.getColumnType(i));
+                        }
+                        decodeRowGroupBuffers.reopen();
+                        parquetDecoder.decodeRowGroup(decodeRowGroupBuffers, decodeColumns, frame.getParquetRowGroup(), rowLo, rowHi);
+                        final long decodeResource = parquetDecoder.takeDecodeResource();
+                        try {
+                            long buffer = writeStreamingParquetChunkFromRowGroupBuffers(
+                                    streamWriter,
+                                    allocator,
+                                    columnData.getAddress(),
+                                    decodeRowGroupBuffers.ptr(),
+                                    rowCount
+                            );
+                            while (buffer != 0) {
+                                streamExportCurrentPtr = buffer + BUFFER_HEADER_SIZE;
+                                streamExportCurrentSize = Unsafe.getLong(buffer);
+                                rowsWrittenToRowGroups = Unsafe.getLong(buffer + Long.BYTES);
+                                writeCallback.onWrite(streamExportCurrentPtr, streamExportCurrentSize);
+                                buffer = writeStreamingParquetChunkFromRowGroupBuffers(
+                                        streamWriter,
+                                        allocator,
+                                        0,
+                                        0,
+                                        0
+                                );
+                            }
+                        } finally {
+                            parquetDecoder.releaseDecodeResource(decodeResource);
+                        }
+                    }
                 }
             }
             totalRows += currentFrameRowCount;

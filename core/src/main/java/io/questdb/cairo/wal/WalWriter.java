@@ -259,6 +259,16 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         apply(alterOp, true);
     }
 
+    public long appendCustomEvent(byte txnType, WalEventPayloadWriter payload) {
+        try {
+            lastSegmentTxn = events.appendCustomEvent(txnType, payload);
+            return getSequencerTxn();
+        } catch (Throwable th) {
+            distressed = true;
+            throw th;
+        }
+    }
+
     @Override
     public long apply(AlterOperation alterOp, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
         alterOp.authorize();

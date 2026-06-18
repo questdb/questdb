@@ -229,6 +229,7 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
 
             TableReader reader = newOffPoolReader(configuration, "x");
             IntervalFwdPartitionFrameCursor cursor = new IntervalFwdPartitionFrameCursor(
+                    configuration,
                     new RuntimeIntervalModel(
                             ColumnType.getTimestampDriver(reader.getMetadata().getTimestampType()),
                             reader.getPartitionedBy(),
@@ -775,6 +776,7 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
             try (
                     TableReader reader = newOffPoolReader(configuration, "x");
                     IntervalFwdPartitionFrameCursor cursor = new IntervalFwdPartitionFrameCursor(
+                            configuration,
                             new RuntimeIntervalModel(
                                     ColumnType.getTimestampDriver(reader.getMetadata().getTimestampType()),
                                     reader.getPartitionedBy(),
