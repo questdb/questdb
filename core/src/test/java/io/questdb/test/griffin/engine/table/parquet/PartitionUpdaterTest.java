@@ -176,9 +176,10 @@ public class PartitionUpdaterTest extends AbstractCairoTest {
         // sync_data to throw would need a production test seam the project
         // forbids. Each update appends a row group to data.parquet, so the two
         // snapshots' footers carry distinct parquet-size tokens; resolveFooter
-        // keys on that parquet data size (from _txn), so the committed token
-        // (committedParquetSize) resolves Update A's footer while Long.MAX_VALUE
-        // takes Update B's.
+                // keys on that parquet data size (from _txn), so the committed token
+                // (committedParquetSize) resolves Update A's footer while
+                // resolveLastFooter() takes Update B's.
+
         assertMemoryLeak(() -> {
             final String tableName = "commit_publish_test";
             final long rows = 10;
@@ -368,85 +369,6 @@ public class PartitionUpdaterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testUpdateWithParquetMetaFd() throws Exception {
-        assertMemoryLeak(() -> {
-            final String tableName = "parquet_meta_test";
-            final long rows = 10;
-            final FilesFacade ff = configuration.getFilesFacade();
-            execute("CREATE TABLE " + tableName + " AS (SELECT" +
-                    " x id," +
-                    " timestamp_sequence(400_000_000_000, 500)::" + timestampType.getTypeName() + " designated_ts" +
-                    " FROM long_sequence(" + rows + ")) TIMESTAMP(designated_ts) PARTITION BY DAY");
-
-            try (
-                    Path path = new Path();
-                    PartitionDescriptor descriptor = new PartitionDescriptor();
-                    TableReader reader = engine.getReader(tableName);
-                    PartitionUpdater updater = new PartitionUpdater()
-            ) {
-                final TableToken table = engine.getTableTokenIfExists(tableName);
-                path.concat(root)
-                        .concat(table.getDirNameUtf8())
-                        .concat("1970-01-05")
-                        .slash$();
-                final int partitionDirLen = path.size();
-                path.put(".1").slash$();
-                final int versionedDirLen = path.size();
-                ff.mkdirs(path, configuration.getMkDirMode());
-                path.concat("data.parquet").$();
-
-                PartitionEncoder.populateFromTableReader(reader, descriptor, 0);
-                PartitionEncoder.encode(descriptor, path);
-
-                Assert.assertTrue(ff.exists(path.$()));
-                final long parquetPartitionSize = ff.length(path.$());
-
-                // Open _pm file for writing alongside the parquet file.
-                path.trimTo(versionedDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
-                final int opts = configuration.getWriterFileOpenOpts();
-                final int parquetMetaFd = Files.detach(ff.openRW(path.$(), opts));
-
-                // Open parquet reader/writer fds.
-                path.trimTo(versionedDirLen).concat("data.parquet").$();
-                final int readerFd = Files.detach(ff.openRONoCache(path.$()));
-                final int writerFd = Files.detach(ff.openRW(path.$(), opts));
-
-                updater.of(
-                        path.$(),
-                        readerFd,
-                        parquetPartitionSize,
-                        writerFd,
-                        parquetPartitionSize,
-                        1,  // index of the timestamp column
-                        0L, // uncompressed
-                        false,
-                        false,
-                        0L,
-                        0L,
-                        0.01,
-                        0.0,
-                        parquetMetaFd,
-                        parquetPartitionSize,
-                        parquetPartitionSize,
-                        0L
-                );
-
-                PartitionEncoder.populateFromTableReader(reader, descriptor, 0);
-                updater.updateRowGroup((short) 0, descriptor);
-                updater.updateFileMetadata();
-
-                final long parquetMetaFileSize = updater.getResultParquetMetaFileSize();
-                Assert.assertTrue("_pm file size must be > 0", parquetMetaFileSize > 0);
-
-                // Verify the _pm file exists on disk with the reported size.
-                path.trimTo(versionedDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
-                Assert.assertTrue("_pm file must exist", ff.exists(path.$()));
-                Assert.assertEquals("_pm file size on disk", parquetMetaFileSize, ff.length(path.$()));
-            }
-        });
-    }
-
-    @Test
     public void testUpdateAppendsPastDeadTail() throws Exception {
         // Crash-window path: an in-place _pm update appends past an orphaned dead
         // footer when the header is dirty-ahead (a prior update published a footer
@@ -562,4 +484,84 @@ public class PartitionUpdaterTest extends AbstractCairoTest {
             }
         });
     }
+
+    @Test
+    public void testUpdateWithParquetMetaFd() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = "parquet_meta_test";
+            final long rows = 10;
+            final FilesFacade ff = configuration.getFilesFacade();
+            execute("CREATE TABLE " + tableName + " AS (SELECT" +
+                    " x id," +
+                    " timestamp_sequence(400_000_000_000, 500)::" + timestampType.getTypeName() + " designated_ts" +
+                    " FROM long_sequence(" + rows + ")) TIMESTAMP(designated_ts) PARTITION BY DAY");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor descriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader(tableName);
+                    PartitionUpdater updater = new PartitionUpdater()
+            ) {
+                final TableToken table = engine.getTableTokenIfExists(tableName);
+                path.concat(root)
+                        .concat(table.getDirNameUtf8())
+                        .concat("1970-01-05")
+                        .slash$();
+                final int partitionDirLen = path.size();
+                path.put(".1").slash$();
+                final int versionedDirLen = path.size();
+                ff.mkdirs(path, configuration.getMkDirMode());
+                path.concat("data.parquet").$();
+
+                PartitionEncoder.populateFromTableReader(reader, descriptor, 0);
+                PartitionEncoder.encode(descriptor, path);
+
+                Assert.assertTrue(ff.exists(path.$()));
+                final long parquetPartitionSize = ff.length(path.$());
+
+                // Open _pm file for writing alongside the parquet file.
+                path.trimTo(versionedDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
+                final int opts = configuration.getWriterFileOpenOpts();
+                final int parquetMetaFd = Files.detach(ff.openRW(path.$(), opts));
+
+                // Open parquet reader/writer fds.
+                path.trimTo(versionedDirLen).concat("data.parquet").$();
+                final int readerFd = Files.detach(ff.openRONoCache(path.$()));
+                final int writerFd = Files.detach(ff.openRW(path.$(), opts));
+
+                updater.of(
+                        path.$(),
+                        readerFd,
+                        parquetPartitionSize,
+                        writerFd,
+                        parquetPartitionSize,
+                        1,  // index of the timestamp column
+                        0L, // uncompressed
+                        false,
+                        false,
+                        0L,
+                        0L,
+                        0.01,
+                        0.0,
+                        parquetMetaFd,
+                        parquetPartitionSize,
+                        parquetPartitionSize,
+                        0L
+                );
+
+                PartitionEncoder.populateFromTableReader(reader, descriptor, 0);
+                updater.updateRowGroup((short) 0, descriptor);
+                updater.updateFileMetadata();
+
+                final long parquetMetaFileSize = updater.getResultParquetMetaFileSize();
+                Assert.assertTrue("_pm file size must be > 0", parquetMetaFileSize > 0);
+
+                // Verify the _pm file exists on disk with the reported size.
+                path.trimTo(versionedDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
+                Assert.assertTrue("_pm file must exist", ff.exists(path.$()));
+                Assert.assertEquals("_pm file size on disk", parquetMetaFileSize, ff.length(path.$()));
+            }
+        });
+    }
+
 }

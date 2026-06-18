@@ -11395,7 +11395,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // reads from _pm metadata - does NOT mmap the parquet file
     // returns the partition size
     private long readParquetMetaMinMaxTimestamps(Path filePath, long parquetFileSize) {
-        assert parquetFileSize > 0;
+        if (parquetFileSize < 0) {
+            throw CairoException.critical(ff.errno()).put("could not access parquet data file for _pm metadata [path=").put(filePath).put(']');
+        }
         try {
             int partitionDirLen = filePath.size() - PARQUET_METADATA_FILE_NAME.length() - 1;
             openParquetMetadataOrThrow(filePath, partitionDirLen, parquetFileSize);

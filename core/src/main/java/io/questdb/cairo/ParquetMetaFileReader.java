@@ -458,9 +458,9 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
     /**
      * Returns the committed {@code _pm} size of the footer {@link #resolveFooter}
      * settled on -- the committed head {@code N}. It drives the in-place-update
-     * parse anchor and the dead-bytes rewrite trigger, and differs from
-     * {@link #getFileSize()} (the mapped / header size) once a dead footer is
-     * present. Returns {@code 0} before {@link #resolveFooter} has run.
+     * parse anchor and differs from {@link #getFileSize()} (the mapped / header
+     * size) once a dead footer is present. Returns {@code 0} before
+     * {@link #resolveFooter} has run.
      */
     public long getResolvedFileSize() {
         return resolvedFileSize;
@@ -806,7 +806,8 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
         // CRC-verify the resolved footer (keyed on currentSize) before trusting
         // its bytes: the physically-last footer can be an orphaned rolled-back
         // one, so only the resolved footer is guaranteed committed. Cached after
-        // the first open; verifyChecksum0 throws on a mismatch or bad file.
+        // the first open; callers clear this reader before resolving a larger
+        // footer. verifyChecksum0 throws on a mismatch or bad file.
         if (!checksumVerified) {
             verifyChecksum0(addr, currentSize);
             checksumVerified = true;
