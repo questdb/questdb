@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PriorityMetadata;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
@@ -65,13 +66,23 @@ public enum ParquetExportMode {
      * Determines the export mode for a given RecordCursorFactory.
      * Shared by both HTTP and SQL export paths.
      *
-     * @param factory      the query's record cursor factory
-     * @param isDescending true when the query produces rows in descending order.
-     *                     The hybrid path (PAGE_FRAME_BACKED) uses zero-copy pointers whose
-     *                     data is always in storage (ascending) order, so descending queries
-     *                     fall back to CURSOR_BASED to produce fully reversed row order.
+     * @param factory          the query's record cursor factory
+     * @param isDescending     true when the query produces rows in descending order.
+     *                         The hybrid path (PAGE_FRAME_BACKED) uses zero-copy pointers whose
+     *                         data is always in storage (ascending) order, so descending queries
+     *                         fall back to CURSOR_BASED to produce fully reversed row order.
+     * @param executionContext the SQL execution context, used to detect lazily type-converted
+     *                         parquet columns.
      */
-    public static ParquetExportMode determineExportMode(RecordCursorFactory factory, boolean isDescending) {
+    public static ParquetExportMode determineExportMode(RecordCursorFactory factory, boolean isDescending, SqlExecutionContext executionContext) {
+        // A lazily type-converted parquet column is decoded in its pre-conversion source layout;
+        // the conversion to the current type happens only in the row-wise Record accessors. The
+        // zero-copy export paths (DIRECT_PAGE_FRAME / PAGE_FRAME_BACKED) ship the raw page buffer
+        // straight to the encoder configured for the target type, which misreads it. Materialize
+        // through a temp table so the conversion is applied before encoding.
+        if (factory.hasParquetConvertedColumns(executionContext)) {
+            return TEMP_TABLE;
+        }
         RecordCursorFactory unwrapped = unwrapFactory(factory);
         if (factory.supportsPageFrameCursor()) {
             return DIRECT_PAGE_FRAME;
