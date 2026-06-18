@@ -392,6 +392,18 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
         return e;
     }
 
+    private boolean isEntryEmpty(Entry<T> e) {
+        do {
+            for (int i = 0; i < segmentSize; i++) {
+                if (Unsafe.arrayGetVolatile(e.allocations, i) != UNALLOCATED || e.getTenant(i) != null) {
+                    return false;
+                }
+            }
+            e = e.next;
+        } while (e != null);
+        return true;
+    }
+
     private void notifyListener(long thread, TableToken token, short event, int segment, int position) {
         PoolListener listener = getPoolListener();
         if (listener != null) {
@@ -503,6 +515,22 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
             // Release the item, to not block the pool, but throw an exception to fail the test
             throw CairoException.nonCritical()
                     .put("table is left behind on pool shutdown [table=").put(leftBehind).put(']');
+        }
+
+        // On a full release (pool close / @TestOnly engine.clear()) every tenant above is now closed,
+        // so also drop the now-empty per-dir-name entries. Otherwise a dropped or ALTER TABLE ... REBASE
+        // WAL'd table leaves its entry behind flagged dropped -- cleared only once WalPurgeJob fully
+        // deletes the dir and calls removeTableToken -- and a later reuse of the same dir name (tests
+        // reset the table-id generator and recreate e.g. base_price~1) inherits that stale flag and
+        // disposes every writer on return. Gated to Long.MAX_VALUE: releaseInactive() runs concurrently
+        // with get() in production, where removing an entry out from under a live borrow is unsafe.
+        if (deadline == Long.MAX_VALUE) {
+            for (Map.Entry<CharSequence, Entry<T>> me : entries.entrySet()) {
+                final Entry<T> e = me.getValue();
+                if (isEntryEmpty(e)) {
+                    entries.remove(me.getKey(), e);
+                }
+            }
         }
 
         // when we are timing out entries the result is "true" if there was any work done
