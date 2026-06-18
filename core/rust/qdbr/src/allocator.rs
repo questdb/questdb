@@ -161,7 +161,9 @@ impl MemTracking {
 /// must match `Unsafe.MEMORY_TRACKER_*_OFFSET` on the Java side.
 #[repr(C)]
 pub struct MemoryTracker {
-    /// Bytes charged against this tracker.
+    /// Bytes charged against this tracker. All parallel workers hammer this one
+    /// atomic, so it is the scaling ceiling - fine for an opt-in, default-off
+    /// limit; stripe it if per-query limits ever go default-on.
     used: AtomicUsize,
 
     /// Configured byte limit. `0` means unlimited.

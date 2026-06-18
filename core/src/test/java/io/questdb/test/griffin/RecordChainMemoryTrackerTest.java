@@ -30,6 +30,8 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.engine.join.HashJoinRecordCursorFactory;
+import io.questdb.griffin.engine.join.HashOuterJoinRecordCursorFactory;
 import io.questdb.griffin.engine.window.CachedWindowRecordCursorFactory;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -287,6 +289,7 @@ public class RecordChainMemoryTrackerTest extends AbstractCairoTest {
                 );
                 try (RecordCursorFactory factory = cq.getRecordCursorFactory();
                      RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    assertInTree(factory, HashJoinRecordCursorFactory.class);
                     while (cursor.hasNext()) {
                         // drain until breach
                     }
@@ -320,6 +323,7 @@ public class RecordChainMemoryTrackerTest extends AbstractCairoTest {
                         "SELECT master.k, slave.w FROM master JOIN slave ON k",
                         sqlExecutionContext
                 ).getRecordCursorFactory()) {
+                    assertInTree(factory, HashJoinRecordCursorFactory.class);
                     for (int i = 0; i < 5; i++) {
                         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                             Assert.fail("expected a per-query memory breach during cursor open at iteration " + i);
@@ -353,6 +357,7 @@ public class RecordChainMemoryTrackerTest extends AbstractCairoTest {
                 );
                 try (RecordCursorFactory factory = cq.getRecordCursorFactory();
                      RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    assertInTree(factory, HashOuterJoinRecordCursorFactory.class);
                     while (cursor.hasNext()) {
                         // drain until breach
                     }
@@ -385,6 +390,7 @@ public class RecordChainMemoryTrackerTest extends AbstractCairoTest {
                         "SELECT master.k, slave.w FROM master JOIN slave ON k",
                         sqlExecutionContext
                 ).getRecordCursorFactory()) {
+                    assertInTree(factory, HashJoinRecordCursorFactory.class);
                     for (int i = 0; i < 20; i++) {
                         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                             long rows = 0;

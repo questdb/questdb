@@ -105,11 +105,11 @@ impl ColumnChunkBuffers {
         let target = self.page_buffers_size;
         if target > self.page_buffers_charged {
             let delta = target - self.page_buffers_charged;
-            self.data_vec.allocator().clone().charge_tracked(delta)?;
+            self.data_vec.allocator().charge_tracked(delta)?;
             self.page_buffers_charged = target;
         } else if target < self.page_buffers_charged {
             let delta = self.page_buffers_charged - target;
-            self.data_vec.allocator().clone().credit_tracked(delta);
+            self.data_vec.allocator().credit_tracked(delta);
             self.page_buffers_charged = target;
         }
         Ok(())
@@ -122,7 +122,6 @@ impl ColumnChunkBuffers {
         if self.page_buffers_charged > 0 {
             self.data_vec
                 .allocator()
-                .clone()
                 .credit_tracked(self.page_buffers_charged);
             self.page_buffers_charged = 0;
         }

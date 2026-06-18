@@ -104,10 +104,13 @@ public class DistinctTimeSeriesMemoryTrackerTest extends AbstractCairoTest {
                 assertInTree(factory);
                 for (int i = 0; i < 20; i++) {
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                        //noinspection StatementWithEmptyBody
+                        long rows = 0;
                         while (cursor.hasNext()) {
-                            // drain
+                            rows++;
                         }
+                        // v is globally unique, so all 1000 rows are distinct; without this a
+                        // cursor returning zero/wrong rows would still pass the leak check.
+                        Assert.assertEquals(1000, rows);
                     }
                 }
             }

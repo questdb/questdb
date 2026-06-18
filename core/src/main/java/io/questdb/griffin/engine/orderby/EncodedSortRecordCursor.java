@@ -157,6 +157,8 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
         // close()/forceClose() null baseCursor, so a null field here means fresh-or-closed.
         assert this.baseCursor == null : "of() without intervening close(): rebinding the memory tracker would underflow the per-query counter";
         this.baseCursor = baseCursor;
+        // Wire only the row-count-scaled allocators; keyHeap stays global-counter only as it is
+        // bounded by maxEntryMemBytes (see the throwLimitOverflow check below).
         entryMem.setMemoryTracker(executionContext.getMemoryTracker());
         recordChain.setMemoryTracker(executionContext.getMemoryTracker());
         if (!isOpen) {

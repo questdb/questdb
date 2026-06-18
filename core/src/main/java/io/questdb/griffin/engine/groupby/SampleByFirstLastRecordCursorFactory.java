@@ -117,6 +117,8 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
             int blockSize = metadata.getIndexValueBlockCapacity(groupBySymbolColIndex);
             pageSize = configPageSize < 16 ? Math.max(blockSize, 16) : configPageSize;
             maxSamplePeriodSize = pageSize * 4;
+            // Fixed-size scratch (samplePeriodAddress reset per frame), so global-counter only;
+            // the frame memory pool, which scales with the data, carries the per-query tracker.
             int outSize = pageSize << ITEMS_PER_OUT_ARRAY_SHIFT;
             rowIdOutAddress = new DirectLongList(outSize, MemoryTag.NATIVE_SAMPLE_BY_LONG_LIST);
             rowIdOutAddress.setPos(outSize);
