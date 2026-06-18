@@ -654,11 +654,20 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // pre-merge size. _pm is never truncated (see below).
                 path.of(pathToTable);
                 setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, srcNameTxn);
-                long fd = TableUtils.openRW(ff, path.$(), LOG, cairoConfiguration.getWriterFileOpenOpts());
-                if (!ff.truncate(fd, parquetSize)) {
-                    LOG.error().$("could not truncate partition file [path=").$(path).I$();
+                try {
+                    // Swallow any error (openRW throws on an FS fault): o3BumpErrorCount
+                    // below must still run to suspend the table. A failed truncate leaves
+                    // the failed update's appended bytes as a dead tail past the committed
+                    // parquetSize, which is harmless -- the committed _txn size is unchanged,
+                    // so readers ignore it and the next update overwrites it.
+                    long fd = TableUtils.openRW(ff, path.$(), LOG, cairoConfiguration.getWriterFileOpenOpts());
+                    if (!ff.truncate(fd, parquetSize)) {
+                        LOG.error().$("could not truncate partition file [path=").$(path).I$();
+                    }
+                    ff.close(fd);
+                } catch (Throwable dataErr) {
+                    LOG.error().$("could not truncate parquet data file on rollback [path=").$(path).$(", e=").$(dataErr).I$();
                 }
-                ff.close(fd);
 
                 if (parquetMetaReader.getAddr() != 0) {
                     // Leave _pm un-truncated, header unrestored. A failure before
@@ -677,7 +686,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         // o3BumpErrorCount below must still run to suspend the table.
                         // fsyncAndClose closes the fd even on failure (no leak), and a
                         // non-durable dead tail is harmless -- the next update rewrites it.
-                        fd = TableUtils.openRW(ff, path.$(), LOG, cairoConfiguration.getWriterFileOpenOpts());
+                        long fd = TableUtils.openRW(ff, path.$(), LOG, cairoConfiguration.getWriterFileOpenOpts());
                         if (cairoConfiguration.getCommitMode() != CommitMode.NOSYNC) {
                             ff.fsyncAndClose(fd);
                         } else {
