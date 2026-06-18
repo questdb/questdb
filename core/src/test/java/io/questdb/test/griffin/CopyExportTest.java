@@ -333,7 +333,7 @@ public class CopyExportTest extends AbstractCairoTest {
                         .noLeakCheck()
                         .returns("""
                                 path\tdiskSizeHuman
-                                test_table.parquet\t583.0 B
+                                test_table.parquet\t605.0 B
                                 """);
             };
             testCopyExport(stmt, test);
@@ -711,8 +711,8 @@ public class CopyExportTest extends AbstractCairoTest {
                         assertQuery("select path, diskSizeHuman from export_files() order by path")
                                 .noLeakCheck()
                                 .returns("path\tdiskSizeHuman\n" +
-                                        "test_table" + File.separator + "2023-01.parquet\t614.0 B\n" +
-                                        "test_table" + File.separator + "2023-02.parquet\t614.0 B\n");
+                                        "test_table" + File.separator + "2023-01.parquet\t636.0 B\n" +
+                                        "test_table" + File.separator + "2023-02.parquet\t636.0 B\n");
                     });
             testCopyExport(stmt, test);
         });
@@ -795,8 +795,8 @@ public class CopyExportTest extends AbstractCairoTest {
                         assertQuery("select path, diskSizeHuman from export_files()  order by path")
                                 .noLeakCheck()
                                 .returns("path\tdiskSizeHuman\n" +
-                                        "test_table" + File.separator + "2020-01-01.parquet\t501.0 B\n" +
-                                        "test_table" + File.separator + "2020-01-02.parquet\t590.0 B\n");
+                                        "test_table" + File.separator + "2020-01-01.parquet\t523.0 B\n" +
+                                        "test_table" + File.separator + "2020-01-02.parquet\t612.0 B\n");
                     });
             testCopyExport(stmt, test);
         });
@@ -903,8 +903,8 @@ public class CopyExportTest extends AbstractCairoTest {
                         assertQuery("select path, diskSizeHuman from export_files()  order by path")
                                 .noLeakCheck()
                                 .returns("path\tdiskSizeHuman\n" +
-                                        "price_1h" + File.separator + "2023-09.parquet\t922.0 B\n" +
-                                        "price_1h" + File.separator + "2023-11.parquet\t927.0 B\n");
+                                        "price_1h" + File.separator + "2023-09.parquet\t954.0 B\n" +
+                                        "price_1h" + File.separator + "2023-11.parquet\t959.0 B\n");
                     });
 
             testCopyExport(stmt, test);
@@ -1264,7 +1264,7 @@ public class CopyExportTest extends AbstractCairoTest {
                                 .noLeakCheck()
                                 .returns("""
                                         path\tdiskSizeHuman
-                                        ❤️🍺.parquet\t639.0 B
+                                        ❤️🍺.parquet\t661.0 B
                                         """);
                     });
 
@@ -3225,7 +3225,7 @@ public class CopyExportTest extends AbstractCairoTest {
                                 .noLeakCheck()
                                 .returns("""
                                         path\tdiskSizeHuman
-                                        💗❤️.parquet\t543.0 B
+                                        💗❤️.parquet\t565.0 B
                                         """);
                     });
 
@@ -3399,7 +3399,7 @@ public class CopyExportTest extends AbstractCairoTest {
                                 .noLeakCheck()
                                 .returns("""
                                         path\tdiskSizeHuman
-                                        output13.parquet\t818.0 B
+                                        output13.parquet\t851.0 B
                                         """);
                     });
 
@@ -3416,8 +3416,8 @@ public class CopyExportTest extends AbstractCairoTest {
                                 .noLeakCheck()
                                 .returns("""
                                         path\tdiskSizeHuman
-                                        output13.parquet\t818.0 B
-                                        output14.parquet\t818.0 B
+                                        output13.parquet\t851.0 B
+                                        output14.parquet\t851.0 B
                                         """);
                     });
 
@@ -3436,8 +3436,8 @@ public class CopyExportTest extends AbstractCairoTest {
                                 .noLeakCheck()
                                 .returns("""
                                         path\tdiskSizeHuman
-                                        output13.parquet\t865.0 B
-                                        output14.parquet\t818.0 B
+                                        output13.parquet\t898.0 B
+                                        output14.parquet\t851.0 B
                                         """);
                     });
             execute("insert into test_table values (4, 'hello1', 3.5), (5, 'world1', 4.5)");
@@ -3454,9 +3454,9 @@ public class CopyExportTest extends AbstractCairoTest {
                         assertQuery("select path, diskSizeHuman from export_files() order by path")
                                 .noLeakCheck()
                                 .returns("path\tdiskSizeHuman\n" +
-                                        "output13.parquet\t865.0 B\n" +
-                                        "output13" + File.separator + "dir1" + File.separator + "dir2.parquet\t865.0 B\n" +
-                                        "output14.parquet\t818.0 B\n");
+                                        "output13.parquet\t898.0 B\n" +
+                                        "output13" + File.separator + "dir1" + File.separator + "dir2.parquet\t898.0 B\n" +
+                                        "output14.parquet\t851.0 B\n");
                     });
             testCopyExport(stmt3, test3);
 
@@ -3471,10 +3471,10 @@ public class CopyExportTest extends AbstractCairoTest {
                         assertQuery("select path, diskSizeHuman from export_files() order by path")
                                 .noLeakCheck()
                                 .returns("path\tdiskSizeHuman\n" +
-                                        "output13.parquet\t865.0 B\n" +
-                                        "output13" + File.separator + "dir1" + File.separator + "dir2.parquet\t865.0 B\n" +
-                                        "output14.parquet\t818.0 B\n" +
-                                        "output15" + File.separator + "dir1" + File.separator + "dir2.parquet\t865.0 B\n");
+                                        "output13.parquet\t898.0 B\n" +
+                                        "output13" + File.separator + "dir1" + File.separator + "dir2.parquet\t898.0 B\n" +
+                                        "output14.parquet\t851.0 B\n" +
+                                        "output15" + File.separator + "dir1" + File.separator + "dir2.parquet\t898.0 B\n");
                     });
             testCopyExport(stmt4, test4);
         });
@@ -3503,10 +3503,10 @@ public class CopyExportTest extends AbstractCairoTest {
                     assertEventually(() -> assertQuery("select path, diskSizeHuman from export_files() order by path")
                             .noLeakCheck()
                             .returns("path\tdiskSizeHuman\n" +
-                                    "output13.parquet\t818.0 B\n" +
-                                    "output13" + File.separator + "dir1" + File.separator + "dir2.parquet\t866.0 B\n" +
-                                    "output14.parquet\t819.0 B\n" +
-                                    "output15" + File.separator + "dir1" + File.separator + "dir2.parquet\t819.0 B\n"));
+                                    "output13.parquet\t851.0 B\n" +
+                                    "output13" + File.separator + "dir1" + File.separator + "dir2.parquet\t899.0 B\n" +
+                                    "output14.parquet\t852.0 B\n" +
+                                    "output15" + File.separator + "dir1" + File.separator + "dir2.parquet\t852.0 B\n"));
             testCopyExport(stmt, test4, true, 4);
         });
     }
