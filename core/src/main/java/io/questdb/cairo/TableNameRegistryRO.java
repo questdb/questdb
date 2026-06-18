@@ -72,22 +72,7 @@ public class TableNameRegistryRO extends AbstractTableNameRegistry {
     }
 
     @Override
-    public void preRegisterDir(TableToken newToken) {
-        throw CairoException.critical(0).put("instance is read only");
-    }
-
-    @Override
     public void purgeToken(TableToken token) {
-        throw CairoException.critical(0).put("instance is read only");
-    }
-
-    @Override
-    public void rebaseSwap(TableToken oldToken, TableToken newToken) {
-        throw CairoException.critical(0).put("instance is read only");
-    }
-
-    @Override
-    public void rebaseSwapBack(TableToken newToken, TableToken oldToken) {
         throw CairoException.critical(0).put("instance is read only");
     }
 

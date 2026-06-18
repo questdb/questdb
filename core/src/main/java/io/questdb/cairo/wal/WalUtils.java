@@ -27,6 +27,9 @@ package io.questdb.cairo.wal;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriterMetadata;
+import io.questdb.cairo.TxWriter;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateReader;
@@ -34,13 +37,18 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cairo.wal.seq.TableSequencerImpl;
 import io.questdb.cairo.wal.seq.TableTransactionLogFile;
 import io.questdb.cairo.wal.seq.TableTransactionLogV1;
 import io.questdb.cairo.wal.seq.TableTransactionLogV2;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 
 import static io.questdb.cairo.wal.WalTxnType.MAT_VIEW_DATA;
 import static io.questdb.cairo.wal.WalTxnType.MAT_VIEW_INVALIDATE;
@@ -112,6 +120,103 @@ public class WalUtils {
     public static long WAL_DEFAULT_BASE_TABLE_TXN = Long.MIN_VALUE;
     public static long WAL_DEFAULT_LAST_PERIOD_HI = Long.MIN_VALUE;
     public static long WAL_DEFAULT_LAST_REFRESH_TIMESTAMP = Long.MIN_VALUE;
+
+    /**
+     * Builds a complete rebased table in the staging directory {@code dstDir} for
+     * {@code ALTER TABLE ... REBASE WAL}: clones the source table's data (hard-links the immutable
+     * partition column files, copies the table-root files, excludes the sequencer {@code txn_seq} and
+     * WAL segment dirs {@code wal*} plus transient markers), resets {@code _txn}/{@code _meta} to a fresh
+     * table (seqTxn 0, new tableId, metadataVersion 0), and creates the sequencer files. The caller
+     * positions {@code srcDir}/{@code dstDir} at the respective table dirs and must have created
+     * {@code dstDir}; it then renames {@code dstDir} into place atomically. No in-memory sequencer is
+     * registered and the WAL listener is not notified - the live sequencer opens lazily on first access.
+     * When {@code markRebased} is set, the permanent {@code _rebase_new} marker is written too (see below).
+     */
+    public static void cloneTableDirForRebase(
+            CairoConfiguration configuration,
+            WalDirectoryPolicy walDirectoryPolicy,
+            Path srcDir,
+            Path dstDir,
+            TableToken newToken,
+            int newTableId,
+            boolean markRebased,
+            StringSink nameSink
+    ) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        final int dirMode = configuration.getMkDirMode();
+        final int srcLen = srcDir.size();
+        final int dstLen = dstDir.size();
+        final long pFind = ff.findFirst(srcDir.$());
+        if (pFind < 1) {
+            throw CairoException.critical(ff.errno()).put("could not list table dir for rebase [path=").put(srcDir).put(']');
+        }
+        try {
+            do {
+                final long pName = ff.findName(pFind);
+                if (!Files.notDots(pName)) {
+                    continue;
+                }
+                final int type = ff.findType(pFind);
+                nameSink.clear();
+                Utf8s.utf8ToUtf16Z(pName, nameSink);
+                if (type == Files.DT_FILE) {
+                    if (isRebaseClonedRootFile(nameSink)) {
+                        srcDir.trimTo(srcLen).concat(pName);
+                        dstDir.trimTo(dstLen).concat(pName);
+                        if (ff.copy(srcDir.$(), dstDir.$()) < 0) {
+                            throw CairoException.critical(ff.errno()).put("could not clone table file [from=").put(srcDir).put(", to=").put(dstDir).put(']');
+                        }
+                    }
+                } else if (!isRebaseExcludedDir(nameSink)) {
+                    // A data partition directory: hard-link the immutable column files inside it.
+                    srcDir.trimTo(srcLen).concat(pName);
+                    dstDir.trimTo(dstLen).concat(pName);
+                    ff.mkdir(dstDir.$(), dirMode);
+                    if (ff.hardLinkDirRecursive(srcDir, dstDir, dirMode) < 0) {
+                        throw CairoException.critical(ff.errno()).put("could not hard-link partition for rebase [from=").put(srcDir).put(", to=").put(dstDir).put(']');
+                    }
+                }
+                srcDir.trimTo(srcLen);
+                dstDir.trimTo(dstLen);
+            } while (ff.findNext(pFind) > 0);
+        } finally {
+            ff.findClose(pFind);
+            srcDir.trimTo(srcLen);
+            dstDir.trimTo(dstLen);
+        }
+
+        // Reset _txn (seqTxn=0, lag, structure version=0) and _meta (new tableId, metadataVersion=0) in
+        // the staging dir - exactly as WAL conversion does (TableConverter) - then create the sequencer
+        // files so the rename carries a complete table into place.
+        try (
+                TxWriter txWriter = new TxWriter(ff, configuration);
+                MemoryMARW metaMem = Vm.getCMARWInstance()
+        ) {
+            txWriter.ofRW(dstDir.concat(TableUtils.TXN_FILE_NAME).$());
+            txWriter.resetLagValuesUnsafe();
+            TableUtils.openSmallFile(ff, dstDir.trimTo(dstLen), dstLen, metaMem, TableUtils.META_FILE_NAME, MemoryTag.MMAP_TABLE_WRITER);
+            metaMem.putInt(TableUtils.META_OFFSET_TABLE_ID, newTableId);
+            metaMem.putLong(TableUtils.META_OFFSET_METADATA_VERSION, 0);
+            txWriter.resetStructureVersionUnsafe();
+
+            TableUtils.openSmallFile(ff, dstDir.trimTo(dstLen), dstLen, metaMem, TableUtils.META_FILE_NAME, MemoryTag.MMAP_TABLE_WRITER);
+            try (TableWriterMetadata metadata = new TableWriterMetadata(newToken)) {
+                metadata.reload(dstDir.trimTo(dstLen), metaMem);
+                TableSequencerImpl.createSequencerFiles(configuration, walDirectoryPolicy, dstDir.trimTo(dstLen), metadata, newToken, newTableId);
+            }
+        }
+        dstDir.trimTo(dstLen);
+
+        // Mark the new table rebased while it is still invisible in the staging dir, so the permanent
+        // _rebase_new marker is in place before the rename makes the table observable to the uploader.
+        // The uploader's first poll stats this marker and, if present, skips the empty seed txn and records
+        // first_txn=2 (otherwise it would lock first_txn=0 and a replica would build the table from an
+        // incomplete baseline). The replica variant follows the primary's dir and must NOT mark rebased, so
+        // markRebased is false there. No-op effect in OSS, which has no uploader to consume the marker.
+        if (markRebased) {
+            writeRebaseNewMarker(ff, dstDir);
+        }
+    }
 
     public static void createTxnLogFile(FilesFacade ff, MemoryMARW mem, Path txnSeqDirPath, long tableCreateDate, int chunkSize, int mkDirMode) {
         int rootLen = txnSeqDirPath.size();
@@ -321,6 +426,24 @@ public class WalUtils {
                 }
             }
         }
+    }
+
+    // Whether a top-level file should be COPIED into a rebase clone (everything except transient markers).
+    private static boolean isRebaseClonedRootFile(CharSequence name) {
+        if (Chars.equals(name, TableUtils.TODO_FILE_NAME)
+                || Chars.equals(name, CONVERT_FILE_NAME)
+                || Chars.equals(name, REBASE_NEW_FILE_NAME)
+                || Chars.equals(name, TableUtils.TXN_SCOREBOARD_FILE_NAME)) {
+            return false;
+        }
+        return !Chars.endsWith(name, WAL_PENDING_FS_MARKER);
+    }
+
+    // Whether a top-level directory entry should be EXCLUDED from a rebase clone (sequencer + WAL dirs).
+    private static boolean isRebaseExcludedDir(CharSequence name) {
+        return Chars.equals(name, SEQ_DIR)
+                || Chars.equals(name, SEQ_DIR_DEPRECATED)
+                || Chars.startsWith(name, WAL_NAME_BASE);
     }
 
     private static boolean processTransaction(

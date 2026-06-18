@@ -105,10 +105,8 @@ public class TableSequencerImpl implements TableSequencer {
             if (tableStruct != null) {
                 schemaLock.writeLock().lock();
                 try {
-                    createSequencerDir(ff, configuration.getMkDirMode());
                     final long timestamp = microClock.getTicks();
-                    metadata.create(tableStruct, tableToken, path, rootLen, tableId);
-                    tableTransactionLog.create(path, timestamp);
+                    createSequencerFiles(ff, configuration.getMkDirMode(), walDirectoryPolicy, metadata, tableTransactionLog, path, rootLen, tableStruct, tableToken, tableId, timestamp);
                     engine.getWalListener().tableCreated(tableToken, timestamp);
                 } finally {
                     schemaLock.writeLock().unlock();
@@ -153,6 +151,42 @@ public class TableSequencerImpl implements TableSequencer {
                     .I$();
             closeLocked();
             throw th;
+        }
+    }
+
+    /**
+     * Creates the on-disk sequencer files - the {@code txn_seq} directory, the initial sequencer metadata
+     * and the transaction log - for a brand-new table directly under {@code path}
+     */
+    public static void createSequencerFiles(
+            CairoConfiguration configuration,
+            WalDirectoryPolicy walDirectoryPolicy,
+            Path path,
+            TableStructure tableStruct,
+            TableToken tableToken,
+            int tableId
+    ) {
+        final int tableDirLen = path.size();
+        final int rootLen = path.concat(SEQ_DIR).size();
+        try (
+                SequencerMetadata metadata = new SequencerMetadata(configuration);
+                TableTransactionLog tableTransactionLog = new TableTransactionLog(configuration, walDirectoryPolicy)
+        ) {
+            createSequencerFiles(
+                    configuration.getFilesFacade(),
+                    configuration.getMkDirMode(),
+                    walDirectoryPolicy,
+                    metadata,
+                    tableTransactionLog,
+                    path,
+                    rootLen,
+                    tableStruct,
+                    tableToken,
+                    tableId,
+                    configuration.getMicrosecondClock().getTicks()
+            );
+        } finally {
+            path.trimTo(tableDirLen);
         }
     }
 
@@ -437,6 +471,28 @@ public class TableSequencerImpl implements TableSequencer {
         this.distressed = true;
     }
 
+    private static void createSequencerFiles(
+            FilesFacade ff,
+            int mkDirMode,
+            WalDirectoryPolicy walDirectoryPolicy,
+            SequencerMetadata metadata,
+            TableTransactionLog tableTransactionLog,
+            Path path,
+            int rootLen,
+            TableStructure tableStruct,
+            TableToken tableToken,
+            int tableId,
+            long timestamp
+    ) {
+        if (ff.mkdirs(path.slash(), mkDirMode) != 0) {
+            throw CairoException.critical(ff.errno()).put("Cannot create sequencer directory: ").put(path);
+        }
+        walDirectoryPolicy.initDirectory(path);
+        path.trimTo(rootLen);
+        metadata.create(tableStruct, tableToken, path, rootLen, tableId);
+        tableTransactionLog.create(path, timestamp);
+    }
+
     private void applyToMetadata(TableMetadataChange change) {
         change.apply(metadataSvc, true);
         metadata.syncToMetaFile();
@@ -467,16 +523,6 @@ public class TableSequencerImpl implements TableSequencer {
         Misc.free(walIdGenerator);
         Misc.free(path);
         return true;
-    }
-
-    private void createSequencerDir(FilesFacade ff, int mkDirMode) {
-        if (ff.mkdirs(path.slash(), mkDirMode) != 0) {
-            final CairoException e = CairoException.critical(ff.errno()).put("Cannot create sequencer directory: ").put(path);
-            closeLocked();
-            throw e;
-        }
-        walDirectoryPolicy.initDirectory(path);
-        path.trimTo(rootLen);
     }
 
     private long nextTxn(

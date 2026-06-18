@@ -5274,16 +5274,16 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRebaseWalSeedFailureLeavesTableIntactOnOldDir() throws Exception {
-        // REBASE WAL commits the registry name swap (t -> new dir, old dir marked dropped) and only then
-        // seeds the new sequencer with an empty first transaction - the seed must follow the swap so the
-        // WAL apply job it wakes sees the table live under its new name. That seed (getWalWriter on the new
-        // dir plus commitRebaseSeed) does real I/O and can fail on a full disk or a transient FS error.
-        // A seed failure after the swap must roll the swap back: the logical name must keep resolving to
-        // the intact old dir, the data must survive, and a name-registry reload (what a restart does) must
-        // still find the table - never leave it unresolvable with the old dir reclaimable by the purge job
-        // (data loss). The failure is injected by refusing to open the new segment's _event file, which is
-        // the only _event file opened during a rebase and only after the swap has committed.
+    public void testRebaseWalSeedFailureCommitsNewDirUnseeded() throws Exception {
+        // REBASE WAL commits the registry swap (drop old, register new) and only then seeds the new
+        // sequencer with empty transactions - the seed must follow the swap so the WAL apply job it wakes
+        // sees the table live under its new dir. That seed (getWalWriter on the new dir plus
+        // commitRebaseSeed) does real I/O and can fail on a full disk or a transient FS error. The swap is
+        // intentionally NOT rolled back on a seed failure: the table stays committed on the new dir, intact
+        // but unseeded - acceptable for this rare admin op. Crucially there is no data loss (the new dir
+        // hard-links the partitions), and a name-registry reload (what a restart does) still finds the table
+        // on the new dir. The failure is injected by refusing to open the new segment's _event file, which
+        // is the only _event file opened during a rebase and only after the swap has committed.
         setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
 
         final AtomicBoolean failSeed = new AtomicBoolean(false);
@@ -5322,25 +5322,24 @@ public class WalWriterTest extends AbstractCairoTest {
                 failSeed.set(false);
             }
 
-            // The aborted rebase must NOT have left the logical name pointing at the discarded new dir.
-            // The swap-back restored it, so it resolves to the original (intact) dir and the data is all there.
+            // The swap committed before the seed failed, so the name now resolves to the NEW dir (a fresh
+            // tableId), not the old one. The data survives via the new dir's hard-linked partitions.
             final TableToken afterToken = engine.verifyTableName("t");
-            Assert.assertEquals(oldToken.getDirName(), afterToken.getDirName());
-            Assert.assertEquals(oldToken.getTableId(), afterToken.getTableId());
+            Assert.assertNotEquals(oldToken.getDirName(), afterToken.getDirName());
+            Assert.assertNotEquals(oldToken.getTableId(), afterToken.getTableId());
             assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n3\n");
 
-            // A name-registry reload (what a restart does) must still find the table on the old dir. The
-            // new dir was removed, so the compensating DROP(new)/ADD(old) the swap-back logged must restore
-            // the name to the old dir; a botched abort would instead leave it unresolvable - data loss.
+            // A name-registry reload (what a restart does) still finds the table on the new dir: registerName
+            // durably logged ADD(new) and dropTable logged DROP(old) to tables.d.
             engine.releaseInactive();
             engine.reloadTableNames();
             engine.reconcileTableNameRegistryState();
             final TableToken afterReload = engine.verifyTableName("t");
-            Assert.assertEquals(oldToken.getDirName(), afterReload.getDirName());
+            Assert.assertEquals(afterToken.getDirName(), afterReload.getDirName());
             assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n3\n");
 
-            // The recovered table is still functional: resume and keep ingesting on the old sequencer.
-            execute("alter table t resume wal");
+            // The rebased table is functional (not suspended - the rebase installed a fresh sequencer): keep
+            // ingesting on the new dir.
             execute("insert into t values ('2024-01-04T00:00:00.000000Z', 4)");
             drainWalQueue();
             assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n4\n");
