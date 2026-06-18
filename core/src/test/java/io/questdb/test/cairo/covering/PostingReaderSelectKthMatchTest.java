@@ -671,6 +671,56 @@ public class PostingReaderSelectKthMatchTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * selectKthMatch / countMatchesClamped edge cases: an absent key (out of every gen's range)
+     * yields zero matches and the sentinel at k=0, and a single-row-per-key layout resolves k=0 to
+     * the row and k==count to the sentinel -- whatever encoding the writer picks.
+     */
+    @Test
+    public void testSelectKthMatchAbsentAndSingleRowEdges() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                // (a) Absent key: build keys 0..2, probe an out-of-range key.
+                final String name = "skm_absent";
+                writeMultiGenSparse(path, plen, name, 3, 4, 3, 9, 9);
+                try (PostingIndexFwdReader r = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 0, 0)) {
+                    r.reloadConditionally();
+                    final int absent = 99;
+                    assertEquals("absent key must have zero clamped matches",
+                            0L, r.countMatchesClamped(absent, 0, Long.MAX_VALUE, Long.MAX_VALUE));
+                    assertEquals("absent key selectKthMatch(0) must be the sentinel",
+                            Numbers.LONG_NULL, r.selectKthMatch(absent, 0, Long.MAX_VALUE, Long.MAX_VALUE, 0));
+                    assertSelectMatchesCursor(r, absent, 0, Long.MAX_VALUE);
+                }
+                // (b) Single row per key: keys 0,1,2 each at exactly one row.
+                final String name2 = "skm_single_row";
+                try (PostingIndexWriter w = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name2, COLUMN_NAME_TXN_NONE)) {
+                    w.add(0, 0);
+                    w.add(1, 1);
+                    w.add(2, 2);
+                    w.setMaxValue(2);
+                    w.commit();
+                }
+                try (PostingIndexFwdReader r = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name2, COLUMN_NAME_TXN_NONE, 0, 0)) {
+                    r.reloadConditionally();
+                    for (int key = 0; key < 3; key++) {
+                        assertEquals("single-row key must count 1",
+                                1L, r.countMatchesClamped(key, 0, Long.MAX_VALUE, Long.MAX_VALUE));
+                        assertEquals("single-row key k=0 is its row",
+                                (long) key, r.selectKthMatch(key, 0, Long.MAX_VALUE, Long.MAX_VALUE, 0));
+                        assertEquals("single-row key k==count is the sentinel",
+                                Numbers.LONG_NULL, r.selectKthMatch(key, 0, Long.MAX_VALUE, Long.MAX_VALUE, 1));
+                        assertSelectMatchesCursor(r, key, 0, Long.MAX_VALUE);
+                    }
+                }
+            }
+        });
+    }
+
     // ---- helpers ----
 
     private static void assertSelectMatchesCursor(PostingIndexFwdReader reader, int key, long minValue, long callerMax) {

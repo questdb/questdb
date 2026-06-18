@@ -402,6 +402,43 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelCoveredDecodeDescendingTraverseMatchesReference() throws Exception {
+        // Descending covered scans route through fillFrameByTraverse (cheapEligible == false; the
+        // cheap O(genCount) path is forward-only) using the BACKWARD posting reader, decoded on the
+        // async workers -- the same traverse-fallback worker decode a forward MIXED-gen bail
+        // reaches. With a residual filter forcing the async path, a 4-worker descending covered
+        // query (scalar + var-size covered columns) must match a non-indexed twin.
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 200);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(pool, (engine, compiler, ctx) -> {
+                engine.execute("CREATE TABLE cov (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (px, tag), " +
+                        "px DOUBLE, tag STRING) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
+                engine.execute("CREATE TABLE ref (ts TIMESTAMP, sym SYMBOL, px DOUBLE, tag STRING) " +
+                        "TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
+                final int rows = 30_000;
+                engine.execute("INSERT INTO cov SELECT" +
+                        " ('2024-01-01'::TIMESTAMP + (x-1)*60_000_000L)::timestamp," +
+                        " ('S' || ((x-1) % 6))::symbol, (x % 997)::double," +
+                        " case when x % 9 = 0 then null else ('tag-' || (x % 80)) end" +
+                        " FROM long_sequence(" + rows + ")", ctx);
+                engine.execute("INSERT INTO ref SELECT * FROM cov", ctx);
+                engine.releaseAllWriters();
+
+                for (String sym : new String[]{"S0", "S3"}) {
+                    // Descending projection + residual filter -> async covered filter, descending
+                    // frame production -> fillFrameByTraverse on the workers (record path).
+                    final String proj = "SELECT ts, px, tag FROM %s WHERE sym = '" + sym + "' AND px > 0.5 ORDER BY ts DESC";
+                    TestUtils.assertSqlCursors(compiler, ctx, String.format(proj, "ref"), String.format(proj, "cov"), LOG);
+                    // first/last over the covered scalar + var columns.
+                    final String agg = "SELECT first(px), last(px), first(tag), last(tag), count() FROM %s WHERE sym = '" + sym + "'";
+                    TestUtils.assertSqlCursors(compiler, ctx, String.format(agg, "ref"), String.format(agg, "cov"), LOG);
+                }
+            }, configuration, LOG);
+        });
+    }
+
+    @Test
     public void testRepeatedCoveredQueriesDoNotLeakFrozenReaders() throws Exception {
         // A reader left frozen by a covered query would make reloadConditionally()
         // a permanent no-op and break the NEXT query against the same partition;
