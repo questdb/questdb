@@ -132,6 +132,7 @@ import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
+import io.questdb.griffin.engine.window.CachedWindowLightRecordCursorFactory;
 import io.questdb.griffin.engine.window.CachedWindowRecordCursorFactory;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
@@ -2884,12 +2885,23 @@ public class CairoEngine implements Closeable, WriterSource {
         while (root instanceof QueryProgress) {
             root = root.getBaseFactory();
         }
+        // The planner picks a cached factory whenever any window function needs
+        // multi-pass evaluation (e.g. lead, percentile, etc.). The LIGHT variant is
+        // chosen for encoded-sort-eligible, fixed-width outputs; the regular one
+        // otherwise. Both mean caching/multi-pass the incremental refresh cannot drive.
+        final ObjList<WindowFunction> cachedWindowFunctions;
         if (root instanceof CachedWindowRecordCursorFactory cwf) {
-            // The planner picks the cached factory whenever any window function needs
-            // multi-pass evaluation (e.g. lead, percentile, etc.). Surface the lead()
-            // case with a specific message before the generic reject — lead()
-            // is the most common cause and the user benefit of "use lag()" is high.
-            rejectLeadIfPresent(cwf.getAllWindowFunctions(), position);
+            cachedWindowFunctions = cwf.getAllWindowFunctions();
+        } else if (root instanceof CachedWindowLightRecordCursorFactory cwlf) {
+            cachedWindowFunctions = cwlf.getAllWindowFunctions();
+        } else {
+            cachedWindowFunctions = null;
+        }
+        if (cachedWindowFunctions != null) {
+            // Surface the lead() case with a specific message before the generic
+            // reject -- lead() is the most common cause and the user benefit of
+            // "use lag()" is high.
+            rejectLeadIfPresent(cachedWindowFunctions, position);
             throw SqlException.$(position, "live view select may only use window functions that support incremental refresh; " +
                     "this query requires caching or multi-pass evaluation");
         }
