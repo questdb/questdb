@@ -1,5 +1,25 @@
 steps:
   - template: detect-local-client.yml
+  - bash: |
+      if curl -sf --connect-timeout 2 http://maven.internal:8081/ > /dev/null 2>&1; then
+        echo "Private Reposilite cache reachable, using hetzner maven settings"
+        echo "##vso[task.setvariable variable=MAVEN_SETTINGS_FILE]$(Build.SourcesDirectory)/ci/maven-settings-hetzner.xml"
+        # Allow HTTP keep-alive when routing through the private Reposilite cache.
+        # -Dhttp.keepAlive=false opens a new TCP connection per artifact; the single-IP cache
+        # reached over the Hetzner vSwitch can't absorb that connection churn under concurrent
+        # builds (intermittent "Connect to maven.internal:8081 ... Connection timed out", which
+        # the failover-less mirror turns into a build failure). Reusing connections avoids it.
+        # NOTE: this toggle only affects the default HttpClient resolver transport. Tasks that
+        # run with -Dmaven.resolver.transport=wagon ignore it and instead pool connections via
+        # -Dmaven.wagon.httpconnectionManager.ttlSeconds (already set in MAVEN_RUN_OPTS).
+        echo "##vso[task.setvariable variable=MAVEN_KEEPALIVE_OPT]"
+      else
+        echo "Private Reposilite not reachable, using default maven settings"
+        echo "##vso[task.setvariable variable=MAVEN_SETTINGS_FILE]$(Build.SourcesDirectory)/ci/maven-settings.xml"
+        # Direct-to-Central path: keep historical behaviour (no connection reuse).
+        echo "##vso[task.setvariable variable=MAVEN_KEEPALIVE_OPT]-Dhttp.keepAlive=false"
+      fi
+    displayName: "Select Maven settings (local proxy vs default)"
   - bash: sudo sysctl -w fs.file-max=500000
     displayName: "Increase file count on Linux"
     condition: eq(variables['os'], 'Linux')
@@ -38,7 +58,7 @@ steps:
       mavenPomFile: "pom.xml"
       mavenOptions: "$(MAVEN_OPTS)"
       options:
-        "compile $(javadoc_step) -DskipTests -P build-web-console$(javadoc_profile) $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS)"
+        "-s $(MAVEN_SETTINGS_FILE) compile $(javadoc_step) -DskipTests -P build-web-console$(javadoc_profile) $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS)"
       jdkVersionOption: $(jdk)
     condition:
       eq(variables['SOURCE_CODE_CHANGED'], 'false')
@@ -51,7 +71,7 @@ steps:
       mavenOptions: "$(MAVEN_OPTS)"
       goals: "clean test"
       options:
-        "--batch-mode --quiet -Dtest.include=**/compat/**,**/cliutil/**
+        "-s $(MAVEN_SETTINGS_FILE) --batch-mode --quiet -Dtest.include=**/compat/**,**/cliutil/**
         -Dout=$(Build.SourcesDirectory)/ci/qlog.conf
         -DfailIfNoTests=false
         -Dsurefire.failIfNoSpecifiedTests=false
