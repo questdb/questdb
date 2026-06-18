@@ -1790,7 +1790,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     Frame forward scan on: a
                                 Hash
                                     SelectedRecord
-                                        Sort light
+                                        Encode sort light
                                           keys: [s]
                                             PageFrame
                                                 Row forward scan
@@ -10825,7 +10825,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select x, * from xx where str is not null order by str desc limit 10, 20")
                 .ddl("create table xx ( x long, str varchar ) ")
                 .assertsPlan("""
-                        Sort light lo: 10 hi: 20
+                        Encode sort light lo: 10 hi: 20
                           keys: [str desc]
                             SelectedRecord
                                 Async JIT Filter workers: 1
@@ -12486,7 +12486,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select str, ts, l as l1, ts::long+l as tsum, row_number() over ( partition by l, ts order by str) from t")
                 .ddl("create table t as ( select x l, x::string str, x::timestamp ts from long_sequence(100))")
                 .assertsPlan("""
-                        CachedWindow
+                        CachedWindowLight
                           orderedFunctions: [[str] => [row_number() over (partition by [l1,ts])]]
                             VirtualRecord
                               functions: [str,ts,l1,ts::long+l1]
