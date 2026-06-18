@@ -46,6 +46,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     private TableWriter.ExtensionListener extensionListener;
     private int lastRecordBaseOffset = -1;
     private long lastRecordStructureVersion = -1;
+    private long lastSealedPartitionMaxTimestamp = Long.MIN_VALUE;
     private long prevMaxTimestamp;
     private long prevMinTimestamp;
     private long prevPartitionTableVersion = -1;
@@ -155,6 +156,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         prevRecordStructureVersion = -2L;
         lastRecordBaseOffset = -1;
         prevRecordBaseOffset = -2;
+        lastSealedPartitionMaxTimestamp = Long.MIN_VALUE;
     }
 
     @Override
@@ -365,6 +367,10 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         resetLagAppliedRows();
     }
 
+    public void resetPartitionParquetFormat(long timestamp) {
+        setPartitionParquetFormat(timestamp, -1, false);
+    }
+
     public void resetPartitionParquetGenerated(int partitionIndex) {
         resetPartitionParquetGeneratedByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION);
     }
@@ -374,16 +380,13 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         attachedPartitions.setQuick(indexRaw + PARTITION_PARQUET_FILE_SIZE_OFFSET, -1L);
     }
 
-    public void resetPartitionParquetFormat(long timestamp) {
-        setPartitionParquetFormat(timestamp, -1, false);
-    }
-
     public void resetStructureVersionUnsafe() {
         txMemBase.putLong(readBaseOffset + TX_OFFSET_STRUCT_VERSION_64, 0);
     }
 
     public void resetTimestamp() {
         recordStructureVersion++;
+        lastSealedPartitionMaxTimestamp = Long.MIN_VALUE;
         prevMaxTimestamp = Long.MIN_VALUE;
         prevMinTimestamp = Long.MAX_VALUE;
         maxTimestamp = prevMaxTimestamp;
@@ -500,6 +503,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
     public void switchPartitions(long timestamp) {
         recordStructureVersion++;
+        lastSealedPartitionMaxTimestamp = maxTimestamp;
         fixedRowCount += transientRowCount;
         prevTransientRowCount = transientRowCount;
         long partitionTimestampLo = getPartitionTimestampByTimestamp(maxTimestamp);
@@ -519,6 +523,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     public void truncate(long columnVersion, ObjList<? extends SymbolCountProvider> symbolCountProviders) {
+        lastSealedPartitionMaxTimestamp = Long.MIN_VALUE;
         removeAllPartitions();
         if (!PartitionBy.isPartitioned(partitionBy)) {
             attachedPartitions.setPos(LONGS_PER_TX_ATTACHED_PARTITION);
@@ -549,6 +554,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         this.baseVersion = getVersion();
         this.prevPartitionTableVersion = partitionTableVersion;
         this.txPartitionCount = 1;
+        this.lastSealedPartitionMaxTimestamp = Long.MIN_VALUE;
         if (baseVersion >= 0) {
             this.readBaseOffset = getBaseOffset();
             this.readRecordSize = getRecordSize();
@@ -596,12 +602,12 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         return maskedSize;
     }
 
-    private static long updatePartitionHasParquetGenerated(long maskedSize, boolean parquetGenerated) {
-        return updatePartitionFlagAt(maskedSize, parquetGenerated, PARTITION_MASK_PARQUET_GENERATED_BIT_OFFSET);
-    }
-
     private static long updatePartitionHasParquetFormat(long maskedSize, boolean isParquetFormat) {
         return updatePartitionFlagAt(maskedSize, isParquetFormat, PARTITION_MASK_PARQUET_FORMAT_BIT_OFFSET);
+    }
+
+    private static long updatePartitionHasParquetGenerated(long maskedSize, boolean parquetGenerated) {
+        return updatePartitionFlagAt(maskedSize, parquetGenerated, PARTITION_MASK_PARQUET_GENERATED_BIT_OFFSET);
     }
 
     private static long updatePartitionIsReadOnly(long maskedSize, boolean isReadOnly) {
@@ -659,6 +665,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         prevTransientRowCount = transientRowCount;
         prevMinTimestamp = minTimestamp;
         prevMaxTimestamp = maxTimestamp;
+        lastSealedPartitionMaxTimestamp = Long.MIN_VALUE;
 
         prevRecordStructureVersion = lastRecordStructureVersion;
         lastRecordStructureVersion = recordStructureVersion;
@@ -830,7 +837,10 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     void resetToLastPartition(long committedTransientRowCount) {
-        resetToLastPartition(committedTransientRowCount, getLong(TX_OFFSET_MAX_TIMESTAMP_64));
+        resetToLastPartition(
+                committedTransientRowCount,
+                Math.max(getLong(TX_OFFSET_MAX_TIMESTAMP_64), lastSealedPartitionMaxTimestamp)
+        );
     }
 
     long unsafeCommittedFixedRowCount() {
