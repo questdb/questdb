@@ -288,6 +288,9 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
         int count;
         while ((count = nf.recvRaw(fd, buf, bufLen)) > 0) {
             ran = true;
+            if (!acceptOpen.get()) {
+                return true;
+            }
             int datagramState = processDatagram(buf, count);
             if ((datagramState & DATAGRAM_DROPPED) == 0) {
                 processedCount++;

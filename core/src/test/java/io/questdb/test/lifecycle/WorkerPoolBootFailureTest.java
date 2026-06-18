@@ -42,6 +42,70 @@ public class WorkerPoolBootFailureTest {
             .withLookingForStuckThread(true)
             .build();
 
+    @Test
+    public void strictTestHaltSucceedsOnlyAfterWorkerHaltCleanerRuns() throws Exception {
+        final WorkerPool pool = newDaemonWorkerPool("strict-clean", 1);
+        final AtomicBoolean cleanerClosed = new AtomicBoolean();
+        final CountDownLatch jobRan = new CountDownLatch(1);
+        pool.assign(workerContext -> {
+            jobRan.countDown();
+            return false;
+        });
+        pool.assignThreadLocalCleaner(0, () -> cleanerClosed.set(true));
+
+        pool.start();
+        Assert.assertTrue("worker job must run before halt", jobRan.await(10, TimeUnit.SECONDS));
+
+        pool.haltAndAssertCleanForTest(TimeUnit.SECONDS.toNanos(10));
+
+        Assert.assertTrue("strict halt must wait until worker halt cleaners have run", cleanerClosed.get());
+    }
+
+    @Test
+    public void strictTestHaltTimeoutThrowsBeforeOwnedCleanup() throws Exception {
+        final WorkerPool pool = newDaemonWorkerPool("strict-timeout", 1);
+        final AtomicBoolean assignedJobClosed = new AtomicBoolean();
+        final AtomicBoolean freeOnExitClosed = new AtomicBoolean();
+        final CountDownLatch releaseJob = new CountDownLatch(1);
+        final CountDownLatch workerEntered = new CountDownLatch(1);
+        pool.assign(new Job() {
+            @Override
+            public void closeInstance() {
+                assignedJobClosed.set(true);
+            }
+
+            @Override
+            public boolean run(Job.WorkerContext workerContext) {
+                workerEntered.countDown();
+                try {
+                    releaseJob.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                return false;
+            }
+        });
+        pool.freeOnExit(closeableJob(() -> freeOnExitClosed.set(true)));
+
+        try {
+            pool.start();
+            Assert.assertTrue("worker must enter the parked job", workerEntered.await(10, TimeUnit.SECONDS));
+            try {
+                pool.haltAndAssertCleanForTest(TimeUnit.MILLISECONDS.toNanos(10));
+                Assert.fail("strict test halt must throw on worker halt timeout");
+            } catch (AssertionError expected) {
+                Assert.assertTrue("message must name the pool: " + expected.getMessage(),
+                        expected.getMessage().contains("strict-timeout"));
+                Assert.assertTrue("message must include remaining halted count: " + expected.getMessage(),
+                        expected.getMessage().contains("remainingHalted="));
+            }
+            Assert.assertFalse("strict timeout must throw before assigned job cleanup", assignedJobClosed.get());
+            Assert.assertFalse("strict timeout must throw before freeOnExit cleanup", freeOnExitClosed.get());
+        } finally {
+            releaseJob.countDown();
+        }
+    }
+
     /**
      * A SIGTERM-during-boot drives {@code halt(long)} concurrently with a {@code start()} that is still
      * mid-way through its per-worker spawn loop. {@code halt(long)} sets {@code closed} (a plain CAS,
@@ -681,6 +745,30 @@ public class WorkerPoolBootFailureTest {
     // also Closeable so freeOnExit accepts it and halt() runs onClose at shutdown.
     private static Job closeableJob(Runnable onClose) {
         return new CloseableJob(onClose);
+    }
+
+    private static WorkerPool newDaemonWorkerPool(String poolName, int workerCount) {
+        return new WorkerPool(new WorkerPoolConfiguration() {
+            @Override
+            public Metrics getMetrics() {
+                return Metrics.DISABLED;
+            }
+
+            @Override
+            public String getPoolName() {
+                return poolName;
+            }
+
+            @Override
+            public int getWorkerCount() {
+                return workerCount;
+            }
+
+            @Override
+            public boolean isDaemonPool() {
+                return true;
+            }
+        });
     }
 
     // No-op Job that runs onClose when the pool closes it via freeOnExit().

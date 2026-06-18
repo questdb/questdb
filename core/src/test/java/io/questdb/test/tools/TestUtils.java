@@ -1553,7 +1553,7 @@ public final class TestUtils {
                 runnable.run(engine, compiler, sqlExecutionContext);
             } finally {
                 if (pool != null) {
-                    pool.halt();
+                    pool.haltAndAssertCleanForTest(WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS);
                 }
             }
             Assert.assertEquals(0, engine.getBusyWriterCount());

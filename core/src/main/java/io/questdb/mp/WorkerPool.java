@@ -233,6 +233,15 @@ public class WorkerPool implements Closeable {
      *                     {@link System#nanoTime()} deadline, unlike {@link io.questdb.WorkerPoolManager#halt(long)})
      */
     public void halt(long timeoutNanos) {
+        halt(timeoutNanos, false);
+    }
+
+    @TestOnly
+    public void haltAndAssertCleanForTest(long timeoutNanos) {
+        halt(timeoutNanos, true);
+    }
+
+    private void halt(long timeoutNanos, boolean strict) {
         if (closed.compareAndSet(false, true)) {
             if (running.compareAndSet(true, false)) {
                 final long deadline = System.nanoTime() + timeoutNanos;
@@ -249,12 +258,14 @@ public class WorkerPool implements Closeable {
                 // it torn (a half-published pos/buffer or a null slot). The monitor makes this pass see
                 // an empty-or-complete-and-consistent snapshot; the signal still runs UNCONDITIONALLY
                 // and BEFORE started.await() below, preserving the start-stall halt ordering.
+                boolean startCompleted = false;
                 synchronized (workersLock) {
                     for (int i = 0, n = workers.size(); i < n; i++) {
                         workers.getQuick(i).halt();
                     }
                 }
                 if (started.await(remaining(deadline))) {
+                    startCompleted = true;
                     // start() completed: every worker is now in the list. Re-signal to catch any
                     // worker spawned after the first pass but before started counted down (the flag
                     // is idempotent), then wait for them to exit.
@@ -262,10 +273,16 @@ public class WorkerPool implements Closeable {
                         workers.getQuick(i).halt();
                     }
                     if (!halted.await(remaining(deadline))) {
+                        if (strict) {
+                            throw workerPoolHaltTimeout(timeoutNanos, true);
+                        }
                         LOG.error().$("timed out waiting for worker pool to halt; proceeding with close [pool=").$(poolName)
                                 .$(", timeout=").$(timeoutNanos / 1_000_000).$("ms").I$();
                     }
                 } else {
+                    if (strict) {
+                        throw workerPoolHaltTimeout(timeoutNanos, startCompleted);
+                    }
                     LOG.error().$("timed out waiting for worker pool to start; proceeding with close [pool=").$(poolName)
                             .$(", timeout=").$(timeoutNanos / 1_000_000).$("ms").I$();
                 }
@@ -439,6 +456,17 @@ public class WorkerPool implements Closeable {
         // Never hand SOCountDownLatch.await() a non-positive budget; parkNanos(<=0) returns
         // immediately, which is the intended behaviour once the overall deadline has passed.
         return Math.max(1, deadline - System.nanoTime());
+    }
+
+    private AssertionError workerPoolHaltTimeout(long timeoutNanos, boolean startCompleted) {
+        return new AssertionError(
+                "WorkerPool timed out waiting for workers to halt before leak-sensitive test cleanup [pool="
+                        + poolName
+                        + ", timeoutMs=" + (timeoutNanos / 1_000_000)
+                        + ", startCompleted=" + startCompleted
+                        + ", remainingHalted=" + halted.getCount()
+                        + ']'
+        );
     }
 
     private void setupPathCleaner() {

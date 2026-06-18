@@ -78,6 +78,10 @@ public class LinuxMMQwpUdpReceiver extends QwpUdpReceiver {
         boolean ran = false;
         int count;
         while ((count = nf.recvmmsgRaw(fd, msgVec, msgCount)) > 0) {
+            ran = true;
+            if (!acceptOpen.get()) {
+                return true;
+            }
             long p = msgVec;
             for (int i = 0; i < count; i++) {
                 int datagramState = processDatagram(nf.getMMsgBuf(p), (int) nf.getMMsgBufLen(p));
@@ -93,7 +97,6 @@ public class LinuxMMQwpUdpReceiver extends QwpUdpReceiver {
                 p += Net.MMSGHDR_SIZE;
             }
 
-            ran = true;
             if (totalCount >= maxUncommittedDatagrams) {
                 totalCount = 0;
                 forceCommitAll();
