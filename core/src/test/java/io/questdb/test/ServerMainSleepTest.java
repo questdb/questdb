@@ -433,10 +433,13 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
             // Many more client threads than workers (>>workerCount) so the
             // parallelism check has a wide margin: with carriers pinned by
             // Os.sleep, ratio is bounded by workerCount; with TimerCont, ratio
-            // can approach clientThreads. The bigger the gap, the less
-            // ambiguous the failure mode.
-            final int clientThreads = 64;
-            final int iterationsPerThread = 8;
+            // can approach clientThreads. Keep total random coverage steady,
+            // but avoid oversubscribing small CI machines so heavily that the
+            // OS scheduler delays the timer/worker threads beyond the latch
+            // diagnostics this test is trying to prove.
+            final int totalIterations = 512;
+            final int clientThreads = Math.max(16, Math.min(64, Runtime.getRuntime().availableProcessors() * 8));
+            final int iterationsPerThread = (totalIterations + clientThreads - 1) / clientThreads;
 
             try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
                 put(PropertyKey.SHARED_WORKER_COUNT.getEnvVarName(), String.valueOf(workerCount));
@@ -553,7 +556,8 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
                     // Hard upper bound: 12 threads * 25 iters * worst-case ~600ms = ~3 min.
                     // Allow plenty of headroom; the test timeout still bounds the run.
                     Assert.assertTrue(
-                            "fuzz did not complete in time, seeds=" + seed0 + "L, " + seed1 + "L",
+                            "fuzz did not complete in time, seeds=" + seed0 + "L, " + seed1 + "L, clientThreads="
+                                    + clientThreads + ", iterationsPerThread=" + iterationsPerThread,
                             doneLatch.await(150, TimeUnit.SECONDS)
                     );
                     long busyEndMillis = System.currentTimeMillis();
@@ -562,7 +566,8 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
                     if (!failures.isEmpty()) {
                         Throwable head = failures.peek();
                         AssertionError summary = new AssertionError(
-                                "fuzz produced " + failures.size() + " failures (seeds=" + seed0 + "L, " + seed1 + "L; first: "
+                                "fuzz produced " + failures.size() + " failures (seeds=" + seed0 + "L, " + seed1 + "L"
+                                        + ", clientThreads=" + clientThreads + ", iterationsPerThread=" + iterationsPerThread + "; first: "
                                         + head.getMessage()
                         );
                         summary.initCause(head);
@@ -599,6 +604,8 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
                             .$(", parallelism=").$((double) sumSleptMillis / Math.max(1, busyWallMillis))
                             .$(", cancelMaxRegistrationMs=").$(TimeUnit.NANOSECONDS.toMillis(maxCancelRegistrationLatencyNs.get()))
                             .$(", cancelMaxExitMs=").$(TimeUnit.NANOSECONDS.toMillis(maxCancelToExitLatencyNs.get()))
+                            .$(", clientThreads=").$(clientThreads)
+                            .$(", iterationsPerThread=").$(iterationsPerThread)
                             .$(", seeds=").$(seed0).$("L, ").$(seed1).$("L")
                             .$(']').$();
 
