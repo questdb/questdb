@@ -24,11 +24,14 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
@@ -52,10 +55,14 @@ import io.questdb.griffin.engine.functions.ShortFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.UuidFunction;
+import io.questdb.mp.WorkerPool;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Before;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicInteger;
@@ -68,6 +75,16 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
 
     private static final AtomicInteger evalCounter = new AtomicInteger();
 
+    @Override
+    @Before
+    public void setUp() {
+        // Small page frames so the parallel-filter test table splits into several frames that get
+        // dispatched to multiple workers; harmless for the other (tiny, single-frame) tables here.
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 100);
+        setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 16);
+        super.setUp();
+    }
+
     @Test
     public void testAllFoldableTypesCacheAndRoundTrip() throws SqlException {
         // The wrapper reads its arg once in init() through a type-specific getter, caching it into
@@ -75,8 +92,11 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
         // type has its own init()/getter pair; exercise all of them so a mis-wired getter, a truncating
         // cast or a hi/lo swap cannot regress unnoticed. We build the wrapper directly over a typed leaf
         // to isolate the per-type round-trip - the boundary-wrapping decision is covered by the
-        // structural tests and testIsFoldableTypeMatrix. Each leaf throws UnsupportedOperationException
-        // from every getter except its native one, so init() reading the wrong getter fails loudly.
+        // structural tests and testIsFoldableTypeMatrix. Each leaf returns a distinct magic value from
+        // its native getter and bumps a counter, so a mis-wired init() reading the wrong getter surfaces
+        // as a value mismatch or an extra evaluation. (Some numeric base classes cross-convert getters -
+        // e.g. IntFunction.getDouble/getLong, BooleanFunction.getByte/getDouble - rather than throwing,
+        // so the magic-value and counter checks, not a loud throw, are what catch a mis-wiring here.)
 
         // BOOLEAN
         {
@@ -508,6 +528,73 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testEndToEndNullRuntimeConstThreshold() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE trades AS (" +
+                            "  SELECT (x * 1000000)::timestamp ts, x amount FROM long_sequence(10)" +
+                            ") TIMESTAMP(ts) PARTITION BY NONE"
+            );
+
+            // The folded threshold itself evaluates to NULL: the wrapper must cache and serve the NULL
+            // sentinel, producing the same result as the compile-time-folded literal-NULL reference. A
+            // botched NULL round-trip (caching a non-null value) would diverge from that reference.
+            bindVariableService.clear();
+            bindVariableService.setTimestamp(0, Numbers.LONG_NULL);
+
+            assertSqlCursors(
+                    "SELECT sum(CASE WHEN ts >= dateadd('s', -2, null::timestamp) THEN amount ELSE 0 END) s FROM trades",
+                    "SELECT sum(CASE WHEN ts >= dateadd('s', -2, $1::timestamp) THEN amount ELSE 0 END) s FROM trades"
+            );
+        });
+    }
+
+    @Test
+    public void testEndToEndParallelFilterSharesFoldedThreshold() throws Exception {
+        // Highest-risk path: a folded runtime-constant threshold in a WHERE predicate, shared across
+        // (thread-safe) or cloned per (non-thread-safe) parallel-filter workers reading the cached
+        // fields. We filter on ts2, a non-designated timestamp, so the planner keeps it a real (parallel)
+        // filter rather than rewriting it into a designated-timestamp interval scan. The plan check
+        // proves the async filter engaged; the cursor comparison proves the folded result matches the
+        // literal-threshold reference, which folds at compile time.
+        final WorkerPool pool = new WorkerPool(() -> 4);
+        TestUtils.execute(
+                pool,
+                (engine, compiler, sqlExecutionContext) -> {
+                    engine.execute(
+                            "CREATE TABLE trades AS (" +
+                                    "  SELECT (x * 1000000)::timestamp ts, (x * 1000000)::timestamp ts2, x amount" +
+                                    "  FROM long_sequence(1000)" +
+                                    ") TIMESTAMP(ts) PARTITION BY NONE",
+                            sqlExecutionContext
+                    );
+
+                    // prove the async (parallel) filter path is taken for this table/config
+                    assertQuery("SELECT ts2, amount FROM trades WHERE ts2 >= dateadd('s', -2, 500000000::timestamp)")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .assertsPlanContaining("Async");
+
+                    sqlExecutionContext.getBindVariableService().clear();
+                    sqlExecutionContext.getBindVariableService().setTimestamp(0, 500_000_000L);
+
+                    // folded ($1-derived) threshold vs. literal threshold, both executed in parallel
+                    TestUtils.assertSqlCursors(
+                            compiler,
+                            sqlExecutionContext,
+                            "SELECT ts2, amount FROM trades WHERE ts2 >= dateadd('s', -2, 500000000::timestamp)",
+                            "SELECT ts2, amount FROM trades WHERE ts2 >= dateadd('s', -2, $1::timestamp)",
+                            LOG,
+                            false
+                    );
+                },
+                configuration,
+                LOG
+        );
+    }
+
+    @Test
     public void testEndToEndPlanIsTransparent() throws Exception {
         assertMemoryLeak(() -> {
             execute(
@@ -525,6 +612,70 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
             String plan = planSink.toString();
             assertFalse("wrapper must not leak into the plan: " + plan, plan.contains("RuntimeConst"));
             assertTrue("plan should still mention the folded dateadd subtree: " + plan, plan.contains("dateadd"));
+        });
+    }
+
+    @Test
+    public void testEndToEndRebindRefreshesCachedThreshold() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE trades AS (" +
+                            "  SELECT (x * 1000000)::timestamp ts, x amount FROM long_sequence(10)" +
+                            ") TIMESTAMP(ts) PARTITION BY NONE"
+            );
+
+            // The wrapper caches its value once per cursor in init(), not once forever. Re-binding $1 and
+            // re-running the SAME compiled factory must re-evaluate the folded threshold via init(), not
+            // reuse the value cached on the previous run - the core hazard of a cached runtime constant.
+            bindVariableService.clear();
+            bindVariableService.setTimestamp(0, 6_000_000L);
+            try (RecordCursorFactory factory = select(
+                    "SELECT sum(CASE WHEN ts >= dateadd('s', -2, $1::timestamp) THEN amount ELSE 0 END) s FROM trades"
+            )) {
+                // first run: threshold 6s - 2s = 4s -> rows ts >= 4s carry amount 4..10 -> 49
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    println(factory, cursor);
+                }
+                TestUtils.assertEquals("s\n49\n", sink);
+
+                // re-bind and re-run the same factory: threshold 9s - 2s = 7s -> rows 7..10 -> 34
+                bindVariableService.clear();
+                bindVariableService.setTimestamp(0, 9_000_000L);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    println(factory, cursor);
+                }
+                TestUtils.assertEquals("s\n34\n", sink);
+            }
+        });
+    }
+
+    @Test
+    public void testEndToEndWhereFilterThreshold() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE trades AS (" +
+                            "  SELECT (x * 1000000)::timestamp ts, (x * 1000000)::timestamp ts2, x amount" +
+                            "  FROM long_sequence(10)" +
+                            ") TIMESTAMP(ts) PARTITION BY NONE"
+            );
+
+            // The PR names WHERE filters as a primary use case. Put the folded runtime-constant threshold
+            // directly in the predicate. We filter on ts2 (a non-designated timestamp) so it stays a real
+            // per-row filter rather than a designated-timestamp interval scan, and assert it matches the
+            // literal-threshold reference, which folds at compile time.
+            bindVariableService.clear();
+            bindVariableService.setTimestamp(0, 6_000_000L);
+
+            assertSqlCursors(
+                    "SELECT ts2, amount FROM trades WHERE ts2 >= dateadd('s', -2, 6000000::timestamp)",
+                    "SELECT ts2, amount FROM trades WHERE ts2 >= dateadd('s', -2, $1::timestamp)"
+            );
+
+            // threshold 6s - 2s = 4s; ts2 = x seconds -> rows x in 4..10 -> sum(amount) 49
+            assertQuery("SELECT sum(amount) s FROM trades WHERE ts2 >= dateadd('s', -2, $1::timestamp)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("s\n49\n");
         });
     }
 

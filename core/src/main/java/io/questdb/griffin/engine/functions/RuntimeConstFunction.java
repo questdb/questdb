@@ -393,6 +393,13 @@ public final class RuntimeConstFunction implements UnaryFunction {
         arg.toPlan(sink); // stay transparent in plans
     }
 
+    // Correctness hinges on this gate: only a composite foldable-type function is ever wrapped, and the
+    // wrapper trusts that function's isRuntimeConstant() report - it freezes the value at init() and
+    // serves it per row. A composite function that read per-row data while reporting runtime constant
+    // would be silently mis-folded, so this relies on the contract that QuestDB's per-row composite
+    // functions (e.g. arithmetic over a column) correctly report isRuntimeConstant()==false. Trivial
+    // runtime-constant leaves (bind variables, now()) are deliberately excluded by the composite check:
+    // they already cache their value, so wrapping them would only add an indirection.
     private static boolean isComposite(Function function) {
         return function instanceof UnaryFunction
                 || function instanceof BinaryFunction
