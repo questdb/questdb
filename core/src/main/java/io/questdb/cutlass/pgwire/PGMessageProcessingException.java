@@ -25,7 +25,7 @@
 package io.questdb.cutlass.pgwire;
 
 import io.questdb.std.FlyweightMessageContainer;
-import io.questdb.std.ThreadLocal;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -36,7 +36,7 @@ public class PGMessageProcessingException extends Exception implements Flyweight
     public static final PGMessageProcessingException INSTANCE = new PGMessageProcessingException();
 
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
-    private static final io.questdb.std.ThreadLocal<PGMessageProcessingException> tlException = new ThreadLocal<>(PGMessageProcessingException::new);
+    private static final CarrierLocal<PGMessageProcessingException> tlException = new CarrierLocal<>(PGMessageProcessingException::new);
     private StringSink message;
     private PGPipelineEntry pe;
 

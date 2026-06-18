@@ -24,10 +24,26 @@
 
 package io.questdb.test.griffin.engine.window;
 
+import io.questdb.PropertyKey;
+import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
+import static io.questdb.test.tools.TestUtils.generateRandom;
+
 public class PercentRankFunctionTest extends AbstractCairoTest {
+    private final boolean isCacheLightWindowEnabled;
+
+    public PercentRankFunctionTest() {
+        Rnd rnd = generateRandom(LOG);
+        this.isCacheLightWindowEnabled = rnd.nextBoolean();
+    }
+
+    @Override
+    public void setUp() {
+        setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, Boolean.toString(this.isCacheLightWindowEnabled));
+        super.setUp();
+    }
 
     @Test
     public void testPercentRankAllTies() throws Exception {
@@ -141,47 +157,47 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
             // Test plan for percent_rank() over (order by ts) - no partition, with order
             assertQuery("select ts, percent_rank() over (order by ts) from tab")
                     .noLeakCheck()
-                    .assertsPlan("""
-                            CachedWindow
-                              unorderedFunctions: [percent_rank() over (order by [ts])]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """);
+                    .assertsPlan((this.isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                            """
+                                      unorderedFunctions: [percent_rank() over (order by [ts])]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """);
 
             // Test plan for percent_rank() over (partition by s order by ts) - with partition and order
             assertQuery("select ts, percent_rank() over (partition by s order by ts) from tab")
                     .noLeakCheck()
-                    .assertsPlan("""
-                            CachedWindow
-                              unorderedFunctions: [percent_rank() over (partition by [s] order by [ts])]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """);
+                    .assertsPlan((this.isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                            """
+                                      unorderedFunctions: [percent_rank() over (partition by [s] order by [ts])]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """);
 
             // ORDER BY non-timestamp -> dismissOrder=false (grouped) path. Before the
             // SqlCodeGenerator fix that forwards ac.getOrderBy() to initRecordComparator,
             // this branch left orderBy null and toPlan rendered "order by null".
             assertQuery("select ts, percent_rank() over (order by i) from tab")
                     .noLeakCheck()
-                    .assertsPlan("""
-                            CachedWindow
-                              orderedFunctions: [[i] => [percent_rank() over (order by [i])]]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """);
+                    .assertsPlan((this.isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                            """
+                                      orderedFunctions: [[i] => [percent_rank() over (order by [i])]]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """);
 
             assertQuery("select ts, percent_rank() over (partition by s order by i) from tab")
                     .noLeakCheck()
-                    .assertsPlan("""
-                            CachedWindow
-                              orderedFunctions: [[i] => [percent_rank() over (partition by [s] order by [i])]]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """);
+                    .assertsPlan((this.isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                            """
+                                      orderedFunctions: [[i] => [percent_rank() over (partition by [s] order by [i])]]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """);
         });
     }
 

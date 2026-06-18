@@ -39,7 +39,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.QuietCloseable;
-import io.questdb.std.ThreadLocal;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.Vect;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.str.DirectString;
@@ -52,7 +52,7 @@ import static io.questdb.cairo.wal.WalUtils.*;
 public class WalTxnDetails implements QuietCloseable {
     public static final long FORCE_FULL_COMMIT = Long.MAX_VALUE;
     public static final long LAST_ROW_COMMIT = Long.MAX_VALUE - 1;
-    private static final ThreadLocal<DirectString> DIRECT_STRING = new ThreadLocal<>(DirectString::new);
+    private static final CarrierLocal<DirectString> DIRECT_STRING = new CarrierLocal<>(DirectString::new);
     private static final int FLAG_IS_LAST_SEGMENT_USAGE = 0x2;
     private static final int FLAG_IS_OOO = 0x1;
     private static final int SEQ_TXN_OFFSET = 0;

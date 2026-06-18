@@ -67,20 +67,19 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
     @Override
     public ReaderPool.R get(TableToken tableToken) {
         // Live views are WAL-backed tables backed by a real on-disk _meta + WAL;
-        // queries route through the standard TableReader machinery.
-        // Regular SQL views remain rejected here.
-        if (tableToken.isView()) {
-            throw CairoException.critical(0).put("cannot get a reader for view [view=").put(tableToken).put(']');
-        }
+        // queries route through the standard TableReader machinery, and their
+        // tokens are not flagged isView(). Regular SQL views remain rejected here.
+        checkNotView(tableToken);
         return super.get(tableToken);
     }
 
-    /**
-     * Returns a pooled table reader that is pointed at the same transaction number
-     * as the source reader.
-     */
-    public TableReader getCopyOf(TableReader srcReader) {
-        return getCopyOf((ReaderPool.R) srcReader);
+    public ReaderPool.R get(TableToken tableToken, @Nullable ResourcePoolSupervisor<TableReader> supervisor) {
+        checkNotView(tableToken);
+        return getWithSupervisor(tableToken, asReaderSupervisor(supervisor));
+    }
+
+    public TableReader getCopyOf(TableReader srcReader, @Nullable ResourcePoolSupervisor<TableReader> supervisor) {
+        return getCopyOf((ReaderPool.R) srcReader, asReaderSupervisor(supervisor));
     }
 
     public int getDetachedRefCount(TableReader reader) {
@@ -108,6 +107,22 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
     @Override
     protected byte getListenerSrc() {
         return PoolListener.SRC_READER;
+    }
+
+    // The public reader-pool API exposes the supervisor as ResourcePoolSupervisor<TableReader>
+    // (so callers never name the internal ReaderPool.R type), while the generic pool machinery
+    // is parameterized by R. The cast is safe by contravariance: the pool only ever hands R
+    // instances -- which are TableReaders -- to the supervisor, so a TableReader-typed consumer
+    // stands in for an R-typed one.
+    @SuppressWarnings("unchecked")
+    private static ResourcePoolSupervisor<R> asReaderSupervisor(@Nullable ResourcePoolSupervisor<TableReader> supervisor) {
+        return (ResourcePoolSupervisor<R>) (ResourcePoolSupervisor<?>) supervisor;
+    }
+
+    private static void checkNotView(TableToken tableToken) {
+        if (tableToken.isView()) {
+            throw CairoException.critical(0).put("cannot get a reader for view [view=").put(tableToken).put(']');
+        }
     }
 
     @Override

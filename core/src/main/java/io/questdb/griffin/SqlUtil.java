@@ -62,7 +62,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
-import io.questdb.std.ThreadLocal;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.Uuid;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.Micros;
@@ -83,7 +83,7 @@ public class SqlUtil {
     static final LowerCaseCharSequenceHashSet disallowedAliases = new LowerCaseCharSequenceHashSet();
     private static final DateFormat[] IMPLICIT_CAST_FORMATS;
     private static final int IMPLICIT_CAST_FORMATS_SIZE;
-    private static final ThreadLocal<Long256ConstantFactory> LONG256_FACTORY = new ThreadLocal<>(Long256ConstantFactory::new);
+    private static final CarrierLocal<Long256ConstantFactory> LONG256_FACTORY = new CarrierLocal<>(Long256ConstantFactory::new);
 
     public static void addSelectStar(
             IQueryModel model,

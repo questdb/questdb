@@ -184,6 +184,26 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     /**
+     * VARCHAR value size from a native aux header (inlined or split). The caller
+     * must have already excluded NULL via {@link #hasNullFlag(int)}.
+     */
+    public static int getInlinedOrSplitSize(int auxHeader) {
+        return hasInlinedFlag(auxHeader)
+                ? (auxHeader >> HEADER_FLAGS_WIDTH) & INLINED_LENGTH_MASK
+                : (auxHeader >> HEADER_FLAGS_WIDTH) & DATA_LENGTH_MASK;
+    }
+
+    /**
+     * The first {@value #VARCHAR_INLINED_PREFIX_BYTES} value bytes of a split (non-inlined,
+     * non-Parquet) VARCHAR, read straight from the aux entry into the low bytes of a
+     * little-endian word with the high two bytes zeroed - no data-vector access. The caller
+     * must have already excluded NULL and the inlined and Parquet representations.
+     */
+    public static long getInlinedPrefixWord(long auxEntry) {
+        return Unsafe.getLong(auxEntry + INLINED_PREFIX_OFFSET) & VARCHAR_INLINED_PREFIX_MASK;
+    }
+
+    /**
      * Reads UTF8 varchar type from the memory with a header.
      *
      * @param dataMem memory with header and UTF8 bytes
@@ -241,6 +261,23 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
 
     public static int getSingleMemValueByteCount(@Nullable Utf8Sequence value) {
         return value != null ? Integer.BYTES + value.size() : Integer.BYTES;
+    }
+
+    /**
+     * Address of a non-null {@code VARCHAR_SLICE} (Parquet) value's UTF-8 bytes: a
+     * direct pointer into the decompressed page/dict buffer. {@code auxEntry} is
+     * {@code auxAddr + VARCHAR_AUX_WIDTH_BYTES * rowNum}.
+     */
+    public static long getSliceByteAddress(long auxEntry) {
+        return Unsafe.getLong(auxEntry + Long.BYTES);
+    }
+
+    /**
+     * VARCHAR value size from a {@code VARCHAR_SLICE} (Parquet) aux header. The
+     * caller must have already excluded NULL via {@link #hasNullFlag(int)}.
+     */
+    public static int getSliceSize(int auxHeader) {
+        return auxHeader >>> HEADER_FLAGS_WIDTH;
     }
 
     /**
@@ -341,6 +378,17 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     /**
+     * Address of a non-null native VARCHAR value's UTF-8 bytes: the inline bytes in
+     * the aux entry for a fully-inlined value, otherwise the full value in the data
+     * vector. {@code auxEntry} is {@code auxAddr + VARCHAR_AUX_WIDTH_BYTES * rowNum}.
+     */
+    public static long getValueByteAddress(int auxHeader, long auxEntry, long dataAddr) {
+        return hasInlinedFlag(auxHeader)
+                ? auxEntry + FULLY_INLINED_STRING_OFFSET
+                : dataAddr + getDataOffset(auxEntry);
+    }
+
+    /**
      * Reads a UTF-8 value size from a VARCHAR column.
      *
      * @param auxAddr base pointer of the auxiliary vector
@@ -384,6 +432,14 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
             return (raw >> HEADER_FLAGS_WIDTH) & INLINED_LENGTH_MASK;
         }
         return (raw >> HEADER_FLAGS_WIDTH) & DATA_LENGTH_MASK;
+    }
+
+    public static boolean hasInlinedFlag(int auxHeader) {
+        return (auxHeader & HEADER_FLAG_INLINED) == HEADER_FLAG_INLINED;
+    }
+
+    public static boolean hasNullFlag(int auxHeader) {
+        return (auxHeader & VARCHAR_HEADER_FLAG_NULL) == VARCHAR_HEADER_FLAG_NULL;
     }
 
     @Override
@@ -711,14 +767,6 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
 
     private static boolean hasAsciiFlag(int auxHeader) {
         return (auxHeader & HEADER_FLAG_ASCII) == HEADER_FLAG_ASCII;
-    }
-
-    private static boolean hasInlinedFlag(int auxHeader) {
-        return (auxHeader & HEADER_FLAG_INLINED) == HEADER_FLAG_INLINED;
-    }
-
-    private static boolean hasNullFlag(int auxHeader) {
-        return (auxHeader & VARCHAR_HEADER_FLAG_NULL) == VARCHAR_HEADER_FLAG_NULL;
     }
 
     private static boolean hasNullOrInlinedFlag(int auxHeader) {

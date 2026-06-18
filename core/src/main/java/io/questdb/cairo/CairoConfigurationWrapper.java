@@ -888,6 +888,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getQueryContinuationWakeIntervalMillis() {
+        return getDelegate().getQueryContinuationWakeIntervalMillis();
+    }
+
+    @Override
     public int getQueryRegistryPoolSize() {
         return getDelegate().getQueryRegistryPoolSize();
     }
@@ -1418,6 +1423,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getTimerShardCount() {
+        return getDelegate().getTimerShardCount();
+    }
+
+    @Override
     public int getTxnScoreboardEntryCount() {
         return getDelegate().getTxnScoreboardEntryCount();
     }
@@ -1745,6 +1755,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isSqlParquetRowGroupPruningEnabled() {
         return getDelegate().isSqlParquetRowGroupPruningEnabled();
+    }
+
+    @Override
+    public boolean isSqlWindowCachedLightEnabled() {
+        return getDelegate().isSqlWindowCachedLightEnabled();
     }
 
     @Override

@@ -54,17 +54,17 @@ public class LiveViewRefreshSqlExecutionContext extends SqlExecutionContextImpl 
     @Override
     public TableReader getReader(TableToken tableToken, long version) {
         if (baseTableReader != null && tableToken.equals(baseTableReader.getTableToken())) {
-            return getCairoEngine().getReaderAtTxn(baseTableReader);
+            return getCairoEngine().getReaderAtTxn(baseTableReader, this);
         }
-        return getCairoEngine().getReader(tableToken, version);
+        return super.getReader(tableToken, version);
     }
 
     @Override
     public TableReader getReader(TableToken tableToken) {
         if (baseTableReader != null && tableToken.equals(baseTableReader.getTableToken())) {
-            return getCairoEngine().getReaderAtTxn(baseTableReader);
+            return getCairoEngine().getReaderAtTxn(baseTableReader, this);
         }
-        return getCairoEngine().getReader(tableToken);
+        return super.getReader(tableToken);
     }
 
     public boolean hasReader() {

@@ -89,9 +89,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class LiveViewSmokeTest extends AbstractCairoTest {
 
     private static boolean drainJob(Job job) {
-        Job.RunStatus status = () -> false;
         boolean any = false;
-        for (int i = 0; i < 64 && job.run(0, status); i++) {
+        for (int i = 0; i < 64 && job.run(); i++) {
             any = true;
         }
         return any;
@@ -566,8 +565,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
             // Partial sweep, then simulate a restart mid-sweep, all on one job.
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                Job.RunStatus status = () -> false;
-                job.run(0, status);
+                job.run();
                 drainWalQueue();
                 Assert.assertEquals(
                         "partial sweep must still be BACKFILLING",
@@ -610,8 +608,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             // Capture the rolling .bcp key from a partial sweep before finishing.
             final long bcpKey;
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                Job.RunStatus status = () -> false;
-                job.run(0, status);
+                job.run();
                 drainWalQueue();
                 bcpKey = engine.getLiveViewRegistry().getViewInstance("lv").getHeadBackfillCpKey();
                 Assert.assertNotEquals("a .bcp must have been written mid-sweep", Numbers.LONG_NULL, bcpKey);
@@ -671,8 +668,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x >= 5");
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                Job.RunStatus status = () -> false;
-                job.run(0, status);
+                job.run();
                 drainWalQueue();
                 Assert.assertEquals(
                         LiveViewState.BACKFILL_STATE_BACKFILLING,
@@ -708,8 +704,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                Job.RunStatus status = () -> false;
-                job.run(0, status);
+                job.run();
                 drainWalQueue();
                 LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
                 Assert.assertEquals(
@@ -760,8 +755,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                Job.RunStatus status = () -> false;
-                job.run(0, status);
+                job.run();
                 drainWalQueue();
                 LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
                 Assert.assertEquals(
@@ -807,8 +801,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                Job.RunStatus status = () -> false;
-                job.run(0, status);
+                job.run();
                 drainWalQueue();
                 engine.getLiveViewRegistry().clear();
                 engine.buildViewGraphs();
@@ -847,8 +840,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                Job.RunStatus status = () -> false;
-                job.run(0, status);
+                job.run();
                 drainWalQueue();
                 Assert.assertEquals(
                         "one turn must not complete a 40-row sweep",

@@ -27,12 +27,18 @@ package io.questdb.griffin.engine.orderby;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.sql.PageFrameMemory;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.griffin.engine.functions.SymbolFunction;
@@ -43,21 +49,29 @@ import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Rows;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Uuid;
+import io.questdb.std.str.DirectString;
+import io.questdb.std.str.Utf8Sequence;
 
 /**
- * Analyzes sort column types at compile time, produces a fixed-width
- * byte-comparable key encoder, and serializes sort columns into native memory.
- * After encoding, the key can be compared using unsigned long comparison
- * to determine sort order.
+ * Analyzes sort column types at compile time, produces a byte-comparable
+ * key encoder, and serializes sort columns into native memory. Keys of up
+ * to 32 fixed-width bytes are encoded inline into the entry; wider or
+ * variable-length keys are written to a key heap, with the entry holding a
+ * 16-byte prefix, the key length, the heap offset and the rowId. After
+ * encoding, keys compare with unsigned long/byte comparison.
  */
 public class SortKeyEncoder implements QuietCloseable {
-    // Vergesort's index space caps a sort at (2^32 - 2) entries of 8 bytes.
+    public static final int KEY_PREFIX_BYTES = 16;
     public static final long MAX_ENTRY_HEAP_BYTES = (Integer.toUnsignedLong(-1) - 1) << 3;
     private final int[] columnByteWidths;
     private final int[] columnIndices;
@@ -66,11 +80,14 @@ public class SortKeyEncoder implements QuietCloseable {
     private final Decimal256 decimal256Sink;
     private final boolean hasBorrowedRankMaps;
     private final boolean[] isDesc;
-    private final boolean isSingleColumnFixed8;
-    private final boolean[] isSymbol;
+    private final boolean[] isStaticSymbol;
+    // Encode fast-path selector; keyType is the entry layout (the two are not redundant).
+    private final KeyShape keyShape;
     private final int[] offsets;
     private final int[] rankMapSizes;
     private final ObjList<DirectIntList> rankMaps;
+    private final DirectString stringView;
+    private MemoryCARW keyHeap;
     private SortKeyType keyType;
     private long padMask;
 
@@ -91,7 +108,7 @@ public class SortKeyEncoder implements QuietCloseable {
         this.columnIndices = new int[n];
         this.columnTypes = new int[n];
         this.isDesc = new boolean[n];
-        this.isSymbol = new boolean[n];
+        this.isStaticSymbol = new boolean[n];
         this.offsets = new int[n];
         this.columnByteWidths = new int[n];
         this.rankMapSizes = new int[n];
@@ -100,24 +117,51 @@ public class SortKeyEncoder implements QuietCloseable {
         this.hasBorrowedRankMaps = rankMapOwner != null;
         this.rankMaps = hasBorrowedRankMaps ? rankMapOwner.rankMaps : new ObjList<>(n);
 
-        for (int i = 0; i < n; i++) {
-            int encoded = sortColumnFilter.getQuick(i);
-            isDesc[i] = encoded < 0;
-            columnIndices[i] = (encoded > 0 ? encoded : -encoded) - 1;
-            columnTypes[i] = ColumnType.tagOf(metadata.getColumnType(columnIndices[i]));
-            isSymbol[i] = ColumnType.isSymbol(columnTypes[i]);
-            hasDecimal128 |= columnTypes[i] == ColumnType.DECIMAL128;
-            hasDecimal256 |= columnTypes[i] == ColumnType.DECIMAL256;
-            if (!isSymbol[i]) {
-                columnByteWidths[i] = columnByteWidth(columnTypes[i], metadata, columnIndices[i]);
+        try {
+            for (int i = 0; i < n; i++) {
+                int encoded = sortColumnFilter.getQuick(i);
+                isDesc[i] = encoded < 0;
+                columnIndices[i] = (encoded > 0 ? encoded : -encoded) - 1;
+                columnTypes[i] = ColumnType.tagOf(metadata.getColumnType(columnIndices[i]));
+                hasDecimal128 |= columnTypes[i] == ColumnType.DECIMAL128;
+                hasDecimal256 |= columnTypes[i] == ColumnType.DECIMAL256;
+                if (ColumnType.isSymbol(columnTypes[i]) && metadata.isSymbolTableStatic(columnIndices[i])) {
+                    isStaticSymbol[i] = true;
+                    columnByteWidths[i] = 4;
+                    if (!hasBorrowedRankMaps) {
+                        rankMaps.add(new DirectIntList(1024, MemoryTag.NATIVE_DEFAULT, true));
+                    }
+                } else {
+                    columnByteWidths[i] = fixedColumnByteWidth(columnTypes[i]);
+                    if (!hasBorrowedRankMaps) {
+                        rankMaps.add(null);
+                    }
+                }
             }
+        } catch (Throwable th) {
             if (!hasBorrowedRankMaps) {
-                rankMaps.add(isSymbol[i] ? new DirectIntList(1024, MemoryTag.NATIVE_DEFAULT, true) : null);
+                Misc.freeObjList(rankMaps);
             }
+            throw th;
         }
-        this.isSingleColumnFixed8 = n == 1 && columnByteWidths[0] <= 8;
+        // A static SYMBOL has columnByteWidths[0] == 4 and lands in FIXED8; only a
+        // non-static SYMBOL reaches KeyShape.SYMBOL.
+        if (n != 1) {
+            this.keyShape = KeyShape.GENERIC;
+        } else if (columnByteWidths[0] >= 0 && columnByteWidths[0] <= 8) {
+            this.keyShape = KeyShape.FIXED8;
+        } else {
+            this.keyShape = switch (columnTypes[0]) {
+                case ColumnType.VARCHAR -> KeyShape.VARCHAR;
+                case ColumnType.STRING -> KeyShape.STRING;
+                case ColumnType.SYMBOL -> KeyShape.SYMBOL;
+                case ColumnType.UUID, ColumnType.LONG128, ColumnType.LONG256 -> KeyShape.FIXED_WIDE;
+                default -> KeyShape.GENERIC;
+            };
+        }
         this.decimal128Sink = hasDecimal128 ? new Decimal128() : null;
         this.decimal256Sink = hasDecimal256 ? new Decimal256() : null;
+        this.stringView = keyShape == KeyShape.STRING ? new DirectString() : null;
     }
 
     public static void buildRankMap(SymbolTable symbolTable, DirectIntList rankMap) {
@@ -201,22 +245,18 @@ public class SortKeyEncoder implements QuietCloseable {
     }
 
     /**
-     * Checks whether all sort columns can be encoded as a fixed-width
-     * byte-comparable key (at most 32 bytes).
+     * Checks whether all sort columns can be encoded into a byte-comparable
+     * key. Every column type that ORDER BY accepts is encodable.
      */
     public static boolean isSupported(RecordMetadata metadata, IntList sortColumnFilter) {
-        int totalBytes = 0;
         for (int i = 0, n = sortColumnFilter.size(); i < n; i++) {
             int encoded = sortColumnFilter.getQuick(i);
             int columnIndex = (encoded > 0 ? encoded : -encoded) - 1;
-            int columnType = ColumnType.tagOf(metadata.getColumnType(columnIndex));
-            int width = columnByteWidth(columnType, metadata, columnIndex);
-            if (width < 0) {
+            if (!isEncodable(ColumnType.tagOf(metadata.getColumnType(columnIndex)))) {
                 return false;
             }
-            totalBytes += width;
         }
-        return totalBytes <= 32;
+        return true;
     }
 
     /**
@@ -258,31 +298,80 @@ public class SortKeyEncoder implements QuietCloseable {
     }
 
     public void encode(Record record, long destAddr, long rowId) {
-        if (isSingleColumnFixed8) {
+        if (keyShape == KeyShape.FIXED8) {
             encodeFixed8(record, destAddr, rowId);
             return;
         }
+        if (keyType.isVariable()) {
+            encodeVariable(record, destAddr, rowId);
+            return;
+        }
+        // FIXED_WIDE and multi-column fixed keys both go through encodeGeneric, which
+        // reverses each word to native order to match the entry comparison.
         encodeGeneric(record, destAddr);
         Unsafe.putLong(destAddr + keyType.rowIdOffset(), rowId);
     }
 
     /**
-     * Encodes every frame row into the buffer in one pass, with the column
-     * address, type dispatch and direction transform hoisted out of the per-row
-     * loop. Returns false when the batch does not apply - multi-column key, or
-     * the column is absent from the frame - and the caller must fall back to
-     * per-row {@link #encode(Record, long, long)}.
+     * Encodes a whole page frame into the top-K buffer in one pass, dispatching once on
+     * the key shape to a monomorphic batch loop that hoists the column address, type
+     * dispatch and direction transform out of the per-row work. A non-null {@code rows}
+     * restricts the pass to those frame-local row indexes (filtered scan); a null
+     * {@code rows} walks all {@code frameRowCount} rows. A shape with no batch loop, and
+     * a batch that declines a column-top frame, fall back to per-row {@link #encodeTopK}.
      */
-    public boolean encodeFixed8Frame(PageFrameMemory frameMemory, int frameIndex, long frameRowCount, EncodedTopKBuffer topK) {
-        return encodeFixed8Batch(frameMemory, frameIndex, null, frameRowCount, topK);
+    public void encodeFrame(PageFrameMemory frameMemory, int frameIndex, DirectLongList rows, long frameRowCount, EncodedTopKBuffer topK, PageFrameMemoryRecord record) {
+        final long count = rows != null ? rows.size() : frameRowCount;
+        switch (keyShape) {
+            case FIXED8:
+                if (encodeFixed8Batch(frameMemory, frameIndex, rows, count, topK)) {
+                    return;
+                }
+                break;
+            case FIXED_WIDE:
+                if (encodeFixedWideBatch(frameMemory, frameIndex, rows, count, topK)) {
+                    return;
+                }
+                break;
+            case VARCHAR:
+                if (encodeVarcharBatch(frameMemory, frameIndex, rows, count, topK, record)) {
+                    return;
+                }
+                break;
+            case STRING:
+                if (encodeStringBatch(frameMemory, frameIndex, rows, count, topK, record)) {
+                    return;
+                }
+                break;
+            default:
+                break;
+        }
+        if (rows == null) {
+            for (long r = 0; r < count; r++) {
+                record.setRowIndex(r);
+                encodeTopK(record, record.getRowId(), topK);
+            }
+        } else {
+            for (long p = 0; p < count; p++) {
+                record.setRowIndex(rows.get(p));
+                encodeTopK(record, record.getRowId(), topK);
+            }
+        }
     }
 
     /**
-     * Filtered variant of {@link #encodeFixed8Frame(PageFrameMemory, int, long, EncodedTopKBuffer)}:
-     * encodes only the frame-local row indexes in {@code rows}.
+     * Encodes one row into the top-K buffer, dropping it up front when the buffer's
+     * threshold already excludes its leading prefix word. For a variable-length key
+     * this skips the full key encode and key-heap write for the rows that lose,
+     * which is the bulk of a scan once the top-K is warm. Fixed keys encode inline
+     * and cheaply, so they fall straight through to the full encode.
      */
-    public boolean encodeFixed8Frame(PageFrameMemory frameMemory, int frameIndex, DirectLongList rows, EncodedTopKBuffer topK) {
-        return encodeFixed8Batch(frameMemory, frameIndex, rows, rows.size(), topK);
+    public void encodeTopK(Record record, long rowId, EncodedTopKBuffer topK) {
+        if (keyType.isVariable() && variableRowRejected(record, rowId, topK)) {
+            return;
+        }
+        encode(record, topK.beginAppend(), rowId);
+        topK.endAppend();
     }
 
     public SortKeyType init(SymbolTableSource symbolTableSource) {
@@ -290,10 +379,10 @@ public class SortKeyEncoder implements QuietCloseable {
         // mutate them behind the owner's back.
         assert !hasBorrowedRankMaps;
         int totalBytes = 0;
+        boolean hasVarLength = false;
 
         for (int i = 0; i < columnIndices.length; i++) {
-            offsets[i] = totalBytes;
-            if (isSymbol[i]) {
+            if (isStaticSymbol[i]) {
                 StaticSymbolTable sst = getStaticSymbolTable(symbolTableSource.getSymbolTable(columnIndices[i]));
                 int symbolCount = sst.getSymbolCount();
                 buildRankMap(sst, rankMaps.getQuick(i));
@@ -307,12 +396,19 @@ public class SortKeyEncoder implements QuietCloseable {
                     columnByteWidths[i] = 4;
                 }
             }
-            totalBytes += columnByteWidths[i];
+            if (columnByteWidths[i] < 0) {
+                hasVarLength = true;
+            } else {
+                offsets[i] = totalBytes;
+                totalBytes += columnByteWidths[i];
+            }
         }
 
-        keyType = SortKeyType.fromKeyLength(totalBytes);
-        int padBytes = keyType.keyLength() - totalBytes;
-        padMask = padBytes > 0 ? (1L << ((8 - padBytes) * 8)) - 1 : -1L;
+        keyType = hasVarLength ? SortKeyType.VARIABLE : SortKeyType.fromKeyLength(totalBytes);
+        if (!keyType.isVariable()) {
+            int padBytes = keyType.keyLength() - totalBytes;
+            padMask = padBytes > 0 ? (1L << ((8 - padBytes) * 8)) - 1 : -1L;
+        }
         return keyType;
     }
 
@@ -333,6 +429,10 @@ public class SortKeyEncoder implements QuietCloseable {
         return keyType;
     }
 
+    public void setKeyHeap(MemoryCARW keyHeap) {
+        this.keyHeap = keyHeap;
+    }
+
     private static void appendEntry(EncodedTopKBuffer topK, long key, long rowId) {
         if (topK.fastRejectsKey(key)) {
             return;
@@ -340,6 +440,66 @@ public class SortKeyEncoder implements QuietCloseable {
         final long addr = topK.beginAppend();
         Unsafe.putLong(addr, key);
         Unsafe.putLong(addr + 8, rowId);
+        topK.endAppend();
+    }
+
+    // LONG128/UUID page layout is lo at +0, hi at +8. Reject on the natural leading word
+    // before encoding so a losing row pays no key write; endAppend re-checks the full key.
+    private static void appendLong128Row(EncodedTopKBuffer topK, long colAddr, long rowIdBase, int rowIdOffset, long r, boolean desc) {
+        final long base = colAddr + (r << 4);
+        final long k1 = signedKey(Unsafe.getLong(base + 8), desc);
+        if (topK.fastRejectsKey(k1)) {
+            return;
+        }
+        final long addr = topK.beginAppend();
+        Unsafe.putLong(addr, k1);
+        Unsafe.putLong(addr + 8, unsignedKey(Unsafe.getLong(base), desc));
+        Unsafe.putLong(addr + rowIdOffset, rowIdBase + r);
+        topK.endAppend();
+    }
+
+    private static void appendLong256Row(EncodedTopKBuffer topK, long colAddr, long rowIdBase, int rowIdOffset, long r, boolean desc) {
+        final long base = colAddr + (r << 5);
+        long l0 = Unsafe.getLong(base);
+        long l1 = Unsafe.getLong(base + 8);
+        long l2 = Unsafe.getLong(base + 16);
+        long l3 = Unsafe.getLong(base + 24);
+        if (Long256Impl.isNull(l0, l1, l2, l3)) {
+            l0 = l1 = l2 = l3 = 0;
+        } else if (isBelowLong256Null(l0, l1, l2, l3) && ++l0 == 0 && ++l1 == 0 && ++l2 == 0) {
+            l3++;
+        }
+        final long k1 = unsignedKey(l3, desc);
+        if (topK.fastRejectsKey(k1)) {
+            return;
+        }
+        final long addr = topK.beginAppend();
+        Unsafe.putLong(addr, k1);
+        Unsafe.putLong(addr + 8, unsignedKey(l2, desc));
+        Unsafe.putLong(addr + 16, unsignedKey(l1, desc));
+        Unsafe.putLong(addr + 24, unsignedKey(l0, desc));
+        Unsafe.putLong(addr + rowIdOffset, rowIdBase + r);
+        topK.endAppend();
+    }
+
+    private static void appendUuidRow(EncodedTopKBuffer topK, long colAddr, long rowIdBase, int rowIdOffset, long r, boolean desc) {
+        final long base = colAddr + (r << 4);
+        long hi = Unsafe.getLong(base + 8);
+        long lo = Unsafe.getLong(base);
+        if (Uuid.isNull(lo, hi)) {
+            hi = 0;
+            lo = 0;
+        } else if (isUuidBelowNull(hi, lo) && ++lo == 0) {
+            hi++;
+        }
+        final long k1 = unsignedKey(hi, desc);
+        if (topK.fastRejectsKey(k1)) {
+            return;
+        }
+        final long addr = topK.beginAppend();
+        Unsafe.putLong(addr, k1);
+        Unsafe.putLong(addr + 8, unsignedKey(lo, desc));
+        Unsafe.putLong(addr + rowIdOffset, rowIdBase + r);
         topK.endAppend();
     }
 
@@ -421,23 +581,40 @@ public class SortKeyEncoder implements QuietCloseable {
         }
     }
 
-    private static int columnByteWidth(int columnType, RecordMetadata metadata, int columnIndex) {
-        return switch (columnType) {
-            case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.GEOBYTE, ColumnType.DECIMAL8 -> 1;
-            case ColumnType.SHORT, ColumnType.GEOSHORT, ColumnType.CHAR, ColumnType.DECIMAL16 -> 2;
-            case ColumnType.INT, ColumnType.GEOINT, ColumnType.IPv4, ColumnType.FLOAT, ColumnType.DECIMAL32 -> 4;
-            case ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.DOUBLE, ColumnType.GEOLONG,
-                 ColumnType.DECIMAL64 -> 8;
-            case ColumnType.DECIMAL128 -> 16;
-            case ColumnType.DECIMAL256 -> 32;
-            case ColumnType.SYMBOL -> {
-                if (metadata.isSymbolTableStatic(columnIndex)) {
-                    yield 4;
-                }
-                yield -1;
+    private static void batchLong128(EncodedTopKBuffer topK, long colAddr, long rowIdBase, int rowIdOffset, DirectLongList rows, long rowCount, boolean desc) {
+        if (rows == null) {
+            for (long r = 0; r < rowCount; r++) {
+                appendLong128Row(topK, colAddr, rowIdBase, rowIdOffset, r, desc);
             }
-            default -> -1;
-        };
+        } else {
+            for (long p = 0; p < rowCount; p++) {
+                appendLong128Row(topK, colAddr, rowIdBase, rowIdOffset, rows.get(p), desc);
+            }
+        }
+    }
+
+    private static void batchLong256(EncodedTopKBuffer topK, long colAddr, long rowIdBase, int rowIdOffset, DirectLongList rows, long rowCount, boolean desc) {
+        if (rows == null) {
+            for (long r = 0; r < rowCount; r++) {
+                appendLong256Row(topK, colAddr, rowIdBase, rowIdOffset, r, desc);
+            }
+        } else {
+            for (long p = 0; p < rowCount; p++) {
+                appendLong256Row(topK, colAddr, rowIdBase, rowIdOffset, rows.get(p), desc);
+            }
+        }
+    }
+
+    private static void batchUuid(EncodedTopKBuffer topK, long colAddr, long rowIdBase, int rowIdOffset, DirectLongList rows, long rowCount, boolean desc) {
+        if (rows == null) {
+            for (long r = 0; r < rowCount; r++) {
+                appendUuidRow(topK, colAddr, rowIdBase, rowIdOffset, r, desc);
+            }
+        } else {
+            for (long p = 0; p < rowCount; p++) {
+                appendUuidRow(topK, colAddr, rowIdBase, rowIdOffset, rows.get(p), desc);
+            }
+        }
     }
 
     private static long doubleKey(double value, boolean desc) {
@@ -487,7 +664,24 @@ public class SortKeyEncoder implements QuietCloseable {
     }
 
     private static void encodeLong(long addr, long value, boolean desc) {
-        Unsafe.putLong(addr, Long.reverseBytes(value ^ (desc ? Long.MAX_VALUE : Long.MIN_VALUE)));
+        Unsafe.putLong(addr, Long.reverseBytes(signedKey(value, desc)));
+    }
+
+    private static void encodeLong256(long addr, Long256 value, boolean desc) {
+        encodeLong256(addr, value.getLong0(), value.getLong1(), value.getLong2(), value.getLong3(), desc);
+    }
+
+    // word 0 = most significant l3 ... word 3 = l0.
+    private static void encodeLong256(long addr, long l0, long l1, long l2, long l3, boolean desc) {
+        if (Long256Impl.isNull(l0, l1, l2, l3)) {
+            l0 = l1 = l2 = l3 = 0;
+        } else if (isBelowLong256Null(l0, l1, l2, l3) && ++l0 == 0 && ++l1 == 0 && ++l2 == 0) {
+            l3++;
+        }
+        Unsafe.putLong(addr, Long.reverseBytes(unsignedKey(l3, desc)));
+        Unsafe.putLong(addr + 8, Long.reverseBytes(unsignedKey(l2, desc)));
+        Unsafe.putLong(addr + 16, Long.reverseBytes(unsignedKey(l1, desc)));
+        Unsafe.putLong(addr + 24, Long.reverseBytes(unsignedKey(l0, desc)));
     }
 
     private static void encodeShort(long addr, short value, boolean desc) {
@@ -499,7 +693,7 @@ public class SortKeyEncoder implements QuietCloseable {
     }
 
     private static void encodeUnsignedLong(long addr, long value, boolean desc) {
-        Unsafe.putLong(addr, Long.reverseBytes(desc ? ~value : value));
+        Unsafe.putLong(addr, Long.reverseBytes(unsignedKey(value, desc)));
     }
 
     private static void encodeUnsignedRank(long addr, int rank, int byteWidth, boolean desc) {
@@ -508,6 +702,30 @@ public class SortKeyEncoder implements QuietCloseable {
             case 2 -> Unsafe.putShort(addr, Short.reverseBytes((short) (desc ? ~rank : rank)));
             default -> Unsafe.putInt(addr, Integer.reverseBytes(desc ? ~rank : rank));
         }
+    }
+
+    private static void encodeUuid(long addr, long hi, long lo, boolean desc) {
+        if (Uuid.isNull(lo, hi)) {
+            hi = 0;
+            lo = 0;
+        } else if (isUuidBelowNull(hi, lo) && ++lo == 0) {
+            hi++;
+        }
+        Unsafe.putLong(addr, Long.reverseBytes(unsignedKey(hi, desc)));
+        Unsafe.putLong(addr + 8, Long.reverseBytes(unsignedKey(lo, desc)));
+    }
+
+    private static int fixedColumnByteWidth(int columnType) {
+        return switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.GEOBYTE, ColumnType.DECIMAL8 -> 1;
+            case ColumnType.SHORT, ColumnType.GEOSHORT, ColumnType.CHAR, ColumnType.DECIMAL16 -> 2;
+            case ColumnType.INT, ColumnType.GEOINT, ColumnType.IPv4, ColumnType.FLOAT, ColumnType.DECIMAL32 -> 4;
+            case ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.DOUBLE, ColumnType.GEOLONG,
+                 ColumnType.DECIMAL64 -> 8;
+            case ColumnType.DECIMAL128, ColumnType.LONG128, ColumnType.UUID -> 16;
+            case ColumnType.DECIMAL256, ColumnType.LONG256 -> 32;
+            default -> -1;
+        };
     }
 
     private static long floatKey(float value, boolean desc) {
@@ -530,6 +748,11 @@ public class SortKeyEncoder implements QuietCloseable {
         throw new AssertionError("Failed to get static symbol table from " + symbolTable);
     }
 
+    private static boolean hasByteFF(long word) {
+        final long inv = ~word;
+        return ((inv - 0x0101010101010101L) & word & 0x8080808080808080L) != 0;
+    }
+
     private static void insertionSortRankMap(DirectIntList rankMap, StaticSymbolTable symbolTable, int lo, int hi) {
         for (int i = lo + 1; i <= hi; i++) {
             int key = rankMap.get(i);
@@ -541,6 +764,38 @@ public class SortKeyEncoder implements QuietCloseable {
             }
             rankMap.set(j + 1, key);
         }
+    }
+
+    private static CairoException invalidVarcharUtf8() {
+        return CairoException.nonCritical().put("cannot ORDER BY a VARCHAR with invalid UTF-8 (contains a 0xFF byte)");
+    }
+
+    private static boolean isBelowLong256Null(long l0, long l1, long l2, long l3) {
+        int cmp = Long.compareUnsigned(l3, Numbers.LONG_NULL);
+        if (cmp != 0) {
+            return cmp < 0;
+        }
+        cmp = Long.compareUnsigned(l2, Numbers.LONG_NULL);
+        if (cmp != 0) {
+            return cmp < 0;
+        }
+        cmp = Long.compareUnsigned(l1, Numbers.LONG_NULL);
+        if (cmp != 0) {
+            return cmp < 0;
+        }
+        return Long.compareUnsigned(l0, Numbers.LONG_NULL) < 0;
+    }
+
+    private static boolean isEncodable(int columnType) {
+        return switch (columnType) {
+            case ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL -> true;
+            default -> fixedColumnByteWidth(columnType) >= 0;
+        };
+    }
+
+    private static boolean isUuidBelowNull(long hi, long lo) {
+        return Long.compareUnsigned(hi, Numbers.LONG_NULL) < 0
+                || (hi == Numbers.LONG_NULL && Long.compareUnsigned(lo, Numbers.LONG_NULL) < 0);
     }
 
     private static void quickSortRankMap(DirectIntList rankMap, StaticSymbolTable symbolTable, int lo, int hi) {
@@ -578,6 +833,258 @@ public class SortKeyEncoder implements QuietCloseable {
         }
     }
 
+    // Natural (compareUnsigned-comparable) key words; encode* stores the reverseBytes'd form.
+    private static long signedKey(long value, boolean desc) {
+        return value ^ (desc ? Long.MAX_VALUE : Long.MIN_VALUE);
+    }
+
+    private static long unsignedKey(long value, boolean desc) {
+        return desc ? ~value : value;
+    }
+
+    // The length is only compared as len <= 8 (whole key fits the leading word) vs len > 8, plus
+    // a tie-break for equal short keys, so the single scan stops once the word fills and len > 8.
+    private static boolean utf16Rejects(CharSequence value, boolean desc, long rowId, EncodedTopKBuffer topK) {
+        final long byteMask = desc ? 0xFFL : 0L;
+        if (value == null) {
+            return topK.fastRejectsVarEntry(byteMask << 56, 1, rowId);
+        }
+        long word = (1L ^ byteMask) << 56; // marker
+        int shift = 48;
+        long len = 1; // marker
+        for (int i = 0, n = value.length(); i < n; i++) {
+            final char c = value.charAt(i);
+            final long hi = c >>> 8;
+            final long lo = c & 0xFF;
+            if (hi <= 1) {
+                if (shift >= 0) {
+                    word |= (1L ^ byteMask) << shift; // escape
+                    shift -= 8;
+                }
+                len++;
+            }
+            if (shift >= 0) {
+                word |= ((hi ^ byteMask) & 0xFFL) << shift;
+                shift -= 8;
+            }
+            len++;
+            if (lo <= 1) {
+                if (shift >= 0) {
+                    word |= (1L ^ byteMask) << shift; // escape
+                    shift -= 8;
+                }
+                len++;
+            }
+            if (shift >= 0) {
+                word |= ((lo ^ byteMask) & 0xFFL) << shift;
+                shift -= 8;
+            }
+            len++;
+            if (len > Long.BYTES) {
+                return topK.fastRejectsVarEntry(word, len, rowId);
+            }
+        }
+        if (shift >= 0) {
+            word |= byteMask << shift; // terminator; trailing bytes stay zero-padded
+        }
+        len++; // terminator
+        return topK.fastRejectsVarEntry(word, len, rowId);
+    }
+
+    /**
+     * The leading 8-byte comparison word of a single VARCHAR key, computed straight
+     * from the value - bit-identical to the {@code k1} word that
+     * {@link #appendVarchar(Utf8Sequence, boolean, long)} writes (marker, then up to
+     * seven {@code +1}-normalized value bytes, then terminator and zero padding for a
+     * shorter value), but with no key-heap write or rollback. Rejects a 0xFF byte in
+     * the leading word, matching the full encode's invalid-UTF-8 guard; bytes past
+     * the leading word are checked by appendVarchar on the rows that survive.
+     */
+    private static long varcharLeadingWord(Utf8Sequence value, boolean desc) {
+        final long byteMask = desc ? 0xFFL : 0L;
+        if (value == null) {
+            return byteMask << 56;
+        }
+        final int size = value.size();
+        if (size >= Long.BYTES) {
+            final long word = value.longAt(0);
+            if (hasByteFF(word)) {
+                throw invalidVarcharUtf8();
+            }
+            final long normalized = (word + 0x0101010101010101L) ^ (desc ? -1L : 0L);
+            return ((1L ^ byteMask) << 56) | (Long.reverseBytes(normalized) >>> 8);
+        }
+        long word = (1L ^ byteMask) << 56;
+        int shift = 48;
+        for (int i = 0; i < size; i++, shift -= 8) {
+            final byte b = value.byteAt(i);
+            if (b == (byte) 0xFF) {
+                throw invalidVarcharUtf8();
+            }
+            word |= (((b + 1) & 0xFFL) ^ byteMask) << shift;
+        }
+        if (size < 7) {
+            word |= byteMask << shift; // terminator; trailing bytes stay zero-padded
+        }
+        return word;
+    }
+
+    /**
+     * Leading word of a VARCHAR key read straight from {@code size} value bytes at a
+     * native address - the no-view-materialization counterpart of
+     * {@link #varcharLeadingWord(Utf8Sequence, boolean)}, used by the batched page-frame
+     * path. The address must back at least {@code min(size, 8)} bytes (the aux inline
+     * bytes, the data vector, or the Parquet slice all satisfy this).
+     */
+    private static long varcharLeadingWordFromBytes(long addr, int size, boolean desc) {
+        final long byteMask = desc ? 0xFFL : 0L;
+        if (size >= Long.BYTES) {
+            final long word = Unsafe.getLong(addr);
+            if (hasByteFF(word)) {
+                throw invalidVarcharUtf8();
+            }
+            final long normalized = (word + 0x0101010101010101L) ^ (desc ? -1L : 0L);
+            return ((1L ^ byteMask) << 56) | (Long.reverseBytes(normalized) >>> 8);
+        }
+        long word = (1L ^ byteMask) << 56;
+        int shift = 48;
+        for (int i = 0; i < size; i++, shift -= 8) {
+            final byte b = Unsafe.getByte(addr + i);
+            if (b == (byte) 0xFF) {
+                throw invalidVarcharUtf8();
+            }
+            word |= (((b + 1) & 0xFFL) ^ byteMask) << shift;
+        }
+        if (size < 7) {
+            word |= byteMask << shift; // terminator; trailing bytes stay zero-padded
+        }
+        return word;
+    }
+
+    /**
+     * Leading word of a split VARCHAR key built from the six-byte inline prefix stored in the
+     * aux entry, with the seventh value byte forced to zero. This is the data-vector-free
+     * counterpart of {@link #varcharLeadingWordFromBytes(long, int, boolean)} for the batched
+     * reject path: it is bit-identical to that word masked with {@code 0xFF..FF00}, so
+     * {@link EncodedTopKBuffer#fastRejectsVarEntryPrefix6(long, long, long)} can compare it
+     * against the (full) threshold word masked the same way. Only the six prefix bytes are
+     * checked for 0xFF; bytes past the prefix are validated by appendVarchar on survivors.
+     */
+    private static long varcharLeadingWordFromPrefix(long auxEntry, boolean desc) {
+        final long byteMask = desc ? 0xFFL : 0L;
+        final long prefix = VarcharTypeDriver.getInlinedPrefixWord(auxEntry);
+        if (hasByteFF(prefix)) {
+            throw invalidVarcharUtf8();
+        }
+        final long normalized = (prefix + 0x0000010101010101L) ^ (desc ? VarcharTypeDriver.VARCHAR_INLINED_PREFIX_MASK : 0L);
+        return ((1L ^ byteMask) << 56) | (Long.reverseBytes(normalized) >>> 8);
+    }
+
+    /**
+     * Appends the variable-length key's normalized bytes to the key heap, one
+     * sort column after another, and returns the byte length written. A
+     * {@code budget} below {@link Long#MAX_VALUE} stops once that many bytes are
+     * on the heap, so {@link #variableRowRejected(Record, long, EncodedTopKBuffer)}
+     * can materialize just the leading word without encoding the full key. The full encode passes
+     * {@code Long.MAX_VALUE} and writes every byte. The leading bytes the bounded
+     * call produces are a byte-for-byte prefix of the full encode's, so a key
+     * fast-rejected on its leading word never has to be encoded in full.
+     */
+    private long appendKeyBytes(Record record, long budget) {
+        final MemoryCARW heap = keyHeap;
+        final long start = heap.getAppendOffset();
+        for (int i = 0; i < columnIndices.length; i++) {
+            if (heap.getAppendOffset() - start >= budget) {
+                break;
+            }
+            if (columnByteWidths[i] >= 0) {
+                encodeFixedColumn(record, i, heap.appendAddressFor(columnByteWidths[i]));
+            } else {
+                final long remaining = budget - (heap.getAppendOffset() - start);
+                switch (columnTypes[i]) {
+                    case ColumnType.VARCHAR ->
+                            appendVarchar(record.getVarcharA(columnIndices[i]), isDesc[i], remaining);
+                    case ColumnType.STRING -> appendUtf16(record.getStrA(columnIndices[i]), isDesc[i], remaining);
+                    case ColumnType.SYMBOL -> appendUtf16(record.getSymA(columnIndices[i]), isDesc[i], remaining);
+                    default ->
+                            throw CairoException.nonCritical().put("unexpected type in encodeVariable: ").put(ColumnType.nameOf(columnTypes[i]));
+                }
+            }
+        }
+        return heap.getAppendOffset() - start;
+    }
+
+    private void appendUtf16(CharSequence value, boolean desc, long maxBytes) {
+        final byte mask = desc ? (byte) 0xFF : 0;
+        if (value == null) {
+            Unsafe.putByte(keyHeap.appendAddressFor(1), mask);
+            return;
+        }
+        final int n = value.length();
+        final long offset = keyHeap.getAppendOffset();
+        final long full = 4L * n + 2;
+        // Reserve the whole key, or, when bounded, the budget plus one character's
+        // worth of slack for the step that can overrun maxBytes mid-character.
+        final long base = keyHeap.appendAddressFor(maxBytes >= full ? full : maxBytes + 4L);
+        long p = base;
+        Unsafe.putByte(p++, (byte) (1 ^ mask));
+        int i = 0;
+        for (; i < n && (p - base) < maxBytes; i++) {
+            final char c = value.charAt(i);
+            final int hi = c >>> 8;
+            final int lo = c & 0xFF;
+            if (hi <= 1) {
+                Unsafe.putByte(p++, (byte) (1 ^ mask));
+            }
+            Unsafe.putByte(p++, (byte) (hi ^ mask));
+            if (lo <= 1) {
+                Unsafe.putByte(p++, (byte) (1 ^ mask));
+            }
+            Unsafe.putByte(p++, (byte) (lo ^ mask));
+        }
+        if (i >= n) {
+            Unsafe.putByte(p++, mask);
+        }
+        keyHeap.jumpTo(offset + (p - base));
+    }
+
+    private void appendVarchar(Utf8Sequence value, boolean desc, long maxBytes) {
+        final byte mask = desc ? (byte) 0xFF : 0;
+        if (value == null) {
+            Unsafe.putByte(keyHeap.appendAddressFor(1), mask);
+            return;
+        }
+        final int size = value.size();
+        // Reserve the whole key, or, when bounded, the budget plus a word of
+        // slack for the 8-byte SWAR step that can overrun maxBytes.
+        final long offset = keyHeap.getAppendOffset();
+        final long base = keyHeap.appendAddressFor(maxBytes >= size + 2L ? size + 2L : maxBytes + Long.BYTES);
+        long p = base;
+        Unsafe.putByte(p++, (byte) (1 ^ mask));
+        final long wordMask = desc ? -1L : 0;
+        int i = 0;
+        for (; i + 8 <= size && (p - base) < maxBytes; i += 8, p += 8) {
+            final long word = value.longAt(i);
+            // The +1 shift reserves 0x00 as the terminator; a 0xFF byte would
+            // wrap to 0x00 and break the order. Valid UTF-8 has no 0xFF.
+            if (hasByteFF(word)) {
+                throw invalidVarcharUtf8();
+            }
+            Unsafe.putLong(p, (word + 0x0101010101010101L) ^ wordMask);
+        }
+        for (; i < size && (p - base) < maxBytes; i++, p++) {
+            final byte b = value.byteAt(i);
+            if (b == (byte) 0xFF) {
+                throw invalidVarcharUtf8();
+            }
+            Unsafe.putByte(p, (byte) ((b + 1) ^ mask));
+        }
+        if (i >= size) {
+            Unsafe.putByte(p++, mask);
+        }
+        keyHeap.jumpTo(offset + (p - base));
+    }
+
     private void batchSymbol(EncodedTopKBuffer topK, long colAddr, long rowIdBase, DirectLongList rows, long rowCount, boolean desc) {
         final DirectIntList rankMap = rankMaps.getQuick(0);
         final int rankMapSize = rankMapSizes[0];
@@ -604,7 +1111,7 @@ public class SortKeyEncoder implements QuietCloseable {
         boolean desc = isDesc[0];
         int shift = (8 - columnByteWidths[0]) * 8;
         long key;
-        if (isSymbol[0]) {
+        if (isStaticSymbol[0]) {
             int symKey = record.getInt(colIdx);
             int rank = (symKey < 0 || symKey >= rankMapSizes[0]) ? 0 : rankMaps.getQuick(0).get(symKey);
             key = Integer.toUnsignedLong(desc ? ~rank : rank) << shift;
@@ -659,12 +1166,8 @@ public class SortKeyEncoder implements QuietCloseable {
     }
 
     private boolean encodeFixed8Batch(PageFrameMemory frameMemory, int frameIndex, DirectLongList rows, long rowCount, EncodedTopKBuffer topK) {
-        if (!isSingleColumnFixed8) {
-            return false;
-        }
         final long colAddr = frameMemory.getPageAddress(columnIndices[0]);
         if (colAddr == 0) {
-            // Column top: every frame row is NULL for this column.
             return false;
         }
         final long rowIdBase = Rows.toRowID(frameIndex, 0);
@@ -691,53 +1194,86 @@ public class SortKeyEncoder implements QuietCloseable {
         return true;
     }
 
+    private void encodeFixedColumn(Record record, int i, long addr) {
+        int colIdx = columnIndices[i];
+        boolean desc = isDesc[i];
+
+        if (isStaticSymbol[i]) {
+            int key = record.getInt(colIdx);
+            int rank = (key < 0 || key >= rankMapSizes[i]) ? 0 : rankMaps.getQuick(i).get(key);
+            encodeUnsignedRank(addr, rank, columnByteWidths[i], desc);
+            return;
+        }
+        switch (columnTypes[i]) {
+            case ColumnType.BOOLEAN -> encodeBoolean(addr, record.getBool(colIdx), desc);
+            case ColumnType.BYTE -> encodeByte(addr, record.getByte(colIdx), desc);
+            case ColumnType.GEOBYTE -> encodeByte(addr, record.getGeoByte(colIdx), desc);
+            case ColumnType.DECIMAL8 -> encodeByte(addr, record.getDecimal8(colIdx), desc);
+            case ColumnType.SHORT -> encodeShort(addr, record.getShort(colIdx), desc);
+            case ColumnType.GEOSHORT -> encodeShort(addr, record.getGeoShort(colIdx), desc);
+            case ColumnType.DECIMAL16 -> encodeShort(addr, record.getDecimal16(colIdx), desc);
+            case ColumnType.CHAR -> encodeChar(addr, record.getChar(colIdx), desc);
+            case ColumnType.INT -> encodeInt(addr, record.getInt(colIdx), desc);
+            case ColumnType.GEOINT -> encodeInt(addr, record.getGeoInt(colIdx), desc);
+            case ColumnType.DECIMAL32 -> encodeInt(addr, record.getDecimal32(colIdx), desc);
+            case ColumnType.IPv4 -> encodeUnsignedInt(addr, record.getIPv4(colIdx), desc);
+            case ColumnType.LONG -> encodeLong(addr, record.getLong(colIdx), desc);
+            case ColumnType.GEOLONG -> encodeLong(addr, record.getGeoLong(colIdx), desc);
+            case ColumnType.DECIMAL64 -> encodeLong(addr, record.getDecimal64(colIdx), desc);
+            case ColumnType.DATE -> encodeLong(addr, record.getDate(colIdx), desc);
+            case ColumnType.TIMESTAMP -> encodeLong(addr, record.getTimestamp(colIdx), desc);
+            case ColumnType.FLOAT -> encodeFloat(addr, record.getFloat(colIdx), desc);
+            case ColumnType.DOUBLE -> encodeDouble(addr, record.getDouble(colIdx), desc);
+            case ColumnType.LONG128 -> {
+                encodeLong(addr, record.getLong128Hi(colIdx), desc);
+                encodeUnsignedLong(addr + 8, record.getLong128Lo(colIdx), desc);
+            }
+            case ColumnType.UUID -> encodeUuid(addr, record.getLong128Hi(colIdx), record.getLong128Lo(colIdx), desc);
+            case ColumnType.LONG256 -> encodeLong256(addr, record.getLong256A(colIdx), desc);
+            case ColumnType.DECIMAL128 -> {
+                record.getDecimal128(colIdx, decimal128Sink);
+                encodeLong(addr, decimal128Sink.getHigh(), desc);
+                encodeUnsignedLong(addr + 8, decimal128Sink.getLow(), desc);
+            }
+            case ColumnType.DECIMAL256 -> {
+                record.getDecimal256(colIdx, decimal256Sink);
+                encodeLong(addr, decimal256Sink.getHh(), desc);
+                encodeUnsignedLong(addr + 8, decimal256Sink.getHl(), desc);
+                encodeUnsignedLong(addr + 16, decimal256Sink.getLh(), desc);
+                encodeUnsignedLong(addr + 24, decimal256Sink.getLl(), desc);
+            }
+            default ->
+                    throw CairoException.nonCritical().put("unexpected type in encodeFixedColumn: ").put(ColumnType.nameOf(columnTypes[i]));
+        }
+    }
+
+    /**
+     * Batched single wide-fixed top-K path (UUID/LONG128/LONG256) over a page frame: reads
+     * each row's value straight from the column page, normalizes it with the shared encode
+     * helpers, and threshold-rejects on the leading 16 bytes. Returns false - so the caller
+     * falls back to per-row {@link #encodeTopK} - for a column-top frame.
+     */
+    private boolean encodeFixedWideBatch(PageFrameMemory frameMemory, int frameIndex, DirectLongList rows, long rowCount, EncodedTopKBuffer topK) {
+        final long colAddr = frameMemory.getPageAddress(columnIndices[0]);
+        if (colAddr == 0) {
+            // Column top: every frame row is NULL for this column.
+            return false;
+        }
+        final long rowIdBase = Rows.toRowID(frameIndex, 0);
+        final int rowIdOffset = columnByteWidths[0];
+        final boolean desc = isDesc[0];
+        switch (columnTypes[0]) {
+            case ColumnType.UUID -> batchUuid(topK, colAddr, rowIdBase, rowIdOffset, rows, rowCount, desc);
+            case ColumnType.LONG128 -> batchLong128(topK, colAddr, rowIdBase, rowIdOffset, rows, rowCount, desc);
+            case ColumnType.LONG256 -> batchLong256(topK, colAddr, rowIdBase, rowIdOffset, rows, rowCount, desc);
+            default -> throw new AssertionError("unexpected FIXED_WIDE type: " + ColumnType.nameOf(columnTypes[0]));
+        }
+        return true;
+    }
+
     private void encodeGeneric(Record record, long destAddr) {
         for (int i = 0; i < columnIndices.length; i++) {
-            int colIdx = columnIndices[i];
-            long addr = destAddr + offsets[i];
-            boolean desc = isDesc[i];
-
-            if (isSymbol[i]) {
-                int key = record.getInt(colIdx);
-                int rank = (key < 0 || key >= rankMapSizes[i]) ? 0 : rankMaps.getQuick(i).get(key);
-                encodeUnsignedRank(addr, rank, columnByteWidths[i], desc);
-            } else {
-                switch (columnTypes[i]) {
-                    case ColumnType.BOOLEAN -> encodeBoolean(addr, record.getBool(colIdx), desc);
-                    case ColumnType.BYTE -> encodeByte(addr, record.getByte(colIdx), desc);
-                    case ColumnType.GEOBYTE -> encodeByte(addr, record.getGeoByte(colIdx), desc);
-                    case ColumnType.DECIMAL8 -> encodeByte(addr, record.getDecimal8(colIdx), desc);
-                    case ColumnType.SHORT -> encodeShort(addr, record.getShort(colIdx), desc);
-                    case ColumnType.GEOSHORT -> encodeShort(addr, record.getGeoShort(colIdx), desc);
-                    case ColumnType.DECIMAL16 -> encodeShort(addr, record.getDecimal16(colIdx), desc);
-                    case ColumnType.CHAR -> encodeChar(addr, record.getChar(colIdx), desc);
-                    case ColumnType.INT -> encodeInt(addr, record.getInt(colIdx), desc);
-                    case ColumnType.GEOINT -> encodeInt(addr, record.getGeoInt(colIdx), desc);
-                    case ColumnType.DECIMAL32 -> encodeInt(addr, record.getDecimal32(colIdx), desc);
-                    case ColumnType.IPv4 -> encodeUnsignedInt(addr, record.getIPv4(colIdx), desc);
-                    case ColumnType.LONG -> encodeLong(addr, record.getLong(colIdx), desc);
-                    case ColumnType.GEOLONG -> encodeLong(addr, record.getGeoLong(colIdx), desc);
-                    case ColumnType.DECIMAL64 -> encodeLong(addr, record.getDecimal64(colIdx), desc);
-                    case ColumnType.DATE -> encodeLong(addr, record.getDate(colIdx), desc);
-                    case ColumnType.TIMESTAMP -> encodeLong(addr, record.getTimestamp(colIdx), desc);
-                    case ColumnType.FLOAT -> encodeFloat(addr, record.getFloat(colIdx), desc);
-                    case ColumnType.DOUBLE -> encodeDouble(addr, record.getDouble(colIdx), desc);
-                    case ColumnType.DECIMAL128 -> {
-                        record.getDecimal128(colIdx, decimal128Sink);
-                        encodeLong(addr, decimal128Sink.getHigh(), desc);
-                        encodeUnsignedLong(addr + 8, decimal128Sink.getLow(), desc);
-                    }
-                    case ColumnType.DECIMAL256 -> {
-                        record.getDecimal256(colIdx, decimal256Sink);
-                        encodeLong(addr, decimal256Sink.getHh(), desc);
-                        encodeUnsignedLong(addr + 8, decimal256Sink.getHl(), desc);
-                        encodeUnsignedLong(addr + 16, decimal256Sink.getLh(), desc);
-                        encodeUnsignedLong(addr + 24, decimal256Sink.getLl(), desc);
-                    }
-                    default ->
-                            throw CairoException.nonCritical().put("unexpected type in encodeGeneric: ").put(ColumnType.nameOf(columnTypes[i]));
-                }
-            }
+            encodeFixedColumn(record, i, destAddr + offsets[i]);
         }
 
         // Reverse each 8-byte word from big-endian to native byte order.
@@ -751,5 +1287,157 @@ public class SortKeyEncoder implements QuietCloseable {
         }
         long val = Unsafe.getLong(destAddr + lastWord);
         Unsafe.putLong(destAddr + lastWord, Long.reverseBytes(val & padMask));
+    }
+
+    // STRING is materialized natively even in Parquet frames, so the value is read straight from the page.
+    private boolean encodeStringBatch(PageFrameMemory frameMemory, int frameIndex, DirectLongList rows, long rowCount, EncodedTopKBuffer topK, PageFrameMemoryRecord record) {
+        final long dataAddr = frameMemory.getPageAddress(columnIndices[0]);
+        if (dataAddr == 0) {
+            // Column top: every frame row is NULL for this column.
+            return false;
+        }
+        final long auxAddr = frameMemory.getAuxPageAddress(columnIndices[0]);
+        final long rowIdBase = Rows.toRowID(frameIndex, 0);
+        if (rows == null) {
+            for (long r = 0; r < rowCount; r++) {
+                encodeStringRow(topK, record, dataAddr, auxAddr, rowIdBase, r);
+            }
+        } else {
+            for (long p = 0; p < rowCount; p++) {
+                encodeStringRow(topK, record, dataAddr, auxAddr, rowIdBase, rows.get(p));
+            }
+        }
+        return true;
+    }
+
+    private void encodeStringRow(EncodedTopKBuffer topK, PageFrameMemoryRecord record, long dataAddr, long auxAddr, long rowIdBase, long r) {
+        final long valueAddr = dataAddr + Unsafe.getLong(auxAddr + (r << 3));
+        final int len = Unsafe.getInt(valueAddr);
+        final CharSequence value = len == TableUtils.NULL_LEN ? null : stringView.of(valueAddr + Vm.STRING_LENGTH_BYTES, len);
+        final boolean desc = isDesc[0];
+        final long rowId = rowIdBase + r;
+        if (utf16Rejects(value, desc, rowId, topK)) {
+            return;
+        }
+        record.setRowIndex(r);
+        encode(record, topK.beginAppend(), rowId);
+        topK.endAppend();
+    }
+
+    private boolean encodeVarcharBatch(PageFrameMemory frameMemory, int frameIndex, DirectLongList rows, long rowCount, EncodedTopKBuffer topK, PageFrameMemoryRecord record) {
+        final long auxAddr = frameMemory.getAuxPageAddress(columnIndices[0]);
+        if (auxAddr == 0) {
+            return false;
+        }
+        final boolean isParquet = frameMemory.getFrameFormat() == PartitionFormat.PARQUET;
+        final long dataAddr = isParquet ? 0 : frameMemory.getPageAddress(columnIndices[0]);
+        final long rowIdBase = Rows.toRowID(frameIndex, 0);
+        if (rows == null) {
+            for (long r = 0; r < rowCount; r++) {
+                encodeVarcharRow(topK, record, auxAddr, dataAddr, isParquet, rowIdBase, r);
+            }
+        } else {
+            for (long p = 0; p < rowCount; p++) {
+                encodeVarcharRow(topK, record, auxAddr, dataAddr, isParquet, rowIdBase, rows.get(p));
+            }
+        }
+        return true;
+    }
+
+    private void encodeVarcharRow(EncodedTopKBuffer topK, PageFrameMemoryRecord record, long auxAddr, long dataAddr, boolean isParquet, long rowIdBase, long r) {
+        final boolean desc = isDesc[0];
+        final long auxEntry = auxAddr + r * VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES;
+        final int header = Unsafe.getInt(auxEntry);
+        final long rowId = rowIdBase + r;
+        final boolean isRejected;
+        if (VarcharTypeDriver.hasNullFlag(header)) {
+            final long k1 = desc ? (0xFFL << 56) : 0L; // matches varcharLeadingWord(null)
+            isRejected = topK.fastRejectsVarEntry(k1, 1, rowId);
+        } else if (isParquet) {
+            final int size = VarcharTypeDriver.getSliceSize(header);
+            final long k1 = varcharLeadingWordFromBytes(VarcharTypeDriver.getSliceByteAddress(auxEntry), size, desc);
+            isRejected = topK.fastRejectsVarEntry(k1, size + 2L, rowId);
+        } else if (VarcharTypeDriver.hasInlinedFlag(header)) {
+            final int size = VarcharTypeDriver.getInlinedOrSplitSize(header);
+            final long k1 = varcharLeadingWordFromBytes(VarcharTypeDriver.getValueByteAddress(header, auxEntry, dataAddr), size, desc);
+            isRejected = topK.fastRejectsVarEntry(k1, size + 2L, rowId);
+        } else {
+            final int size = VarcharTypeDriver.getInlinedOrSplitSize(header);
+            final long k1 = varcharLeadingWordFromPrefix(auxEntry, desc);
+            isRejected = topK.fastRejectsVarEntryPrefix6(k1, size + 2L, rowId);
+        }
+        if (isRejected) {
+            return;
+        }
+        record.setRowIndex(r);
+        encode(record, topK.beginAppend(), rowId);
+        topK.endAppend();
+    }
+
+    private void encodeVariable(Record record, long destAddr, long rowId) {
+        final MemoryCARW heap = keyHeap;
+        final long start = heap.getAppendOffset();
+        final long len = appendKeyBytes(record, Long.MAX_VALUE);
+        if (len < KEY_PREFIX_BYTES) {
+            long padAddr = heap.appendAddressFor(KEY_PREFIX_BYTES);
+            Unsafe.putLong(padAddr, 0);
+            Unsafe.putLong(padAddr + 8, 0);
+        }
+        final long keyAddr = heap.addressOf(start);
+        Unsafe.putLong(destAddr, Long.reverseBytes(Unsafe.getLong(keyAddr)));
+        Unsafe.putLong(destAddr + 8, Long.reverseBytes(Unsafe.getLong(keyAddr + 8)));
+        Unsafe.putLong(destAddr + 16, len);
+        Unsafe.putLong(destAddr + 24, start);
+        Unsafe.putLong(destAddr + 32, rowId);
+        heap.jumpTo(len <= KEY_PREFIX_BYTES ? start : start + len);
+    }
+
+    private boolean variableRowRejected(Record record, long rowId, EncodedTopKBuffer topK) {
+        // Single-column hot path: the leading word and length come straight from the
+        // value with a few ALU ops - no key-heap write and no rollback.
+        switch (keyShape) {
+            case VARCHAR: {
+                final Utf8Sequence value = record.getVarcharA(columnIndices[0]);
+                final long len = value == null ? 1 : value.size() + 2L;
+                return topK.fastRejectsVarEntry(varcharLeadingWord(value, isDesc[0]), len, rowId);
+            }
+            // STRING and non-static SYMBOL (resolved through the symbol table) share the UTF-16 word.
+            case STRING: {
+                final CharSequence value = record.getStrA(columnIndices[0]);
+                return utf16Rejects(value, isDesc[0], rowId, topK);
+            }
+            case SYMBOL: {
+                final CharSequence value = record.getSymA(columnIndices[0]);
+                return utf16Rejects(value, isDesc[0], rowId, topK);
+            }
+            default:
+                break;
+        }
+        // General fallback: materialize the leading word in the key heap (reusing the
+        // real encode path so it cannot drift), then roll the scratch back. The budget
+        // is one byte past the leading word, so a key that fits it reports its exact
+        // length while a longer key is simply flagged as spilling past it.
+        final MemoryCARW heap = keyHeap;
+        final long mark = heap.getAppendOffset();
+        final long len = appendKeyBytes(record, Long.BYTES + 1);
+        final long padBytes = Long.BYTES - len;
+        if (padBytes > 0) {
+            heap.appendAddressFor(padBytes); // ensure 8 bytes are mapped for the read below
+        }
+        long k1 = Long.reverseBytes(Unsafe.getLong(heap.addressOf(mark)));
+        if (padBytes > 0) {
+            k1 &= -1L << (8 * (int) padBytes);
+        }
+        heap.jumpTo(mark);
+        return topK.fastRejectsVarEntry(k1, len, rowId);
+    }
+
+    private enum KeyShape {
+        FIXED8,
+        FIXED_WIDE, // single UUID/LONG128/LONG256
+        GENERIC, // multi-column, or single wide-fixed without a batch path (DECIMAL128/256)
+        STRING,
+        SYMBOL,
+        VARCHAR
     }
 }

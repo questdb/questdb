@@ -1549,7 +1549,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                     try {
                         barrier.await();
                         while (createCounter.get() < iterations && errorCounter.get() == 0) {
-                            if (!refreshJob.run(0)) {
+                            if (!refreshJob.run()) {
                                 Os.sleep(1);
                             }
                         }

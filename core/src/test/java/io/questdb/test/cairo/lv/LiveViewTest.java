@@ -54,9 +54,8 @@ import org.junit.Test;
 public class LiveViewTest extends AbstractCairoTest {
 
     private static boolean drainJob(Job job) {
-        Job.RunStatus status = () -> false;
         boolean any = false;
-        for (int i = 0; i < 64 && job.run(0, status); i++) {
+        for (int i = 0; i < 64 && job.run(); i++) {
             any = true;
         }
         return any;
