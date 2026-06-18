@@ -1186,9 +1186,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             if (isRetriableRefreshError(th)) {
                 // Transient: base table reader pool exhausted, or an out-of-memory error that survived
                 // the in-call interval step reduction. The interval loop already rolled the WAL writer
-                // back before rethrowing, so propagate to the caller: incremental refresh schedules a
-                // deferred retry (up to the configured limit) instead of invalidating, while full and
-                // range refresh invalidate as before.
+                // back before rethrowing, so propagate to the caller: incremental and range refresh
+                // schedule a deferred retry (up to the configured limit) instead of invalidating,
+                // while full refresh invalidates as before (it truncates the view up front).
                 throw (RuntimeException) th;
             }
             int errno = Integer.MIN_VALUE;
@@ -1420,6 +1420,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         final long refreshTriggerTimestamp = refreshTask.refreshTriggerTimestamp;
         final long rangeFrom = refreshTask.rangeFrom;
         final long rangeTo = refreshTask.rangeTo;
+        // A period-timer-driven refresh leaves rangeFrom unset (the timer only knows the period's hi
+        // boundary). A transient error on this path can be deferred and re-driven safely, because the
+        // re-drive runs an incremental refresh that recomputes and re-includes every complete period.
+        // A user-initiated REFRESH ... RANGE FROM .. TO .. sets rangeFrom and targets an arbitrary
+        // window the incremental re-drive would NOT cover, so it keeps the legacy invalidate-on-error
+        // behaviour rather than silently dropping the requested range.
+        final boolean periodRefresh = rangeFrom == Numbers.LONG_NULL;
 
         final MatViewState viewState = stateStore.getViewState(viewToken);
         if (viewState == null || viewState.isPendingInvalidation() || viewState.isInvalid() || viewState.isDropped()) {
@@ -1428,6 +1435,14 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
         if (isRefreshBlocked(viewToken)) {
             LOG.info().$("skipping materialized view range refresh, view is in the refresh block list [view=").$(viewToken).I$();
+            return false;
+        }
+
+        if (periodRefresh && !viewState.isRefreshDue(microsecondClock.getTicks())) {
+            // Period view is in a transient-refresh backoff window (e.g. the base table was busy or
+            // the refresh hit out-of-memory). Skip this pass; MatViewTimerJob re-drives an incremental
+            // refresh once the backoff elapses, which re-includes every complete-but-unrefreshed
+            // period, so the deferred range is not lost.
             return false;
         }
 
@@ -1483,13 +1498,24 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                             rangeTo
                     );
                     insertAsSelect(viewDefinition, viewState, walWriter, refreshContext, refreshTriggerTimestamp);
+                    // Refresh completed without a retriable failure; clear any accumulated retry
+                    // backoff and counter so a future transient error starts from a fresh budget.
+                    viewState.resetRefreshRetry();
                 } finally {
                     refreshSqlExecutionContext.clearReader();
                     engine.attachReader(baseTableReader);
                 }
             } catch (Throwable th) {
+                if (periodRefresh && tryScheduleRetry(viewState, viewToken, th)) {
+                    // Transient error (base table reader pool exhausted or out-of-memory) on a
+                    // period refresh: defer instead of invalidating. MatViewTimerJob re-drives an
+                    // incremental refresh once the backoff elapses; that incremental refresh
+                    // recomputes and re-includes every complete-but-unrefreshed period, so the
+                    // deferred period range is not lost.
+                    return false;
+                }
                 LOG.error()
-                        .$("could not perform full refresh [view=").$(viewToken)
+                        .$("could not perform range refresh [view=").$(viewToken)
                         .$(", baseTable=").$(baseTableToken)
                         .$(", ex=").$(th)
                         .I$();
@@ -1499,6 +1525,14 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         } catch (Throwable th) {
             if (handleErrorRetryRefresh(th, viewToken, stateStore, refreshTask)) {
                 // Range refresh is re-scheduled.
+                return false;
+            }
+            // Don't arm a retry on a view that a prior refreshFailState already marked invalid
+            // in-memory (e.g. its WAL write threw a retriable error after refreshFail ran): the
+            // retry would be scheduled on an already-invalid view and only dropped later by the
+            // timer job's isInvalid() guard, after needlessly bumping the retry counter.
+            if (periodRefresh && !viewState.isInvalid() && tryScheduleRetry(viewState, viewToken, th)) {
+                // The view's WAL writer pool was exhausted; retry later instead of invalidating.
                 return false;
             }
             // If we're here, we either couldn't obtain the WAL writer or the writer couldn't write

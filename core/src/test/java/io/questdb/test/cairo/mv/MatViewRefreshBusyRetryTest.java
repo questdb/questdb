@@ -59,6 +59,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class MatViewRefreshBusyRetryTest extends AbstractCairoTest {
 
     private static final AtomicBoolean failBaseReader = new AtomicBoolean(false);
+    // Make the base read fail with a retriable out-of-memory error, simulating an OOM that survived
+    // the in-call interval step reduction during a materialized view refresh.
+    private static final AtomicBoolean failBaseReaderOom = new AtomicBoolean(false);
     // Stage 1 of the m3 scenario: make the base read fail NON-retriably so the dependent-view loop's
     // inner catch routes to refreshFailState (which marks the view invalid in-memory).
     private static final AtomicBoolean failBaseReaderNonRetriable = new AtomicBoolean(false);
@@ -85,6 +88,9 @@ public class MatViewRefreshBusyRetryTest extends AbstractCairoTest {
                     }
                     if (failBaseReader.get()) {
                         throw EntryUnavailableException.instance("pool size exceeded");
+                    }
+                    if (failBaseReaderOom.get()) {
+                        throw CairoException.nonCritical().put("injected out-of-memory").setOutOfMemory(true);
                     }
                 }
                 return super.getReader(tableToken);
@@ -140,6 +146,7 @@ public class MatViewRefreshBusyRetryTest extends AbstractCairoTest {
         super.setUp();
         // Reset all fault-injection switches so they never leak between tests regardless of order.
         failBaseReader.set(false);
+        failBaseReaderOom.set(false);
         failBaseReaderNonRetriable.set(false);
         failViewResetMatViewState.set(false);
         failViewWalWriter.set(false);
@@ -758,6 +765,80 @@ public class MatViewRefreshBusyRetryTest extends AbstractCairoTest {
                     0,
                     state.getRefreshRetryCount()
             );
+        });
+    }
+
+    @Test
+    public void testPeriodRangeRefreshOutOfMemoryDefersInsteadOfInvalidating() throws Exception {
+        // A period mat view's scheduled refresh runs through the range path. An out-of-memory error
+        // there must defer (not invalidate), exactly like the incremental path.
+        assertPeriodRangeRefreshTransientErrorDefers(failBaseReaderOom);
+    }
+
+    @Test
+    public void testPeriodRangeRefreshReaderPoolExhaustionDefersInsteadOfInvalidating() throws Exception {
+        // A period mat view's scheduled refresh runs through the range path (the period timer enqueues
+        // a range refresh). A transient "base table busy" error there must defer (not invalidate).
+        assertPeriodRangeRefreshTransientErrorDefers(failBaseReader);
+    }
+
+    private void assertPeriodRangeRefreshTransientErrorDefers(AtomicBoolean faultSwitch) throws Exception {
+        // 0 backoff so the timer sweep re-drives the deferred refresh on the very next tick.
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_BUSY_RETRY_TIMEOUT, 0);
+        baseTableName = "base_price";
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL;"
+            );
+            // Anchor the clock so period P1 (2020-01-01) is already complete at creation, while
+            // period P2 (2020-01-02) is still open. An immediate period view registers ONLY a period
+            // timer, so the sole timer-driven refresh path is the range path.
+            currentMicros = parseFloorPartialTimestamp("2020-01-02T00:00:00.000000Z");
+            execute(
+                    "create materialized view price_1h refresh immediate period (length 1d) as (" +
+                            "  select ts, avg(price) as avg_price from base_price sample by 1h" +
+                            ") partition by day"
+            );
+            // One row in P1 and one row in P2. P2's row stays unrefreshed until P2 closes.
+            execute(
+                    "insert into base_price values('a', 1.0, '2020-01-01T00:00:00.000000Z')" +
+                            ",('a', 2.0, '2020-01-02T12:00:00.000000Z')"
+            );
+
+            // Baseline: drain everything so P1 is refreshed (via the immediate incremental path) and
+            // the view is valid with no pending tasks.
+            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
+            drainMatViewTimerQueue(timerJob);
+            drainWalAndMatViewQueues();
+            assertViewStatus("valid");
+            assertViewRowCount(1);
+
+            // P2 closes. No new base data, so the only refresh trigger is the period timer, i.e. the
+            // range path. Inject the transient error and let the range refresh run.
+            currentMicros = parseFloorPartialTimestamp("2020-01-03T00:00:01.000000Z");
+            faultSwitch.set(true);
+            drainMatViewTimerQueue(timerJob); // period timer -> enqueueRangeRefresh(P2)
+            drainMatViewQueue(engine);        // rangeRefresh -> getReader throws -> defer
+            // Apply any state transaction the refresh wrote. Without the fix the range path calls
+            // refreshFailState here, so this applies the invalidation and assertNoInvalidViews() below
+            // fails -- demonstrating the bug. With the fix nothing is written (the refresh is deferred).
+            drainWalQueue();
+
+            // The transient failure must NOT invalidate the period view (it reports "retrying"), and
+            // the view must not have caught up yet (still P1's single bucket).
+            assertNoInvalidViews();
+            assertViewStatus("retrying");
+            assertViewRowCount(1);
+
+            // Clear the failure; the timer re-drives the deferred refresh (as an incremental refresh,
+            // which re-includes the now-complete P2) and the view catches up.
+            faultSwitch.set(false);
+            drainMatViewTimerQueue(timerJob);
+            drainWalAndMatViewQueues();
+            assertViewStatus("valid");
+            assertViewRowCount(2);
         });
     }
 
