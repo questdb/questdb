@@ -148,7 +148,14 @@ public class MatViewRefreshBlockListTest extends AbstractCairoTest {
             drainWalAndMatViewQueues();
 
             assertViewRowCount("price_1h", 1); // blocked: still one bucket
-            assertViewRowCount("price_1d", 1); // both rows fall in the same day bucket
+            // Both rows fall in the same day bucket, so the row count alone cannot distinguish a
+            // refreshed price_1d from a stalled one. Assert the aggregate advanced (avg(1.0, 2.0) =
+            // 1.5) to prove the unlisted view actually folded in the second base row.
+            assertViewRowCount("price_1d", 1);
+            assertQuery("select avg_price from price_1d")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("avg_price\n1.5\n");
             assertQuery("select count() from materialized_views where view_status != 'valid'")
                     .noLeakCheck()
                     .expectSize()

@@ -53,7 +53,8 @@ public class MatViewRefreshBusyRetryTest extends AbstractCairoTest {
         AbstractCairoTest.engineFactory = conf -> new CairoEngine(conf) {
             @Override
             public TableReader getReader(TableToken tableToken) {
-                if (failBaseReader.get() && tableToken.getTableName().equals(baseTableName)) {
+                final String prefix = baseTableName;
+                if (failBaseReader.get() && prefix != null && tableToken.getTableName().startsWith(prefix)) {
                     throw EntryUnavailableException.instance("pool size exceeded");
                 }
                 return super.getReader(tableToken);
@@ -179,6 +180,93 @@ public class MatViewRefreshBusyRetryTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testStaggeredDeadlinesRedriveInDeadlineOrder() throws Exception {
+        // Several views arm retries at DISTINCT deadlines. The timer job must re-drive each view
+        // exactly when its own deadline elapses - it pops only the due entries from its retry heap,
+        // in deadline order, rather than re-driving all pending retries on the first due tick.
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_BUSY_RETRY_TIMEOUT, 1000);
+        failBaseReader.set(false);
+        baseTableName = "base_"; // prefix-match: fail readers for every base_* table
+        final int views = 3;
+        assertMemoryLeak(() -> {
+            try {
+                for (int i = 0; i < views; i++) {
+                    execute(
+                            "create table base_" + i + " (sym varchar, price double, ts timestamp) " +
+                                    "timestamp(ts) partition by DAY WAL;"
+                    );
+                    execute("insert into base_" + i + " values('a', 1.0, '2020-01-01T00:00:00.000000Z')");
+                }
+                drainWalAndMatViewQueues();
+                for (int i = 0; i < views; i++) {
+                    execute(
+                            "create materialized view v_" + i + " as (" +
+                                    "  select ts, avg(price) as avg_price from base_" + i + " sample by 1h" +
+                                    ") partition by day"
+                    );
+                }
+                drainWalAndMatViewQueues();
+                for (int i = 0; i < views; i++) {
+                    assertViewStatus("v_" + i, "valid");
+                    assertViewRowCount("v_" + i, 1);
+                }
+
+                // Pin the clock so every retry deadline (now + 1s) is deterministic.
+                final long t0 = 1_700_000_000_000_000L;
+
+                // Arm each view's retry at its own deadline: commit + refresh one view at a time, at
+                // clocks 100ms apart, so v_i's backoff elapses at d_i = t0 + i*100ms + 1s.
+                for (int i = 0; i < views; i++) {
+                    failBaseReader.set(false);
+                    execute("insert into base_" + i + " values('a', 2.0, '2020-01-01T01:00:00.000000Z')");
+                    drainWalQueue(); // commit only base_i -> enqueues only v_i for refresh
+                    setCurrentMicros(t0 + i * 100_000L);
+                    failBaseReader.set(true);
+                    drainMatViewQueue(engine); // v_i refresh hits "table busy" -> arms retry at d_i
+                }
+                assertNoInvalidViews();
+                for (int i = 0; i < views; i++) {
+                    assertViewStatus("v_" + i, "retrying");
+                    assertViewRowCount("v_" + i, 1);
+                }
+
+                // Clear the transient failure. A single long-lived timer job mirrors production: its
+                // retry heap holds all three (deadline, view) entries at once.
+                failBaseReader.set(false);
+                final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
+
+                // Before the soonest deadline: the heap drains the RETRY tasks but pops nothing.
+                setCurrentMicros(t0 + 900_000L);
+                drainMatViewTimerQueue(timerJob);
+                drainWalAndMatViewQueues();
+                for (int i = 0; i < views; i++) {
+                    assertViewStatus("v_" + i, "retrying");
+                    assertViewRowCount("v_" + i, 1);
+                }
+
+                // Cross each deadline in turn; exactly one more view catches up each time, proving
+                // the heap pops due entries only, in deadline order.
+                for (int due = 0; due < views; due++) {
+                    setCurrentMicros(t0 + 1_000_000L + due * 100_000L); // d_due
+                    drainMatViewTimerQueue(timerJob);
+                    drainWalAndMatViewQueues();
+                    for (int i = 0; i < views; i++) {
+                        if (i <= due) {
+                            assertViewStatus("v_" + i, "valid");
+                            assertViewRowCount("v_" + i, 2);
+                        } else {
+                            assertViewStatus("v_" + i, "retrying");
+                            assertViewRowCount("v_" + i, 1);
+                        }
+                    }
+                }
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
     private void assertNoInvalidViews() throws Exception {
         assertQuery("select count() from materialized_views where view_status = 'invalid'")
                 .noLeakCheck()
@@ -188,11 +276,22 @@ public class MatViewRefreshBusyRetryTest extends AbstractCairoTest {
     }
 
     private void assertViewRowCount(long expected) throws Exception {
-        assertQuery("select count() from price_1h")
+        assertViewRowCount("price_1h", expected);
+    }
+
+    private void assertViewRowCount(String viewName, long expected) throws Exception {
+        assertQuery("select count() from " + viewName)
                 .noLeakCheck()
                 .expectSize()
                 .noRandomAccess()
                 .returns("count\n" + expected + "\n");
+    }
+
+    private void assertViewStatus(String viewName, String status) throws Exception {
+        assertQuery("select view_status from materialized_views where view_name = '" + viewName + "'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("view_status\n" + status + "\n");
     }
 
     private void assertViewStatus(String status) throws Exception {
