@@ -25,6 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -33,9 +34,25 @@ import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
+import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.griffin.engine.functions.ByteFunction;
+import io.questdb.griffin.engine.functions.CharFunction;
+import io.questdb.griffin.engine.functions.DateFunction;
+import io.questdb.griffin.engine.functions.DoubleFunction;
+import io.questdb.griffin.engine.functions.FloatFunction;
+import io.questdb.griffin.engine.functions.GeoByteFunction;
+import io.questdb.griffin.engine.functions.GeoIntFunction;
+import io.questdb.griffin.engine.functions.GeoLongFunction;
+import io.questdb.griffin.engine.functions.GeoShortFunction;
+import io.questdb.griffin.engine.functions.IPv4Function;
 import io.questdb.griffin.engine.functions.IntFunction;
+import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.RuntimeConstFunction;
+import io.questdb.griffin.engine.functions.ShortFunction;
+import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.UuidFunction;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
@@ -50,6 +67,309 @@ import static org.junit.Assert.assertTrue;
 public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
 
     private static final AtomicInteger evalCounter = new AtomicInteger();
+
+    @Test
+    public void testAllFoldableTypesCacheAndRoundTrip() throws SqlException {
+        // The wrapper reads its arg once in init() through a type-specific getter, caching it into
+        // longValue/doubleValue/longValueHi, then serves the cached primitive every row. Each foldable
+        // type has its own init()/getter pair; exercise all of them so a mis-wired getter, a truncating
+        // cast or a hi/lo swap cannot regress unnoticed. We build the wrapper directly over a typed leaf
+        // to isolate the per-type round-trip - the boundary-wrapping decision is covered by the
+        // structural tests and testIsFoldableTypeMatrix. Each leaf throws UnsupportedOperationException
+        // from every getter except its native one, so init() reading the wrong getter fails loudly.
+
+        // BOOLEAN
+        {
+            final int[] c = {0};
+            assertCachedRoundTrip(new BooleanFunction() {
+                @Override
+                public boolean getBool(Record rec) {
+                    c[0]++;
+                    return true;
+                }
+
+                @Override
+                public boolean isRuntimeConstant() {
+                    return true;
+                }
+            }, c, f -> f.getBool(null), Boolean.TRUE);
+        }
+
+        // BYTE
+        {
+            final int[] c = {0};
+            assertCachedRoundTrip(new ByteFunction() {
+                @Override
+                public byte getByte(Record rec) {
+                    c[0]++;
+                    return (byte) 90;
+                }
+
+                @Override
+                public boolean isRuntimeConstant() {
+                    return true;
+                }
+            }, c, f -> f.getByte(null), (byte) 90);
+        }
+
+        // SHORT
+        {
+            final int[] c = {0};
+            assertCachedRoundTrip(new ShortFunction() {
+                @Override
+                public short getShort(Record rec) {
+                    c[0]++;
+                    return (short) 12_345;
+                }
+
+                @Override
+                public boolean isRuntimeConstant() {
+                    return true;
+                }
+            }, c, f -> f.getShort(null), (short) 12_345);
+        }
+
+        // CHAR
+        {
+            final int[] c = {0};
+            assertCachedRoundTrip(new CharFunction() {
+                @Override
+                public char getChar(Record rec) {
+                    c[0]++;
+                    return 'Q';
+                }
+
+                @Override
+                public boolean isRuntimeConstant() {
+                    return true;
+                }
+            }, c, f -> f.getChar(null), 'Q');
+        }
+
+        // INT
+        {
+            final int[] c = {0};
+            assertCachedRoundTrip(new IntFunction() {
+                @Override
+                public int getInt(Record rec) {
+                    c[0]++;
+                    return 1_234_567;
+                }
+
+                @Override
+                public boolean isRuntimeConstant() {
+                    return true;
+                }
+            }, c, f -> f.getInt(null), 1_234_567);
+        }
+
+        // LONG
+        {
+            final int[] c = {0};
+            assertCachedRoundTrip(new LongFunction() {
+                @Override
+                public long getLong(Record rec) {
+                    c[0]++;
+                    return 9_876_543_210L;
+                }
+
+                @Override
+                public boolean isRuntimeConstant() {
+                    return true;
+                }
+            }, c, f -> f.getLong(null), 9_876_543_210L);
+        }
+
+        // FLOAT
+        {
+            final int[] c = {0};
+            assertCachedRoundTrip(new FloatFunction() {
+                @Override
+                public float getFloat(Record rec) {
+                    c[0]++;
+                    return 3.5f;
+                }
+
+                @Override
+                public boolean isRuntimeConstant() {
+                    return true;
+                }
+            }, c, f -> f.getFloat(null), 3.5f);
+        }
+
+        // DOUBLE
+        {
+            final int[] c = {0};
+            assertCachedRoundTrip(new DoubleFunction() {
+                @Override
+                public double getDouble(Record rec) {
+                    c[0]++;
+                    return 6.25;
+                }
+
+                @Override
+                public boolean isRuntimeConstant() {
+                    return true;
+                }
+            }, c, f -> f.getDouble(null), 6.25);
+        }
+
+        // DATE
+        {
+            final int[] c = {0};
+            assertCachedRoundTrip(new DateFunction() {
+                @Override
+                public long getDate(Record rec) {
+                    c[0]++;
+                    return 1_700_000_000_000L;
+                }
+
+                @Override
+                public boolean isRuntimeConstant() {
+                    return true;
+                }
+            }, c, f -> f.getDate(null), 1_700_000_000_000L);
+        }
+
+        // TIMESTAMP
+        {
+            final int[] c = {0};
+            assertCachedRoundTrip(new TimestampFunction(ColumnType.TIMESTAMP) {
+                @Override
+                public long getTimestamp(Record rec) {
+                    c[0]++;
+                    return 1_700_000_000_000_000L;
+                }
+
+                @Override
+                public boolean isRuntimeConstant() {
+                    return true;
+                }
+            }, c, f -> f.getTimestamp(null), 1_700_000_000_000_000L);
+        }
+
+        // IPv4
+        {
+            final int[] c = {0};
+            assertCachedRoundTrip(new IPv4Function() {
+                @Override
+                public int getIPv4(Record rec) {
+                    c[0]++;
+                    return 0x01020304;
+                }
+
+                @Override
+                public boolean isRuntimeConstant() {
+                    return true;
+                }
+            }, c, f -> f.getIPv4(null), 0x01020304);
+        }
+
+        // GEOBYTE
+        {
+            final int[] c = {0};
+            assertCachedRoundTrip(new GeoByteFunction(ColumnType.getGeoHashTypeWithBits(5)) {
+                @Override
+                public byte getGeoByte(Record rec) {
+                    c[0]++;
+                    return (byte) 21;
+                }
+
+                @Override
+                public boolean isRuntimeConstant() {
+                    return true;
+                }
+            }, c, f -> f.getGeoByte(null), (byte) 21);
+        }
+
+        // GEOSHORT
+        {
+            final int[] c = {0};
+            assertCachedRoundTrip(new GeoShortFunction(ColumnType.getGeoHashTypeWithBits(12)) {
+                @Override
+                public short getGeoShort(Record rec) {
+                    c[0]++;
+                    return (short) 2_047;
+                }
+
+                @Override
+                public boolean isRuntimeConstant() {
+                    return true;
+                }
+            }, c, f -> f.getGeoShort(null), (short) 2_047);
+        }
+
+        // GEOINT
+        {
+            final int[] c = {0};
+            assertCachedRoundTrip(new GeoIntFunction(ColumnType.getGeoHashTypeWithBits(24)) {
+                @Override
+                public int getGeoInt(Record rec) {
+                    c[0]++;
+                    return 1_048_575;
+                }
+
+                @Override
+                public boolean isRuntimeConstant() {
+                    return true;
+                }
+            }, c, f -> f.getGeoInt(null), 1_048_575);
+        }
+
+        // GEOLONG
+        {
+            final int[] c = {0};
+            assertCachedRoundTrip(new GeoLongFunction(ColumnType.getGeoHashTypeWithBits(40)) {
+                @Override
+                public long getGeoLong(Record rec) {
+                    c[0]++;
+                    return 1_099_511_627_775L;
+                }
+
+                @Override
+                public boolean isRuntimeConstant() {
+                    return true;
+                }
+            }, c, f -> f.getGeoLong(null), 1_099_511_627_775L);
+        }
+
+        // UUID (128-bit: both halves must be cached, independently and without swapping)
+        {
+            final int[] c = {0};
+            final long lo = 0x1122334455667788L;
+            final long hi = 0x99AABBCCDDEEFF00L;
+            final RuntimeConstFunction f = new RuntimeConstFunction(new UuidFunction() {
+                @Override
+                public long getLong128Hi(Record rec) {
+                    c[0]++;
+                    return hi;
+                }
+
+                @Override
+                public long getLong128Lo(Record rec) {
+                    c[0]++;
+                    return lo;
+                }
+
+                @Override
+                public boolean isRuntimeConstant() {
+                    return true;
+                }
+            });
+            try {
+                f.init(null, sqlExecutionContext);
+                final int afterInit = c[0];
+                assertEquals("uuid: both halves read in init()", 2, afterInit);
+                for (int i = 0; i < 64; i++) {
+                    assertEquals("uuid lo", lo, f.getLong128Lo(null));
+                    assertEquals("uuid hi", hi, f.getLong128Hi(null));
+                }
+                assertEquals("uuid must be cached, not re-evaluated per row", afterInit, c[0]);
+            } finally {
+                f.close();
+            }
+        }
+    }
 
     @Test
     public void testCompositeRuntimeConstArgIsWrappedAndEvaluatedOnce() throws SqlException {
@@ -77,6 +397,51 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
         }
         assertEquals("runtime-constant subtree must be evaluated once per cursor", 1, evalCounter.get());
         f.close();
+    }
+
+    @Test
+    public void testIsFoldableTypeMatrix() {
+        // Exactly these fixed-width scalar tags fold; every other type (variable-width STRING/VARCHAR/
+        // BINARY, SYMBOL, LONG256, the 128-bit LONG128, decimals, intervals, arrays, cursors, ...)
+        // delegates to the arg and is served per row. This doubles as a tripwire: the foldable set
+        // here must stay in lockstep with the init() switch and getters in RuntimeConstFunction -
+        // adding a tag without a matching init() case would make the wrapper throw at runtime, so a
+        // new foldable type forces a new round-trip case in testAllFoldableTypesCacheAndRoundTrip too.
+        IntHashSet foldable = new IntHashSet();
+        foldable.add(ColumnType.BOOLEAN);
+        foldable.add(ColumnType.BYTE);
+        foldable.add(ColumnType.SHORT);
+        foldable.add(ColumnType.CHAR);
+        foldable.add(ColumnType.INT);
+        foldable.add(ColumnType.LONG);
+        foldable.add(ColumnType.FLOAT);
+        foldable.add(ColumnType.DOUBLE);
+        foldable.add(ColumnType.DATE);
+        foldable.add(ColumnType.TIMESTAMP);
+        foldable.add(ColumnType.IPv4);
+        foldable.add(ColumnType.GEOBYTE);
+        foldable.add(ColumnType.GEOSHORT);
+        foldable.add(ColumnType.GEOINT);
+        foldable.add(ColumnType.GEOLONG);
+        foldable.add(ColumnType.UUID);
+
+        for (short tag = ColumnType.UNDEFINED; tag <= ColumnType.NULL; tag++) {
+            assertEquals(
+                    "isFoldableType mismatch for " + ColumnType.nameOf(tag),
+                    foldable.contains(tag),
+                    RuntimeConstFunction.isFoldableType(tag)
+            );
+        }
+
+        // isFoldableType keys off tagOf(): encoded variants fold like their tag, and the deliberate
+        // exclusions (notably LONG128, even though the 128-bit UUID folds) stay excluded.
+        assertTrue(RuntimeConstFunction.isFoldableType(ColumnType.getGeoHashTypeWithBits(5)));   // GEOBYTE
+        assertTrue(RuntimeConstFunction.isFoldableType(ColumnType.getGeoHashTypeWithBits(12)));  // GEOSHORT
+        assertTrue(RuntimeConstFunction.isFoldableType(ColumnType.getGeoHashTypeWithBits(24)));  // GEOINT
+        assertTrue(RuntimeConstFunction.isFoldableType(ColumnType.getGeoHashTypeWithBits(40)));  // GEOLONG
+        assertTrue(RuntimeConstFunction.isFoldableType(ColumnType.TIMESTAMP_NANO));
+        assertFalse(RuntimeConstFunction.isFoldableType(ColumnType.LONG128));
+        assertFalse(RuntimeConstFunction.isFoldableType(ColumnType.getDecimalType(18, 3)));
     }
 
     @Test
@@ -163,6 +528,21 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
         });
     }
 
+    private void assertCachedRoundTrip(Function arg, int[] counter, ValueReader reader, Object expected) throws SqlException {
+        final RuntimeConstFunction f = new RuntimeConstFunction(arg);
+        try {
+            f.init(null, sqlExecutionContext);
+            final int afterInit = counter[0];
+            assertEquals("arg must be evaluated exactly once in init()", 1, afterInit);
+            for (int i = 0; i < 64; i++) {
+                assertEquals("cached value must round-trip", expected, reader.read(f));
+            }
+            assertEquals("runtime-constant value must be cached, not re-evaluated per row", afterInit, counter[0]);
+        } finally {
+            f.close();
+        }
+    }
+
     private static void registerTestFunctions() {
         functions.clear();
         // Zero-arg, per-row (neither constant nor runtime constant) leaf.
@@ -237,6 +617,11 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
                 return new BoundaryFunction(left, right);
             }
         });
+    }
+
+    @FunctionalInterface
+    private interface ValueReader {
+        Object read(RuntimeConstFunction f);
     }
 
     private static class BoundaryFunction extends IntFunction implements BinaryFunction {
