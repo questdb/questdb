@@ -176,9 +176,9 @@ public class PartitionUpdaterTest extends AbstractCairoTest {
         // sync_data to throw would need a production test seam the project
         // forbids. Each update appends a row group to data.parquet, so the two
         // snapshots' footers carry distinct parquet-size tokens; resolveFooter
-                // keys on that parquet data size (from _txn), so the committed token
-                // (committedParquetSize) resolves Update A's footer while
-                // resolveLastFooter() takes Update B's.
+        // keys on that parquet data size (from _txn), so the committed token
+        // (committedParquetSize) resolves Update A's footer while
+        // resolveLastFooter() takes Update B's.
 
         assertMemoryLeak(() -> {
             final String tableName = "commit_publish_test";
