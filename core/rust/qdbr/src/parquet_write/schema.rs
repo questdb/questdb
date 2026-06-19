@@ -303,7 +303,7 @@ pub fn column_type_to_parquet_type(
             name,
             PhysicalType::Int32,
             repetition,
-            None,
+            Some(PrimitiveConvertedType::Uint32),
             Some(PrimitiveLogicalType::Integer(IntegerType::UInt32)),
             Some(column_id),
         )?),
@@ -822,6 +822,30 @@ mod tests {
         assert_eq!(
             array_leaf_path(3, "c"),
             ["c", "list", "element", "list", "element", "list", "element"]
+        );
+    }
+
+    #[test]
+    fn ipv4_schema_carries_uint32_annotations() {
+        let pt = column_type_to_parquet_type(
+            7,
+            "ip",
+            ColumnType::new(ColumnTypeTag::IPv4, 0),
+            false,
+            false,
+        )
+        .expect("parquet type");
+        let descr = SchemaDescriptor::new("schema".to_string(), vec![pt]);
+        let primitive_type = &descr.columns()[0].descriptor.primitive_type;
+
+        assert_eq!(primitive_type.physical_type, PhysicalType::Int32);
+        assert_eq!(
+            primitive_type.converted_type,
+            Some(PrimitiveConvertedType::Uint32)
+        );
+        assert_eq!(
+            primitive_type.logical_type,
+            Some(PrimitiveLogicalType::Integer(IntegerType::UInt32))
         );
     }
 
