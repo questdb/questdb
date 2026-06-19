@@ -9497,11 +9497,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             } // end while(srcOoo < srcOooMax)
 
             // at this point we should know the last partition row count
-            partitionTimestampHi = Math.max(partitionTimestampHi, txWriter.getCurrentPartitionMaxTimestamp(o3TimestampMax));
-
             if (!isCommitReplaceMode()) {
+                partitionTimestampHi = Math.max(partitionTimestampHi, txWriter.getCurrentPartitionMaxTimestamp(o3TimestampMax));
                 txWriter.updateMaxTimestamp(Math.max(txWriter.getMaxTimestamp(), o3TimestampMax));
             } else if (replaceMaxTimestamp != Long.MIN_VALUE) {
+                // Derive partitionTimestampHi from the actual highest written timestamp, not
+                // o3TimestampMax (the replace-range high boundary, which is Long.MAX_VALUE - 1 for
+                // an open-ended range and overflows getCurrentPartitionMaxTimestamp). Otherwise a
+                // replace that appends partitions above the previous last partition leaves
+                // partitionTimestampHi stale, finishO3Commit skips switching the active partition,
+                // and the next commit reuses the previous partition's column descriptors.
+                partitionTimestampHi = Math.max(partitionTimestampHi, txWriter.getCurrentPartitionMaxTimestamp(replaceMaxTimestamp));
                 txWriter.updateMaxTimestamp(replaceMaxTimestamp);
             }
         } catch (Throwable th) {
