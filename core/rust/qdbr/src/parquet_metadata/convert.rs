@@ -1698,6 +1698,8 @@ mod tests {
             distinct_count: None,
             max_value: Some(max_days.to_le_bytes().to_vec()),
             min_value: Some(min_days.to_le_bytes().to_vec()),
+            is_max_value_exact: None,
+            is_min_value_exact: None,
         };
         let meta = ColumnMetaData {
             type_: Type::INT32,

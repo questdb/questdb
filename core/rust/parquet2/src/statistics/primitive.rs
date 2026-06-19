@@ -66,5 +66,7 @@ pub fn write<T: types::NativeType>(v: &PrimitiveStatistics<T>) -> ParquetStatist
         min_value: v.min_value.map(|x| x.to_bytes().as_ref().to_vec()),
         min: None,
         max: None,
+        is_max_value_exact: None,
+        is_min_value_exact: None,
     }
 }

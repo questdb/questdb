@@ -151,33 +151,47 @@ impl BinaryMaxMinStats {
 
     pub fn into_parquet_stats(self, null_count: usize) -> ParquetStatistics {
         let Self { primitive_type, min_value, max_value } = self;
-        let (min_value, max_value) = if is_binary_column_type(&primitive_type) {
-            // Opaque Binary: keep the min's <=9-byte prefix (a valid floor) and round
-            // the max up via its incremented 8-byte prefix (a valid ceiling).
-            let max_value = max_value.map(|max_value| {
-                if max_value.len() <= SIZEOF_I64 {
-                    max_value
-                } else {
-                    binary_upper_bound(max_value)
-                }
-            });
-            (min_value, max_value)
-        } else if is_utf8_column_type(&primitive_type) {
-            // Text (String/Symbol/Varchar): bound min/max to UTF8_STATS_TRUNCATE_LEN
-            // bytes on a UTF-8 codepoint boundary. Truncate the min down to a prefix
-            // (byte-wise <= every value) and the max up to the next string (byte-wise
-            // >= every value), so the bound stays conservative for QuestDB's own
-            // row-group pruning and for external readers, while the footer (and the
-            // _pm sidecar that copies these stats by value) no longer grows without
-            // limit when a single value is multi-megabyte.
-            let min_value = min_value.map(|min| truncate_min_utf8(min, UTF8_STATS_TRUNCATE_LEN));
-            let max_value = max_value.map(|max| truncate_max_utf8(max, UTF8_STATS_TRUNCATE_LEN));
-            (min_value, max_value)
-        } else {
-            // Fixed-length byte arrays (Uuid/Long128/Long256/Decimal): fixed-width and
-            // already short, so store the exact bounds verbatim.
-            (min_value, max_value)
-        };
+        let (min_value, max_value, is_min_value_exact, is_max_value_exact) =
+            if is_binary_column_type(&primitive_type) {
+                // Opaque Binary: keep the min's <=9-byte prefix (a valid floor) and round
+                // the max up via its incremented 8-byte prefix (a valid ceiling).
+                let max_value = max_value.map(|max_value| {
+                    if max_value.len() <= SIZEOF_I64 {
+                        max_value
+                    } else {
+                        binary_upper_bound(max_value)
+                    }
+                });
+                (min_value, max_value, None, None)
+            } else if is_utf8_column_type(&primitive_type) {
+                // Text (String/Symbol/Varchar): bound min/max to UTF8_STATS_TRUNCATE_LEN
+                // bytes on a UTF-8 codepoint boundary. Truncate the min down to a prefix
+                // (byte-wise <= every value) and the max up to the next string (byte-wise
+                // >= every value), so the bound stays conservative for QuestDB's own
+                // row-group pruning and for external readers, while the footer (and the
+                // _pm sidecar that copies these stats by value) no longer grows without
+                // limit when a single value is multi-megabyte.
+                let min_truncated = min_value
+                    .as_ref()
+                    .is_some_and(|min| min.len() > UTF8_STATS_TRUNCATE_LEN);
+                let max_truncated = max_value
+                    .as_ref()
+                    .is_some_and(|max| max.len() > UTF8_STATS_TRUNCATE_LEN);
+                let min_value =
+                    min_value.map(|min| truncate_min_utf8(min, UTF8_STATS_TRUNCATE_LEN));
+                let max_value =
+                    max_value.map(|max| truncate_max_utf8(max, UTF8_STATS_TRUNCATE_LEN));
+                (
+                    min_value,
+                    max_value,
+                    min_truncated.then_some(false),
+                    max_truncated.then_some(false),
+                )
+            } else {
+                // Fixed-length byte arrays (Uuid/Long128/Long256/Decimal): fixed-width and
+                // already short, so store the exact bounds verbatim.
+                (min_value, max_value, None, None)
+            };
 
         let stats = &BinaryStatistics {
             primitive_type,
@@ -185,6 +199,8 @@ impl BinaryMaxMinStats {
             distinct_count: None,
             max_value,
             min_value,
+            is_max_value_exact,
+            is_min_value_exact,
         } as &dyn Statistics;
         serialize_statistics(stats)
     }
@@ -316,6 +332,8 @@ impl ArrayStats {
             min_value: None,
             min: None,
             max: None,
+            is_max_value_exact: None,
+            is_min_value_exact: None,
         }
     }
 }
@@ -858,6 +876,16 @@ mod tests {
             max.as_slice() >= hi.as_slice(),
             "max is a ceiling for both values"
         );
+        assert_eq!(
+            parquet_stats.is_min_value_exact,
+            Some(false),
+            "truncated min must be marked inexact"
+        );
+        assert_eq!(
+            parquet_stats.is_max_value_exact,
+            Some(false),
+            "truncated max must be marked inexact"
+        );
     }
 
     #[test]
@@ -877,6 +905,8 @@ mod tests {
             parquet_stats.max_value.as_deref(),
             Some(b"banana".as_slice())
         );
+        assert_eq!(parquet_stats.is_min_value_exact, None);
+        assert_eq!(parquet_stats.is_max_value_exact, None);
     }
 
     #[test]
@@ -906,6 +936,8 @@ mod tests {
         let parquet_stats = stats.into_parquet_stats(0);
         assert_eq!(parquet_stats.min_value.as_deref(), Some(value.as_slice()));
         assert_eq!(parquet_stats.max_value.as_deref(), Some(value.as_slice()));
+        assert_eq!(parquet_stats.is_min_value_exact, None);
+        assert_eq!(parquet_stats.is_max_value_exact, None);
     }
 
     #[test]

@@ -22,6 +22,8 @@ use parquet::file::metadata::ParquetMetaData;
 use parquet::file::statistics::Statistics;
 use parquet::format::BoundaryOrder;
 use parquet2::metadata::SortingColumn;
+use parquet_format_safe::thrift::protocol::TCompactInputProtocol;
+use parquet_format_safe::FileMetaData as ThriftFileMetaData;
 use qdb_core::col_type::{ColumnType, ColumnTypeTag};
 use questdbr::parquet_write::schema::Partition;
 use questdbr::parquet_write::ParquetWriter;
@@ -38,6 +40,20 @@ fn external_metadata(data: &[u8]) -> Arc<ParquetMetaData> {
         .expect("open parquet with arrow reader")
         .metadata()
         .clone()
+}
+
+/// Parse the raw Thrift footer of QuestDB-written Parquet bytes.
+fn thrift_metadata(data: &[u8]) -> ThriftFileMetaData {
+    let footer_len_offset = data.len() - 8;
+    let footer_len = u32::from_le_bytes(
+        data[footer_len_offset..footer_len_offset + 4]
+            .try_into()
+            .unwrap(),
+    ) as usize;
+    let footer_offset = footer_len_offset - footer_len;
+    let mut protocol =
+        TCompactInputProtocol::new(&data[footer_offset..footer_len_offset], usize::MAX);
+    ThriftFileMetaData::read_from_in_protocol(&mut protocol).expect("read thrift metadata")
 }
 
 /// Reinterpret a contiguous slice as raw bytes for `Column::from_raw_data`.
@@ -379,6 +395,15 @@ fn questdb_parquet_truncates_long_string_statistics() {
     );
     assert!(min <= value_bytes, "min must be a byte-wise floor");
     assert!(max >= value_bytes, "max must be a byte-wise ceiling");
+
+    let thrift_metadata = thrift_metadata(&data);
+    let thrift_stats = thrift_metadata.row_groups[0].columns[0]
+        .meta_data
+        .as_ref()
+        .and_then(|meta| meta.statistics.as_ref())
+        .expect("thrift varchar statistics");
+    assert_eq!(thrift_stats.is_min_value_exact, Some(false));
+    assert_eq!(thrift_stats.is_max_value_exact, Some(false));
 }
 
 /// When the truncation length falls inside a multi-byte codepoint, the writer must

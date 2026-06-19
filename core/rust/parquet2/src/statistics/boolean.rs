@@ -70,5 +70,7 @@ pub fn write(v: &BooleanStatistics) -> ParquetStatistics {
         min_value: v.min_value.map(|x| vec![x as u8]),
         min: None,
         max: None,
+        is_max_value_exact: None,
+        is_min_value_exact: None,
     }
 }

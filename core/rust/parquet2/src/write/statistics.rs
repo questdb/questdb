@@ -92,8 +92,17 @@ fn reduce_binary<'a, I: Iterator<Item = &'a BinaryStatistics>>(mut stats: I) -> 
         acc.max_value = reduce_vec8(acc.max_value, &new.max_value, true, ord_binary);
         acc.null_count = reduce_single(acc.null_count, new.null_count, |x, y| x + y);
         acc.distinct_count = None;
+        acc.is_min_value_exact = reduce_exact_flag(acc.is_min_value_exact, new.is_min_value_exact);
+        acc.is_max_value_exact = reduce_exact_flag(acc.is_max_value_exact, new.is_max_value_exact);
         acc
     })
+}
+
+fn reduce_exact_flag(a: Option<bool>, b: Option<bool>) -> Option<bool> {
+    match (a, b) {
+        (Some(false), _) | (_, Some(false)) => Some(false),
+        _ => None,
+    }
 }
 
 fn reduce_fix_len_binary<'a, I: Iterator<Item = &'a FixedLenStatistics>>(
@@ -254,6 +263,8 @@ mod tests {
                 distinct_count: None,
                 min_value: Some(vec![1, 2]),
                 max_value: Some(vec![3, 4]),
+                is_max_value_exact: Some(false),
+                is_min_value_exact: None,
             },
             BinaryStatistics {
                 primitive_type: PrimitiveType::from_physical(
@@ -264,6 +275,8 @@ mod tests {
                 distinct_count: None,
                 min_value: Some(vec![4, 5]),
                 max_value: None,
+                is_max_value_exact: None,
+                is_min_value_exact: Some(false),
             },
         ];
         let a = reduce_binary(iter.iter());
@@ -279,6 +292,8 @@ mod tests {
                 distinct_count: None,
                 min_value: Some(vec![1, 2]),
                 max_value: Some(vec![3, 4]),
+                is_max_value_exact: Some(false),
+                is_min_value_exact: Some(false),
             },
         );
 

@@ -74,5 +74,7 @@ pub fn write(v: &FixedLenStatistics) -> ParquetStatistics {
         min_value: v.min_value.clone(),
         min: None,
         max: None,
+        is_max_value_exact: None,
+        is_min_value_exact: None,
     }
 }
