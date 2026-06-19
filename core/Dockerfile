@@ -74,7 +74,23 @@ COPY . .
 # they match the crates linked into libquestdbr. Installs cargo-deny if absent.
 RUN CARGO_DENY_VERSION="${CARGO_DENY_VERSION}" bash ci/generate_third_party_licenses.sh
 
-RUN mvn clean package -Djdk.lang.Process.launchMechanism=vfork -Dmaven.resolver.transport=wagon -Dmaven.wagon.httpconnectionManager.ttlSeconds=30 -DskipTests -P build-web-console,build-binaries
+# Auto-detect how the java-questdb-client dependency must be resolved.
+# If core/pom.xml references a -SNAPSHOT client version, that artifact is not
+# published to Maven Central, so we build it from the bundled java-questdb-client
+# submodule by enabling the `local-client` Maven profile. For a released client
+# version we resolve it from Maven Central (no extra profile).
+# NOTE: for the SNAPSHOT path the submodule must be present in the build context
+# (the docker-release pipeline checks it out via `submodules: true`) and its
+# version must match questdb.client.version.
+RUN set -eux; \
+    CLIENT_VERSION="$(sed -n 's/.*<questdb.client.version>\(.*\)<\/questdb.client.version>.*/\1/p' core/pom.xml | head -1)"; \
+    echo "questdb.client.version=${CLIENT_VERSION}"; \
+    CLIENT_PROFILE=""; \
+    case "${CLIENT_VERSION}" in \
+      *-SNAPSHOT) echo "SNAPSHOT client detected, activating local-client profile"; CLIENT_PROFILE=",local-client" ;; \
+      *) echo "Release client detected, resolving from Maven Central" ;; \
+    esac; \
+    mvn clean package -Djdk.lang.Process.launchMechanism=vfork -Dmaven.resolver.transport=wagon -Dmaven.wagon.httpconnectionManager.ttlSeconds=30 -DskipTests -P "build-web-console,build-binaries${CLIENT_PROFILE}"
 
 WORKDIR /build/questdb/core/target
 
