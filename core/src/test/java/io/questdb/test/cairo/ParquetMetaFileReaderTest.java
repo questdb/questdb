@@ -549,7 +549,6 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
                         Assert.assertTrue(
                                 e.getMessage(),
                                 e.getMessage().contains("unexpected _pm footer feature bytes")
-                                        || e.getMessage().contains("footer")
                         );
                     }
                 } finally {
@@ -1389,9 +1388,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
         // Designated timestamp column index at the lower boundary (0). This
         // is the boundary case for the dtsIndex < -1 || dtsIndex >= columnCount
         // guard in resolveFooter; it must not trip when DTS == 0 and
-        // columnCount > 0. readPartitionMeta itself ignores DTS, but this
-        // regression-guards the boundary alongside the row-count surface that
-        // the enterprise StoragePolicyJob.readParquetMetaSidecar relies on.
+        // columnCount > 0.
         assertMemoryLeak(() -> {
             try (ParquetMetaTestFile file = buildFileWithDts(0, 3, 12L)) {
                 ParquetMetaFileReader reader = new ParquetMetaFileReader();
@@ -1441,8 +1438,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
     public void testReadPartitionMetaMultiRowGroup() throws Exception {
         // Total row count is the sum across every row group; verifies the
         // checked_add accumulator in read_partition_meta_impl on a multi-rg
-        // _pm. This is the surface StoragePolicyJob.readParquetMetaSidecar
-        // consumes as the partition's authoritative row count.
+        // _pm.
         assertMemoryLeak(() -> {
             try (ParquetMetaTestFile file = buildFile(2, 3L, 7L, 2L)) {
                 ParquetMetaFileReader reader = new ParquetMetaFileReader();
@@ -1500,8 +1496,6 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
 
     @Test
     public void testReadPartitionMetaWellFormedFooter() throws Exception {
-        // Happy-path coverage of the readPartitionMeta JNI surface that
-        // StoragePolicyJob.readParquetMetaSidecar invokes after openAndMapRO.
         // Verifies row_count is the sum of row group sizes and squash_tracker
         // is -1 when the SQUASH_TRACKER feature section is absent (the case
         // for every _pm produced by the standard writer path).
