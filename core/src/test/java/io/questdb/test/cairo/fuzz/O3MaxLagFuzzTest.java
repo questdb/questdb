@@ -26,11 +26,8 @@ package io.questdb.test.cairo.fuzz;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
-import io.questdb.cairo.sql.Record;
-import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -66,7 +63,7 @@ public class O3MaxLagFuzzTest extends AbstractO3Test {
     @Test
     public void testRollbackLagPartitionSwitchRegression() throws Exception {
         // Regression test for https://github.com/questdb/questdb/issues/7278
-        // 57091 rows, partition by DAY. The in-order prefix crosses the 1970-01-01 -> 1970-01-02
+        // 57_091 rows, partition by DAY. The in-order prefix crosses the 1970-01-01 -> 1970-01-02
         // boundary, so a lag-commit + rollback leaves maxTimestamp below the committed data.
         executeWithPool(2, (engine, compiler, sqlExecutionContext, timestampTypeName) ->
                 testRollbackFuzz0(engine, compiler, sqlExecutionContext, 57_091, 151, 1_545_848));

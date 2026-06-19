@@ -47,6 +47,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     private int lastRecordBaseOffset = -1;
     private long lastRecordStructureVersion = -1;
     private long lastSealedPartitionMaxTimestamp = Long.MIN_VALUE;
+    private long prevLastSealedPartitionMaxTimestamp = Long.MIN_VALUE;
     private long prevMaxTimestamp;
     private long prevMinTimestamp;
     private long prevPartitionTableVersion = -1;
@@ -117,6 +118,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         if (transientRowCount == 1 && txPartitionCount > 1) {
             // we have to undo creation of partition
             txPartitionCount--;
+            lastSealedPartitionMaxTimestamp = prevLastSealedPartitionMaxTimestamp;
             fixedRowCount -= prevTransientRowCount;
             transientRowCount = prevTransientRowCount + 1; // When row cancel finishes 1 is subtracted. Add 1 to compensate.
             attachedPartitions.setPos(attachedPartitions.size() - LONGS_PER_TX_ATTACHED_PARTITION);
@@ -157,6 +159,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         lastRecordBaseOffset = -1;
         prevRecordBaseOffset = -2;
         lastSealedPartitionMaxTimestamp = Long.MIN_VALUE;
+        prevLastSealedPartitionMaxTimestamp = Long.MIN_VALUE;
     }
 
     @Override
@@ -311,6 +314,8 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     public void removeAllPartitions() {
         maxTimestamp = Long.MIN_VALUE;
         minTimestamp = Long.MAX_VALUE;
+        lastSealedPartitionMaxTimestamp = Long.MIN_VALUE;
+        prevLastSealedPartitionMaxTimestamp = Long.MIN_VALUE;
         prevTransientRowCount = 0;
         transientRowCount = 0;
         fixedRowCount = 0;
@@ -387,6 +392,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     public void resetTimestamp() {
         recordStructureVersion++;
         lastSealedPartitionMaxTimestamp = Long.MIN_VALUE;
+        prevLastSealedPartitionMaxTimestamp = Long.MIN_VALUE;
         prevMaxTimestamp = Long.MIN_VALUE;
         prevMinTimestamp = Long.MAX_VALUE;
         maxTimestamp = prevMaxTimestamp;
@@ -503,6 +509,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
     public void switchPartitions(long timestamp) {
         recordStructureVersion++;
+        prevLastSealedPartitionMaxTimestamp = lastSealedPartitionMaxTimestamp;
         lastSealedPartitionMaxTimestamp = maxTimestamp;
         fixedRowCount += transientRowCount;
         prevTransientRowCount = transientRowCount;
@@ -523,7 +530,6 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     public void truncate(long columnVersion, ObjList<? extends SymbolCountProvider> symbolCountProviders) {
-        lastSealedPartitionMaxTimestamp = Long.MIN_VALUE;
         removeAllPartitions();
         if (!PartitionBy.isPartitioned(partitionBy)) {
             attachedPartitions.setPos(LONGS_PER_TX_ATTACHED_PARTITION);
@@ -555,6 +561,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         this.prevPartitionTableVersion = partitionTableVersion;
         this.txPartitionCount = 1;
         this.lastSealedPartitionMaxTimestamp = Long.MIN_VALUE;
+        this.prevLastSealedPartitionMaxTimestamp = Long.MIN_VALUE;
         if (baseVersion >= 0) {
             this.readBaseOffset = getBaseOffset();
             this.readRecordSize = getRecordSize();
@@ -666,6 +673,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         prevMinTimestamp = minTimestamp;
         prevMaxTimestamp = maxTimestamp;
         lastSealedPartitionMaxTimestamp = Long.MIN_VALUE;
+        prevLastSealedPartitionMaxTimestamp = Long.MIN_VALUE;
 
         prevRecordStructureVersion = lastRecordStructureVersion;
         lastRecordStructureVersion = recordStructureVersion;
