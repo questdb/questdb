@@ -75,6 +75,8 @@ import static io.questdb.TelemetryEvent.*;
 import static io.questdb.cairo.ErrorTag.OUT_OF_MEMORY;
 import static io.questdb.cairo.ErrorTag.resolveTag;
 import static io.questdb.cairo.TableUtils.*;
+import static io.questdb.cairo.wal.WalTxnDetails.dedupModeOf;
+import static io.questdb.cairo.wal.WalTxnDetails.walTxnTypeOf;
 import static io.questdb.cairo.wal.WalTxnType.MAT_VIEW_INVALIDATE;
 import static io.questdb.cairo.wal.WalTxnType.*;
 import static io.questdb.cairo.wal.WalUtils.*;
@@ -147,60 +149,88 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         lastCommittedRows = 0L;
     }
 
-    private static long calculateSkipTransactionCount(long initialSeqTxn, WalTxnDetails walTxnDetails) {
+    private static long calculateSkipTransactionCount(TableToken tableToken, long initialSeqTxn, WalTxnDetails walTxnDetails) {
         // Check all future transactions to see if any fully replace this transaction's range or table is truncated
         final long lastSeqTxn = walTxnDetails.getLastSeqTxn();
+        // Loop-invariant for the whole scan; hoisted out of the inner loop below.
+        final boolean isMatView = tableToken.isMatView();
 
         // Initial loop condition, as if the previous transaction was skipped
         for (long seqTxn = initialSeqTxn; seqTxn < lastSeqTxn; seqTxn++) {
             int walId = walTxnDetails.getWalId(seqTxn);
-            if (walId < 1 || !isDataType(walTxnDetails.getWalTxnType(seqTxn))) {
+            // Read the packed type+flags slot once when present: both the txn type and the dedup mode
+            // (checked further below) decode from it, mirroring the inner scan. NONE for structural
+            // (walId < 1) transactions, which carry no data txn type and short-circuit the data check below.
+            long typeAndFlags = walId > 0 ? walTxnDetails.getWalTxnTypeAndFlags(seqTxn) : 0L;
+            if (walId < 1 || !isDataType(walTxnTypeOf(typeAndFlags))) {
                 // This is not a data transaction
                 return seqTxn - initialSeqTxn;
             }
 
             long txnTsLo = walTxnDetails.getMinTimestamp(seqTxn);
             long txnTsHi = walTxnDetails.getMaxTimestamp(seqTxn) + 1; // Max is inclusive, make txnTsHi exclusive
-            if (walTxnDetails.getDedupMode(seqTxn) == WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE) {
+            if (dedupModeOf(typeAndFlags) == WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE) {
                 txnTsLo = walTxnDetails.getReplaceRangeTsLow(seqTxn);
                 txnTsHi = walTxnDetails.getReplaceRangeTsHi(seqTxn);
             }
 
+            long firstNonSkippableTxn = Long.MAX_VALUE;
             boolean seqTxnCanBeSkipped = false;
 
-            // Even though it's O(N^2) complexity, the number of transactions we can skip is expected to be small.
-            // So the outer loop exits very early, it is expected to exit after 1st iteration.
-            // The replacer search must not cross any non-data transaction. Operations such as column
-            // type conversion to SYMBOL derive persistent state (the symbol map) from the table
-            // content at apply time; allowing a skip to cross such a txn makes that state dependent
-            // on the apply lookahead window, causing silent divergence between appliers.
-            // TRUNCATE is special-cased below: it justifies the skip itself, but only when the
-            // whole window between seqTxn and the TRUNCATE consists of data transactions.
+            // Even though it's O(N^2) complexity, the number of transactions we can skip is expected to be
+            // small, so the outer loop usually exits after the 1st iteration. It runs longer only when many
+            // transactions are skippable: a TRUNCATE ahead (the early return below stops the scan at it), or,
+            // for a materialized view, a run of inserts covered by a later REPLACE_RANGE across recorded
+            // barriers (the mat-view exemption below keeps scanning past non-data transactions).
             for (long futureSeqTxn = seqTxn + 1; futureSeqTxn <= lastSeqTxn; futureSeqTxn++) {
                 int futureWalId = walTxnDetails.getWalId(futureSeqTxn);
-                if (futureWalId > 0) {
-                    final byte walTxnType = walTxnDetails.getWalTxnType(futureSeqTxn);
-                    if (walTxnType == TRUNCATE) {
-                        // Truncate fully removes any prior data, no point doing any data apply.
-                        // Reaching here means every txn between seqTxn and futureSeqTxn is a data
-                        // txn (any non-data txn would have caused a break above), so it is safe
-                        // to skip straight to the truncate.
-                        return futureSeqTxn - initialSeqTxn;
-                    }
+                // Read the packed type+flags slot once when present: both the txn type and the dedup mode
+                // (checked further below) decode from it, so the dedup check does not re-read the same slot.
+                // NONE for structural (walId < 1) transactions, which carry no data txn type; the barrier
+                // check below treats them by walId, so the exact value is irrelevant there.
+                long futureTypeAndFlags = futureWalId > 0 ? walTxnDetails.getWalTxnTypeAndFlags(futureSeqTxn) : 0L;
+                byte futureType = futureWalId > 0 ? walTxnTypeOf(futureTypeAndFlags) : NONE;
+                if (futureType == TRUNCATE) {
+                    // Truncate fully removes any prior data, no point applying it first. Skip straight to the
+                    // truncate, but not past a non-skippable transaction recorded before it. For a regular table
+                    // firstNonSkippableTxn stays MAX (we break at the first barrier below before ever reaching a
+                    // truncate), so this skips everything up to the truncate. For a mat view we scan past
+                    // structural changes (see below), so the clamp prevents skipping past one.
+                    return Math.min(firstNonSkippableTxn, futureSeqTxn) - initialSeqTxn;
+                }
 
-                    if (!WalTxnType.isDataType(walTxnType)) {
-                        // Non-data txn (structural metadata change, SQL, etc.): stop scanning.
-                        // Skipping across this boundary would make the table state applier-dependent.
-                        break;
+                if (futureWalId < 1 || !isDataType(futureType)) {
+                    // Not a data transaction: either an SQL statement (e.g. an UPDATE that uses existing data)
+                    // or a structural change (e.g. a column type conversion). Skipping the data before such a
+                    // transaction can diverge across instances - a STRING->SYMBOL conversion builds the column's
+                    // symbol map from the rows present at conversion time, so a primary and a replica that
+                    // skipped different transactions before it would build different maps. So treat it as a
+                    // barrier and stop scanning.
+                    //
+                    // Materialized views are exempt: a column type conversion cannot run on a mat view, so the
+                    // divergence cannot arise, while the optimization is worth keeping - a full mat view refresh
+                    // truncates, and materialising the data only to truncate it immediately afterwards is wasted
+                    // work. So for a mat view, record the barrier and keep scanning (the original behaviour), so
+                    // a later TRUNCATE or covering REPLACE_RANGE can still skip the data before it. An SQL
+                    // transaction stays a hard barrier even for a mat view, as it may read existing data.
+                    //
+                    // This mat-view exemption is safe only because no row-order-dependent structural change
+                    // can reach a mat view: a column type conversion - the one such operation - is rejected on
+                    // a mat view (SqlCompilerImpl.checkMatViewModification), and the column alters that a mat view
+                    // does permit (ADD INDEX, DROP INDEX, SYMBOL CAPACITY) are non-structural, so they commit
+                    // as walId > 0 SQL transactions and stay hard barriers via the futureType != SQL check
+                    // below. Making a row-dependent op structural and allowing it on a mat view would reopen
+                    // the cross-instance divergence; WalWriterReplaceRangeTest's
+                    // testMatViewPermittedColumnAltersStayNonStructural guards the non-structural half.
+                    if (isMatView && futureType != SQL) {
+                        firstNonSkippableTxn = Math.min(firstNonSkippableTxn, futureSeqTxn);
+                        continue;
                     }
-                } else {
-                    // walId <= 0 indicates a structural metadata txn; stop scanning.
                     break;
                 }
 
                 // If the future transaction is a replace range operation
-                byte futureDedupMode = walTxnDetails.getDedupMode(futureSeqTxn);
-                if (futureDedupMode == WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE) {
+                if (dedupModeOf(futureTypeAndFlags) == WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE) {
                     long futureRangeTsLo = walTxnDetails.getReplaceRangeTsLow(futureSeqTxn);
                     long futureRangeTsHi = walTxnDetails.getReplaceRangeTsHi(futureSeqTxn);
 
@@ -699,8 +729,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             case DATA:
             case MAT_VIEW_DATA:
             case LIVE_VIEW_DATA:
-                walTelemetryFacade.store(WAL_TXN_APPLY_START, writer.getTableToken(), walId, seqTxn, -1L, -1L, start - commitTimestamp, txnDetails.getMinTimestamp(seqTxn), txnDetails.getMaxTimestamp(seqTxn));
-                long skipTxnCount = calculateSkipTransactionCount(seqTxn, txnDetails);
+                TableToken tableToken = writer.getTableToken();
+                walTelemetryFacade.store(WAL_TXN_APPLY_START, tableToken, walId, seqTxn, -1L, -1L, start - commitTimestamp, txnDetails.getMinTimestamp(seqTxn), txnDetails.getMaxTimestamp(seqTxn));
+                long skipTxnCount = calculateSkipTransactionCount(tableToken, seqTxn, txnDetails);
                 // Ask TableWriter to skip applying transactions entirely when possible
                 boolean skipped = false;
                 if (skipTxnCount > 0) {
