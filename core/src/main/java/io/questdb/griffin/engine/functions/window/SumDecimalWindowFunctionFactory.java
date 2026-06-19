@@ -31,6 +31,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
+import io.questdb.cairo.lv.LiveViewSnapshotKeyCodec;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
@@ -40,7 +41,9 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryARW;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -66,15 +69,27 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
     private static final ArrayColumnTypes SUM_DECIMAL128_OVER_PARTITION_RANGE_TYPES;
     private static final ArrayColumnTypes SUM_DECIMAL128_OVER_PARTITION_ROWS_TYPES;
     private static final ArrayColumnTypes SUM_DECIMAL128_TYPES;
+    // Live-view value layout for the Decimal128/256 unbounded-partition-rows
+    // accumulator: the non-LV [DECIMAL256 acc, BOOLEAN wasNullState] plus a
+    // trailing BYTE tombstone slot for anchor-driven frontier compaction.
+    private static final ArrayColumnTypes SUM_DECIMAL128_TYPES_LV;
     private static final ArrayColumnTypes SUM_DECIMAL16_OVER_PARTITION_RANGE_TYPES;
     private static final ArrayColumnTypes SUM_DECIMAL16_OVER_PARTITION_ROWS_TYPES;
     private static final ArrayColumnTypes SUM_DECIMAL16_TYPES;
     private static final ArrayColumnTypes SUM_DECIMAL64_OVER_PARTITION_RANGE_TYPES;
     private static final ArrayColumnTypes SUM_DECIMAL64_OVER_PARTITION_ROWS_TYPES;
     private static final ArrayColumnTypes SUM_DECIMAL64_TYPES;
+    // Live-view value layout for the Decimal32/64 unbounded-partition-rows
+    // accumulator: [DECIMAL128 acc, BOOLEAN wasNullState] plus a trailing BYTE
+    // tombstone slot.
+    private static final ArrayColumnTypes SUM_DECIMAL64_TYPES_LV;
     private static final ArrayColumnTypes SUM_DECIMAL8_OVER_PARTITION_RANGE_TYPES;
     private static final ArrayColumnTypes SUM_DECIMAL8_OVER_PARTITION_ROWS_TYPES;
     private static final ArrayColumnTypes SUM_DECIMAL8_TYPES;
+    // Live-view value layout for the Decimal8/16 unbounded-partition-rows
+    // accumulator: [LONG acc, BOOLEAN wasNullState] plus a trailing BYTE
+    // tombstone slot. Shared by both narrow widths.
+    private static final ArrayColumnTypes SUM_DECIMAL_NARROW_TYPES_LV;
 
     @Override
     public String getSignature() {
@@ -185,9 +200,12 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         throw th;
                     }
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL128_TYPES);
+                    final boolean liveView = windowContext.isLiveView();
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                            liveView ? SUM_DECIMAL128_TYPES_LV : SUM_DECIMAL128_TYPES);
                     try {
-                        return new Decimal128SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
+                        return new Decimal128SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
+                                arg, outputType, argPos, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         throw th;
@@ -213,9 +231,12 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 }
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL128_TYPES);
+                    final boolean liveView = windowContext.isLiveView();
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                            liveView ? SUM_DECIMAL128_TYPES_LV : SUM_DECIMAL128_TYPES);
                     try {
-                        return new Decimal128SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
+                        return new Decimal128SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
+                                arg, outputType, argPos, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         throw th;
@@ -304,9 +325,12 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         throw th;
                     }
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL16_TYPES);
+                    final boolean liveView = windowContext.isLiveView();
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                            liveView ? SUM_DECIMAL_NARROW_TYPES_LV : SUM_DECIMAL16_TYPES);
                     try {
-                        return new Decimal16SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType);
+                        return new Decimal16SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
+                                arg, outputType, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         throw th;
@@ -332,9 +356,12 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 }
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL16_TYPES);
+                    final boolean liveView = windowContext.isLiveView();
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                            liveView ? SUM_DECIMAL_NARROW_TYPES_LV : SUM_DECIMAL16_TYPES);
                     try {
-                        return new Decimal16SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType);
+                        return new Decimal16SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
+                                arg, outputType, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         throw th;
@@ -424,9 +451,12 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         throw th;
                     }
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL128_TYPES);
+                    final boolean liveView = windowContext.isLiveView();
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                            liveView ? SUM_DECIMAL128_TYPES_LV : SUM_DECIMAL128_TYPES);
                     try {
-                        return new Decimal256SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
+                        return new Decimal256SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
+                                arg, outputType, argPos, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         throw th;
@@ -452,9 +482,12 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 }
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL128_TYPES);
+                    final boolean liveView = windowContext.isLiveView();
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                            liveView ? SUM_DECIMAL128_TYPES_LV : SUM_DECIMAL128_TYPES);
                     try {
-                        return new Decimal256SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
+                        return new Decimal256SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
+                                arg, outputType, argPos, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         throw th;
@@ -544,9 +577,12 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         throw th;
                     }
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL64_TYPES);
+                    final boolean liveView = windowContext.isLiveView();
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                            liveView ? SUM_DECIMAL64_TYPES_LV : SUM_DECIMAL64_TYPES);
                     try {
-                        return new Decimal32SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
+                        return new Decimal32SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
+                                arg, outputType, argPos, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         throw th;
@@ -572,9 +608,12 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 }
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL64_TYPES);
+                    final boolean liveView = windowContext.isLiveView();
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                            liveView ? SUM_DECIMAL64_TYPES_LV : SUM_DECIMAL64_TYPES);
                     try {
-                        return new Decimal32SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
+                        return new Decimal32SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
+                                arg, outputType, argPos, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         throw th;
@@ -664,9 +703,12 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         throw th;
                     }
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL64_TYPES);
+                    final boolean liveView = windowContext.isLiveView();
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                            liveView ? SUM_DECIMAL64_TYPES_LV : SUM_DECIMAL64_TYPES);
                     try {
-                        return new Decimal64SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
+                        return new Decimal64SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
+                                arg, outputType, argPos, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         throw th;
@@ -692,9 +734,12 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 }
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL64_TYPES);
+                    final boolean liveView = windowContext.isLiveView();
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                            liveView ? SUM_DECIMAL64_TYPES_LV : SUM_DECIMAL64_TYPES);
                     try {
-                        return new Decimal64SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
+                        return new Decimal64SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
+                                arg, outputType, argPos, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         throw th;
@@ -783,9 +828,12 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         throw th;
                     }
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL8_TYPES);
+                    final boolean liveView = windowContext.isLiveView();
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                            liveView ? SUM_DECIMAL_NARROW_TYPES_LV : SUM_DECIMAL8_TYPES);
                     try {
-                        return new Decimal8SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType);
+                        return new Decimal8SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
+                                arg, outputType, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         throw th;
@@ -811,9 +859,12 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 }
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL8_TYPES);
+                    final boolean liveView = windowContext.isLiveView();
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                            liveView ? SUM_DECIMAL_NARROW_TYPES_LV : SUM_DECIMAL8_TYPES);
                     try {
-                        return new Decimal8SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType);
+                        return new Decimal8SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
+                                arg, outputType, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         throw th;
@@ -1924,15 +1975,56 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
     static class Decimal128SumOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
         private final Decimal256 acc = new Decimal256();
+        private final CairoConfiguration configuration;
+        // Stable snapshot of the partition-by key column types, taken at
+        // construction (the factory reuses its WindowContext buffer across
+        // compiles). Kept for live-view snapshot key codec and frontier sweep.
+        private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
+        // Full value layout (including tombstone slot) for the
+        // newCompactionScratch() scratch Map. Null outside live-view mode.
+        private final ArrayColumnTypes mapValueTypes;
         private final int position;
         private final Decimal128 scratch = new Decimal128();
         private final int type;
         private final Decimal256 value = new Decimal256();
 
-        public Decimal128SumOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int type, int position) {
+        public Decimal128SumOverUnboundedPartitionRowsFrameFunction(
+                Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                Function arg,
+                int type,
+                int position,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView,
+                CairoConfiguration configuration
+        ) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.type = type;
             this.position = position;
+            this.liveView = liveView;
+            this.configuration = configuration;
+            this.keyColumnTypes = new ArrayColumnTypes();
+            for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                this.keyColumnTypes.add(partitionByKeyTypes.getColumnType(i));
+            }
+            if (liveView) {
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = SUM_DECIMAL128_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(SUM_DECIMAL128_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 2;
+            } else {
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            return MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
         }
 
         @Override
@@ -1944,6 +2036,9 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
             boolean wasNullState;
             if (mv.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    mv.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 acc.ofRaw(0);
                 wasNullState = true;
             } else {
@@ -1990,8 +2085,25 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public ColumnTypes getSnapshotKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getSnapshotKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : SUM_DECIMAL128_TYPES.getColumnCount();
         }
 
         @Override
@@ -2007,6 +2119,61 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             Unsafe.putLong(addr + Long.BYTES, value.getHl());
             Unsafe.putLong(addr + 2 * Long.BYTES, value.getLh());
             Unsafe.putLong(addr + 3 * Long.BYTES, value.getLl());
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset. Zero the accumulator and return to the
+            // null-state (no non-null rows seen); the next computeNext
+            // re-anchors on the post-reset row.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mv = key.findValue();
+            if (mv != null) {
+                acc.ofRaw(0);
+                mv.putDecimal256(0, acc);
+                mv.putBool(1, true);
+                if (!mv.isNew() && tombstoneValueIndex >= 0 && mv.getByte(tombstoneValueIndex) != 1) {
+                    mv.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
+            source.getDecimal256(offset, acc);
+            value.putDecimal256(0, acc);
+            offset += 4 * Long.BYTES;
+            value.putBool(1, source.getBool(offset));
+            offset += Byte.BYTES;
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public int snapshotFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public int snapshotMinSupportedVersion() {
+            return 1;
+        }
+
+        @Override
+        public void snapshotPartitionState(MemoryA sink, MapValue value) {
+            value.getDecimal256(0, acc);
+            sink.putDecimal256(acc.getHh(), acc.getHl(), acc.getLh(), acc.getLl());
+            sink.putBool(value.getBool(1));
+        }
+
+        @Override
+        public boolean supportsSnapshot() {
+            return LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -3073,12 +3240,52 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
     static class Decimal16SumOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
+        private final CairoConfiguration configuration;
+        // Stable snapshot of the partition-by key column types, taken at
+        // construction (the factory reuses its WindowContext buffer across
+        // compiles). Kept for live-view snapshot key codec and frontier sweep.
+        private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
+        // Full value layout (including tombstone slot) for the
+        // newCompactionScratch() scratch Map. Null outside live-view mode.
+        private final ArrayColumnTypes mapValueTypes;
         private final int type;
         private long value;
 
-        public Decimal16SumOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int type) {
+        public Decimal16SumOverUnboundedPartitionRowsFrameFunction(
+                Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                Function arg,
+                int type,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView,
+                CairoConfiguration configuration
+        ) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.type = type;
+            this.liveView = liveView;
+            this.configuration = configuration;
+            this.keyColumnTypes = new ArrayColumnTypes();
+            for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                this.keyColumnTypes.add(partitionByKeyTypes.getColumnType(i));
+            }
+            if (liveView) {
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = SUM_DECIMAL_NARROW_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(SUM_DECIMAL_NARROW_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 2;
+            } else {
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            return MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
         }
 
         @Override
@@ -3091,6 +3298,9 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             long acc;
             boolean wasNullState;
             if (mv.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    mv.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 acc = 0L;
                 wasNullState = true;
             } else {
@@ -3123,8 +3333,25 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public ColumnTypes getSnapshotKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getSnapshotKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : SUM_DECIMAL16_TYPES.getColumnCount();
         }
 
         @Override
@@ -3136,6 +3363,58 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), value);
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset. Zero the accumulator and return to the
+            // null-state (no non-null rows seen); the next computeNext
+            // re-anchors on the post-reset row.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mv = key.findValue();
+            if (mv != null) {
+                mv.putLong(0, 0L);
+                mv.putBool(1, true);
+                if (!mv.isNew() && tombstoneValueIndex >= 0 && mv.getByte(tombstoneValueIndex) != 1) {
+                    mv.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
+            value.putLong(0, source.getLong(offset));
+            offset += Long.BYTES;
+            value.putBool(1, source.getBool(offset));
+            offset += Byte.BYTES;
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public int snapshotFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public int snapshotMinSupportedVersion() {
+            return 1;
+        }
+
+        @Override
+        public void snapshotPartitionState(MemoryA sink, MapValue value) {
+            sink.putLong(value.getLong(0));
+            sink.putBool(value.getBool(1));
+        }
+
+        @Override
+        public boolean supportsSnapshot() {
+            return LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -4355,15 +4634,56 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
     static class Decimal256SumOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
         private final Decimal256 acc = new Decimal256();
+        private final CairoConfiguration configuration;
+        // Stable snapshot of the partition-by key column types, taken at
+        // construction (the factory reuses its WindowContext buffer across
+        // compiles). Kept for live-view snapshot key codec and frontier sweep.
+        private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
+        // Full value layout (including tombstone slot) for the
+        // newCompactionScratch() scratch Map. Null outside live-view mode.
+        private final ArrayColumnTypes mapValueTypes;
         private final int position;
         private final Decimal256 scratch = new Decimal256();
         private final int type;
         private final Decimal256 value = new Decimal256();
 
-        public Decimal256SumOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int type, int position) {
+        public Decimal256SumOverUnboundedPartitionRowsFrameFunction(
+                Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                Function arg,
+                int type,
+                int position,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView,
+                CairoConfiguration configuration
+        ) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.type = type;
             this.position = position;
+            this.liveView = liveView;
+            this.configuration = configuration;
+            this.keyColumnTypes = new ArrayColumnTypes();
+            for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                this.keyColumnTypes.add(partitionByKeyTypes.getColumnType(i));
+            }
+            if (liveView) {
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = SUM_DECIMAL128_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(SUM_DECIMAL128_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 2;
+            } else {
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            return MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
         }
 
         @Override
@@ -4375,6 +4695,9 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
             boolean wasNullState;
             if (mv.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    mv.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 acc.ofRaw(0);
                 wasNullState = true;
             } else {
@@ -4421,8 +4744,25 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public ColumnTypes getSnapshotKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getSnapshotKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : SUM_DECIMAL128_TYPES.getColumnCount();
         }
 
         @Override
@@ -4438,6 +4778,61 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             Unsafe.putLong(addr + Long.BYTES, value.getHl());
             Unsafe.putLong(addr + 2 * Long.BYTES, value.getLh());
             Unsafe.putLong(addr + 3 * Long.BYTES, value.getLl());
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset. Zero the accumulator and return to the
+            // null-state (no non-null rows seen); the next computeNext
+            // re-anchors on the post-reset row.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mv = key.findValue();
+            if (mv != null) {
+                acc.ofRaw(0);
+                mv.putDecimal256(0, acc);
+                mv.putBool(1, true);
+                if (!mv.isNew() && tombstoneValueIndex >= 0 && mv.getByte(tombstoneValueIndex) != 1) {
+                    mv.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
+            source.getDecimal256(offset, acc);
+            value.putDecimal256(0, acc);
+            offset += 4 * Long.BYTES;
+            value.putBool(1, source.getBool(offset));
+            offset += Byte.BYTES;
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public int snapshotFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public int snapshotMinSupportedVersion() {
+            return 1;
+        }
+
+        @Override
+        public void snapshotPartitionState(MemoryA sink, MapValue value) {
+            value.getDecimal256(0, acc);
+            sink.putDecimal256(acc.getHh(), acc.getHl(), acc.getLh(), acc.getLl());
+            sink.putBool(value.getBool(1));
+        }
+
+        @Override
+        public boolean supportsSnapshot() {
+            return LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -5566,14 +5961,55 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
     static class Decimal32SumOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
         private final Decimal128 acc = new Decimal128();
+        private final CairoConfiguration configuration;
+        // Stable snapshot of the partition-by key column types, taken at
+        // construction (the factory reuses its WindowContext buffer across
+        // compiles). Kept for live-view snapshot key codec and frontier sweep.
+        private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
+        // Full value layout (including tombstone slot) for the
+        // newCompactionScratch() scratch Map. Null outside live-view mode.
+        private final ArrayColumnTypes mapValueTypes;
         private final int position;
         private final int type;
         private final Decimal128 value = new Decimal128();
 
-        public Decimal32SumOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int type, int position) {
+        public Decimal32SumOverUnboundedPartitionRowsFrameFunction(
+                Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                Function arg,
+                int type,
+                int position,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView,
+                CairoConfiguration configuration
+        ) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.type = type;
             this.position = position;
+            this.liveView = liveView;
+            this.configuration = configuration;
+            this.keyColumnTypes = new ArrayColumnTypes();
+            for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                this.keyColumnTypes.add(partitionByKeyTypes.getColumnType(i));
+            }
+            if (liveView) {
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = SUM_DECIMAL64_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(SUM_DECIMAL64_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 2;
+            } else {
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            return MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
         }
 
         @Override
@@ -5585,6 +6021,9 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
             boolean wasNullState;
             if (mv.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    mv.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 acc.ofRaw(0);
                 wasNullState = true;
             } else {
@@ -5624,8 +6063,25 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public ColumnTypes getSnapshotKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getSnapshotKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : SUM_DECIMAL64_TYPES.getColumnCount();
         }
 
         @Override
@@ -5639,6 +6095,61 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             long addr = spi.getAddress(recordOffset, columnIndex);
             Unsafe.putLong(addr, value.getHigh());
             Unsafe.putLong(addr + Long.BYTES, value.getLow());
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset. Zero the accumulator and return to the
+            // null-state (no non-null rows seen); the next computeNext
+            // re-anchors on the post-reset row.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mv = key.findValue();
+            if (mv != null) {
+                acc.ofRaw(0);
+                mv.putDecimal128(0, acc);
+                mv.putBool(1, true);
+                if (!mv.isNew() && tombstoneValueIndex >= 0 && mv.getByte(tombstoneValueIndex) != 1) {
+                    mv.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
+            source.getDecimal128(offset, acc);
+            value.putDecimal128(0, acc);
+            offset += 2 * Long.BYTES;
+            value.putBool(1, source.getBool(offset));
+            offset += Byte.BYTES;
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public int snapshotFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public int snapshotMinSupportedVersion() {
+            return 1;
+        }
+
+        @Override
+        public void snapshotPartitionState(MemoryA sink, MapValue value) {
+            value.getDecimal128(0, acc);
+            sink.putDecimal128(acc.getHigh(), acc.getLow());
+            sink.putBool(value.getBool(1));
+        }
+
+        @Override
+        public boolean supportsSnapshot() {
+            return LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -6758,14 +7269,55 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
     static class Decimal64SumOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
         private final Decimal128 acc = new Decimal128();
+        private final CairoConfiguration configuration;
+        // Stable snapshot of the partition-by key column types, taken at
+        // construction (the factory reuses its WindowContext buffer across
+        // compiles). Kept for live-view snapshot key codec and frontier sweep.
+        private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
+        // Full value layout (including tombstone slot) for the
+        // newCompactionScratch() scratch Map. Null outside live-view mode.
+        private final ArrayColumnTypes mapValueTypes;
         private final int position;
         private final int type;
         private final Decimal128 value = new Decimal128();
 
-        public Decimal64SumOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int type, int position) {
+        public Decimal64SumOverUnboundedPartitionRowsFrameFunction(
+                Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                Function arg,
+                int type,
+                int position,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView,
+                CairoConfiguration configuration
+        ) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.type = type;
             this.position = position;
+            this.liveView = liveView;
+            this.configuration = configuration;
+            this.keyColumnTypes = new ArrayColumnTypes();
+            for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                this.keyColumnTypes.add(partitionByKeyTypes.getColumnType(i));
+            }
+            if (liveView) {
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = SUM_DECIMAL64_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(SUM_DECIMAL64_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 2;
+            } else {
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            return MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
         }
 
         @Override
@@ -6777,6 +7329,9 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
             boolean wasNullState;
             if (mv.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    mv.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 acc.ofRaw(0);
                 wasNullState = true;
             } else {
@@ -6816,8 +7371,25 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public ColumnTypes getSnapshotKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getSnapshotKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : SUM_DECIMAL64_TYPES.getColumnCount();
         }
 
         @Override
@@ -6831,6 +7403,61 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             long addr = spi.getAddress(recordOffset, columnIndex);
             Unsafe.putLong(addr, value.getHigh());
             Unsafe.putLong(addr + Long.BYTES, value.getLow());
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset. Zero the accumulator and return to the
+            // null-state (no non-null rows seen); the next computeNext
+            // re-anchors on the post-reset row.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mv = key.findValue();
+            if (mv != null) {
+                acc.ofRaw(0);
+                mv.putDecimal128(0, acc);
+                mv.putBool(1, true);
+                if (!mv.isNew() && tombstoneValueIndex >= 0 && mv.getByte(tombstoneValueIndex) != 1) {
+                    mv.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
+            source.getDecimal128(offset, acc);
+            value.putDecimal128(0, acc);
+            offset += 2 * Long.BYTES;
+            value.putBool(1, source.getBool(offset));
+            offset += Byte.BYTES;
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public int snapshotFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public int snapshotMinSupportedVersion() {
+            return 1;
+        }
+
+        @Override
+        public void snapshotPartitionState(MemoryA sink, MapValue value) {
+            value.getDecimal128(0, acc);
+            sink.putDecimal128(acc.getHigh(), acc.getLow());
+            sink.putBool(value.getBool(1));
+        }
+
+        @Override
+        public boolean supportsSnapshot() {
+            return LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -7889,12 +8516,52 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
     static class Decimal8SumOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
+        private final CairoConfiguration configuration;
+        // Stable snapshot of the partition-by key column types, taken at
+        // construction (the factory reuses its WindowContext buffer across
+        // compiles). Kept for live-view snapshot key codec and frontier sweep.
+        private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
+        // Full value layout (including tombstone slot) for the
+        // newCompactionScratch() scratch Map. Null outside live-view mode.
+        private final ArrayColumnTypes mapValueTypes;
         private final int type;
         private long value;
 
-        public Decimal8SumOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int type) {
+        public Decimal8SumOverUnboundedPartitionRowsFrameFunction(
+                Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                Function arg,
+                int type,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView,
+                CairoConfiguration configuration
+        ) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.type = type;
+            this.liveView = liveView;
+            this.configuration = configuration;
+            this.keyColumnTypes = new ArrayColumnTypes();
+            for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                this.keyColumnTypes.add(partitionByKeyTypes.getColumnType(i));
+            }
+            if (liveView) {
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = SUM_DECIMAL_NARROW_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(SUM_DECIMAL_NARROW_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 2;
+            } else {
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            return MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
         }
 
         @Override
@@ -7907,6 +8574,9 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             long acc;
             boolean wasNullState;
             if (mv.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    mv.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 acc = 0L;
                 wasNullState = true;
             } else {
@@ -7939,8 +8609,25 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public ColumnTypes getSnapshotKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getSnapshotKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : SUM_DECIMAL8_TYPES.getColumnCount();
         }
 
         @Override
@@ -7952,6 +8639,58 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), value);
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset. Zero the accumulator and return to the
+            // null-state (no non-null rows seen); the next computeNext
+            // re-anchors on the post-reset row.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mv = key.findValue();
+            if (mv != null) {
+                mv.putLong(0, 0L);
+                mv.putBool(1, true);
+                if (!mv.isNew() && tombstoneValueIndex >= 0 && mv.getByte(tombstoneValueIndex) != 1) {
+                    mv.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
+            value.putLong(0, source.getLong(offset));
+            offset += Long.BYTES;
+            value.putBool(1, source.getBool(offset));
+            offset += Byte.BYTES;
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public int snapshotFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public int snapshotMinSupportedVersion() {
+            return 1;
+        }
+
+        @Override
+        public void snapshotPartitionState(MemoryA sink, MapValue value) {
+            sink.putLong(value.getLong(0));
+            sink.putBool(value.getBool(1));
+        }
+
+        @Override
+        public boolean supportsSnapshot() {
+            return LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -8118,6 +8857,11 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         SUM_DECIMAL64_TYPES.add(ColumnType.LONG);
         SUM_DECIMAL64_TYPES.add(ColumnType.BOOLEAN);
 
+        SUM_DECIMAL64_TYPES_LV = new ArrayColumnTypes();
+        SUM_DECIMAL64_TYPES_LV.add(ColumnType.DECIMAL128); // slot 0: acc
+        SUM_DECIMAL64_TYPES_LV.add(ColumnType.BOOLEAN);    // slot 1: wasNullState
+        SUM_DECIMAL64_TYPES_LV.add(ColumnType.BYTE);       // slot 2: tombstone (anchor-driven compaction)
+
         SUM_DECIMAL64_OVER_PARTITION_RANGE_TYPES = new ArrayColumnTypes();
         SUM_DECIMAL64_OVER_PARTITION_RANGE_TYPES.add(ColumnType.DECIMAL128);
         SUM_DECIMAL64_OVER_PARTITION_RANGE_TYPES.add(ColumnType.LONG);
@@ -8136,6 +8880,11 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         SUM_DECIMAL8_TYPES = new ArrayColumnTypes();
         SUM_DECIMAL8_TYPES.add(ColumnType.LONG);
         SUM_DECIMAL8_TYPES.add(ColumnType.BOOLEAN);
+
+        SUM_DECIMAL_NARROW_TYPES_LV = new ArrayColumnTypes();
+        SUM_DECIMAL_NARROW_TYPES_LV.add(ColumnType.LONG);    // slot 0: acc (raw long sum)
+        SUM_DECIMAL_NARROW_TYPES_LV.add(ColumnType.BOOLEAN); // slot 1: wasNullState
+        SUM_DECIMAL_NARROW_TYPES_LV.add(ColumnType.BYTE);    // slot 2: tombstone (anchor-driven compaction)
 
         SUM_DECIMAL8_OVER_PARTITION_RANGE_TYPES = new ArrayColumnTypes();
         SUM_DECIMAL8_OVER_PARTITION_RANGE_TYPES.add(ColumnType.LONG);
@@ -8172,6 +8921,11 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         SUM_DECIMAL128_TYPES = new ArrayColumnTypes();
         SUM_DECIMAL128_TYPES.add(ColumnType.DECIMAL256);
         SUM_DECIMAL128_TYPES.add(ColumnType.BOOLEAN);
+
+        SUM_DECIMAL128_TYPES_LV = new ArrayColumnTypes();
+        SUM_DECIMAL128_TYPES_LV.add(ColumnType.DECIMAL256); // slot 0: acc
+        SUM_DECIMAL128_TYPES_LV.add(ColumnType.BOOLEAN);    // slot 1: wasNullState
+        SUM_DECIMAL128_TYPES_LV.add(ColumnType.BYTE);       // slot 2: tombstone (anchor-driven compaction)
 
         SUM_DECIMAL128_OVER_PARTITION_RANGE_TYPES = new ArrayColumnTypes();
         SUM_DECIMAL128_OVER_PARTITION_RANGE_TYPES.add(ColumnType.DECIMAL256);

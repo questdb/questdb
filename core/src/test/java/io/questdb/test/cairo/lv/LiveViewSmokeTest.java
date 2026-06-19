@@ -3636,6 +3636,415 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAnchorCountDecimalRestoresRunningStateAcrossRestart() throws Exception {
+        // count(DECIMAL) routes through the shared CountFunctionFactoryHelper -
+        // the same snapshot-capable window function count(DOUBLE) uses - so the
+        // running count of non-null decimal values must survive a restart.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym INT, d DECIMAL(18, 2)) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, count(d) OVER w AS c FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, sym, d) VALUES " +
+                        "('2026-10-01T00:00:00.000000Z', 1, 2.00m), " +
+                        "('2026-10-01T01:00:00.000000Z', 1, 6.00m)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            Assert.assertTrue(engine.getLiveViewRegistry().getViewInstance("lv").isCheckpointRestoreAttempted());
+
+            // Running count continues from 2 (the two pre-restart rows), so the
+            // third row in the same day-1 bucket is count 3, not 1.
+            setCurrentMicros(200_000L);
+            execute("INSERT INTO base (ts, sym, d) VALUES ('2026-10-01T02:00:00.000000Z', 1, 16.00m)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            assertQuery("SELECT ts, sym, c FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\tc\n" +
+                            "2026-10-01T00:00:00.000000Z\t1\t1\n" +
+                            "2026-10-01T01:00:00.000000Z\t1\t2\n" +
+                            "2026-10-01T02:00:00.000000Z\t1\t3\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testAnchorResetsCountDecimalAcrossDayBoundary() throws Exception {
+        // count(DECIMAL) in an anchored live view: the running count of non-null
+        // decimal values resets at the day boundary, and a NULL value does not
+        // advance the count (exercises the decimal not-null predicate).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, d DECIMAL(18, 2)) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, sym, count(d) OVER w AS c FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            // day 1: 5.00, NULL, 7.00 -> running count 1, 1, 2 (NULL skipped)
+            // day 2 (after reset): 9.00, 11.00 -> running count 1, 2
+            execute("INSERT INTO base (ts, sym, d) VALUES " +
+                    "('2026-08-01T00:00:00.000000Z', 'a', 5.00m), " +
+                    "('2026-08-01T01:00:00.000000Z', 'a', null), " +
+                    "('2026-08-01T02:00:00.000000Z', 'a', 7.00m), " +
+                    "('2026-08-02T00:00:00.000000Z', 'a', 9.00m), " +
+                    "('2026-08-02T01:00:00.000000Z', 'a', 11.00m)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            assertQuery("SELECT ts, sym, c FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\tc\n" +
+                            "2026-08-01T00:00:00.000000Z\ta\t1\n" +
+                            "2026-08-01T01:00:00.000000Z\ta\t1\n" +
+                            "2026-08-01T02:00:00.000000Z\ta\t2\n" +
+                            "2026-08-02T00:00:00.000000Z\ta\t1\n" +
+                            "2026-08-02T01:00:00.000000Z\ta\t2\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testAnchorResetsSumDecimal128AcrossDayBoundary() throws Exception {
+        // sum over a DECIMAL(38,6) column (DECIMAL128 storage, DECIMAL256 acc) in
+        // an anchored live view. Exercises the migrated
+        // Decimal128SumOverUnboundedPartitionRowsFrameFunction: the running sum
+        // resets to the new bucket's first row at the day boundary.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, d DECIMAL(38, 6)) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, sym, sum(d) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            execute("INSERT INTO base (ts, sym, d) VALUES " +
+                    "('2026-08-01T00:00:00.000000Z', 'a', 10.000000m), " +
+                    "('2026-08-01T01:00:00.000000Z', 'a', 20.000000m), " +
+                    "('2026-08-02T00:00:00.000000Z', 'a', 100.000000m), " +
+                    "('2026-08-02T01:00:00.000000Z', 'a', 200.000000m)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
+                            "2026-08-01T00:00:00.000000Z\ta\t10.000000\n" +
+                            "2026-08-01T01:00:00.000000Z\ta\t30.000000\n" +
+                            "2026-08-02T00:00:00.000000Z\ta\t100.000000\n" +
+                            "2026-08-02T01:00:00.000000Z\ta\t300.000000\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testAnchorResetsSumDecimal16AcrossDayBoundary() throws Exception {
+        // sum over a DECIMAL(4,0) column - "narrow" storage with a raw LONG
+        // accumulator. Represents the Decimal8/16 widths (identical migration).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, d DECIMAL(4, 0)) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, sym, sum(d) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            execute("INSERT INTO base (ts, sym, d) VALUES " +
+                    "('2026-08-01T00:00:00.000000Z', 'a', 10m), " +
+                    "('2026-08-01T01:00:00.000000Z', 'a', 20m), " +
+                    "('2026-08-02T00:00:00.000000Z', 'a', 100m), " +
+                    "('2026-08-02T01:00:00.000000Z', 'a', 200m)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
+                            "2026-08-01T00:00:00.000000Z\ta\t10\n" +
+                            "2026-08-01T01:00:00.000000Z\ta\t30\n" +
+                            "2026-08-02T00:00:00.000000Z\ta\t100\n" +
+                            "2026-08-02T01:00:00.000000Z\ta\t300\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testAnchorResetsSumDecimal256AcrossDayBoundary() throws Exception {
+        // sum over a DECIMAL(60,0) column (DECIMAL256 storage, DECIMAL256 acc).
+        // Exercises Decimal256SumOverUnboundedPartitionRowsFrameFunction.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, d DECIMAL(60, 0)) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, sym, sum(d) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            execute("INSERT INTO base (ts, sym, d) VALUES " +
+                    "('2026-08-01T00:00:00.000000Z', 'a', 10m), " +
+                    "('2026-08-01T01:00:00.000000Z', 'a', 20m), " +
+                    "('2026-08-02T00:00:00.000000Z', 'a', 100m), " +
+                    "('2026-08-02T01:00:00.000000Z', 'a', 200m)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
+                            "2026-08-01T00:00:00.000000Z\ta\t10\n" +
+                            "2026-08-01T01:00:00.000000Z\ta\t30\n" +
+                            "2026-08-02T00:00:00.000000Z\ta\t100\n" +
+                            "2026-08-02T01:00:00.000000Z\ta\t300\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testAnchorResetsSumDecimal32AcrossDayBoundary() throws Exception {
+        // sum over a DECIMAL(9,3) column (DECIMAL32 storage, DECIMAL128 acc).
+        // Exercises Decimal32SumOverUnboundedPartitionRowsFrameFunction.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, d DECIMAL(9, 3)) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, sym, sum(d) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            execute("INSERT INTO base (ts, sym, d) VALUES " +
+                    "('2026-08-01T00:00:00.000000Z', 'a', 2.000m), " +
+                    "('2026-08-01T01:00:00.000000Z', 'a', 6.000m), " +
+                    "('2026-08-02T00:00:00.000000Z', 'a', 10.000m), " +
+                    "('2026-08-02T01:00:00.000000Z', 'a', 30.000m)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
+                            "2026-08-01T00:00:00.000000Z\ta\t2.000\n" +
+                            "2026-08-01T01:00:00.000000Z\ta\t8.000\n" +
+                            "2026-08-02T00:00:00.000000Z\ta\t10.000\n" +
+                            "2026-08-02T01:00:00.000000Z\ta\t40.000\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testAnchorResetsSumDecimal64AcrossDayBoundary() throws Exception {
+        // sum over a DECIMAL(18,2) column (DECIMAL64 storage, DECIMAL128 acc).
+        // Exercises Decimal64SumOverUnboundedPartitionRowsFrameFunction.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, d DECIMAL(18, 2)) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, sym, sum(d) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            execute("INSERT INTO base (ts, sym, d) VALUES " +
+                    "('2026-08-01T00:00:00.000000Z', 'a', 2.00m), " +
+                    "('2026-08-01T01:00:00.000000Z', 'a', 6.00m), " +
+                    "('2026-08-02T00:00:00.000000Z', 'a', 10.00m), " +
+                    "('2026-08-02T01:00:00.000000Z', 'a', 30.00m)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
+                            "2026-08-01T00:00:00.000000Z\ta\t2.00\n" +
+                            "2026-08-01T01:00:00.000000Z\ta\t8.00\n" +
+                            "2026-08-02T00:00:00.000000Z\ta\t10.00\n" +
+                            "2026-08-02T01:00:00.000000Z\ta\t40.00\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testAnchorResetsSumDecimal8AcrossDayBoundary() throws Exception {
+        // sum over a DECIMAL(2,0) column (DECIMAL8 storage, raw LONG acc).
+        // Exercises Decimal8SumOverUnboundedPartitionRowsFrameFunction.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, d DECIMAL(2, 0)) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, sym, sum(d) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            execute("INSERT INTO base (ts, sym, d) VALUES " +
+                    "('2026-08-01T00:00:00.000000Z', 'a', 10m), " +
+                    "('2026-08-01T01:00:00.000000Z', 'a', 20m), " +
+                    "('2026-08-02T00:00:00.000000Z', 'a', 40m), " +
+                    "('2026-08-02T01:00:00.000000Z', 'a', 50m)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
+                            "2026-08-01T00:00:00.000000Z\ta\t10\n" +
+                            "2026-08-01T01:00:00.000000Z\ta\t30\n" +
+                            "2026-08-02T00:00:00.000000Z\ta\t40\n" +
+                            "2026-08-02T01:00:00.000000Z\ta\t90\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testAnchorSumDecimal128RestoresRunningStateAcrossRestart() throws Exception {
+        // Restart-restore for the DECIMAL256-acc snapshot payload (DECIMAL128
+        // input). The running sum must survive a checkpoint and rehydrate via
+        // restorePartitionState so the sum continues across a restart.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym INT, d DECIMAL(38, 6)) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, sum(d) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, sym, d) VALUES " +
+                        "('2026-10-01T00:00:00.000000Z', 1, 10.000000m), " +
+                        "('2026-10-01T01:00:00.000000Z', 1, 20.000000m)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            Assert.assertTrue(engine.getLiveViewRegistry().getViewInstance("lv").isCheckpointRestoreAttempted());
+
+            // Running sum continues from 30.000000, so {10, 20, 60} sums to
+            // 90.000000, not 60.000000.
+            setCurrentMicros(200_000L);
+            execute("INSERT INTO base (ts, sym, d) VALUES ('2026-10-01T02:00:00.000000Z', 1, 60.000000m)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
+                            "2026-10-01T00:00:00.000000Z\t1\t10.000000\n" +
+                            "2026-10-01T01:00:00.000000Z\t1\t30.000000\n" +
+                            "2026-10-01T02:00:00.000000Z\t1\t90.000000\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testAnchorSumDecimal16RestoresRunningStateAcrossRestart() throws Exception {
+        // Restart-restore for the narrow (raw LONG acc) snapshot payload.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym INT, d DECIMAL(4, 0)) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, sum(d) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, sym, d) VALUES " +
+                        "('2026-10-01T00:00:00.000000Z', 1, 10m), " +
+                        "('2026-10-01T01:00:00.000000Z', 1, 20m)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            Assert.assertTrue(engine.getLiveViewRegistry().getViewInstance("lv").isCheckpointRestoreAttempted());
+
+            // {10, 20, 30} sums to 60 if the LONG acc restored.
+            setCurrentMicros(200_000L);
+            execute("INSERT INTO base (ts, sym, d) VALUES ('2026-10-01T02:00:00.000000Z', 1, 30m)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
+                            "2026-10-01T00:00:00.000000Z\t1\t10\n" +
+                            "2026-10-01T01:00:00.000000Z\t1\t30\n" +
+                            "2026-10-01T02:00:00.000000Z\t1\t60\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testAnchorSumDecimal64RestoresRunningStateAcrossRestart() throws Exception {
+        // Restart-restore for the DECIMAL128-acc snapshot payload (DECIMAL64 input).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym INT, d DECIMAL(18, 2)) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, sum(d) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, sym, d) VALUES " +
+                        "('2026-10-01T00:00:00.000000Z', 1, 2.00m), " +
+                        "('2026-10-01T01:00:00.000000Z', 1, 6.00m)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            Assert.assertTrue(engine.getLiveViewRegistry().getViewInstance("lv").isCheckpointRestoreAttempted());
+
+            setCurrentMicros(200_000L);
+            execute("INSERT INTO base (ts, sym, d) VALUES ('2026-10-01T02:00:00.000000Z', 1, 16.00m)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
+                            "2026-10-01T00:00:00.000000Z\t1\t2.00\n" +
+                            "2026-10-01T01:00:00.000000Z\t1\t8.00\n" +
+                            "2026-10-01T02:00:00.000000Z\t1\t24.00\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testAvgDecimal128OverPartitionRangeFrameSnapshotRoundTrip() throws Exception {
         // avg(DECIMAL(38,6)) over a bounded RANGE frame (DECIMAL128 storage,
         // DECIMAL256 acc). Exercises Decimal128AvgOverPartitionRangeFrameFunction:
