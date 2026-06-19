@@ -57,13 +57,15 @@ public interface RuntimeConstFunction extends UnaryFunction {
      * (bind variables, {@code now()}) already cache their value, so wrapping them only adds overhead.
      */
     static boolean isFoldable(Function function) {
+        // O(1) gates first; the two recursive predicates (isConstant/isRuntimeConstant walk the whole
+        // arg subtree) run last, so a non-composite or non-foldable-type arg never pays for them.
         return function != null
-                && !function.isConstant()
-                && function.isRuntimeConstant()
                 && function.extendedOps() == null
                 && !(function instanceof RuntimeConstFunction)
                 && isComposite(function)
-                && isFoldableType(function.getType());
+                && isFoldableType(function.getType())
+                && !function.isConstant()
+                && function.isRuntimeConstant();
     }
 
     static boolean isFoldableType(int type) {
@@ -133,6 +135,21 @@ public interface RuntimeConstFunction extends UnaryFunction {
         }
     }
 
+    // Correctness hinges on this gate: only a composite foldable-type function is ever wrapped, and the
+    // wrapper trusts that function's isRuntimeConstant() report - it freezes the value at init() and
+    // serves it per row. A composite function that read per-row data while reporting runtime constant
+    // would be silently mis-folded, so this relies on the contract that QuestDB's per-row composite
+    // functions (e.g. arithmetic over a column) correctly report isRuntimeConstant()==false. Trivial
+    // runtime-constant leaves (bind variables, now()) are deliberately excluded by the composite check:
+    // they already cache their value, so wrapping them would only add an indirection.
+    private static boolean isComposite(Function function) {
+        return function instanceof UnaryFunction
+                || function instanceof BinaryFunction
+                || function instanceof TernaryFunction
+                || function instanceof QuaternaryFunction
+                || function instanceof MultiArgFunction;
+    }
+
     @Override
     default boolean isConstant() {
         return false;
@@ -152,21 +169,6 @@ public interface RuntimeConstFunction extends UnaryFunction {
     @Override
     default void toPlan(PlanSink sink) {
         getArg().toPlan(sink); // stay transparent in plans
-    }
-
-    // Correctness hinges on this gate: only a composite foldable-type function is ever wrapped, and the
-    // wrapper trusts that function's isRuntimeConstant() report - it freezes the value at init() and
-    // serves it per row. A composite function that read per-row data while reporting runtime constant
-    // would be silently mis-folded, so this relies on the contract that QuestDB's per-row composite
-    // functions (e.g. arithmetic over a column) correctly report isRuntimeConstant()==false. Trivial
-    // runtime-constant leaves (bind variables, now()) are deliberately excluded by the composite check:
-    // they already cache their value, so wrapping them would only add an indirection.
-    private static boolean isComposite(Function function) {
-        return function instanceof UnaryFunction
-                || function instanceof BinaryFunction
-                || function instanceof TernaryFunction
-                || function instanceof QuaternaryFunction
-                || function instanceof MultiArgFunction;
     }
 
     final class BooleanRuntimeConstFunction extends BooleanFunction implements RuntimeConstFunction {

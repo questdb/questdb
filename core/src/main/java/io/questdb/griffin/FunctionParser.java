@@ -404,9 +404,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     throw SqlException.position(pos).put("Aggregate function cannot be passed as an argument");
                 }
 
-                if (arg == null || (!arg.isConstant() && !arg.isRuntimeConstant())) {
+                final boolean argRuntimeConst = arg != null && arg.isRuntimeConstant();
+                if (arg == null || (!argRuntimeConst && !arg.isConstant())) {
                     allConstOrRuntimeConst = false;
-                } else if (arg.isRuntimeConstant() && !arg.isConstant()) {
+                } else if (argRuntimeConst) {
+                    // a function is never both constant and runtime constant (see Function.isRuntimeConstant)
                     anyRuntimeConst = true;
                 }
             }

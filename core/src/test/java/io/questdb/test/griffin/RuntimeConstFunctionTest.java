@@ -184,9 +184,9 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testAllFoldableTypesCacheAndRoundTrip() throws SqlException {
-        // The wrapper reads its arg once in init() through a type-specific getter, caching it into
-        // longValue/doubleValue/longValueHi, then serves the cached primitive every row. Each foldable
-        // type has its own init()/getter pair; exercise all of them so a mis-wired getter, a truncating
+        // The wrapper reads its arg once in init() through a type-specific getter, caching it into its
+        // typed value field (value, or hi/lo for UUID), then serves the cached primitive every row. Each
+        // foldable type has its own init()/getter pair; exercise all of them so a mis-wired getter, a truncating
         // cast or a hi/lo swap cannot regress unnoticed. We build the wrapper directly over a typed leaf
         // to isolate the per-type round-trip - the boundary-wrapping decision is covered by the
         // structural tests and testIsFoldableTypeMatrix. Each leaf returns a distinct magic value from
@@ -625,6 +625,32 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testEndToEndDoubleRuntimeConstThresholdInWhere() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x::double v, x amount FROM long_sequence(10))");
+
+            // A non-TIMESTAMP foldable type end-to-end: ($1::double * 2.0) is a runtime-constant DOUBLE
+            // subtree folded into a DoubleRuntimeConstFunction at the '>=' boundary, exercising the DOUBLE
+            // wrapper through a real compile/execute path (the unit tests fold it only via direct
+            // construction). It must match the literal-threshold reference, where 3.0 * 2.0 folds at
+            // compile time.
+            bindVariableService.clear();
+            bindVariableService.setDouble(0, 3.0);
+
+            assertSqlCursors(
+                    "SELECT v, amount FROM t WHERE v >= (3.0 * 2.0)",
+                    "SELECT v, amount FROM t WHERE v >= ($1::double * 2.0)"
+            );
+
+            // threshold 3.0 * 2.0 = 6.0; rows v in 6..10 -> sum(amount) = 40
+            assertQuery("SELECT sum(amount) s FROM t WHERE v >= ($1::double * 2.0)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("s\n40\n");
+        });
+    }
+
+    @Test
     public void testEndToEndJsonExtractOverColumnSourceRegression() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t AS (SELECT ('{\"x\":' || x || '}')::varchar j, x::int base FROM long_sequence(5))");
@@ -665,6 +691,30 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
             assertQuery("SELECT (json_extract($1::varchar, '$.x')::int * 2) e FROM long_sequence(3)")
                     .expectSize()
                     .returns("e\n14\n14\n14\n");
+        });
+    }
+
+    @Test
+    public void testEndToEndNullDoubleRuntimeConstThreshold() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x::double v, x amount FROM long_sequence(10))");
+
+            // Non-timestamp NULL fold: the folded DOUBLE threshold is NULL (NaN). The wrapper must cache
+            // and serve the NaN sentinel, matching the compile-time-folded null::double reference. v >= NaN
+            // is never true, so the CASE always takes the ELSE branch and both sides sum to 0.
+            bindVariableService.clear();
+            bindVariableService.setDouble(0, Double.NaN);
+
+            assertSqlCursors(
+                    "SELECT sum(CASE WHEN v >= (null::double + 0.0) THEN amount ELSE 0 END) s FROM t",
+                    "SELECT sum(CASE WHEN v >= ($1::double + 0.0) THEN amount ELSE 0 END) s FROM t"
+            );
+
+            // every row takes the ELSE branch -> sum = 0
+            assertQuery("SELECT sum(CASE WHEN v >= ($1::double + 0.0) THEN amount ELSE 0 END) s FROM t")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("s\n0\n");
         });
     }
 
