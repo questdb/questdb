@@ -46,6 +46,9 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.io.File;
+import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -739,6 +742,127 @@ public class ParquetWriteTest extends AbstractCairoTest {
                     .expectSize()
                     .noRandomAccess()
                     .returns("max\n1\n");
+        });
+    }
+
+    @Test
+    public void testDirtyAheadHeaderQueryReturnsCommittedSnapshot() throws Exception {
+        // Drive the crash window end-to-end through SQL. commitParquetMeta
+        // publishes the _pm header (M) before the _txn commit (N); a crash in that
+        // window leaves _pm physically grown with its header dirty-ahead of the
+        // committed footer, while _txn still records N. A query maps _pm at the raw
+        // header M but must resolve the committed footer at N and serve only
+        // committed rows -- no SIGBUS, no truncate, no never-committed data. The
+        // reader-level testDirtyAheadHeaderResolvesToCommittedHead pins this; here
+        // it runs against a real table through SELECT and SHOW PARTITIONS.
+        //
+        // Row-group-size 4 over 8 rows -> the committed footer carries two row
+        // groups, more than the spliced dead footer's one, so the row-group span
+        // reported by SHOW PARTITIONS proves the dead footer was skipped.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (x INT, ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(x, ts) VALUES
+                            (1, '2020-01-01T00:00:00.000Z'),
+                            (2, '2020-01-01T01:00:00.000Z'),
+                            (3, '2020-01-01T02:00:00.000Z'),
+                            (4, '2020-01-01T03:00:00.000Z'),
+                            (5, '2020-01-01T04:00:00.000Z'),
+                            (6, '2020-01-01T05:00:00.000Z'),
+                            (7, '2020-01-01T06:00:00.000Z'),
+                            (8, '2020-01-01T07:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(x, ts) VALUES (100, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            // 8 rows / row-group-size 4 -> two row groups in the committed footer.
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            TableToken tableToken = engine.verifyTableName("x");
+            File tableDir = new File(root, tableToken.getDirName());
+            final long committedPmSize = parquetMetaLength(tableDir);
+            Assert.assertTrue(committedPmSize > 0);
+
+            // Baseline: the committed snapshot reads back as eight rows. The
+            // interval-filtered parquet scan reports an unknown size, hence
+            // sizeMayVary/noRandomAccess rather than expectSize here.
+            assertQuery("SELECT * FROM x WHERE ts IN '2020-01-01'")
+                    .noLeakCheck()
+                    .sizeMayVary()
+                    .timestamp("ts")
+                    .returns("""
+                            x\tts
+                            1\t2020-01-01T00:00:00.000000Z
+                            2\t2020-01-01T01:00:00.000000Z
+                            3\t2020-01-01T02:00:00.000000Z
+                            4\t2020-01-01T03:00:00.000000Z
+                            5\t2020-01-01T04:00:00.000000Z
+                            6\t2020-01-01T05:00:00.000000Z
+                            7\t2020-01-01T06:00:00.000000Z
+                            8\t2020-01-01T07:00:00.000000Z
+                            """);
+
+            // Splice _pm into the dirty-ahead crash state. Release every handle
+            // first so the rewrite never races a live mmap (required on Windows).
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+            engine.releaseInactive();
+            final long dirtyPmSize = makeParquetMetaDirtyAhead(tableDir);
+            Assert.assertTrue(
+                    "dead footer must grow _pm past the committed head [committed=" + committedPmSize + ", dirty=" + dirtyPmSize + "]",
+                    dirtyPmSize > committedPmSize
+            );
+            Assert.assertEquals("header must read the dirty-ahead M", dirtyPmSize, parquetMetaHeaderSize(tableDir));
+
+            // Fresh readers map _pm at the dirty header M, walk back to the
+            // committed footer at N, and serve the committed snapshot unchanged --
+            // the dead footer past the committed head is never read.
+            assertQuery("SELECT * FROM x WHERE ts IN '2020-01-01'")
+                    .noLeakCheck()
+                    .sizeMayVary()
+                    .timestamp("ts")
+                    .returns("""
+                            x\tts
+                            1\t2020-01-01T00:00:00.000000Z
+                            2\t2020-01-01T01:00:00.000000Z
+                            3\t2020-01-01T02:00:00.000000Z
+                            4\t2020-01-01T03:00:00.000000Z
+                            5\t2020-01-01T04:00:00.000000Z
+                            6\t2020-01-01T05:00:00.000000Z
+                            7\t2020-01-01T06:00:00.000000Z
+                            8\t2020-01-01T07:00:00.000000Z
+                            """);
+
+            // SHOW PARTITIONS maps _pm too, reading min/max from the resolved
+            // footer's row groups: the committed two-row-group span (00:00..07:00,
+            // 8 rows) confirms the dead one-row-group footer was skipped.
+            assertQuery(
+                    """
+                            SELECT name, minTimestamp, maxTimestamp, numRows, isParquet
+                            FROM table_partitions('x') WHERE isParquet
+                            """
+            )
+                    .noLeakCheck()
+                    .sizeMayVary()
+                    .noRandomAccess()
+                    .returns("""
+                            name\tminTimestamp\tmaxTimestamp\tnumRows\tisParquet
+                            2020-01-01\t2020-01-01T00:00:00.000000Z\t2020-01-01T07:00:00.000000Z\t8\ttrue
+                            """);
+
+            // The read path never truncates _pm: it stays dirty-ahead at M.
+            Assert.assertEquals("read path must not truncate _pm", dirtyPmSize, parquetMetaLength(tableDir));
+            Assert.assertEquals(dirtyPmSize, parquetMetaHeaderSize(tableDir));
         });
     }
 
@@ -3777,13 +3901,73 @@ public class ParquetWriteTest extends AbstractCairoTest {
         return dirs != null ? dirs.length : 0;
     }
 
-    private static long parquetMetaLength(File tableDir) {
+    /**
+     * Rewrites the committed {@code _pm} of the 2020-01-01 partition into the
+     * crash-window "dirty ahead" state: appends an orphaned dead footer past the
+     * committed footer at N, then publishes a header (offset 0) that points at the
+     * grown size M. Models commitParquetMeta having published the header before a
+     * crash skipped the {@code _txn} commit. {@code _txn} still records the
+     * committed parquet size, so resolveFooter walks back from M to N. Returns M.
+     * Callers must release every reader/writer first so no live mmap is mapped at
+     * the old size. Reads and writes via {@link ByteOrder#nativeOrder()} to match
+     * the native order used by Unsafe and the Rust writer.
+     */
+    private static long makeParquetMetaDirtyAhead(File tableDir) throws IOException {
+        final File pm = parquetMetaFile(tableDir);
+        final byte[] committed = java.nio.file.Files.readAllBytes(pm.toPath());
+        final int committedHead = committed.length; // N: committed _pm size
+        final ByteBuffer in = ByteBuffer.wrap(committed).order(ByteOrder.nativeOrder());
+
+        // Locate the committed footer C from its trailer (last 4 bytes hold the
+        // footer length). Fixed-position fields, robust to optional feature bytes.
+        final int footerLength = in.getInt(committedHead - Integer.BYTES);
+        final int footerOffset = committedHead - Integer.BYTES - footerLength;
+        Assert.assertEquals("committed footer must carry two row groups", 2, in.getInt(footerOffset + 12));
+        final long parquetFooterOffset = in.getLong(footerOffset);
+        final int parquetFooterLength = in.getInt(footerOffset + 8);
+        final int rowGroupBlock0 = in.getInt(footerOffset + 40); // C's first row group block
+
+        // Dead footer C': fixed(40) + 1 rg entry(4) + CRC(4) + trailer(4) = 52.
+        // prev points back to C; its derived parquet size differs from the
+        // committed token so resolveFooter walks past C' to C. C' is never the
+        // resolved footer, so its CRC is left blank (the walk does not read it).
+        final int deadFooterBytes = 52;
+        final int dirtyLen = committedHead + deadFooterBytes; // M
+        final byte[] out = java.util.Arrays.copyOf(committed, dirtyLen);
+        final ByteBuffer dead = ByteBuffer.wrap(out).order(ByteOrder.nativeOrder());
+        dead.putLong(committedHead, parquetFooterOffset);         // parquet_footer_offset
+        dead.putInt(committedHead + 8, parquetFooterLength + 64); // parquet_footer_length -> derived size != token
+        dead.putInt(committedHead + 12, 1);                       // row_group_count (fewer than C's two)
+        dead.putLong(committedHead + 16, 0L);                     // unused_bytes
+        dead.putLong(committedHead + 24, committedHead);          // prev_parquet_meta_file_size -> C
+        dead.putLong(committedHead + 32, 0L);                     // footer_feature_flags
+        dead.putInt(committedHead + 40, rowGroupBlock0);          // reuse C's first row group block
+        dead.putInt(committedHead + 44, 0);                       // CRC placeholder
+        dead.putInt(committedHead + 48, 48);                      // trailer: footer length sans trailer
+
+        // Publish the dirty-ahead header: _pm now physically spans [0, M).
+        dead.putLong(0, dirtyLen);
+
+        java.nio.file.Files.write(pm.toPath(), out);
+        return dirtyLen;
+    }
+
+    private static File parquetMetaFile(File tableDir) {
         String[] dirs = tableDir.list((_, name) -> name.startsWith("2020-01-01"));
         Assert.assertNotNull("no 2020-01-01 partition dir found", dirs);
         Assert.assertEquals("expected exactly one 2020-01-01 partition dir", 1, dirs.length);
         File pm = new File(new File(tableDir, dirs[0]), "_pm");
         Assert.assertTrue("_pm must exist: " + pm, pm.exists());
-        return pm.length();
+        return pm;
+    }
+
+    private static long parquetMetaHeaderSize(File tableDir) throws IOException {
+        byte[] pm = java.nio.file.Files.readAllBytes(parquetMetaFile(tableDir).toPath());
+        return ByteBuffer.wrap(pm).order(ByteOrder.nativeOrder()).getLong(0);
+    }
+
+    private static long parquetMetaLength(File tableDir) {
+        return parquetMetaFile(tableDir).length();
     }
 
     private static @NotNull FilesFacade getFilesFacade(AtomicBoolean armed) {
