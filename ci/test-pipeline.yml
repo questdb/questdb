@@ -14,7 +14,15 @@ variables:
   includeTests: "%regex[.*[^o].class]"
   MAVEN_CACHE_FOLDER: $(HOME)/.m2/repository
   MAVEN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx3g -XX:+UseParallelGC"
-  MAVEN_RUN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Dmaven.resolver.transport=wagon -Dmaven.wagon.httpconnectionManager.ttlSeconds=30 "
+  # retryHandler.count: the self-hosted Reposilite cache is a single IP reached over the
+  # Hetzner vSwitch; under the fleet's cold-build connection bursts a fraction of TCP SYNs
+  # to it are dropped, and the failover-less mirror turns one dropped SYN into a dead build
+  # ("Connect to maven.internal:8081 ... Connection timed out"). Wagon retries the transfer
+  # on connect failure, so the resolve re-attempts (typically succeeding, since the loss is
+  # intermittent) instead of failing the build. The root-cause cache-box fix (host
+  # networking + raised SYN backlog) addresses the drops directly; this is a client-side
+  # backstop for any residual lost SYN.
+  MAVEN_RUN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Dmaven.resolver.transport=wagon -Dmaven.wagon.httpconnectionManager.ttlSeconds=30 -Dmaven.wagon.http.retryHandler.count=3 "
   MAVEN_VERSION: "version"
   MAVEN_VERSION_OPTION: "Default"
   # Full-reactor defaults for the self-hosted Linux jobs. The hosted mac/windows
