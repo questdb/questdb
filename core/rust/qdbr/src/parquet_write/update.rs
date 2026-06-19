@@ -1066,31 +1066,14 @@ impl ParquetUpdater {
     }
 
     /// Publishes the new `_pm` snapshot: patches the committed
-    /// `parquet_meta_file_size` into the header at offset 0 -- the MVCC commit
-    /// signal -- then fsyncs when `sync` is set. The caller must invoke this
-    /// after `end()` wrote the new footer (and the index build mapped it at the
-    /// explicit size) and before the matching `_txn` commit.
-    ///
-    /// Ordering: the header `write_all` is the last structural `_pm` write, so a
-    /// failure before it leaves the committed header and footer intact. Once it
-    /// lands the snapshot is published -- even if the following `sync_data`
-    /// throws, the header already points at the new footer. That is safe: the
-    /// committed `_txn` `parquet_meta_file_size` is unchanged, so a reader pinned
-    /// to it walks the MVCC chain back to the committed footer. The writer and
-    /// the readers run on the same host and share the OS page cache (they open
-    /// distinct fds / a fresh mmap, not one shared fd), so a reader observes the
-    /// writer's appended blocks and footer once it sees the size that points at
-    /// them. What gates that size is not the `_pm` writes themselves but `_txn`:
-    /// the cross-thread hand-off is ordered by `_txn`'s acquire fence (the
-    /// `Unsafe.loadFence` in `TxReader.unsafeLoadBaseOffset`), which gates when
-    /// the new `parquet_meta_file_size` becomes visible to readers. A reader that
-    /// sees the committed `_txn` size therefore also sees the bytes it points at.
-    ///
-    /// When `sync` is set the `sync_data` stops a power loss from leaving `_txn`
-    /// pointing at a footer the page cache lost. In NOSYNC commit mode the fsync
-    /// is skipped and that durability guarantee is deliberately traded away,
-    /// consistent with NOSYNC's whole-database durability model. A no-op when no
-    /// `_pm` fd is attached.
+    /// `parquet_meta_file_size` into the header (the MVCC commit signal), then
+    /// fsyncs when `sync` is set. The caller must invoke this after `end()` wrote
+    /// the new footer and the index build mapped it, and before the matching
+    /// `_txn` commit. The header patch is the last `_pm` write, so a failure
+    /// before it leaves the committed header and footer intact; the fsync
+    /// (skipped in NOSYNC commit mode) stops a power loss from leaving `_txn`
+    /// pointing at a footer the page cache lost. A no-op when no `_pm` fd is
+    /// attached.
     pub fn commit_parquet_meta(&mut self, sync: bool) -> ParquetResult<()> {
         let new_file_size = self.result_parquet_meta_size;
         if let Some(ref mut parquet_meta_file) = self.parquet_meta_fd {
