@@ -12,15 +12,19 @@
 
 mod common;
 
+use std::io::Cursor;
 use std::sync::Arc;
 
 use bytes::Bytes;
-use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+use parquet::arrow::arrow_reader::{ArrowReaderOptions, ParquetRecordBatchReaderBuilder};
 use parquet::basic::ColumnOrder;
 use parquet::file::metadata::ParquetMetaData;
 use parquet::file::statistics::Statistics;
+use parquet::format::BoundaryOrder;
+use parquet2::metadata::SortingColumn;
 use qdb_core::col_type::{ColumnType, ColumnTypeTag};
 use questdbr::parquet_write::schema::Partition;
+use questdbr::parquet_write::ParquetWriter;
 
 use crate::common::encode::{
     build_qdb_varchar_data, make_primitive_column, make_varchar_column, write_parquet,
@@ -122,6 +126,81 @@ fn questdb_parquet_declares_column_orders_for_external_readers() {
             "leaf column {i} must declare TypeDefinedOrder, got {order:?}"
         );
     }
+}
+
+/// Regression guard: QuestDB physically orders rows by the designated timestamp
+/// and declares it as a `SortingColumn`. Its page-level `ColumnIndex` must then
+/// advertise an `ASCENDING` `boundary_order` so external readers can binary-search
+/// the timestamp's page bounds; a non-sorted column must stay `UNORDERED`.
+#[test]
+fn questdb_parquet_marks_sorted_timestamp_with_ascending_boundary_order() {
+    let row_count = 8usize;
+    // An unsorted value column (leaf 0) alongside the ascending designated
+    // timestamp (leaf 1).
+    let longs: Vec<i64> = vec![5, 1, 9, 3, 7, 2, 8, 4];
+    let timestamps: Vec<i64> = (1..=row_count as i64).collect();
+    let long_bytes = as_bytes(&longs);
+    let ts_bytes = as_bytes(&timestamps);
+
+    let columns = vec![
+        make_primitive_column(
+            "l",
+            ColumnType::new(ColumnTypeTag::Long, 0).code(),
+            long_bytes.as_ptr(),
+            long_bytes.len(),
+            row_count,
+            Encoding::Plain.config(),
+        ),
+        make_primitive_column(
+            "t",
+            ColumnType::new(ColumnTypeTag::Timestamp, 0).code(),
+            ts_bytes.as_ptr(),
+            ts_bytes.len(),
+            row_count,
+            Encoding::Plain.config(),
+        ),
+    ];
+    let partition = Partition {
+        table: "compat".to_string(),
+        columns,
+    };
+
+    // Drive the real writer with the timestamp (leaf 1) declared as the
+    // ascending sorting column. A small page size splits the timestamp across
+    // several data pages, so the boundary order spans more than one page.
+    let mut buf = Cursor::new(Vec::new());
+    ParquetWriter::new(&mut buf)
+        .with_statistics(true)
+        .with_data_page_size(Some(16))
+        .with_sorting_columns(Some(vec![SortingColumn::new(1, false, false)]))
+        .finish(partition)
+        .expect("ParquetWriter::finish");
+    let data = buf.into_inner();
+
+    // Read the page index back with the independent Arrow reader.
+    let options = ArrowReaderOptions::new().with_page_index(true);
+    let bytes: Bytes = data.into();
+    let builder = ParquetRecordBatchReaderBuilder::try_new_with_options(bytes, options)
+        .expect("open parquet with arrow reader");
+    let column_index = builder
+        .metadata()
+        .column_index()
+        .expect("page index must be present when statistics are written");
+
+    assert_eq!(column_index.len(), 1, "expected a single row group");
+    let row_group = &column_index[0];
+    assert_eq!(row_group.len(), 2, "expected two leaf columns");
+
+    assert_eq!(
+        row_group[1].get_boundary_order(),
+        Some(BoundaryOrder::ASCENDING),
+        "the sorted designated timestamp must declare ASCENDING boundary order"
+    );
+    assert_eq!(
+        row_group[0].get_boundary_order(),
+        Some(BoundaryOrder::UNORDERED),
+        "an unsorted column must keep UNORDERED boundary order"
+    );
 }
 
 /// Companion characterization: QuestDB does write per-row-group min/max and

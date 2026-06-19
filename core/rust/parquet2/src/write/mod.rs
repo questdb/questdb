@@ -18,7 +18,9 @@ pub use dyn_iter::{DynIter, DynStreamingIterator};
 
 pub use compression::{compress, Compressor};
 
-pub use file::{end_file, start_file, write_metadata_sidecar, FileWriter, ParquetFile};
+pub use file::{
+    end_file, start_file, write_metadata_sidecar, CopiedColumnIndex, FileWriter, ParquetFile,
+};
 
 pub use row_group::{write_row_group, ColumnOffsetsMetadata};
 

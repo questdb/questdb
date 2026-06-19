@@ -36,11 +36,11 @@ use parquet2::schema::types::ParquetType;
 use parquet2::schema::Repetition;
 use parquet2::write;
 use parquet2::write::footer_cache::FooterCache;
-use parquet2::write::{ColumnOffsetsMetadata, ParquetFile, Version};
-use parquet_format_safe::thrift::protocol::TCompactOutputProtocol;
+use parquet2::write::{ColumnOffsetsMetadata, CopiedColumnIndex, ParquetFile, Version};
+use parquet_format_safe::thrift::protocol::{TCompactInputProtocol, TCompactOutputProtocol};
 use parquet_format_safe::{
     ColumnChunk, ColumnMetaData, CompressionCodec, DataPageHeader, DictionaryPageHeader,
-    Encoding as ThriftEncoding, PageHeader, PageType, RowGroup, Type,
+    Encoding as ThriftEncoding, OffsetIndex, PageHeader, PageType, RowGroup, Type,
 };
 use qdb_core::col_type::{ColumnType, ColumnTypeTag};
 use rapidhash::RapidHashMap;
@@ -571,6 +571,11 @@ impl ParquetUpdater {
             .into_iter()
             .map(|c| c.into_thrift())
             .collect();
+
+        // Capture the source page index before adjust_column_chunk_offsets
+        // clears the index pointers.
+        let copied_page_index = build_copied_page_index(&columns, &mut self.reader, offset_delta)?;
+
         for col in &mut columns {
             adjust_column_chunk_offsets(col, offset_delta);
         }
@@ -579,7 +584,12 @@ impl ParquetUpdater {
         let thrift_rg = build_raw_row_group(columns, row_count, sorting_columns);
 
         self.parquet_file
-            .write_raw_row_group_with_bloom(&self.copy_buffer, thrift_rg, bloom_bitsets)
+            .write_raw_row_group_with_index(
+                &self.copy_buffer,
+                thrift_rg,
+                bloom_bitsets,
+                copied_page_index,
+            )
             .map_err(|s| {
                 ParquetError::with_descr(
                     ParquetErrorReason::Parquet2(s),
@@ -1188,6 +1198,61 @@ fn adjust_column_chunk_offsets(col: &mut ColumnChunk, offset_delta: i64) {
     col.column_index_length = None;
     col.offset_index_offset = None;
     col.offset_index_length = None;
+}
+
+/// Reads a copied row group's source page index, rebased for the output file:
+/// the ColumnIndex is copied verbatim, the OffsetIndex page offsets are shifted
+/// by `offset_delta`. `None` if any column lacks an OffsetIndex, which keeps the
+/// whole output unindexed (a mixed file is rejected by strict readers). Call
+/// before `adjust_column_chunk_offsets` clears `columns`' source index pointers.
+fn build_copied_page_index(
+    columns: &[ColumnChunk],
+    reader: &mut File,
+    offset_delta: i64,
+) -> ParquetResult<Option<Vec<CopiedColumnIndex>>> {
+    let mut result = Vec::with_capacity(columns.len());
+    for col in columns {
+        let (Some(oi_offset), Some(oi_length)) = (col.offset_index_offset, col.offset_index_length)
+        else {
+            return Ok(None);
+        };
+
+        // Read and rebase the OffsetIndex.
+        let mut oi_bytes = vec![0u8; oi_length as usize];
+        reader.seek(SeekFrom::Start(oi_offset as u64))?;
+        reader.read_exact(&mut oi_bytes)?;
+        let mut offset_index = {
+            // Generous byte cap, matching parquet2's reader.
+            let max_bytes = oi_bytes.len() * 2 + 1024;
+            let mut prot = TCompactInputProtocol::new(oi_bytes.as_slice(), max_bytes);
+            OffsetIndex::read_from_in_protocol(&mut prot)
+                .map_err(|e| fmt_err!(InvalidLayout, "could not read source offset index: {e}"))?
+        };
+        for location in &mut offset_index.page_locations {
+            location.offset += offset_delta;
+        }
+        let mut rebased = Vec::with_capacity(oi_bytes.len());
+        {
+            let mut prot = TCompactOutputProtocol::new(&mut rebased);
+            offset_index
+                .write_to_out_protocol(&mut prot)
+                .map_err(|e| fmt_err!(InvalidLayout, "could not write offset index: {e}"))?;
+        }
+
+        // ColumnIndex has no file offsets, so copy its bytes verbatim.
+        let column_index = match (col.column_index_offset, col.column_index_length) {
+            (Some(ci_offset), Some(ci_length)) => {
+                let mut ci_bytes = vec![0u8; ci_length as usize];
+                reader.seek(SeekFrom::Start(ci_offset as u64))?;
+                reader.read_exact(&mut ci_bytes)?;
+                Some(ci_bytes)
+            }
+            _ => None,
+        };
+
+        result.push(CopiedColumnIndex { column_index, offset_index: rebased });
+    }
+    Ok(Some(result))
 }
 
 /// File-level `sorting_columns` for a QuestDB parquet file: the designated
@@ -2099,6 +2164,465 @@ mod tests {
                 "leaf column {i} must declare TypeDefinedOrder, got {order:?}"
             );
         }
+        Ok(())
+    }
+
+    /// Two-column (designated TIMESTAMP + INT) partition with the given values.
+    fn ts_val_partition(ts: &[i64], val: &[i32]) -> Partition {
+        Partition {
+            table: "t".to_string(),
+            columns: vec![
+                make_designated_ts_with_id(0, "ts", ts),
+                make_column("val", ColumnTypeTag::Int.into_type(), val),
+            ],
+        }
+    }
+
+    /// Asserts every column carries both indexes, each OffsetIndex points at the
+    /// column's data page, and the timestamp ColumnIndex matches `ts_bounds` with
+    /// ASCENDING order. Loads with the page index Required (a mixed file rejects).
+    fn assert_fully_indexed(bytes: &[u8], ts_bounds: &[(i64, i64)]) {
+        use parquet::arrow::arrow_reader::ArrowReaderOptions;
+        use parquet::file::page_index::index::Index;
+        use parquet::format::BoundaryOrder;
+
+        let builder = ParquetRecordBatchReaderBuilder::try_new_with_options(
+            Bytes::from(bytes.to_vec()),
+            ArrowReaderOptions::new().with_page_index(true),
+        )
+        .expect("a fully indexed file must load under the Required page-index policy");
+        let md = builder.metadata();
+        assert_eq!(md.num_row_groups(), ts_bounds.len());
+
+        for rg in md.row_groups() {
+            for col in rg.columns() {
+                assert!(col.offset_index_offset().is_some(), "offset index offset");
+                assert!(col.offset_index_length().is_some(), "offset index length");
+                assert!(col.column_index_offset().is_some(), "column index offset");
+                assert!(col.column_index_length().is_some(), "column index length");
+            }
+        }
+
+        let column_index = md.column_index().expect("parsed column index");
+        let offset_index = md.offset_index().expect("parsed offset index");
+        assert_eq!(column_index.len(), md.num_row_groups());
+        assert_eq!(offset_index.len(), md.num_row_groups());
+
+        for (rg_i, rg) in md.row_groups().iter().enumerate() {
+            for (col_i, col_oi) in offset_index[rg_i].iter().enumerate() {
+                let locations = col_oi.page_locations();
+                assert!(
+                    !locations.is_empty(),
+                    "rg{rg_i} col{col_i}: no page locations"
+                );
+                assert_eq!(
+                    locations[0].offset,
+                    rg.column(col_i).data_page_offset(),
+                    "rg{rg_i} col{col_i}: offset index must point at the rebased data page",
+                );
+            }
+            let (min, max) = ts_bounds[rg_i];
+            match &column_index[rg_i][0] {
+                Index::INT64(native) => {
+                    assert_eq!(
+                        native.boundary_order,
+                        BoundaryOrder::ASCENDING,
+                        "rg{rg_i}: sorted timestamp must declare ASCENDING"
+                    );
+                    assert_eq!(native.indexes[0].min, Some(min), "rg{rg_i} ts min");
+                    assert_eq!(native.indexes[0].max, Some(max), "rg{rg_i} ts max");
+                }
+                other => panic!("rg{rg_i}: expected INT64 timestamp index, got {other:?}"),
+            }
+        }
+    }
+
+    /// Asserts no column carries a page index. Loads with the page index Required,
+    /// which still succeeds since a fully unindexed file short-circuits cleanly.
+    fn assert_unindexed(bytes: &[u8]) {
+        use parquet::arrow::arrow_reader::ArrowReaderOptions;
+
+        let builder = ParquetRecordBatchReaderBuilder::try_new_with_options(
+            Bytes::from(bytes.to_vec()),
+            ArrowReaderOptions::new().with_page_index(true),
+        )
+        .expect("an unindexed file must still load under the Required page-index policy");
+        let md = builder.metadata();
+        for rg in md.row_groups() {
+            for col in rg.columns() {
+                assert!(
+                    col.offset_index_offset().is_none(),
+                    "expected no offset index"
+                );
+                assert!(
+                    col.column_index_offset().is_none(),
+                    "expected no column index"
+                );
+            }
+        }
+    }
+
+    /// Reads the int `val` column (leaf 1) across all row groups, proving the
+    /// data is reachable from the (rebased) column offsets.
+    fn read_val_column(bytes: &[u8]) -> Vec<Option<i32>> {
+        let reader = ParquetRecordBatchReaderBuilder::try_new(Bytes::from(bytes.to_vec()))
+            .unwrap()
+            .build()
+            .unwrap();
+        let mut out = Vec::new();
+        for batch in reader {
+            let arr = batch
+                .unwrap()
+                .column(1)
+                .as_any()
+                .downcast_ref::<arrow::array::Int32Array>()
+                .unwrap()
+                .iter()
+                .collect::<Vec<_>>();
+            out.extend(arr);
+        }
+        out
+    }
+
+    /// Clears every column's page-index pointer, modelling a legacy file. The old
+    /// index bytes stay as dead space, no longer referenced by the footer.
+    fn strip_page_index(bytes: &[u8]) -> Result<Vec<u8>, Box<dyn Error>> {
+        let len = bytes.len();
+        let meta_len = i32::from_le_bytes(bytes[len - 8..len - 4].try_into()?) as usize;
+        let meta_start = len - 8 - meta_len;
+        let mut cur = Cursor::new(bytes);
+        let metadata = read_metadata_with_size(&mut cur, len as u64)?;
+        let mut thrift = metadata.into_thrift();
+        for rg in &mut thrift.row_groups {
+            for col in &mut rg.columns {
+                col.column_index_offset = None;
+                col.column_index_length = None;
+                col.offset_index_offset = None;
+                col.offset_index_length = None;
+            }
+        }
+        let mut out = bytes[..meta_start].to_vec();
+        parquet2::write::end_file(&mut out, &thrift)?;
+        Ok(out)
+    }
+
+    /// Rewrite (copy one group, freshly encode another): the output is fully
+    /// page-indexed, copied groups replaying their rebased source index.
+    #[test]
+    fn rewritten_file_writes_full_page_index() -> Result<(), Box<dyn Error>> {
+        use crate::allocator::TestAllocatorState;
+        use parquet2::metadata::SortingColumn;
+        use std::io::Read as _;
+
+        let sorting = || Some(vec![SortingColumn::new(0, false, false)]);
+        let src = NamedTempFile::new()?;
+        ParquetWriter::new(src.reopen()?)
+            .with_sorting_columns(sorting())
+            .finish(ts_val_partition(&[1, 2, 3, 4], &[10, 20, 30, 40]))?;
+        let src_len = src.as_file().metadata()?.len();
+
+        let out = NamedTempFile::new()?;
+        let alloc = TestAllocatorState::new();
+        let mut updater = super::ParquetUpdater::new(
+            alloc.allocator(),
+            src.reopen()?,
+            src_len,
+            out.reopen()?,
+            0, // write_file_size == 0 -> rewrite
+            sorting(),
+            true,
+            false,
+            CompressionOptions::Uncompressed,
+            None,
+            None,
+            DEFAULT_BLOOM_FILTER_FPP,
+            0.0,
+            None,
+            0,
+            -1,
+        )?;
+        updater.copy_row_group(0)?; // raw-copied: source index rebased
+        updater.insert_row_group(&ts_val_partition(&[5, 6, 7], &[50, 60, 70]), 1)?; // fresh
+        updater.end(None)?;
+
+        let mut bytes = Vec::new();
+        out.reopen()?.read_to_end(&mut bytes)?;
+
+        assert_fully_indexed(&bytes, &[(1, 4), (5, 7)]);
+        assert_eq!(
+            read_val_column(&bytes),
+            vec![
+                Some(10),
+                Some(20),
+                Some(30),
+                Some(40),
+                Some(50),
+                Some(60),
+                Some(70)
+            ],
+        );
+        Ok(())
+    }
+
+    /// Append: the new group is indexed to match the cached group's kept index,
+    /// so the file stays uniformly indexed.
+    #[test]
+    fn appended_file_writes_full_page_index() -> Result<(), Box<dyn Error>> {
+        use crate::allocator::TestAllocatorState;
+        use parquet2::metadata::SortingColumn;
+        use std::io::Read as _;
+
+        let sorting = || Some(vec![SortingColumn::new(0, false, false)]);
+        let tmp = NamedTempFile::new()?;
+        ParquetWriter::new(tmp.reopen()?)
+            .with_sorting_columns(sorting())
+            .finish(ts_val_partition(&[1, 2, 3, 4], &[10, 20, 30, 40]))?;
+        let file_len = tmp.as_file().metadata()?.len();
+
+        let alloc = TestAllocatorState::new();
+        let mut updater = super::ParquetUpdater::new(
+            alloc.allocator(),
+            tmp.reopen()?,
+            file_len,
+            tmp.reopen()?,
+            file_len, // update (append) mode
+            sorting(),
+            true,
+            false,
+            CompressionOptions::Uncompressed,
+            None,
+            None,
+            DEFAULT_BLOOM_FILTER_FPP,
+            0.0,
+            None,
+            0,
+            -1,
+        )?;
+        updater.insert_row_group(&ts_val_partition(&[5, 6, 7], &[50, 60, 70]), 1)?;
+        updater.end(None)?;
+
+        let mut bytes = Vec::new();
+        tmp.reopen()?.read_to_end(&mut bytes)?;
+
+        assert_fully_indexed(&bytes, &[(1, 4), (5, 7)]);
+        assert_eq!(
+            read_val_column(&bytes),
+            vec![
+                Some(10),
+                Some(20),
+                Some(30),
+                Some(40),
+                Some(50),
+                Some(60),
+                Some(70)
+            ],
+        );
+        Ok(())
+    }
+
+    /// Rewriting a source with no page index (a legacy file) leaves the whole
+    /// output unindexed rather than mixed, since copied groups can't be indexed.
+    #[test]
+    fn rewrite_of_unindexed_source_stays_unindexed() -> Result<(), Box<dyn Error>> {
+        use crate::allocator::TestAllocatorState;
+        use parquet2::metadata::SortingColumn;
+        use std::io::{Read as _, Write as _};
+
+        let sorting = || Some(vec![SortingColumn::new(0, false, false)]);
+        let indexed = NamedTempFile::new()?;
+        ParquetWriter::new(indexed.reopen()?)
+            .with_sorting_columns(sorting())
+            .finish(ts_val_partition(&[1, 2, 3, 4], &[10, 20, 30, 40]))?;
+        let mut indexed_bytes = Vec::new();
+        indexed.reopen()?.read_to_end(&mut indexed_bytes)?;
+
+        // Model a legacy, page-index-less source file.
+        let stripped_bytes = strip_page_index(&indexed_bytes)?;
+        assert_unindexed(&stripped_bytes);
+        let src = NamedTempFile::new()?;
+        src.reopen()?.write_all(&stripped_bytes)?;
+        let src_len = stripped_bytes.len() as u64;
+
+        let out = NamedTempFile::new()?;
+        let alloc = TestAllocatorState::new();
+        let mut updater = super::ParquetUpdater::new(
+            alloc.allocator(),
+            src.reopen()?,
+            src_len,
+            out.reopen()?,
+            0, // rewrite
+            sorting(),
+            true,
+            false,
+            CompressionOptions::Uncompressed,
+            None,
+            None,
+            DEFAULT_BLOOM_FILTER_FPP,
+            0.0,
+            None,
+            0,
+            -1,
+        )?;
+        updater.copy_row_group(0)?; // source has no index -> not indexable
+        updater.insert_row_group(&ts_val_partition(&[5, 6, 7], &[50, 60, 70]), 1)?;
+        updater.end(None)?;
+
+        let mut bytes = Vec::new();
+        out.reopen()?.read_to_end(&mut bytes)?;
+
+        // Unindexed: the copied group can't be indexed, so neither is the fresh one.
+        assert_unindexed(&bytes);
+        assert_eq!(
+            read_val_column(&bytes),
+            vec![
+                Some(10),
+                Some(20),
+                Some(30),
+                Some(40),
+                Some(50),
+                Some(60),
+                Some(70)
+            ],
+        );
+        Ok(())
+    }
+
+    /// Appending to a source with no page index leaves the appended group
+    /// unindexed too, so the file does not become mixed.
+    #[test]
+    fn append_to_unindexed_source_stays_unindexed() -> Result<(), Box<dyn Error>> {
+        use crate::allocator::TestAllocatorState;
+        use parquet2::metadata::SortingColumn;
+        use std::io::{Read as _, Write as _};
+
+        let sorting = || Some(vec![SortingColumn::new(0, false, false)]);
+        let indexed = NamedTempFile::new()?;
+        ParquetWriter::new(indexed.reopen()?)
+            .with_sorting_columns(sorting())
+            .finish(ts_val_partition(&[1, 2, 3, 4], &[10, 20, 30, 40]))?;
+        let mut indexed_bytes = Vec::new();
+        indexed.reopen()?.read_to_end(&mut indexed_bytes)?;
+
+        // Model a legacy, page-index-less source and append to it in place.
+        let stripped_bytes = strip_page_index(&indexed_bytes)?;
+        let tmp = NamedTempFile::new()?;
+        tmp.reopen()?.write_all(&stripped_bytes)?;
+        let file_len = stripped_bytes.len() as u64;
+
+        let alloc = TestAllocatorState::new();
+        let mut updater = super::ParquetUpdater::new(
+            alloc.allocator(),
+            tmp.reopen()?,
+            file_len,
+            tmp.reopen()?,
+            file_len, // update (append) mode
+            sorting(),
+            true,
+            false,
+            CompressionOptions::Uncompressed,
+            None,
+            None,
+            DEFAULT_BLOOM_FILTER_FPP,
+            0.0,
+            None,
+            0,
+            -1,
+        )?;
+        updater.insert_row_group(&ts_val_partition(&[5, 6, 7], &[50, 60, 70]), 1)?;
+        updater.end(None)?;
+
+        let mut bytes = Vec::new();
+        tmp.reopen()?.read_to_end(&mut bytes)?;
+
+        assert_unindexed(&bytes);
+        assert_eq!(
+            read_val_column(&bytes),
+            vec![
+                Some(10),
+                Some(20),
+                Some(30),
+                Some(40),
+                Some(50),
+                Some(60),
+                Some(70)
+            ],
+        );
+        Ok(())
+    }
+
+    /// With statistics off the writer emits an OffsetIndex but no ColumnIndex; a
+    /// rewrite keeps the output uniformly offset-indexed (the copied-OffsetIndex-
+    /// without-ColumnIndex path).
+    #[test]
+    fn rewrite_preserves_offset_only_index_when_statistics_disabled() -> Result<(), Box<dyn Error>>
+    {
+        use crate::allocator::TestAllocatorState;
+        use parquet::arrow::arrow_reader::ArrowReaderOptions;
+        use parquet2::metadata::SortingColumn;
+        use std::io::Read as _;
+
+        let sorting = || Some(vec![SortingColumn::new(0, false, false)]);
+        let src = NamedTempFile::new()?;
+        ParquetWriter::new(src.reopen()?)
+            .with_sorting_columns(sorting())
+            .with_statistics(false)
+            .finish(ts_val_partition(&[1, 2, 3, 4], &[10, 20, 30, 40]))?;
+        let src_len = src.as_file().metadata()?.len();
+
+        let out = NamedTempFile::new()?;
+        let alloc = TestAllocatorState::new();
+        let mut updater = super::ParquetUpdater::new(
+            alloc.allocator(),
+            src.reopen()?,
+            src_len,
+            out.reopen()?,
+            0, // rewrite
+            sorting(),
+            false, // statistics disabled
+            false,
+            CompressionOptions::Uncompressed,
+            None,
+            None,
+            DEFAULT_BLOOM_FILTER_FPP,
+            0.0,
+            None,
+            0,
+            -1,
+        )?;
+        updater.copy_row_group(0)?; // source has an OffsetIndex but no ColumnIndex
+        updater.insert_row_group(&ts_val_partition(&[5, 6, 7], &[50, 60, 70]), 1)?;
+        updater.end(None)?;
+
+        let mut bytes = Vec::new();
+        out.reopen()?.read_to_end(&mut bytes)?;
+
+        let builder = ParquetRecordBatchReaderBuilder::try_new_with_options(
+            Bytes::from(bytes.clone()),
+            ArrowReaderOptions::new().with_page_index(true),
+        )?;
+        let md = builder.metadata();
+        assert_eq!(md.num_row_groups(), 2);
+        for rg in md.row_groups() {
+            for col in rg.columns() {
+                assert!(col.offset_index_offset().is_some(), "offset index present");
+                assert!(
+                    col.column_index_offset().is_none(),
+                    "no column index when statistics are disabled"
+                );
+            }
+        }
+        assert_eq!(
+            read_val_column(&bytes),
+            vec![
+                Some(10),
+                Some(20),
+                Some(30),
+                Some(40),
+                Some(50),
+                Some(60),
+                Some(70)
+            ],
+        );
         Ok(())
     }
 

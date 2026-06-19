@@ -8,7 +8,10 @@ use crate::statistics::serialize_statistics;
 
 use crate::write::page::{is_data_page, PageWriteSpec};
 
-pub fn serialize_column_index(pages: &[PageWriteSpec]) -> Result<ColumnIndex> {
+pub fn serialize_column_index(
+    pages: &[PageWriteSpec],
+    boundary_order: BoundaryOrder,
+) -> Result<ColumnIndex> {
     let mut null_pages = Vec::with_capacity(pages.len());
     let mut min_values = Vec::with_capacity(pages.len());
     let mut max_values = Vec::with_capacity(pages.len());
@@ -51,7 +54,7 @@ pub fn serialize_column_index(pages: &[PageWriteSpec]) -> Result<ColumnIndex> {
         null_pages,
         min_values,
         max_values,
-        boundary_order: BoundaryOrder::UNORDERED,
+        boundary_order,
         null_counts: Some(null_counts),
     })
 }
