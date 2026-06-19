@@ -221,6 +221,20 @@ jobs:
           name: third-party-licenses
           path: THIRD_PARTY_LICENSES.txt
 
+      # When core pins a -SNAPSHOT questdb-client, build it from the submodule
+      # into the local Maven repo so the core build below can resolve it. A
+      # released client is on Maven Central and this is a no-op. Needed because
+      # questdb-client is a test-scoped dep and -DskipTests skips only test
+      # *execution*, not the test-compile classpath resolution.
+      - name: Build local SNAPSHOT client (if pinned)
+        run: |
+          CLIENT_VERSION=$(sed -n 's/.*<questdb.client.version>\(.*\)<\/questdb.client.version>.*/\1/p' core/pom.xml | head -1)
+          echo "questdb.client.version=$CLIENT_VERSION"
+          if echo "$CLIENT_VERSION" | grep -q '\-SNAPSHOT$'; then
+            echo "SNAPSHOT client detected, building it from the submodule"
+            mvn clean install -DskipTests -f java-questdb-client/pom.xml
+          fi
+
       - name: Build QuestDB
         working-directory: core
         run: mvn package -DskipTests -DskipNative -Dhttp.keepAlive=false -P build-web-console,build-binaries
@@ -286,6 +300,19 @@ jobs:
         with:
           name: third-party-licenses
           path: .
+
+      # See the linux job: build a -SNAPSHOT questdb-client from the submodule so
+      # the core build can resolve it. Released clients come from Maven Central.
+      # shell: bash because windows-latest defaults to PowerShell.
+      - name: Build local SNAPSHOT client (if pinned)
+        shell: bash
+        run: |
+          CLIENT_VERSION=$(sed -n 's/.*<questdb.client.version>\(.*\)<\/questdb.client.version>.*/\1/p' core/pom.xml | head -1)
+          echo "questdb.client.version=$CLIENT_VERSION"
+          if echo "$CLIENT_VERSION" | grep -q '\-SNAPSHOT$'; then
+            echo "SNAPSHOT client detected, building it from the submodule"
+            mvn clean install -DskipTests -f java-questdb-client/pom.xml
+          fi
 
       - name: Build QuestDB
         working-directory: core

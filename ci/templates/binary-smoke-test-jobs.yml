@@ -51,6 +51,13 @@ jobs:
         displayName: "C++ glibc check: dlopen committed libquestdb on $(glibcImage)"
       - script: python3 .github/prepare_rust_env.py --export-cargo-install-env --match core/rust/qdbr/rust-toolchain.toml
         displayName: "Ensure Rust is installed"
+      # When core pins a -SNAPSHOT questdb-client, build it from the submodule
+      # (sets CLIENT_PROFILE=-P local-client); a released client is fetched from
+      # Maven Central. Without this the build dies at dependency resolution:
+      # questdb-client is a test-scoped dep, and -DskipTests skips only test
+      # *execution*, not the test-compile classpath resolution, so a SNAPSHOT
+      # client that is not on Central (built locally only) fails to resolve.
+      - template: detect-local-client.yml
       - task: Maven@3
         displayName: "Build distribution (native libs from source)"
         inputs:
@@ -60,7 +67,7 @@ jobs:
           goals: "clean package"
           options:
             "-pl core -am -DskipTests -Dhttp.keepAlive=false
-            -P build-web-console,build-binaries $(MAVEN_RUN_OPTS)"
+            -P build-web-console,build-binaries $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS)"
           jdkVersionOption: "$(jdk)"
       - bash: |
           set -eux
