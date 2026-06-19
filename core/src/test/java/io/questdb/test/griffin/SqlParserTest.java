@@ -1574,6 +1574,18 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testCaseDanglingDotAfterEnd() throws Exception {
+        // A dot right after 'end' has no literal to attach to: the CASE result sits on the
+        // operand stack rather than as a gluable token. It must produce a clean syntax error,
+        // not an NPE from dereferencing an empty operator stack.
+        assertSyntaxError(
+                "select case when true then 1 else 0 end.foo",
+                39,
+                "'.' is unexpected here"
+        );
+    }
+
+    @Test
     public void testCaseDanglingOperatorAfterEnd() throws Exception {
         // A binary operator with a missing right operand right after 'end' must produce
         // a clean syntax error, not an NPE from a malformed expression node.

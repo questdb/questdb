@@ -297,6 +297,24 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCaseDanglingDotAfterEnd() {
+        assertFail(
+                "case x when 1 then 'a' when 2 then 'b' end.foo",
+                42,
+                "'.' is unexpected here"
+        );
+    }
+
+    @Test
+    public void testCaseDanglingDotAfterEndInExpression() {
+        assertFail(
+                "1 + case x when 1 then 'a' when 2 then 'b' end.foo",
+                46,
+                "'.' is unexpected here"
+        );
+    }
+
+    @Test
     public void testCaseDanglingOperatorAfterCase() {
         assertFail(
                 "1 + case *x when 1 then 'a' when 2 then 'b' end",

@@ -1109,7 +1109,15 @@ public class ExpressionParser {
                             } else {
                                 // attach dot to existing literal or constant
                                 ExpressionNode en = opStack.peek();
-                                ((GenericLexer.FloatingSequence) en.token).setHi(lastPos + 1);
+                                if (en != null && en.token instanceof GenericLexer.FloatingSequence floatingToken) {
+                                    floatingToken.setHi(lastPos + 1);
+                                } else {
+                                    // The dot has no literal to glue to. This happens for a dangling
+                                    // member access right after a value-producing construct such as
+                                    // 'case ... end.col', whose result sits on the operand stack
+                                    // rather than as a gluable token on the op stack.
+                                    throw SqlException.$(lastPos, "'.' is unexpected here");
+                                }
                             }
                         }
                         if (prevBranch == BRANCH_DOT || prevBranch == BRANCH_DOT_DEREFERENCE) {
