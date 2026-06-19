@@ -2448,7 +2448,7 @@ mod tests {
         assert_eq!(&full[s0 as usize..s1 as usize], &dead[..]);
 
         // A reader at the new committed size verifies the cumulative CRC, which
-        // now spans the dead region, and the new footer chains onto s0 —
+        // now spans the dead region, and the new footer chains onto s0 --
         // orphaning the dead footer out of the MVCC chain.
         let new_reader = ParquetMetaReader::from_file_size(&full, result.new_file_size).unwrap();
         new_reader.verify_checksum().unwrap();

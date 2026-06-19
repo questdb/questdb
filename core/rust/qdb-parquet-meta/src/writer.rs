@@ -884,7 +884,7 @@ mod tests {
         );
 
         // A reader resolving the new committed size validates the cumulative
-        // CRC — which now spans the dead region — and sees the committed row
+        // CRC -- which now spans the dead region -- and sees the committed row
         // group plus the new one.
         let reader = ParquetMetaReader::from_file_size(&full, s2).unwrap();
         reader.verify_checksum().unwrap();
