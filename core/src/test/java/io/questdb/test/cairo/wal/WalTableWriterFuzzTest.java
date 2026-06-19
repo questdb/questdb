@@ -1199,7 +1199,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
             }
 
             @Override
-            protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
+            protected boolean doRun(long cursor, WorkerContext workerContext) {
                 try {
                     queue.get(cursor);
                 } finally {

@@ -31,6 +31,10 @@ jobs:
       - checkout: self
         fetchDepth: 1
         fetchTags: false
+        # Needed so the java-questdb-client submodule is present in the Docker
+        # build context when core/Dockerfile activates the local-client profile
+        # for a -SNAPSHOT client version.
+        submodules: true
 
       - bash: |
           tag=$(Build.SourceBranchName)
@@ -140,6 +144,10 @@ jobs:
       - checkout: self
         fetchDepth: 1
         fetchTags: false
+        # Needed so the java-questdb-client submodule is present in the Docker
+        # build context when core/Dockerfile activates the local-client profile
+        # for a -SNAPSHOT client version.
+        submodules: true
 
       - bash: |
           tag=$(Build.SourceBranchName)

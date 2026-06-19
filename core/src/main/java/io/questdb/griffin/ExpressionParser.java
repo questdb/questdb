@@ -1109,7 +1109,15 @@ public class ExpressionParser {
                             } else {
                                 // attach dot to existing literal or constant
                                 ExpressionNode en = opStack.peek();
-                                ((GenericLexer.FloatingSequence) en.token).setHi(lastPos + 1);
+                                if (en != null && en.token instanceof GenericLexer.FloatingSequence floatingToken) {
+                                    floatingToken.setHi(lastPos + 1);
+                                } else {
+                                    // The dot has no literal to glue to. This happens for a dangling
+                                    // member access right after a value-producing construct such as
+                                    // 'case ... end.col', whose result sits on the operand stack
+                                    // rather than as a gluable token on the op stack.
+                                    throw SqlException.$(lastPos, "'.' is unexpected here");
+                                }
                             }
                         }
                         if (prevBranch == BRANCH_DOT || prevBranch == BRANCH_DOT_DEREFERENCE) {
@@ -1906,6 +1914,14 @@ public class ExpressionParser {
                                         while ((node = opStack.pop()) != null && !SqlKeywords.isCaseKeyword(node.token)) {
                                             argStackDepth = onNode(listener, node, argStackDepth, prevBranch);
                                         }
+
+                                        // The final branch's value is already accounted for in paramCount and is
+                                        // re-added below, so clear the local depth the flush loop left behind. This
+                                        // keeps argStackDepth in step with the listener's operand stack: a CASE
+                                        // expression yields exactly one value. An inflated depth here would let a
+                                        // trailing binary operator (e.g. 'case ... end &') pass the arity guard with a
+                                        // missing operand.
+                                        argStackDepth = 0;
 
                                         // 'when/else' have been clearing argStackDepth to ensure expressions between
                                         // 'when' and 'when' do not pick up arguments outside of scope now we need to

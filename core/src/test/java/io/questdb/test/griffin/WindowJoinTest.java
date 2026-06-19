@@ -6733,7 +6733,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     .timestamp("ts")
                     .expectSize()
                     .withPlan("""
-                            Sort
+                            Encode sort
                               keys: [ts, sym]
                                 Window Join
                                   window lo: 60000000 preceding (exclude prevailing)

@@ -241,6 +241,79 @@ public class ParquetTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAddIndexOverParquetPartitionWithAbsentColumn() throws Exception {
+        // ADD INDEX on a SYMBOL column must not suspend a WAL table when the column
+        // predates one of its parquet partitions. sym is added while 2024-01-02 is
+        // the last partition, so the older 2024-01-01 partition has no column-version
+        // record and getColumnTop returns -1 there (not 0, not partitionSize).
+        // 2024-01-01 is converted to parquet AFTER the column exists, so the parquet
+        // file physically carries sym (all-NULL) -- findParquetColumnIndex finds it and
+        // indexParquetColumn proceeds to the columnTop check. This previously tripped an
+        // over-strict assertion (it allowed only 0 or partitionSize) and suspended the
+        // table under -ea. The guard below skips the all-NULL column; nothing to index.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // 2024-01-02 must exist before ADD COLUMN so that 2024-01-01 predates sym.
+            execute("INSERT INTO x(ts) VALUES" +
+                    " ('2024-01-01T00:00:00.000000Z')," +
+                    " ('2024-01-01T01:00:00.000000Z')," +
+                    " ('2024-01-02T00:00:00.000000Z')");
+            drainWalQueue();
+
+            // Added at 2024-01-02 (then-last): getColumnTop('2024-01-01') is -1.
+            execute("ALTER TABLE x ADD COLUMN sym SYMBOL");
+            drainWalQueue();
+
+            // Convert AFTER ADD COLUMN: the parquet carries sym (all-NULL) while
+            // 2024-01-01's column-version record stays -1.
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+
+            // Populate sym in a later partition so the index has real entries.
+            execute("INSERT INTO x(ts, sym) VALUES" +
+                    " ('2024-01-03T00:00:00.000000Z', 'a')," +
+                    " ('2024-01-03T01:00:00.000000Z', 'b')," +
+                    " ('2024-01-03T02:00:00.000000Z', 'a')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN sym ADD INDEX");
+            drainWalQueue();
+
+            Assert.assertFalse(
+                    "ADD INDEX over a parquet partition that predates the column must not suspend the table",
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
+
+            // The index is queryable: sym='a' returns the indexed rows in ts order.
+            // Pin the plan so a silently-degraded full scan cannot mask a broken
+            // index by returning the right answer for the wrong reason.
+            assertQuery("x where sym = 'a'")
+                    .noLeakCheck()
+                    .withPlanContaining("Index forward scan on: sym")
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tsym
+                            2024-01-03T00:00:00.000000Z\ta
+                            2024-01-03T02:00:00.000000Z\ta
+                            """);
+
+            // Full read: the parquet partition survives with NULL sym, later rows keep their values.
+            assertQuery("x")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tsym
+                            2024-01-01T00:00:00.000000Z\t
+                            2024-01-01T01:00:00.000000Z\t
+                            2024-01-02T00:00:00.000000Z\t
+                            2024-01-03T00:00:00.000000Z\ta
+                            2024-01-03T01:00:00.000000Z\tb
+                            2024-01-03T02:00:00.000000Z\ta
+                            """);
+        });
+    }
+
+    @Test
     public void testArrayColTops() throws Exception {
         testArrayColTops(false);
     }
