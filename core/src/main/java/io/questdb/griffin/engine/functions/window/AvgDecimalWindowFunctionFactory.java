@@ -31,6 +31,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
+import io.questdb.cairo.lv.LiveViewSnapshotKeyCodec;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
@@ -40,7 +41,9 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryARW;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -67,6 +70,11 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
     private static final ArrayColumnTypes AVG_DECIMAL128_OVER_PARTITION_RANGE_TYPES;
     private static final ArrayColumnTypes AVG_DECIMAL128_OVER_PARTITION_ROWS_TYPES;
     private static final ArrayColumnTypes AVG_DECIMAL128_TYPES;
+    // Live-view value layout for the unbounded-partition-rows accumulator: the
+    // non-LV [DECIMAL256 acc, LONG count] plus a trailing BYTE tombstone slot for
+    // anchor-driven frontier compaction. Shared by the Decimal128 and Decimal256
+    // variants, which carry the same map value layout.
+    private static final ArrayColumnTypes AVG_DECIMAL128_TYPES_LV;
     private static final ArrayColumnTypes AVG_DECIMAL64_OVER_PARTITION_RANGE_TYPES;
     private static final ArrayColumnTypes AVG_DECIMAL64_OVER_PARTITION_ROWS_TYPES;
     private static final ArrayColumnTypes AVG_DECIMAL64_TYPES;
@@ -172,9 +180,12 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         throw th;
                     }
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_DECIMAL128_TYPES);
+                    final boolean liveView = windowContext.isLiveView();
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                            liveView ? AVG_DECIMAL128_TYPES_LV : AVG_DECIMAL128_TYPES);
                     try {
-                        return new Decimal128AvgOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, argType, argPos);
+                        return new Decimal128AvgOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
+                                arg, argType, argPos, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         throw th;
@@ -200,9 +211,12 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 }
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_DECIMAL128_TYPES);
+                    final boolean liveView = windowContext.isLiveView();
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                            liveView ? AVG_DECIMAL128_TYPES_LV : AVG_DECIMAL128_TYPES);
                     try {
-                        return new Decimal128AvgOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, argType, argPos);
+                        return new Decimal128AvgOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
+                                arg, argType, argPos, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         throw th;
@@ -412,9 +426,12 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         throw th;
                     }
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_DECIMAL128_TYPES);
+                    final boolean liveView = windowContext.isLiveView();
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                            liveView ? AVG_DECIMAL128_TYPES_LV : AVG_DECIMAL128_TYPES);
                     try {
-                        return new Decimal256AvgOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, argType, argPos);
+                        return new Decimal256AvgOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
+                                arg, argType, argPos, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         throw th;
@@ -440,9 +457,12 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 }
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_DECIMAL128_TYPES);
+                    final boolean liveView = windowContext.isLiveView();
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                            liveView ? AVG_DECIMAL128_TYPES_LV : AVG_DECIMAL128_TYPES);
                     try {
-                        return new Decimal256AvgOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, argType, argPos);
+                        return new Decimal256AvgOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
+                                arg, argType, argPos, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         throw th;
@@ -1931,18 +1951,59 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
     static class Decimal128AvgOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
         private final Decimal256 acc = new Decimal256();
+        private final CairoConfiguration configuration;
         private final Decimal256 divScratch = new Decimal256();
+        // Stable snapshot of the partition-by key column types, taken at
+        // construction (the factory reuses its WindowContext buffer across
+        // compiles). Kept for live-view snapshot key codec and frontier sweep.
+        private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
+        // Full value layout (including tombstone slot) for the
+        // newCompactionScratch() scratch Map. Null outside live-view mode.
+        private final ArrayColumnTypes mapValueTypes;
         private final int position;
         private final int scale;
         private final Decimal128 scratch = new Decimal128();
         private final int type;
         private final Decimal128 value = new Decimal128();
 
-        public Decimal128AvgOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int type, int position) {
+        public Decimal128AvgOverUnboundedPartitionRowsFrameFunction(
+                Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                Function arg,
+                int type,
+                int position,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView,
+                CairoConfiguration configuration
+        ) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.type = type;
             this.scale = ColumnType.getDecimalScale(type);
             this.position = position;
+            this.liveView = liveView;
+            this.configuration = configuration;
+            this.keyColumnTypes = new ArrayColumnTypes();
+            for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                this.keyColumnTypes.add(partitionByKeyTypes.getColumnType(i));
+            }
+            if (liveView) {
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = AVG_DECIMAL128_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(AVG_DECIMAL128_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 2;
+            } else {
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            return MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
         }
 
         @Override
@@ -1954,6 +2015,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
             long count;
             if (mv.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    mv.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 acc.ofRaw(0);
                 count = 0;
             } else {
@@ -2000,8 +2064,25 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public ColumnTypes getSnapshotKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getSnapshotKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : AVG_DECIMAL128_TYPES.getColumnCount();
         }
 
         @Override
@@ -2015,6 +2096,60 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             long addr = spi.getAddress(recordOffset, columnIndex);
             Unsafe.putLong(addr, value.getHigh());
             Unsafe.putLong(addr + Long.BYTES, value.getLow());
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset. Zero the [acc, count] slots; the next
+            // computeNext re-anchors on the post-reset row.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mv = key.findValue();
+            if (mv != null) {
+                acc.ofRaw(0);
+                mv.putDecimal256(0, acc);
+                mv.putLong(1, 0L);
+                if (!mv.isNew() && tombstoneValueIndex >= 0 && mv.getByte(tombstoneValueIndex) != 1) {
+                    mv.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
+            source.getDecimal256(offset, acc);
+            value.putDecimal256(0, acc);
+            offset += 4 * Long.BYTES;
+            value.putLong(1, source.getLong(offset));
+            offset += Long.BYTES;
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public int snapshotFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public int snapshotMinSupportedVersion() {
+            return 1;
+        }
+
+        @Override
+        public void snapshotPartitionState(MemoryA sink, MapValue value) {
+            value.getDecimal256(0, acc);
+            sink.putDecimal256(acc.getHh(), acc.getHl(), acc.getLh(), acc.getLl());
+            sink.putLong(value.getLong(1));
+        }
+
+        @Override
+        public boolean supportsSnapshot() {
+            return LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -4521,18 +4656,59 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
     static class Decimal256AvgOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
         private final Decimal256 acc = new Decimal256();
+        private final CairoConfiguration configuration;
         private final Decimal256 divScratch = new Decimal256();
+        // Stable snapshot of the partition-by key column types, taken at
+        // construction (the factory reuses its WindowContext buffer across
+        // compiles). Kept for live-view snapshot key codec and frontier sweep.
+        private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
+        // Full value layout (including tombstone slot) for the
+        // newCompactionScratch() scratch Map. Null outside live-view mode.
+        private final ArrayColumnTypes mapValueTypes;
         private final int position;
         private final int scale;
         private final Decimal256 scratch = new Decimal256();
         private final int type;
         private final Decimal256 value = new Decimal256();
 
-        public Decimal256AvgOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int type, int position) {
+        public Decimal256AvgOverUnboundedPartitionRowsFrameFunction(
+                Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                Function arg,
+                int type,
+                int position,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView,
+                CairoConfiguration configuration
+        ) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.type = type;
             this.scale = ColumnType.getDecimalScale(type);
             this.position = position;
+            this.liveView = liveView;
+            this.configuration = configuration;
+            this.keyColumnTypes = new ArrayColumnTypes();
+            for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                this.keyColumnTypes.add(partitionByKeyTypes.getColumnType(i));
+            }
+            if (liveView) {
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = AVG_DECIMAL128_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(AVG_DECIMAL128_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 2;
+            } else {
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            return MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
         }
 
         @Override
@@ -4544,6 +4720,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
             long count;
             if (mv.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    mv.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 acc.ofRaw(0);
                 count = 0;
             } else {
@@ -4593,8 +4772,25 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public ColumnTypes getSnapshotKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getSnapshotKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : AVG_DECIMAL128_TYPES.getColumnCount();
         }
 
         @Override
@@ -4610,6 +4806,60 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             Unsafe.putLong(addr + Long.BYTES, value.getHl());
             Unsafe.putLong(addr + 2 * Long.BYTES, value.getLh());
             Unsafe.putLong(addr + 3 * Long.BYTES, value.getLl());
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset. Zero the [acc, count] slots; the next
+            // computeNext re-anchors on the post-reset row.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mv = key.findValue();
+            if (mv != null) {
+                acc.ofRaw(0);
+                mv.putDecimal256(0, acc);
+                mv.putLong(1, 0L);
+                if (!mv.isNew() && tombstoneValueIndex >= 0 && mv.getByte(tombstoneValueIndex) != 1) {
+                    mv.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
+            source.getDecimal256(offset, acc);
+            value.putDecimal256(0, acc);
+            offset += 4 * Long.BYTES;
+            value.putLong(1, source.getLong(offset));
+            offset += Long.BYTES;
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public int snapshotFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public int snapshotMinSupportedVersion() {
+            return 1;
+        }
+
+        @Override
+        public void snapshotPartitionState(MemoryA sink, MapValue value) {
+            value.getDecimal256(0, acc);
+            sink.putDecimal256(acc.getHh(), acc.getHl(), acc.getLh(), acc.getLl());
+            sink.putLong(value.getLong(1));
+        }
+
+        @Override
+        public boolean supportsSnapshot() {
+            return LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -8436,6 +8686,11 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         AVG_DECIMAL128_TYPES = new ArrayColumnTypes();
         AVG_DECIMAL128_TYPES.add(ColumnType.DECIMAL256); // slot 0: acc
         AVG_DECIMAL128_TYPES.add(ColumnType.LONG);       // slot 1: count
+
+        AVG_DECIMAL128_TYPES_LV = new ArrayColumnTypes();
+        AVG_DECIMAL128_TYPES_LV.add(ColumnType.DECIMAL256); // slot 0: acc
+        AVG_DECIMAL128_TYPES_LV.add(ColumnType.LONG);       // slot 1: count
+        AVG_DECIMAL128_TYPES_LV.add(ColumnType.BYTE);       // slot 2: tombstone (anchor-driven compaction)
 
         AVG_DECIMAL128_OVER_PARTITION_RANGE_TYPES = new ArrayColumnTypes();
         AVG_DECIMAL128_OVER_PARTITION_RANGE_TYPES.add(ColumnType.DECIMAL256); // slot 0: acc

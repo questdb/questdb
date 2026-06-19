@@ -3298,6 +3298,141 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAnchorAvgDecimalRestoresRunningStateAcrossRestart() throws Exception {
+        // The migrated avg(DECIMAL) unbounded-partition-rows variant must write
+        // its [acc, count] accumulator into the head .cp via
+        // snapshotPartitionState and rehydrate it via restorePartitionState on
+        // restart, so the running average continues across a restart instead of
+        // restarting from the post-restart rows. Uses an INT partition key to
+        // side-step the per-WAL-segment SYMBOL index collision.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym INT, d DECIMAL(38, 6)) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, avg(d) OVER w AS a FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, sym, d) VALUES " +
+                        "('2026-10-01T00:00:00.000000Z', 1, 10.000000m), " +
+                        "('2026-10-01T01:00:00.000000Z', 1, 20.000000m)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                Assert.assertNotEquals(
+                        "head .cp written before restart",
+                        Numbers.LONG_NULL,
+                        instance.getHeadCheckpointLvSeqTxn()
+                );
+            }
+
+            // Simulate restart: drop the in-memory registry, rebuild from disk.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            // Pure-restore tick (no new commits) fires tryRestoreFromHead, which
+            // must rehydrate the function accumulator through restorePartitionState.
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(reloaded);
+            Assert.assertTrue(
+                    "restore attempted on the first post-restart cycle",
+                    reloaded.isCheckpointRestoreAttempted()
+            );
+
+            // New row in the same day-1 bucket and partition. The running avg
+            // must include the two pre-restart rows (acc=30.000000, count=2), so
+            // avg over {10, 20, 60} = 30.000000, not 60.000000.
+            setCurrentMicros(200_000L);
+            execute("INSERT INTO base (ts, sym, d) VALUES ('2026-10-01T02:00:00.000000Z', 1, 60.000000m)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            assertQuery("SELECT ts, sym, a FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ta\n" +
+                            "2026-10-01T00:00:00.000000Z\t1\t10.000000\n" +
+                            "2026-10-01T01:00:00.000000Z\t1\t15.000000\n" +
+                            "2026-10-01T02:00:00.000000Z\t1\t30.000000\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testAnchorResetsAvgDecimal128AcrossDayBoundary() throws Exception {
+        // avg over a DECIMAL(38,6) column (DECIMAL128 storage) in an anchored
+        // live view. Exercises the migrated
+        // Decimal128AvgOverUnboundedPartitionRowsFrameFunction: the running avg
+        // resets to the new bucket's first row at the day boundary.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, d DECIMAL(38, 6)) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, sym, avg(d) OVER w AS a FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            // day 1: 10, 20 -> running avg 10, 15
+            // day 2 (after reset): 100, 200 -> running avg 100, 150
+            execute("INSERT INTO base (ts, sym, d) VALUES " +
+                    "('2026-08-01T00:00:00.000000Z', 'a', 10.000000m), " +
+                    "('2026-08-01T01:00:00.000000Z', 'a', 20.000000m), " +
+                    "('2026-08-02T00:00:00.000000Z', 'a', 100.000000m), " +
+                    "('2026-08-02T01:00:00.000000Z', 'a', 200.000000m)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            assertQuery("SELECT ts, sym, a FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ta\n" +
+                            "2026-08-01T00:00:00.000000Z\ta\t10.000000\n" +
+                            "2026-08-01T01:00:00.000000Z\ta\t15.000000\n" +
+                            "2026-08-02T00:00:00.000000Z\ta\t100.000000\n" +
+                            "2026-08-02T01:00:00.000000Z\ta\t150.000000\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testAnchorResetsAvgDecimal256AcrossDayBoundary() throws Exception {
+        // avg over a DECIMAL(60,0) column (DECIMAL256 storage) in an anchored
+        // live view. Exercises the migrated
+        // Decimal256AvgOverUnboundedPartitionRowsFrameFunction.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, d DECIMAL(60, 0)) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, sym, avg(d) OVER w AS a FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            execute("INSERT INTO base (ts, sym, d) VALUES " +
+                    "('2026-08-01T00:00:00.000000Z', 'a', 10m), " +
+                    "('2026-08-01T01:00:00.000000Z', 'a', 20m), " +
+                    "('2026-08-02T00:00:00.000000Z', 'a', 100m), " +
+                    "('2026-08-02T01:00:00.000000Z', 'a', 200m)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            assertQuery("SELECT ts, sym, a FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ta\n" +
+                            "2026-08-01T00:00:00.000000Z\ta\t10\n" +
+                            "2026-08-01T01:00:00.000000Z\ta\t15\n" +
+                            "2026-08-02T00:00:00.000000Z\ta\t100\n" +
+                            "2026-08-02T01:00:00.000000Z\ta\t150\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testAnchorResetsCountAcrossDayBoundary() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
