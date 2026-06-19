@@ -154,6 +154,57 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
         throw new IllegalStateException("compiled factory does not contain a WindowRecordCursorFactory");
     }
 
+    // Drives a partitioned bounded-frame avg(DECIMAL) live view: asserts the
+    // windowed average is correct (also proving CREATE-accept), then performs a
+    // byte-exact snapshot/restore round-trip of the function's partition state
+    // (write -> toTop -> restore -> write again, comparing the two payloads).
+    private void assertAvgDecimalFrameRoundTrip(
+            String decimalType,
+            String frameClause,
+            String insertValues,
+            String expectedRows
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, d " + decimalType + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, avg(d) OVER w AS a FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts " + frameClause + ")");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, sym, d) VALUES " + insertValues);
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                assertQuery("SELECT ts, sym, a FROM lv ORDER BY sym, ts").noLeakCheck().expectSize().returns(expectedRows);
+
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                WindowFunction fn = unwrapWindowFunctions(lv).getQuick(0);
+                Assert.assertTrue(fn.supportsSnapshot());
+                Map fnMap = fn.getPartitionMap();
+                Assert.assertEquals(2L, fnMap.size());
+
+                try (MemoryCARW s1 = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                     MemoryCARW s2 = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+                    LiveViewFunctionSnapshot.write(s1, fn);
+                    final long len = s1.getAppendOffset();
+                    fn.toTop();
+                    Assert.assertEquals(0L, fnMap.size());
+                    LiveViewFunctionSnapshot.restore(s1, 0L, fn, 1);
+                    Assert.assertEquals(2L, fnMap.size());
+                    LiveViewFunctionSnapshot.write(s2, fn);
+                    Assert.assertEquals(len, s2.getAppendOffset());
+                    for (long i = 0; i < len; i++) {
+                        Assert.assertEquals("snapshot byte mismatch at " + i, s1.getByte(i), s2.getByte(i));
+                    }
+                }
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
     @Test
     public void testCreateAndDropLiveView() throws Exception {
         assertMemoryLeak(() -> {
@@ -3582,6 +3633,317 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
             execute("DROP LIVE VIEW lv");
         });
+    }
+
+    @Test
+    public void testAvgDecimal128OverPartitionRangeFrameSnapshotRoundTrip() throws Exception {
+        // avg(DECIMAL(38,6)) over a bounded RANGE frame (DECIMAL128 storage,
+        // DECIMAL256 acc). Exercises Decimal128AvgOverPartitionRangeFrameFunction:
+        // CREATE-accept in a live view, the correct windowed average, and a
+        // byte-exact snapshot/restore round-trip of the
+        // [acc, frameSize, startOffset, size, capacity, firstIdx] slots plus the
+        // variable-size native [ts, value] ring.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, d DECIMAL(38, 6)) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, avg(d) OVER w AS a FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW)");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, sym, d) VALUES " +
+                        "('2026-08-01T00:00:00.000000Z', 'a', 10.000000m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20.000000m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30.000000m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 7.000000m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 11.000000m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 13.000000m)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                // RANGE within 2 HOUR preceding (hourly rows, so all three are in frame at row 3):
+                // a: 10, (10+20)/2=15, (10+20+30)/3=20
+                // b: 7, (7+11)/2=9, (7+11+13)/3=10.333333
+                assertQuery("SELECT ts, sym, a FROM lv ORDER BY sym, ts").noLeakCheck().expectSize().returns("ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t10.000000\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t15.000000\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t20.000000\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t7.000000\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t9.000000\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t10.333333\n");
+
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                WindowFunction fn = unwrapWindowFunctions(lv).getQuick(0);
+                Assert.assertTrue(fn.supportsSnapshot());
+                Map fnMap = fn.getPartitionMap();
+                Assert.assertEquals(2L, fnMap.size());
+
+                try (MemoryCARW s1 = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                     MemoryCARW s2 = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+                    LiveViewFunctionSnapshot.write(s1, fn);
+                    final long len = s1.getAppendOffset();
+                    fn.toTop();
+                    Assert.assertEquals(0L, fnMap.size());
+                    LiveViewFunctionSnapshot.restore(s1, 0L, fn, 1);
+                    Assert.assertEquals(2L, fnMap.size());
+                    LiveViewFunctionSnapshot.write(s2, fn);
+                    Assert.assertEquals(len, s2.getAppendOffset());
+                    for (long i = 0; i < len; i++) {
+                        Assert.assertEquals("snapshot byte mismatch at " + i, s1.getByte(i), s2.getByte(i));
+                    }
+                }
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testAvgDecimal128OverPartitionRowsFrameSnapshotRoundTrip() throws Exception {
+        // avg(DECIMAL(38,6)) over a bounded ROWS frame (DECIMAL128 storage,
+        // DECIMAL256 acc). Exercises Decimal128AvgOverPartitionRowsFrameFunction:
+        // CREATE-accept in a live view, the correct rolling average, and a
+        // byte-exact snapshot/restore round-trip of the
+        // [acc, count, loIdx, startOffset] slots plus the fixed-size native ring.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, d DECIMAL(38, 6)) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, avg(d) OVER w AS a FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, sym, d) VALUES " +
+                        "('2026-08-01T00:00:00.000000Z', 'a', 10.000000m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20.000000m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30.000000m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 7.000000m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 11.000000m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 13.000000m)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                // rolling avg over {current and up to 2 preceding rows}:
+                // a: 10, (10+20)/2=15, (10+20+30)/3=20
+                // b: 7, (7+11)/2=9, (7+11+13)/3=10.333333
+                assertQuery("SELECT ts, sym, a FROM lv ORDER BY sym, ts").noLeakCheck().expectSize().returns("ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t10.000000\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t15.000000\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t20.000000\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t7.000000\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t9.000000\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t10.333333\n");
+
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                WindowFunction fn = unwrapWindowFunctions(lv).getQuick(0);
+                Assert.assertTrue(fn.supportsSnapshot());
+                Map fnMap = fn.getPartitionMap();
+                Assert.assertEquals(2L, fnMap.size());
+
+                try (MemoryCARW s1 = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                     MemoryCARW s2 = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+                    LiveViewFunctionSnapshot.write(s1, fn);
+                    final long len = s1.getAppendOffset();
+                    fn.toTop();
+                    Assert.assertEquals(0L, fnMap.size());
+                    LiveViewFunctionSnapshot.restore(s1, 0L, fn, 1);
+                    Assert.assertEquals(2L, fnMap.size());
+                    LiveViewFunctionSnapshot.write(s2, fn);
+                    Assert.assertEquals(len, s2.getAppendOffset());
+                    for (long i = 0; i < len; i++) {
+                        Assert.assertEquals("snapshot byte mismatch at " + i, s1.getByte(i), s2.getByte(i));
+                    }
+                }
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testAvgDecimal16OverPartitionRowsFrameSnapshotRoundTrip() throws Exception {
+        // avg(DECIMAL(4,1)) over a bounded ROWS frame - narrow LONG acc, SHORT
+        // ring element.
+        assertAvgDecimalFrameRoundTrip(
+                "DECIMAL(4, 1)",
+                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10.0m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20.0m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30.0m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6.0m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12.0m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18.0m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t10.0\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t15.0\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t20.0\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t6.0\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t9.0\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t12.0\n"
+        );
+    }
+
+    @Test
+    public void testAvgDecimal256OverPartitionRangeFrameSnapshotRoundTrip() throws Exception {
+        // avg(DECIMAL(60,0)) over a bounded RANGE frame - DECIMAL256 acc, 32-byte
+        // ring element.
+        assertAvgDecimalFrameRoundTrip(
+                "DECIMAL(60, 0)",
+                "RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t10\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t15\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t20\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t6\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t9\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t12\n"
+        );
+    }
+
+    @Test
+    public void testAvgDecimal256OverPartitionRowsFrameSnapshotRoundTrip() throws Exception {
+        // avg(DECIMAL(60,0)) over a bounded ROWS frame - DECIMAL256 acc, 32-byte
+        // ring element.
+        assertAvgDecimalFrameRoundTrip(
+                "DECIMAL(60, 0)",
+                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t10\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t15\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t20\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t6\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t9\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t12\n"
+        );
+    }
+
+    @Test
+    public void testAvgDecimal32OverPartitionRangeFrameSnapshotRoundTrip() throws Exception {
+        // avg(DECIMAL(9,3)) over a bounded RANGE frame - narrow LONG acc, INT
+        // ring element.
+        assertAvgDecimalFrameRoundTrip(
+                "DECIMAL(9, 3)",
+                "RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10.000m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20.000m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30.000m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6.000m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12.000m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18.000m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t10.000\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t15.000\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t20.000\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t6.000\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t9.000\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t12.000\n"
+        );
+    }
+
+    @Test
+    public void testAvgDecimal32OverPartitionRowsFrameSnapshotRoundTrip() throws Exception {
+        // avg(DECIMAL(9,3)) over a bounded ROWS frame - narrow LONG acc, INT
+        // ring element.
+        assertAvgDecimalFrameRoundTrip(
+                "DECIMAL(9, 3)",
+                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10.000m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20.000m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30.000m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6.000m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12.000m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18.000m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t10.000\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t15.000\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t20.000\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t6.000\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t9.000\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t12.000\n"
+        );
+    }
+
+    @Test
+    public void testAvgDecimal64OverPartitionRangeFrameSnapshotRoundTrip() throws Exception {
+        // avg(DECIMAL(18,2)) over a bounded RANGE frame - DECIMAL128 acc, 8-byte
+        // ring element.
+        assertAvgDecimalFrameRoundTrip(
+                "DECIMAL(18, 2)",
+                "RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10.00m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20.00m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30.00m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6.00m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12.00m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18.00m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t10.00\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t15.00\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t20.00\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t6.00\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t9.00\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t12.00\n"
+        );
+    }
+
+    @Test
+    public void testAvgDecimal64OverPartitionRowsFrameSnapshotRoundTrip() throws Exception {
+        // avg(DECIMAL(18,2)) over a bounded ROWS frame - DECIMAL128 acc, 8-byte
+        // ring element.
+        assertAvgDecimalFrameRoundTrip(
+                "DECIMAL(18, 2)",
+                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10.00m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20.00m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30.00m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6.00m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12.00m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18.00m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t10.00\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t15.00\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t20.00\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t6.00\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t9.00\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t12.00\n"
+        );
+    }
+
+    @Test
+    public void testAvgDecimal8OverPartitionRowsFrameSnapshotRoundTrip() throws Exception {
+        // avg(DECIMAL(2,0)) over a bounded ROWS frame - narrow LONG acc, BYTE
+        // ring element.
+        assertAvgDecimalFrameRoundTrip(
+                "DECIMAL(2, 0)",
+                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t10\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t15\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t20\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t6\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t9\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t12\n"
+        );
     }
 
     @Test
