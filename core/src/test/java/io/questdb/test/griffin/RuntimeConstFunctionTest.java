@@ -629,12 +629,10 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t AS (SELECT ('{\"x\":' || x || '}')::varchar j, x::int base FROM long_sequence(5))");
 
-            // json_extract reads its JSON source per row, so a cast/arithmetic node over it must NOT be
-            // folded as runtime constant. Before json_extract reported isRuntimeConstant() honestly, the
-            // composite parent inherited a stale compile-time true, got wrapped, and crashed in init() with
-            // an NPE evaluating json_extract.getInt(null) against a per-row column. These three shapes -
-            // projection, WHERE/async-filter and CASE - all reproduced the crash; they must now run per row
-            // and match the equivalent plain column-arithmetic (json_extract(j,'$.x')::int equals base here).
+            // json_extract reads its JSON source per row, so a cast/arithmetic node over it must NOT fold
+            // as runtime constant. The folded wrapper would call json_extract.getInt(null) in init() and
+            // NPE on the per-row column. These three shapes crashed before the fix; each must now match the
+            // plain column-arithmetic equivalent (json_extract(j,'$.x')::int equals base here).
 
             // projection: e = base + x = 2*x
             assertSqlCursors(
@@ -657,12 +655,14 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
     }
 
     @Test
-    public void testEndToEndJsonExtractOverConstantSourceFolds() throws Exception {
+    public void testEndToEndJsonExtractOverRuntimeConstSourceFolds() throws Exception {
         assertMemoryLeak(() -> {
-            // When the JSON source is itself constant, json_extract IS runtime constant, so arithmetic over
-            // it is a foldable subtree: the wrapper evaluates json_extract.getInt(null) once (safe, because
-            // the constant source ignores the null record) and serves the cached value per row.
-            assertQuery("SELECT (json_extract('{\"x\":7}'::varchar, '$.x')::int * 2) e FROM long_sequence(3)")
+            // When the JSON source is runtime constant (here a bind variable), json_extract is too, so
+            // arithmetic over it is a foldable subtree: the wrapper evaluates getInt(null) once - safe,
+            // since the runtime-const source ignores the null record - and serves the cached value per row.
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "{\"x\":7}");
+            assertQuery("SELECT (json_extract($1::varchar, '$.x')::int * 2) e FROM long_sequence(3)")
                     .expectSize()
                     .returns("e\n14\n14\n14\n");
         });
@@ -795,11 +795,10 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t2 AS (SELECT ('{\"k\":\"v' || x || '\"}')::varchar j, ('v' || x)::varchar label FROM long_sequence(3))");
 
-            // Same root cause via a different consumer: EqVarcharFunctionFactory reads isRuntimeConstant() at
-            // compile time and, when true, builds a HalfRuntimeConstFunc that caches right.getVarcharA(null)
-            // in init(). With json_extract over a per-row column that path NPE'd (pre-existing latent bug).
-            // Now json_extract reports false, so equality falls back to per-row evaluation. Every row matches
-            // (label == json_extract(j,'$.k')), so the result equals the all-rows reference.
+            // Same root cause, different consumer: EqVarcharFunctionFactory builds a HalfRuntimeConstFunc
+            // when a side reports isRuntimeConstant(), caching right.getVarcharA(null) in init() - which
+            // NPE'd on a per-row json_extract column (pre-existing latent bug). json_extract now reports
+            // false, so equality falls back to per-row evaluation; every row matches the all-rows reference.
             assertSqlCursors(
                     "SELECT count(*) c FROM t2 WHERE label = label",
                     "SELECT count(*) c FROM t2 WHERE label = json_extract(j, '$.k')"

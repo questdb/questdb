@@ -454,15 +454,12 @@ public class JsonExtractFunction implements Function {
 
     @Override
     public boolean isRuntimeConstant() {
-        // Per-row variability comes solely from the JSON source: 'path' is read once in init() and
-        // frozen into 'pointer', so it does not affect runtime-constness. The function is runtime
-        // constant iff its JSON source is constant or runtime constant. Deriving this from 'json'
-        // (rather than the init-populated 'pointer') keeps the report stable from compile time
-        // onward, which callers that fold or cache the value once - e.g. RuntimeConstFunction and the
-        // half-runtime-const equality factories - rely on. A per-row JSON column correctly reports
-        // false here, so those callers keep reading it per row instead of calling getXxx(null) on a
-        // column with a null record.
-        return json.isConstant() || json.isRuntimeConstant();
+        // 'path' is frozen into 'pointer' at init(), so per-row variability comes only from 'json'.
+        // Derive the report from 'json' (not the init-populated 'pointer') so it is stable from compile
+        // time on: a per-row column reports false, keeping callers that fold/cache the value once via
+        // getXxx(null) - the runtime-const wrapper and the half-runtime-const eq factories - reading it
+        // per row instead of dereferencing a null record.
+        return json.isRuntimeConstant();
     }
 
     @Override
