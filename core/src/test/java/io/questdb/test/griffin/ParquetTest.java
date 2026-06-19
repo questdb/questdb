@@ -284,8 +284,11 @@ public class ParquetTest extends AbstractCairoTest {
                     engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
 
             // The index is queryable: sym='a' returns the indexed rows in ts order.
+            // Pin the plan so a silently-degraded full scan cannot mask a broken
+            // index by returning the right answer for the wrong reason.
             assertQuery("x where sym = 'a'")
                     .noLeakCheck()
+                    .withPlanContaining("Index forward scan on: sym")
                     .timestamp("ts")
                     .returns("""
                             ts\tsym
