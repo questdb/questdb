@@ -1907,6 +1907,14 @@ public class ExpressionParser {
                                             argStackDepth = onNode(listener, node, argStackDepth, prevBranch);
                                         }
 
+                                        // The final branch's value is already accounted for in paramCount and is
+                                        // re-added below, so clear the local depth the flush loop left behind. This
+                                        // keeps argStackDepth in step with the listener's operand stack: a CASE
+                                        // expression yields exactly one value. An inflated depth here would let a
+                                        // trailing binary operator (e.g. 'case ... end &') pass the arity guard with a
+                                        // missing operand.
+                                        argStackDepth = 0;
+
                                         // 'when/else' have been clearing argStackDepth to ensure expressions between
                                         // 'when' and 'when' do not pick up arguments outside of scope now we need to
                                         // restore stack depth before 'case' entry

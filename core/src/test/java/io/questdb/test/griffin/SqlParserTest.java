@@ -1574,6 +1574,17 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testCaseDanglingOperatorAfterEnd() throws Exception {
+        // A binary operator with a missing right operand right after 'end' must produce
+        // a clean syntax error, not an NPE from a malformed expression node.
+        assertSyntaxError(
+                "select sum(case when true then 1 else 0 end & )",
+                44,
+                "too few arguments for '&'"
+        );
+    }
+
+    @Test
     public void testCaseImpossibleRewrite1() throws SqlException {
         // referenced columns in 'when' clauses are different
         assertQuery(
