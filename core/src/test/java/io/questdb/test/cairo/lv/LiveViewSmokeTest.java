@@ -691,6 +691,63 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBackfillRestartRestoresO3DetectionWatermark() throws Exception {
+        // Finding 2b regression: row_number() OVER () under BACKFILL + O3 + restart.
+        // A restart resets the in-memory O3 detection watermark (latestSeenTs) to
+        // null, so tryRestoreFromHead must re-seed it from the head .cp's
+        // maxTimestamp. Without that, the first post-restart commit - here a
+        // back-dated (O3) row - slips past O3 detection and gets forward-appended
+        // in arrival order, so the late row keeps too high a row number instead of
+        // being re-sequenced by ts.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0L);
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base (ts, x) VALUES " +
+                    "('2026-04-01T00:00:00.000000Z', 1), " +
+                    "('2026-04-01T00:00:01.000000Z', 2)");
+            drainWalQueue();
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms BACKFILL AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            // The job re-fetches the instance from the registry each tick, so a
+            // single job survives the registry rebuild that simulates a restart.
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveBackfillToCompletion(job, "lv");
+
+                // In-order forward-append row; the head .cp records maxTs=00:00:10.
+                setCurrentMicros(currentMicros + 250_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:10.000000Z', 3)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                // Restart: rebuild the registry so the instance (and its
+                // latestSeenTs) is reconstructed from disk.
+                engine.getLiveViewRegistry().clear();
+                engine.buildViewGraphs();
+
+                // First post-restart commit is a back-dated (O3) row sitting
+                // between the backfilled data and the forward-appended row. It
+                // must trigger a re-sequencing replay, not a forward append.
+                setCurrentMicros(currentMicros + 250_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:05.000000Z', 4)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns(
+                    "ts\tx\trn\n" +
+                            "2026-04-01T00:00:00.000000Z\t1\t1\n" +
+                            "2026-04-01T00:00:01.000000Z\t2\t2\n" +
+                            "2026-04-01T00:00:05.000000Z\t4\t3\n" +
+                            "2026-04-01T00:00:10.000000Z\t3\t4\n");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testBackfillRestartResumesFromCheckpoint() throws Exception {
         // A restart mid-sweep finds the surviving .bcp, stamps its key, resumes
         // from the recorded data offset, and produces the full, gap-free output.

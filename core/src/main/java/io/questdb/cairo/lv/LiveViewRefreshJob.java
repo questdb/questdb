@@ -2070,6 +2070,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // addRowsSinceLastCheckpointWritten calls accumulate against the
         // restored total rather than resetting to zero.
         instance.setLvRowsTotal(restoredHeadState.lvRowsTotal);
+        // Re-seed the O3 detection watermark - latestSeenTs is an in-memory
+        // volatile reset to LONG_NULL on rebuild. Without it the first
+        // post-restart commit is not compared against already-materialized
+        // rows, so a late row arriving first slips past O3 detection and gets
+        // forward-appended in arrival order. Mirrors the backfill-resume restore.
+        if (restoredHeadState.maxTimestamp != Numbers.LONG_NULL) {
+            instance.setLatestSeenTs(restoredHeadState.maxTimestamp);
+        }
         // Refresh the head metadata trio with the real maxTs + stateBytes
         // we just read; the startup sweep stamped placeholder values.
         // writtenUs stays LONG_NULL so the next cycle's cadence check

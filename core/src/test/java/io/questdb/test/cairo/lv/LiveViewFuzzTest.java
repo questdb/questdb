@@ -81,9 +81,8 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
     // base in ts-ascending order - forward-append in ts order, head-miss replay
     // from the lower bound, head-hit replay continuing from the checkpoint's
     // ts-ordered count - so the numbering matches a batch recompute (which also
-    // scans the designated timestamp ascending). Fuzzed under O3 and restart,
-    // except the BACKFILL + O3 + restart combination (the restored scalar counter
-    // is off by one - a separate open checkpoint-restore bug; see isRankingVariant).
+    // scans the designated timestamp ascending). Fuzzed under O3, restart, and
+    // BACKFILL in any combination.
     // FLUSH EVERY rate-limits LV commits by wall clock: a refresh within
     // flushEveryMicros of the previous commit is deferred. Tests drive a
     // controllable clock (currentMicros) and advance it past this interval
@@ -103,10 +102,7 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
         final Rnd rnd = TestUtils.generateRandom(LOG);
         assertMemoryLeak(() -> {
             for (int v = 0; v < variantCount(); v++) {
-                // Keep restart off for ranking: row_number() under BACKFILL + O3 + restart hits a
-                // separate, still-open checkpoint-restore off-by-one.
-                final boolean restart = rnd.nextBoolean() && !isRankingVariant(v);
-                runFuzz(rnd, v, 140, true, restart, true, rnd.nextBoolean());
+                runFuzz(rnd, v, 140, true, rnd.nextBoolean(), true, rnd.nextBoolean());
             }
         });
     }
@@ -158,11 +154,7 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
             // BACKFILL now combines with O3 (the merge bug forcing them apart is fixed).
             final boolean backfill = rnd.nextBoolean();
             final int variant = rnd.nextInt(variantCount());
-            // Exclude only ranking + BACKFILL + O3 + restart (separate open off-by-one).
-            boolean restart = o3 && rnd.nextBoolean();
-            if (restart && backfill && isRankingVariant(variant)) {
-                restart = false;
-            }
+            final boolean restart = o3 && rnd.nextBoolean();
             runFuzz(rnd, variant, 80 + rnd.nextInt(320), o3, restart, backfill, rnd.nextBoolean());
         });
     }
@@ -223,11 +215,6 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
             }
         }
         return a;
-    }
-
-    // The last variant is the ranking row_number() OVER () shape.
-    private static boolean isRankingVariant(int variant) {
-        return variant == variantCount() - 1;
     }
 
     private static int variantCount() {
