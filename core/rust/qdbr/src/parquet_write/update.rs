@@ -252,6 +252,24 @@ impl ParquetUpdater {
         let version = version_from(metadata.version)?;
         let created_by = metadata.created_by.clone();
         let schema = metadata.schema_descr.clone();
+
+        // Append/update reuses the cached row groups' page index verbatim, so the
+        // newly encoded groups must make the same ColumnIndex choice or the file
+        // mixes indexed and unindexed row groups, which strict readers reject.
+        // QuestDB writes a ColumnIndex iff statistics were on, so the source's
+        // actual ColumnIndex presence recovers that setting; adopt it so the
+        // encoder emits matching page/row-group stats and the footer stays
+        // uniform. A rewrite (fresh output) or an empty source has nothing to
+        // match and keeps the runtime config.
+        let write_statistics = if is_rewrite || metadata.row_groups.is_empty() {
+            write_statistics
+        } else {
+            metadata.row_groups.iter().all(|rg| {
+                rg.columns()
+                    .iter()
+                    .all(|c| c.column_index_offset().is_some())
+            })
+        };
         let options = write::WriteOptions { write_statistics, version, bloom_filter_fpp };
 
         // Seed the per-column "still all-ASCII" tracker from the old qdb_meta.
@@ -1217,6 +1235,14 @@ fn build_copied_page_index(
         else {
             return Ok(None);
         };
+        // A corrupt footer can encode a negative offset/length; reject it before casting
+        // to usize/u64, which would request a usize::MAX allocation and abort the JVM.
+        if oi_offset < 0 || oi_length < 0 {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "negative offset index location: offset={oi_offset}, length={oi_length}"
+            ));
+        }
 
         // Read and rebase the OffsetIndex.
         let mut oi_bytes = vec![0u8; oi_length as usize];
@@ -1230,7 +1256,9 @@ fn build_copied_page_index(
                 .map_err(|e| fmt_err!(InvalidLayout, "could not read source offset index: {e}"))?
         };
         for location in &mut offset_index.page_locations {
-            location.offset += offset_delta;
+            location.offset = location.offset.checked_add(offset_delta).ok_or_else(|| {
+                fmt_err!(InvalidLayout, "offset index page location offset overflow")
+            })?;
         }
         let mut rebased = Vec::with_capacity(oi_bytes.len());
         {
@@ -1243,6 +1271,12 @@ fn build_copied_page_index(
         // ColumnIndex has no file offsets, so copy its bytes verbatim.
         let column_index = match (col.column_index_offset, col.column_index_length) {
             (Some(ci_offset), Some(ci_length)) => {
+                if ci_offset < 0 || ci_length < 0 {
+                    return Err(fmt_err!(
+                        InvalidLayout,
+                        "negative column index location: offset={ci_offset}, length={ci_length}"
+                    ));
+                }
                 let mut ci_bytes = vec![0u8; ci_length as usize];
                 reader.seek(SeekFrom::Start(ci_offset as u64))?;
                 reader.read_exact(&mut ci_bytes)?;
@@ -2697,6 +2731,140 @@ mod tests {
         Ok(())
     }
 
+    /// Appending with statistics disabled to a source written with a ColumnIndex:
+    /// the appended group adopts the source's ColumnIndex choice instead of the
+    /// runtime flag, so the output is uniformly indexed rather than mixed.
+    #[test]
+    fn append_with_statistics_off_matches_indexed_source() -> Result<(), Box<dyn Error>> {
+        use crate::allocator::TestAllocatorState;
+        use parquet2::metadata::SortingColumn;
+        use std::io::Read as _;
+
+        let sorting = || Some(vec![SortingColumn::new(0, false, false)]);
+        let tmp = NamedTempFile::new()?;
+        ParquetWriter::new(tmp.reopen()?)
+            .with_sorting_columns(sorting())
+            .with_statistics(true) // source carries a ColumnIndex
+            .finish(ts_val_partition(&[1, 2, 3, 4], &[10, 20, 30, 40]))?;
+        let file_len = tmp.as_file().metadata()?.len();
+
+        let alloc = TestAllocatorState::new();
+        let mut updater = super::ParquetUpdater::new(
+            alloc.allocator(),
+            tmp.reopen()?,
+            file_len,
+            tmp.reopen()?,
+            file_len, // update (append) mode
+            sorting(),
+            false, // runtime statistics off: must be overridden to match the source
+            false,
+            CompressionOptions::Uncompressed,
+            None,
+            None,
+            DEFAULT_BLOOM_FILTER_FPP,
+            0.0,
+            None,
+            0,
+            -1,
+        )?;
+        updater.insert_row_group(&ts_val_partition(&[5, 6, 7], &[50, 60, 70]), 1)?;
+        updater.end(None)?;
+
+        let mut bytes = Vec::new();
+        tmp.reopen()?.read_to_end(&mut bytes)?;
+
+        assert_fully_indexed(&bytes, &[(1, 4), (5, 7)]);
+        assert_eq!(
+            read_val_column(&bytes),
+            vec![
+                Some(10),
+                Some(20),
+                Some(30),
+                Some(40),
+                Some(50),
+                Some(60),
+                Some(70)
+            ],
+        );
+        Ok(())
+    }
+
+    /// Appending with statistics enabled to a source written without a ColumnIndex
+    /// (OffsetIndex only): the appended group drops its ColumnIndex to match the
+    /// source, so the file stays uniformly offset-only rather than mixed.
+    #[test]
+    fn append_with_statistics_on_matches_offset_only_source() -> Result<(), Box<dyn Error>> {
+        use crate::allocator::TestAllocatorState;
+        use parquet::arrow::arrow_reader::ArrowReaderOptions;
+        use parquet2::metadata::SortingColumn;
+        use std::io::Read as _;
+
+        let sorting = || Some(vec![SortingColumn::new(0, false, false)]);
+        let tmp = NamedTempFile::new()?;
+        ParquetWriter::new(tmp.reopen()?)
+            .with_sorting_columns(sorting())
+            .with_statistics(false) // source: OffsetIndex but no ColumnIndex
+            .finish(ts_val_partition(&[1, 2, 3, 4], &[10, 20, 30, 40]))?;
+        let file_len = tmp.as_file().metadata()?.len();
+
+        let alloc = TestAllocatorState::new();
+        let mut updater = super::ParquetUpdater::new(
+            alloc.allocator(),
+            tmp.reopen()?,
+            file_len,
+            tmp.reopen()?,
+            file_len, // update (append) mode
+            sorting(),
+            true, // runtime statistics on: must be overridden to match the source
+            false,
+            CompressionOptions::Uncompressed,
+            None,
+            None,
+            DEFAULT_BLOOM_FILTER_FPP,
+            0.0,
+            None,
+            0,
+            -1,
+        )?;
+        updater.insert_row_group(&ts_val_partition(&[5, 6, 7], &[50, 60, 70]), 1)?;
+        updater.end(None)?;
+
+        let mut bytes = Vec::new();
+        tmp.reopen()?.read_to_end(&mut bytes)?;
+
+        let builder = ParquetRecordBatchReaderBuilder::try_new_with_options(
+            Bytes::from(bytes.clone()),
+            ArrowReaderOptions::new().with_page_index(true),
+        )?;
+        let md = builder.metadata();
+        assert_eq!(md.num_row_groups(), 2);
+        for rg in md.row_groups() {
+            for col in rg.columns() {
+                assert!(
+                    col.offset_index_offset().is_some(),
+                    "offset index present on every row group"
+                );
+                assert!(
+                    col.column_index_offset().is_none(),
+                    "no column index on any row group"
+                );
+            }
+        }
+        assert_eq!(
+            read_val_column(&bytes),
+            vec![
+                Some(10),
+                Some(20),
+                Some(30),
+                Some(40),
+                Some(50),
+                Some(60),
+                Some(70)
+            ],
+        );
+        Ok(())
+    }
+
     /// After copy_row_group with a non-zero offset shift, the bloom filter
     /// on the last column must still be readable and contain the original
     /// values. This requires either copying the bloom bytes into the new
@@ -3528,6 +3696,149 @@ mod tests {
         assert_eq!(reader.designated_timestamp(), Some(0));
         assert_eq!(reader.sorting_column_count(), 1);
         assert_eq!(reader.sorting_column(0).unwrap(), 0);
+        Ok(())
+    }
+
+    /// Rewrite copying TWO source row groups. Fresh groups of differing sizes
+    /// precede each copy, so the copied groups land at distinct, non-zero
+    /// offset_deltas -- exercising the per-group page-index rebase that a
+    /// single-group copy can't. assert_fully_indexed verifies each copied
+    /// group's OffsetIndex points at its own rebased data page.
+    #[test]
+    fn rewrite_copies_multiple_row_groups_with_distinct_offset_deltas() -> Result<(), Box<dyn Error>>
+    {
+        use crate::allocator::TestAllocatorState;
+        use parquet2::metadata::SortingColumn;
+        use std::io::Read as _;
+
+        let sorting = || Some(vec![SortingColumn::new(0, false, false)]);
+
+        // Source with two row groups (row_group_size 2 over 4 rows).
+        let src = NamedTempFile::new()?;
+        ParquetWriter::new(src.reopen()?)
+            .with_sorting_columns(sorting())
+            .with_row_group_size(Some(2))
+            .finish(ts_val_partition(&[10, 20, 30, 40], &[100, 200, 300, 400]))?;
+        let src_len = src.as_file().metadata()?.len();
+        {
+            // Sanity: the source really has two groups to copy.
+            let md = read_metadata_with_size(&mut src.reopen()?, src_len)?;
+            assert_eq!(md.row_groups.len(), 2);
+        }
+
+        let out = NamedTempFile::new()?;
+        let alloc = TestAllocatorState::new();
+        let mut updater = super::ParquetUpdater::new(
+            alloc.allocator(),
+            src.reopen()?,
+            src_len,
+            out.reopen()?,
+            0, // rewrite
+            sorting(),
+            true,
+            false,
+            CompressionOptions::Uncompressed,
+            None,
+            None,
+            DEFAULT_BLOOM_FILTER_FPP,
+            0.0,
+            None,
+            0,
+            -1,
+        )?;
+
+        // Physical output order (rewrite ignores the insert position):
+        //   freshA | copied rg0 | freshB | copied rg1
+        // freshA has 3 rows vs rg0's 2, so the two copied groups land at
+        // different shifts -> distinct, non-zero offset_delta per copied group.
+        updater.insert_row_group(&ts_val_partition(&[1, 2, 3], &[1, 2, 3]), 0)?;
+        updater.copy_row_group(0)?;
+        updater.insert_row_group(&ts_val_partition(&[25, 26], &[250, 260]), 2)?;
+        updater.copy_row_group(1)?;
+        updater.end(None)?;
+
+        let mut bytes = Vec::new();
+        out.reopen()?.read_to_end(&mut bytes)?;
+
+        assert_fully_indexed(&bytes, &[(1, 3), (10, 20), (25, 26), (30, 40)]);
+        assert_eq!(
+            read_val_column(&bytes),
+            vec![
+                Some(1),
+                Some(2),
+                Some(3),
+                Some(100),
+                Some(200),
+                Some(250),
+                Some(260),
+                Some(300),
+                Some(400),
+            ],
+        );
+        Ok(())
+    }
+
+    /// The rewrite _pm generation path resolves column ids via
+    /// build_column_infos_from_qdb_meta -> resolve_column_id. Every other
+    /// update.rs test passes None for parquet_meta_fd, so this drives a real
+    /// _pm file and asserts the resolved (QuestDB) ids land in the metadata.
+    #[test]
+    fn rewrite_generates_pm_with_resolved_column_ids() -> Result<(), Box<dyn Error>> {
+        use crate::allocator::TestAllocatorState;
+        use crate::parquet_metadata::reader::ParquetMetaReader;
+        use parquet2::metadata::SortingColumn;
+        use std::io::Read as _;
+
+        // Source columns carry explicit, distinct QuestDB ids (10, 20). The
+        // writer embeds them in qdb_meta; resolve_column_id must surface them.
+        let ts = [1i64, 2, 3, 4];
+        let val = [10i32, 20, 30, 40];
+        let partition = Partition {
+            table: "t".to_string(),
+            columns: vec![
+                make_designated_ts_with_id(10, "ts", &ts),
+                make_column_with_id(20, "val", ColumnTypeTag::Int.into_type(), &val),
+            ],
+        };
+        let src = NamedTempFile::new()?;
+        ParquetWriter::new(src.reopen()?)
+            .with_sorting_columns(Some(vec![SortingColumn::new(0, false, false)]))
+            .finish(partition)?;
+        let src_len = src.as_file().metadata()?.len();
+
+        let out = NamedTempFile::new()?;
+        let pm = NamedTempFile::new()?;
+        let alloc = TestAllocatorState::new();
+        let mut updater = super::ParquetUpdater::new(
+            alloc.allocator(),
+            src.reopen()?,
+            src_len,
+            out.reopen()?,
+            0, // rewrite
+            Some(vec![SortingColumn::new(0, false, false)]),
+            true,
+            false,
+            CompressionOptions::Uncompressed,
+            None,
+            None,
+            DEFAULT_BLOOM_FILTER_FPP,
+            0.0,
+            Some(pm.reopen()?), // real _pm fd exercises the id-resolution path
+            0,
+            -1, // no existing _pm -> full-create branch
+        )?;
+        updater.copy_row_group(0)?;
+        updater.end(None)?;
+
+        let pm_size = updater.result_parquet_meta_size();
+        assert!(pm_size > 0, "rewrite must produce a _pm file");
+
+        let mut pm_bytes = Vec::new();
+        pm.reopen()?.read_to_end(&mut pm_bytes)?;
+        let reader = ParquetMetaReader::from_file_size(&pm_bytes, pm_size as u64).unwrap();
+        assert_eq!(reader.column_count(), 2);
+        assert_eq!(reader.column_descriptor(0).unwrap().id, 10);
+        assert_eq!(reader.column_descriptor(1).unwrap().id, 20);
         Ok(())
     }
 }

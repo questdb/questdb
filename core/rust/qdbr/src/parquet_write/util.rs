@@ -154,7 +154,11 @@ impl BinaryMaxMinStats {
         let (min_value, max_value, is_min_value_exact, is_max_value_exact) =
             if is_binary_column_type(&primitive_type) {
                 // Opaque Binary: keep the min's <=9-byte prefix (a valid floor) and round
-                // the max up via its incremented 8-byte prefix (a valid ceiling).
+                // the max up via its incremented 8-byte prefix (a valid ceiling). Both can
+                // be inexact (truncated prefix / rounded-up ceiling), so flag them like the
+                // text path. update() clamps both to <=9 bytes, so len > 8 means len == 9.
+                let min_clamped = min_value.as_ref().is_some_and(|min| min.len() > SIZEOF_I64);
+                let max_rounded = max_value.as_ref().is_some_and(|max| max.len() > SIZEOF_I64);
                 let max_value = max_value.map(|max_value| {
                     if max_value.len() <= SIZEOF_I64 {
                         max_value
@@ -162,7 +166,12 @@ impl BinaryMaxMinStats {
                         binary_upper_bound(max_value)
                     }
                 });
-                (min_value, max_value, None, None)
+                (
+                    min_value,
+                    max_value,
+                    min_clamped.then_some(false),
+                    max_rounded.then_some(false),
+                )
             } else if is_utf8_column_type(&primitive_type) {
                 // Text (String/Symbol/Varchar): bound min/max to UTF8_STATS_TRUNCATE_LEN
                 // bytes on a UTF-8 codepoint boundary. Truncate the min down to a prefix
@@ -756,6 +765,9 @@ mod tests {
         // Can't increment [0xFF; 8], falls back to 9-byte value
         assert!(parquet_stats.max_value.is_some());
         assert!(parquet_stats.min_value.is_some());
+        // Both bounds are 9-byte clamped prefixes, hence inexact.
+        assert_eq!(parquet_stats.is_min_value_exact, Some(false));
+        assert_eq!(parquet_stats.is_max_value_exact, Some(false));
     }
 
     fn utf8_primitive_type() -> PrimitiveType {
@@ -910,6 +922,37 @@ mod tests {
     }
 
     #[test]
+    fn test_binary_stats_text_boundary_64_is_exact() {
+        // Exactly UTF8_STATS_TRUNCATE_LEN bytes: at the bound, not over it, so the value
+        // is kept verbatim and both bounds stay exact (flagged None).
+        let primitive_type = utf8_primitive_type();
+        let mut stats = BinaryMaxMinStats::new(&primitive_type);
+        let value = vec![b'm'; 64];
+        stats.update(&value);
+
+        let parquet_stats = stats.into_parquet_stats(0);
+        assert_eq!(parquet_stats.min_value.as_deref(), Some(value.as_slice()));
+        assert_eq!(parquet_stats.max_value.as_deref(), Some(value.as_slice()));
+        assert_eq!(parquet_stats.is_min_value_exact, None);
+        assert_eq!(parquet_stats.is_max_value_exact, None);
+    }
+
+    #[test]
+    fn test_binary_stats_text_boundary_65_truncates() {
+        // One byte past the bound triggers the first truncation, so both bounds become
+        // inexact and the min is cut back to the bound.
+        let primitive_type = utf8_primitive_type();
+        let mut stats = BinaryMaxMinStats::new(&primitive_type);
+        let value = vec![b'm'; 65];
+        stats.update(&value);
+
+        let parquet_stats = stats.into_parquet_stats(0);
+        assert_eq!(parquet_stats.min_value.unwrap().len(), 64);
+        assert_eq!(parquet_stats.is_min_value_exact, Some(false));
+        assert_eq!(parquet_stats.is_max_value_exact, Some(false));
+    }
+
+    #[test]
     fn test_binary_stats_binary_path_unchanged() {
         // Regression guard: opaque Binary keeps its 8/9-byte prefix bound and is NOT
         // subject to the 64-byte text truncation.
@@ -921,6 +964,30 @@ mod tests {
         // update() clamps to 9 bytes; max rounds up via binary_upper_bound to 8.
         assert_eq!(parquet_stats.min_value.unwrap().len(), 9);
         assert_eq!(parquet_stats.max_value.unwrap().len(), 8);
+        // The 9-byte min is a truncated prefix and the max was rounded up: both inexact.
+        assert_eq!(parquet_stats.is_min_value_exact, Some(false));
+        assert_eq!(parquet_stats.is_max_value_exact, Some(false));
+    }
+
+    #[test]
+    fn test_binary_stats_binary_short_value_is_exact() {
+        // A short opaque Binary value (<= 8 bytes) is stored verbatim, so both bounds
+        // stay exact (flagged None).
+        let primitive_type = PrimitiveType::from_physical("b".to_string(), PhysicalType::ByteArray);
+        let mut stats = BinaryMaxMinStats::new(&primitive_type);
+        stats.update(&[b'A'; 8]);
+
+        let parquet_stats = stats.into_parquet_stats(0);
+        assert_eq!(
+            parquet_stats.min_value.as_deref(),
+            Some([b'A'; 8].as_slice())
+        );
+        assert_eq!(
+            parquet_stats.max_value.as_deref(),
+            Some([b'A'; 8].as_slice())
+        );
+        assert_eq!(parquet_stats.is_min_value_exact, None);
+        assert_eq!(parquet_stats.is_max_value_exact, None);
     }
 
     #[test]

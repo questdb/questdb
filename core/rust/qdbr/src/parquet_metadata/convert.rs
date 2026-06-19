@@ -33,6 +33,7 @@ use crate::parquet_metadata::types::{
     encode_stat_sizes, Codec, ColumnFlags, EncodingMask, FieldRepetition, StatFlags,
 };
 use crate::parquet_metadata::writer::ParquetMetaWriter;
+use crate::parquet_read::meta::resolve_column_id;
 use parquet2::metadata::FileMetaData;
 use parquet2::metadata::SortingColumn;
 use parquet2::schema::types::{PhysicalType, PrimitiveLogicalType};
@@ -131,10 +132,7 @@ pub fn convert_from_parquet(
         // Prefer QuestDB's authoritative id from QdbMeta over the parquet
         // field_id, so a `_pm` rebuilt from a file with no field_id still
         // recovers the column id.
-        let id = crate::parquet_read::meta::resolve_column_id(
-            qdb_meta.and_then(|m| m.schema.get(i)).and_then(|c| c.id),
-            field_info.id,
-        );
+        let id = resolve_column_id(qdb_meta.and_then(|m| m.schema[i].id), field_info.id);
 
         let col_type_code = if let Some(meta) = qdb_meta {
             let col_meta = &meta.schema[i];

@@ -847,6 +847,9 @@ mod tests {
             primitive_type.logical_type,
             Some(PrimitiveLogicalType::Integer(IntegerType::UInt32))
         );
+        // IPv4 is nullable in QuestDB, so its leaf must stay Optional; a flip to Required
+        // would silently break null IPv4 def-levels.
+        assert_eq!(primitive_type.field_info.repetition, Repetition::Optional);
     }
 
     #[test]

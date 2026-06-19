@@ -354,7 +354,7 @@ fn encode_int32_dispatch(
         }
 
         // RleDictionary
-        (Encoding::RleDictionary, Int) => rle_dictionary::encode_simd::<i32>(
+        (Encoding::RleDictionary, Int) => rle_dictionary::encode_simd::<i32, false>(
             columns,
             first_partition_start,
             last_partition_end,
@@ -362,7 +362,7 @@ fn encode_int32_dispatch(
             options,
             bloom_set,
         ),
-        (Encoding::RleDictionary, Byte) => rle_dictionary::encode_int_notnull::<i8, i32>(
+        (Encoding::RleDictionary, Byte) => rle_dictionary::encode_int_notnull::<i8, i32, false>(
             columns,
             first_partition_start,
             last_partition_end,
@@ -370,7 +370,7 @@ fn encode_int32_dispatch(
             options,
             bloom_set,
         ),
-        (Encoding::RleDictionary, Short) => rle_dictionary::encode_int_notnull::<i16, i32>(
+        (Encoding::RleDictionary, Short) => rle_dictionary::encode_int_notnull::<i16, i32, false>(
             columns,
             first_partition_start,
             last_partition_end,
@@ -378,7 +378,7 @@ fn encode_int32_dispatch(
             options,
             bloom_set,
         ),
-        (Encoding::RleDictionary, Char) => rle_dictionary::encode_int_notnull::<u16, i32>(
+        (Encoding::RleDictionary, Char) => rle_dictionary::encode_int_notnull::<u16, i32, false>(
             columns,
             first_partition_start,
             last_partition_end,
@@ -387,7 +387,7 @@ fn encode_int32_dispatch(
             bloom_set,
         ),
         (Encoding::RleDictionary, IPv4) => {
-            rle_dictionary::encode_int_nullable::<crate::parquet_write::IPv4, i32>(
+            rle_dictionary::encode_int_nullable::<crate::parquet_write::IPv4, i32, true>(
                 columns,
                 first_partition_start,
                 last_partition_end,
@@ -397,7 +397,7 @@ fn encode_int32_dispatch(
             )
         }
         (Encoding::RleDictionary, GeoByte) => {
-            rle_dictionary::encode_int_nullable::<crate::parquet_write::GeoByte, i32>(
+            rle_dictionary::encode_int_nullable::<crate::parquet_write::GeoByte, i32, false>(
                 columns,
                 first_partition_start,
                 last_partition_end,
@@ -407,7 +407,7 @@ fn encode_int32_dispatch(
             )
         }
         (Encoding::RleDictionary, GeoShort) => {
-            rle_dictionary::encode_int_nullable::<crate::parquet_write::GeoShort, i32>(
+            rle_dictionary::encode_int_nullable::<crate::parquet_write::GeoShort, i32, false>(
                 columns,
                 first_partition_start,
                 last_partition_end,
@@ -417,7 +417,7 @@ fn encode_int32_dispatch(
             )
         }
         (Encoding::RleDictionary, GeoInt) => {
-            rle_dictionary::encode_int_nullable::<crate::parquet_write::GeoInt, i32>(
+            rle_dictionary::encode_int_nullable::<crate::parquet_write::GeoInt, i32, false>(
                 columns,
                 first_partition_start,
                 last_partition_end,
@@ -543,7 +543,7 @@ fn encode_int64_dispatch(
 
         // RleDictionary
         (Encoding::RleDictionary, Long) | (Encoding::RleDictionary, Date) => {
-            rle_dictionary::encode_simd::<i64>(
+            rle_dictionary::encode_simd::<i64, false>(
                 columns,
                 first_partition_start,
                 last_partition_end,
@@ -558,7 +558,7 @@ fn encode_int64_dispatch(
             } else if is_designated_timestamp {
                 // Designated timestamps are Required: use the notnull dict path
                 // so the data page is built with Required repetition.
-                rle_dictionary::encode_int_notnull::<i64, i64>(
+                rle_dictionary::encode_int_notnull::<i64, i64, false>(
                     columns,
                     first_partition_start,
                     last_partition_end,
@@ -567,7 +567,7 @@ fn encode_int64_dispatch(
                     bloom_set,
                 )
             } else {
-                rle_dictionary::encode_simd::<i64>(
+                rle_dictionary::encode_simd::<i64, false>(
                     columns,
                     first_partition_start,
                     last_partition_end,
@@ -578,7 +578,7 @@ fn encode_int64_dispatch(
             }
         }
         (Encoding::RleDictionary, GeoLong) => {
-            rle_dictionary::encode_int_nullable::<crate::parquet_write::GeoLong, i64>(
+            rle_dictionary::encode_int_nullable::<crate::parquet_write::GeoLong, i64, false>(
                 columns,
                 first_partition_start,
                 last_partition_end,
@@ -613,7 +613,7 @@ fn encode_float_dispatch(
             options,
             bloom_set,
         ),
-        (Encoding::RleDictionary, Float) => rle_dictionary::encode_simd::<f32>(
+        (Encoding::RleDictionary, Float) => rle_dictionary::encode_simd::<f32, false>(
             columns,
             first_partition_start,
             last_partition_end,
@@ -646,7 +646,7 @@ fn encode_double_dispatch(
             options,
             bloom_set,
         ),
-        (Encoding::RleDictionary, Double) => rle_dictionary::encode_simd::<f64>(
+        (Encoding::RleDictionary, Double) => rle_dictionary::encode_simd::<f64, false>(
             columns,
             first_partition_start,
             last_partition_end,

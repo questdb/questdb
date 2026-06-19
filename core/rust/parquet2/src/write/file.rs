@@ -267,19 +267,6 @@ pub fn end_file<W: Write>(mut writer: &mut W, metadata: &ThriftFileMetaData) -> 
     Ok(metadata_len as u64 + FOOTER_SIZE)
 }
 
-/// Writes the page index (ColumnIndex + OffsetIndex) for `row_groups`, recording
-/// each column chunk's index offset/length in place and advancing `offset` past
-/// the bytes written. Column chunks whose matching `page_specs` entry is empty --
-/// raw-copied row groups push no specs -- are skipped by the inner zip and keep
-/// the `None` index pointers they were given. The ColumnIndex is gated on
-/// `write_statistics` (it carries per-page statistics); the OffsetIndex is always
-/// written for columns that have specs. `sorting_columns` drives each column's
-/// `boundary_order`. All ColumnIndexes are emitted first, then all OffsetIndexes,
-/// so the layout matches a single-shot write.
-///
-/// The caller must have already written every row group's page data, so `offset`
-/// points past the last data byte and the index lands between the data and the
-/// footer.
 /// A raw-copied row group's per-column page index, rebased for the output file:
 /// `offset_index` has its page offsets shifted to the new position, `column_index`
 /// (statistics only, no offsets) is verbatim, or `None` if the source had none.

@@ -19,6 +19,7 @@ use crate::parquet_write::encoders::helpers::{
     column_chunk_row_count, lock_bloom_set, partition_chunk_slice, write_utf8_from_utf16_iter,
     FlatValidity,
 };
+use crate::parquet_write::encoders::numeric::StatsUpdater;
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::schema::{Column, TimestampValues};
 use crate::parquet_write::util::{bit_width, build_plain_page, BinaryMaxMinStats, MaxMin};
@@ -78,7 +79,7 @@ pub fn encode_designated_timestamp_strided(
     // Concrete iterator (slice::Iter<[i64; 2]>::map over a non-capturing
     // closure) — no enum dispatch in the hot loop.
     for pair in slice {
-        let key = upsert_dict_entry(
+        let key = upsert_dict_entry::<i64, false>(
             &mut dict_map,
             &mut dict_entries,
             pair[0],
@@ -200,7 +201,7 @@ impl<S> ColumnChunkDictState<S> {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn encode_primitive<T, P, F, G>(
+fn encode_primitive<T, P, F, G, const UNSIGNED_STATS: bool>(
     columns: &[Column],
     first_partition_start: usize,
     last_partition_end: usize,
@@ -219,6 +220,7 @@ where
     P::Bytes: Eq + Hash,
     F: Fn(T) -> bool,
     G: Fn(T) -> P,
+    MaxMin<P>: StatsUpdater<P, UNSIGNED_STATS>,
 {
     let num_partitions = columns.len();
     let total_rows = column_chunk_row_count(columns, first_partition_start, last_partition_end);
@@ -251,7 +253,7 @@ where
                     "encode_primitive: Required column has column top but no default supplied"
                 )
             })?;
-            let default_key = upsert_dict_entry(
+            let default_key = upsert_dict_entry::<P, UNSIGNED_STATS>(
                 &mut dict_map,
                 &mut dict_entries,
                 default_p,
@@ -273,8 +275,12 @@ where
                 state.push_optional_null()?;
             } else {
                 let p = project(value);
-                let key =
-                    upsert_dict_entry(&mut dict_map, &mut dict_entries, p, state.stats.as_mut())?;
+                let key = upsert_dict_entry::<P, UNSIGNED_STATS>(
+                    &mut dict_map,
+                    &mut dict_entries,
+                    p,
+                    state.stats.as_mut(),
+                )?;
                 if repetition.is_required() {
                     state.push_required_value(key);
                 } else {
@@ -318,7 +324,7 @@ where
 }
 
 #[inline]
-fn upsert_dict_entry<P>(
+fn upsert_dict_entry<P, const UNSIGNED_STATS: bool>(
     dict_map: &mut RapidHashMap<P::Bytes, u32>,
     dict_entries: &mut Vec<P>,
     value: P,
@@ -327,6 +333,7 @@ fn upsert_dict_entry<P>(
 where
     P: NativeType,
     P::Bytes: Eq + Hash,
+    MaxMin<P>: StatsUpdater<P, UNSIGNED_STATS>,
 {
     let bytes = value.to_bytes();
     if let Some(&id) = dict_map.get(&bytes) {
@@ -337,7 +344,7 @@ where
     dict_map.insert(bytes, id);
     dict_entries.push(value);
     if let Some(stats) = stats {
-        stats.update(value);
+        stats.update_stats(value);
     }
     Ok(id)
 }

@@ -758,7 +758,7 @@ pub struct Statistics {
   /// If true, min_value is the actual minimum value for a column. If false, min_value is a valid lower bound but not necessarily the actual minimum value.
   pub is_min_value_exact: Option<bool>,
 }
- 
+
 impl Statistics {
   pub fn new<F1, F2, F3, F4, F5, F6, F7, F8>(max: F1, min: F2, null_count: F3, distinct_count: F4, max_value: F5, min_value: F6, is_max_value_exact: F7, is_min_value_exact: F8) -> Statistics where F1: Into<Option<Vec<u8>>>, F2: Into<Option<Vec<u8>>>, F3: Into<Option<i64>>, F4: Into<Option<i64>>, F5: Into<Option<Vec<u8>>>, F6: Into<Option<Vec<u8>>>, F7: Into<Option<bool>>, F8: Into<Option<bool>> {
     Statistics {
@@ -951,7 +951,7 @@ impl ReadThrift for Statistics {
     Ok(ret)
   }
 }
- 
+
 #[cfg(feature = "async")]
 #[async_trait]
 impl AsyncReadThrift for Statistics {
