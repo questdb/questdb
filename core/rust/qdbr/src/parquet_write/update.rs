@@ -40,7 +40,8 @@ use parquet2::write::{ColumnOffsetsMetadata, CopiedColumnIndex, ParquetFile, Ver
 use parquet_format_safe::thrift::protocol::{TCompactInputProtocol, TCompactOutputProtocol};
 use parquet_format_safe::{
     ColumnChunk, ColumnMetaData, CompressionCodec, DataPageHeader, DictionaryPageHeader,
-    Encoding as ThriftEncoding, OffsetIndex, PageHeader, PageType, RowGroup, Type,
+    Encoding as ThriftEncoding, OffsetIndex, PageEncodingStats, PageHeader, PageType, RowGroup,
+    Type,
 };
 use qdb_core::col_type::{ColumnType, ColumnTypeTag};
 use rapidhash::RapidHashMap;
@@ -1437,6 +1438,26 @@ fn generate_null_column_chunk_bytes(
     } else {
         vec![ThriftEncoding::PLAIN, ThriftEncoding::RLE]
     };
+    let encoding_stats = if is_symbol {
+        vec![
+            PageEncodingStats {
+                page_type: PageType::DICTIONARY_PAGE,
+                encoding: ThriftEncoding::PLAIN,
+                count: 1,
+            },
+            PageEncodingStats {
+                page_type: PageType::DATA_PAGE,
+                encoding: ThriftEncoding::RLE_DICTIONARY,
+                count: 1,
+            },
+        ]
+    } else {
+        vec![PageEncodingStats {
+            page_type: PageType::DATA_PAGE,
+            encoding: ThriftEncoding::PLAIN,
+            count: 1,
+        }]
+    };
 
     let metadata = ColumnMetaData {
         type_: thrift_type,
@@ -1451,7 +1472,7 @@ fn generate_null_column_chunk_bytes(
         index_page_offset: None,
         dictionary_page_offset: dict_page_offset,
         statistics: None,
-        encoding_stats: None,
+        encoding_stats: Some(encoding_stats),
         bloom_filter_offset: None,
         bloom_filter_length: None,
     };
@@ -1722,6 +1743,56 @@ mod tests {
             0,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn generate_null_column_chunk_bytes_sets_encoding_stats() -> Result<(), Box<dyn Error>> {
+        let int_type = ColumnTypeTag::Int.into_type();
+        let symbol_type = ColumnTypeTag::Symbol.into_type();
+        let int_partition = Partition {
+            table: "t".to_string(),
+            columns: vec![make_column_with_id(0, "i", int_type, &[1i32])],
+        };
+        let symbol_partition = Partition {
+            table: "t".to_string(),
+            columns: vec![make_column_with_id(0, "s", symbol_type, &[1i32])],
+        };
+        let (int_schema, _) = to_parquet_schema(&int_partition, false, -1)?;
+        let (symbol_schema, _) = to_parquet_schema(&symbol_partition, false, -1)?;
+
+        let (_, int_chunk) =
+            super::generate_null_column_chunk_bytes(&int_schema.fields()[0], int_type, 10, 100)?;
+        let (_, symbol_chunk) = super::generate_null_column_chunk_bytes(
+            &symbol_schema.fields()[0],
+            symbol_type,
+            10,
+            200,
+        )?;
+
+        assert_eq!(
+            int_chunk.meta_data.as_ref().unwrap().encoding_stats,
+            Some(vec![super::PageEncodingStats {
+                page_type: super::PageType::DATA_PAGE,
+                encoding: super::ThriftEncoding::PLAIN,
+                count: 1,
+            }])
+        );
+        assert_eq!(
+            symbol_chunk.meta_data.as_ref().unwrap().encoding_stats,
+            Some(vec![
+                super::PageEncodingStats {
+                    page_type: super::PageType::DICTIONARY_PAGE,
+                    encoding: super::ThriftEncoding::PLAIN,
+                    count: 1,
+                },
+                super::PageEncodingStats {
+                    page_type: super::PageType::DATA_PAGE,
+                    encoding: super::ThriftEncoding::RLE_DICTIONARY,
+                    count: 1,
+                },
+            ])
+        );
+        Ok(())
     }
 
     #[test]

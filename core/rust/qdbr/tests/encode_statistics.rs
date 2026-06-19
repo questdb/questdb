@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use parquet::arrow::arrow_reader::{ArrowReaderOptions, ParquetRecordBatchReaderBuilder};
-use parquet::basic::ColumnOrder;
+use parquet::basic::{ColumnOrder, Encoding as ParquetEncoding, PageType as ParquetPageType};
 use parquet::file::metadata::ParquetMetaData;
 use parquet::file::statistics::Statistics;
 use parquet::format::BoundaryOrder;
@@ -124,6 +124,61 @@ fn questdb_parquet_declares_column_orders_for_external_readers() {
         assert!(
             matches!(order, ColumnOrder::TYPE_DEFINED_ORDER(_)),
             "leaf column {i} must declare TypeDefinedOrder, got {order:?}"
+        );
+    }
+}
+
+/// Regression guard: QuestDB-written column chunks must expose Parquet page
+/// encoding statistics so external readers can inspect page-body encodings
+/// without scanning page headers.
+#[test]
+fn questdb_parquet_populates_encoding_stats_for_external_readers() {
+    let longs: Vec<i64> = vec![10, 20, 30, 40, 50];
+    let doubles: Vec<f64> = vec![1.5, 2.5, 3.5, 4.5, 5.5];
+    let row_count = longs.len();
+    let long_bytes = as_bytes(&longs);
+    let double_bytes = as_bytes(&doubles);
+
+    let columns = vec![
+        make_primitive_column(
+            "l",
+            ColumnType::new(ColumnTypeTag::Long, 0).code(),
+            long_bytes.as_ptr(),
+            long_bytes.len(),
+            row_count,
+            Encoding::Plain.config(),
+        ),
+        make_primitive_column(
+            "d",
+            ColumnType::new(ColumnTypeTag::Double, 0).code(),
+            double_bytes.as_ptr(),
+            double_bytes.len(),
+            row_count,
+            Encoding::Plain.config(),
+        ),
+    ];
+    let partition = Partition {
+        table: "compat".to_string(),
+        columns,
+    };
+    let data = write_parquet(partition);
+
+    let metadata = external_metadata(&data);
+    assert_eq!(metadata.num_row_groups(), 1, "expected a single row group");
+    let row_group = metadata.row_group(0);
+    for column_index in 0..row_group.num_columns() {
+        let stats = row_group
+            .column(column_index)
+            .page_encoding_stats()
+            .unwrap_or_else(|| panic!("column {column_index} is missing page encoding statistics"));
+        assert!(!stats.is_empty(), "column {column_index} has empty stats");
+        assert!(
+            stats.iter().any(|stat| {
+                stat.page_type == ParquetPageType::DATA_PAGE
+                    && stat.encoding == ParquetEncoding::PLAIN
+                    && stat.count >= 1
+            }),
+            "column {column_index} must report at least one PLAIN data page, got {stats:?}"
         );
     }
 }
