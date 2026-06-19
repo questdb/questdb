@@ -625,6 +625,50 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testEndToEndJsonExtractOverColumnSourceRegression() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT ('{\"x\":' || x || '}')::varchar j, x::int base FROM long_sequence(5))");
+
+            // json_extract reads its JSON source per row, so a cast/arithmetic node over it must NOT be
+            // folded as runtime constant. Before json_extract reported isRuntimeConstant() honestly, the
+            // composite parent inherited a stale compile-time true, got wrapped, and crashed in init() with
+            // an NPE evaluating json_extract.getInt(null) against a per-row column. These three shapes -
+            // projection, WHERE/async-filter and CASE - all reproduced the crash; they must now run per row
+            // and match the equivalent plain column-arithmetic (json_extract(j,'$.x')::int equals base here).
+
+            // projection: e = base + x = 2*x
+            assertSqlCursors(
+                    "SELECT (base + (base * 1)) e FROM t",
+                    "SELECT (base + (json_extract(j, '$.x')::int * 1)) e FROM t"
+            );
+
+            // WHERE / async filter: base > x - 100 is always true, so every row survives
+            assertSqlCursors(
+                    "SELECT base FROM t WHERE base > (base - 100)",
+                    "SELECT base FROM t WHERE base > (json_extract(j, '$.x')::int - 100)"
+            );
+
+            // CASE: same predicate inside a CASE, all rows qualify -> sum(base) = 15
+            assertSqlCursors(
+                    "SELECT sum(CASE WHEN base > (base - 100) THEN base ELSE 0 END) s FROM t",
+                    "SELECT sum(CASE WHEN base > (json_extract(j, '$.x')::int - 100) THEN base ELSE 0 END) s FROM t"
+            );
+        });
+    }
+
+    @Test
+    public void testEndToEndJsonExtractOverConstantSourceFolds() throws Exception {
+        assertMemoryLeak(() -> {
+            // When the JSON source is itself constant, json_extract IS runtime constant, so arithmetic over
+            // it is a foldable subtree: the wrapper evaluates json_extract.getInt(null) once (safe, because
+            // the constant source ignores the null record) and serves the cached value per row.
+            assertQuery("SELECT (json_extract('{\"x\":7}'::varchar, '$.x')::int * 2) e FROM long_sequence(3)")
+                    .expectSize()
+                    .returns("e\n14\n14\n14\n");
+        });
+    }
+
+    @Test
     public void testEndToEndNullRuntimeConstThreshold() throws Exception {
         assertMemoryLeak(() -> {
             execute(
@@ -743,6 +787,23 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
                 }
                 TestUtils.assertEquals("s\n34\n", sink);
             }
+        });
+    }
+
+    @Test
+    public void testEndToEndVarcharEqJsonExtractRegression() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t2 AS (SELECT ('{\"k\":\"v' || x || '\"}')::varchar j, ('v' || x)::varchar label FROM long_sequence(3))");
+
+            // Same root cause via a different consumer: EqVarcharFunctionFactory reads isRuntimeConstant() at
+            // compile time and, when true, builds a HalfRuntimeConstFunc that caches right.getVarcharA(null)
+            // in init(). With json_extract over a per-row column that path NPE'd (pre-existing latent bug).
+            // Now json_extract reports false, so equality falls back to per-row evaluation. Every row matches
+            // (label == json_extract(j,'$.k')), so the result equals the all-rows reference.
+            assertSqlCursors(
+                    "SELECT count(*) c FROM t2 WHERE label = label",
+                    "SELECT count(*) c FROM t2 WHERE label = json_extract(j, '$.k')"
+            );
         });
     }
 
