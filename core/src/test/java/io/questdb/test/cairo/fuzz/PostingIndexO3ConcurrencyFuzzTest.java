@@ -135,15 +135,15 @@ public class PostingIndexO3ConcurrencyFuzzTest extends AbstractFuzzTest {
                 0.0,
                 0.8,
                 0.0,   // replaceProb -- DISABLED: replace-range commits are a mat-view-only
-                       //   operation in production (WalWriter.commitMatView via
-                       //   MatViewRefreshJob); they are never issued against a regular WAL
-                       //   table. With partitionToParquetProb>0 above, enabling replace here
-                       //   makes the fuzz apply a replace commit onto a Parquet partition --
-                       //   an unsupported, production-unreachable state that suspends the
-                       //   table ("commit replace mode is not supported for Parquet
-                       //   partitions"). Replace and Parquet must stay mutually exclusive;
-                       //   native-partition replace coverage lives in
-                       //   testCoveringPostingO3NativeSpillFuzz and testCoveringPostingSquashSpillFuzz.
+                //   operation in production (WalWriter.commitMatView via
+                //   MatViewRefreshJob); they are never issued against a regular WAL
+                //   table. With partitionToParquetProb>0 above, enabling replace here
+                //   makes the fuzz apply a replace commit onto a Parquet partition --
+                //   an unsupported, production-unreachable state that suspends the
+                //   table ("commit replace mode is not supported for Parquet
+                //   partitions"). Replace and Parquet must stay mutually exclusive;
+                //   native-partition replace coverage lives in
+                //   testCoveringPostingO3NativeSpillFuzz and testCoveringPostingSquashSpillFuzz.
                 0.0,
                 0.01,
                 0.1,   // setParquetEncodingProb
