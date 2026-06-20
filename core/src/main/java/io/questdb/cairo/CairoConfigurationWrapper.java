@@ -558,11 +558,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public long getMatViewRefreshOomRetryTimeout() {
-        return getDelegate().getMatViewRefreshOomRetryTimeout();
-    }
-
-    @Override
     public long getMatViewRowsPerQueryEstimate() {
         return getDelegate().getMatViewRowsPerQueryEstimate();
     }

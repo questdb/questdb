@@ -916,7 +916,6 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.mat.view.enabled\tQDB_CAIRO_MAT_VIEW_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.mat.view.covering.index.enabled\tQDB_CAIRO_MAT_VIEW_COVERING_INDEX_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
                                     "cairo.mat.view.max.refresh.retries\tQDB_CAIRO_MAT_VIEW_MAX_REFRESH_RETRIES\t10\tdefault\tfalse\ttrue\n" +
-                                    "cairo.mat.view.refresh.oom.retry.timeout\tQDB_CAIRO_MAT_VIEW_REFRESH_OOM_RETRY_TIMEOUT\t200\tdefault\tfalse\tfalse\n" +
                                     "cairo.mat.view.refresh.busy.retry.timeout\tQDB_CAIRO_MAT_VIEW_REFRESH_BUSY_RETRY_TIMEOUT\t1000\tdefault\tfalse\tfalse\n" +
                                     "cairo.mat.view.refresh.busy.retry.limit\tQDB_CAIRO_MAT_VIEW_REFRESH_BUSY_RETRY_LIMIT\t10\tdefault\tfalse\tfalse\n" +
                                     "cairo.mat.view.refresh.block.list\tQDB_CAIRO_MAT_VIEW_REFRESH_BLOCK_LIST\t\tdefault\tfalse\tfalse\n" +

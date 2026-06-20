@@ -375,8 +375,6 @@ public interface CairoConfiguration {
      */
     long getMatViewRefreshMemoryLimitBytes();
 
-    long getMatViewRefreshOomRetryTimeout();
-
     long getMatViewRowsPerQueryEstimate();
 
     int getMaxCrashFiles();

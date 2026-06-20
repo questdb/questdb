@@ -111,7 +111,6 @@ public class MatViewRefreshRetryTest extends AbstractCairoTest {
     }
 
     private void testOom(boolean enableParallelSql) throws Exception {
-        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_OOM_RETRY_TIMEOUT, 1);
         setProperty(PropertyKey.CAIRO_MAT_VIEW_PARALLEL_SQL_ENABLED, String.valueOf(enableParallelSql));
         // Defer OOM refreshes without backoff and cap them low, so a few re-drives exhaust the limit.
         setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_BUSY_RETRY_TIMEOUT, 0);

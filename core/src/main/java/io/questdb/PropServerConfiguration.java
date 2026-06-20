@@ -352,7 +352,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int matViewRefreshMaxClusters;
     private final long matViewRefreshMemoryLimitBytes;
     private final boolean matViewRefreshMissingWalFilesFatal;
-    private final long matViewRefreshOomRetryTimeout;
     private final WorkerPoolConfiguration matViewRefreshPoolConfiguration = new PropMatViewsRefreshPoolConfiguration();
     private final long matViewRefreshSleepTimeout;
     private final int[] matViewRefreshWorkerAffinity;
@@ -1501,7 +1500,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             // reuse wal-apply defaults for mat view workers
             this.matViewEnabled = getBoolean(properties, env, PropertyKey.CAIRO_MAT_VIEW_ENABLED, true);
             this.matViewMaxRefreshRetries = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_RETRIES, 10);
-            this.matViewRefreshOomRetryTimeout = getMillis(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_OOM_RETRY_TIMEOUT, 200);
             this.matViewRefreshBusyRetryTimeout = getMillis(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_BUSY_RETRY_TIMEOUT, 1000);
             this.matViewRefreshBusyRetryLimit = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_BUSY_RETRY_LIMIT, 10);
             parseMatViewRefreshBlockList(getString(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_BLOCK_LIST, ""));
@@ -4185,11 +4183,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getMatViewRefreshMemoryLimitBytes() {
             return matViewRefreshMemoryLimitBytes;
-        }
-
-        @Override
-        public long getMatViewRefreshOomRetryTimeout() {
-            return matViewRefreshOomRetryTimeout;
         }
 
         @Override
