@@ -238,6 +238,71 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReplaceRangeAddsPartitionsAboveLastThenRebuilds() throws Exception {
+        // Regression for a replace-mode O3 bug (reachable via live-view BACKFILL + O3).
+        // Commit A is a REPLACE_RANGE [oldMax + 1us, +inf) that appends new partitions above the
+        // previous last partition (2026-01-05), leaving it untouched. The open-ended high boundary
+        // (Long.MAX_VALUE - 1) overflowed getCurrentPartitionMaxTimestamp, so partitionTimestampHi
+        // stayed stale and finishO3Commit never switched the active columns to the new last
+        // partition (2026-01-10). Commit B, a full rebuild (REPLACE_RANGE [min, +inf)), then
+        // treated 2026-01-10 as the active partition, reused the stale 2026-01-05 descriptors, and
+        // corrupted the view / suspended the table.
+        assertMemoryLeak(() -> {
+            execute("create table rg (id long, ts timestamp, v long) timestamp(ts) partition by DAY WAL");
+            execute("create table expected (id long, ts timestamp, v long) timestamp(ts) partition by DAY WAL");
+            TableToken rg = engine.verifyTableName("rg");
+            TableToken expected = engine.verifyTableName("expected");
+
+            // Existing data: days 2026-01-01..2026-01-05, last partition 2026-01-05 maxing at
+            // exactly 2026-01-05T00:03:46.111248Z.
+            for (int day = 0; day < 5; day++) {
+                try (WalWriter ww = engine.getWalWriter(rg)) {
+                    long[] tss = existingDay(day);
+                    for (int r = 0; r < tss.length; r++) {
+                        appendRow(ww, tss[r], day * 100L + r, (day * 100L + r) * 10);
+                    }
+                    ww.commit();
+                }
+                drainWalQueue();
+            }
+
+            // Commit A: replace [oldMax + 1us, +inf) with new partitions above the last: days 06,
+            // 08, 09, 10 (gap at 07).
+            long rangeLoA = MicrosTimestampDriver.floor("2026-01-05T00:03:46.111248Z") + 1;
+            long[] newTss = newPartitionRows();
+            try (WalWriter ww = engine.getWalWriter(rg)) {
+                for (int i = 0; i < newTss.length; i++) {
+                    appendRow(ww, newTss[i], 1000L + i, (1000L + i) * 10);
+                }
+                ww.commitWithParams(rangeLoA, Long.MAX_VALUE, WAL_DEDUP_MODE_REPLACE_RANGE);
+            }
+            drainWalQueue();
+
+            // Commit B: full rebuild. Replace [min, +inf), re-emitting every row in ts order,
+            // including a new 2026-01-07 row between commit A's partitions.
+            try (WalWriter ww = engine.getWalWriter(rg)) {
+                appendFinalDataset(ww);
+                ww.commitWithParams(MicrosTimestampDriver.floor("2026-01-01T00:00:00.000000Z"), Long.MAX_VALUE, WAL_DEDUP_MODE_REPLACE_RANGE);
+            }
+            drainWalQueue();
+
+            // Oracle: the same final row set written with plain commits, no replace mode.
+            try (WalWriter ww = engine.getWalWriter(expected)) {
+                appendFinalDataset(ww);
+                ww.commit();
+            }
+            drainWalQueue();
+
+            Assert.assertFalse("table is suspended", engine.getTableSequencerAPI().isSuspended(rg));
+            assertSqlCursors("select id, ts, v from expected", "select id, ts, v from rg");
+            assertSqlCursors(
+                    "select count(*), min(ts), max(ts) from expected",
+                    "select count(*), min(ts), max(ts) from rg"
+            );
+        });
+    }
+
+    @Test
     public void testReplaceRangeBeforeFirstPartitionAndData() throws Exception {
         testReplaceRangeBeforeFirstPartitionAndData(false);
     }
@@ -1897,6 +1962,32 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
         });
     }
 
+    // The complete final row set in ts order. Commit B and the oracle both write exactly this.
+    private static void appendFinalDataset(WalWriter ww) throws NumericException {
+        long id = 1;
+        for (int day = 0; day < 5; day++) {
+            for (long ts : existingDay(day)) {
+                appendRow(ww, ts, id, id * 10);
+                id++;
+            }
+        }
+        long[] newTss = newPartitionRows();
+        appendRow(ww, newTss[0], id++, 0); // 2026-01-06
+        appendRow(ww, newTss[1], id++, 0); // 2026-01-06
+        appendRow(ww, MicrosTimestampDriver.floor("2026-01-07T00:04:35.803821Z"), id++, 0);
+        appendRow(ww, newTss[2], id++, 0); // 2026-01-08
+        appendRow(ww, newTss[3], id++, 0); // 2026-01-09
+        appendRow(ww, newTss[4], id++, 0); // 2026-01-10
+        appendRow(ww, newTss[5], id, 0);   // 2026-01-10
+    }
+
+    private static void appendRow(WalWriter ww, long ts, long id, long v) {
+        TableWriter.Row row = ww.newRow(ts);
+        row.putLong(0, id);
+        row.putLong(2, v);
+        row.append();
+    }
+
     private static void assertAlterIsStructural(String alterSql, boolean expectedStructural) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             AlterOperation alterOp = compiler.compile(alterSql, sqlExecutionContext).getAlterOperation();
@@ -1922,6 +2013,26 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
             long rangeEnd = MicrosTimestampDriver.floor(rangeEndStr) + 1;
             ww.commitWithParams(rangeStart, rangeEnd, WAL_DEDUP_MODE_REPLACE_RANGE);
         }
+    }
+
+    // Existing rows for the 0-based day index. Days 0..3 hold five rows each; day 4 (2026-01-05)
+    // holds six, the last at exactly 2026-01-05T00:03:46.111248Z (the commit-A range starts 1us
+    // above it).
+    private static long[] existingDay(int day) throws NumericException {
+        long base = MicrosTimestampDriver.floor("2026-01-01T00:00:00.000000Z");
+        if (day < 4) {
+            long dayBase = base + day * 86_400_000_000L;
+            return new long[]{dayBase, dayBase + 1_000_000L, dayBase + 2_000_000L, dayBase + 3_000_000L, dayBase + 4_000_000L};
+        }
+        long d05 = MicrosTimestampDriver.floor("2026-01-05T00:03:32.239828Z");
+        return new long[]{
+                d05,
+                d05 + 3_000_000L,
+                d05 + 4_000_000L,
+                d05 + 6_000_000L,
+                d05 + 9_000_000L,
+                MicrosTimestampDriver.floor("2026-01-05T00:03:46.111248Z"),
+        };
     }
 
     private static void insertRowsWithRangeReplace(
@@ -1958,6 +2069,18 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
                 ww.commit();
             }
         }
+    }
+
+    // Commit-A rows: days 06, 08, 09, 10 (gap at 07), all above the 2026-01-05 max, in ts order.
+    private static long[] newPartitionRows() throws NumericException {
+        return new long[]{
+                MicrosTimestampDriver.floor("2026-01-06T00:03:46.377496Z"),
+                MicrosTimestampDriver.floor("2026-01-06T00:04:00.000000Z"),
+                MicrosTimestampDriver.floor("2026-01-08T00:04:41.334009Z"),
+                MicrosTimestampDriver.floor("2026-01-09T00:05:19.959452Z"),
+                MicrosTimestampDriver.floor("2026-01-10T00:05:54.691962Z"),
+                MicrosTimestampDriver.floor("2026-01-10T00:06:00.177392Z"),
+        };
     }
 
     private void insertRowWithReplaceRange(
