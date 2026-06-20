@@ -135,6 +135,7 @@ import io.questdb.griffin.engine.functions.columns.GeoShortColumn;
 import io.questdb.griffin.engine.functions.columns.IPv4Column;
 import io.questdb.griffin.engine.functions.columns.IntColumn;
 import io.questdb.griffin.engine.functions.columns.IntervalColumn;
+import io.questdb.griffin.engine.functions.columns.Long128Column;
 import io.questdb.griffin.engine.functions.columns.Long256Column;
 import io.questdb.griffin.engine.functions.columns.LongColumn;
 import io.questdb.griffin.engine.functions.columns.ShortColumn;
@@ -2810,6 +2811,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         assert fromTag == UUID;
                         castFunctions.add(UuidColumn.newInstance(i));
                         break;
+                    case LONG128:
+                        assert fromTag == LONG128;
+                        castFunctions.add(Long128Column.newInstance(i));
+                        break;
                     case TIMESTAMP:
                         switch (fromTag) {
                             case DATE:
@@ -3480,6 +3485,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             default:
                                 assert false;
                         }
+                        break;
+                    default:
+                        assert false;
                 }
             }
         }
@@ -9603,6 +9611,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // metadata instance
             intHashSet.clear();
             final IntList columnIndexes = new IntList();
+            // Cached window functions read from the record chain, which reorders columns
+            // (window outputs lead, base columns follow), so track where the designated
+            // timestamp lands in the chain for RANGE-framed functions to read.
+            int chainTimestampIndex = -1;
             for (int i = 0; i < columnCount; i++) {
                 final QueryColumn qc = columns.getQuick(i);
                 if (!qc.isWindowExpression()) {
@@ -9630,6 +9642,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                     if (baseMetadata.getTimestampIndex() != -1 && baseMetadata.getTimestampIndex() == columnIndex) {
                         factoryMetadata.setTimestampIndex(i);
+                        chainTimestampIndex = i;
                     }
                 }
             }
@@ -9650,6 +9663,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     listColumnFilterA.extendAndSet(addAt, addAt + 1);
                     listColumnFilterB.extendAndSet(addAt, i);
                     columnIndexes.extendAndSet(addAt, i);
+                    if (baseMetadata.getTimestampIndex() == i) {
+                        chainTimestampIndex = addAt;
+                    }
                     addAt++;
                 }
             }
@@ -9746,7 +9762,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             ac.getRowsHiKindPos(),
                             ac.getExclusionKind(),
                             ac.getExclusionKindPos(),
-                            baseMetadata.getTimestampIndex(),
+                            chainTimestampIndex,
                             baseMetadata.getTimestampType(),
                             ac.isIgnoreNulls(),
                             ac.getNullsDescPos()

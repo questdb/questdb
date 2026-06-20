@@ -86,7 +86,7 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
         EncodedTopKBuffer entriesInit = null;
         try {
             encoderInit = new SortKeyEncoder(metadata, sortColumnFilter);
-            entriesInit = new EncodedTopKBuffer(configuration);
+            entriesInit = new EncodedTopKBuffer(configuration, true);
         } catch (Throwable th) {
             Misc.free(encoderInit);
             Misc.free(entriesInit);
@@ -168,10 +168,19 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
 
     @Override
     public void of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
+        // The tracker is rebound unconditionally below (outside the !isOpen guard) because
+        // the ctor opens eagerly with isOpen=true; binding inside the guard would leave the
+        // first query untracked. A second of() without an intervening close() would rebind
+        // onto still-charged backing and underflow the per-query counter on free. close()
+        // nulls baseCursor, so a null field here means fresh-or-closed.
+        assert this.baseCursor == null : "of() without intervening close(): rebinding the memory tracker would underflow the per-query counter";
         // Take ownership before reopen() can throw: on a reopen OOM, close()
         // must find baseCursor here to free it instead of leaking it.
         this.baseCursor = baseCursor;
         this.baseRecord = baseCursor.getRecord();
+        // Bind the tracker before any entry-buffer allocation: the first open grows the buffer
+        // lazily in beginAppend (reopen is skipped as isOpen starts true), a reuse re-allocates via reopen.
+        entries.setMemoryTracker(executionContext.getMemoryTracker());
         if (!isOpen) {
             isOpen = true;
             entries.reopen();
@@ -186,6 +195,11 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
         entrySize = keyType.entrySize();
         rowIdOffset = keyType.rowIdOffset();
         entries.of(keyType, isFirstN, limit);
+        // Variable-length keys spill into the buffer's key heap; the encoder
+        // writes the full key bytes there during the build pass.
+        if (keyType.isVariable()) {
+            encoder.setKeyHeap(entries.getKeyHeap());
+        }
         circuitBreaker = executionContext.getCircuitBreaker();
         isBuilt = false;
         currentAddr = 0;
@@ -282,8 +296,7 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
         }
         while (baseCursor.hasNext()) {
             circuitBreaker.statefulThrowExceptionIfTripped();
-            encodeCurrentRow();
-            entries.endAppend();
+            encoder.encodeTopK(baseRecord, baseRecord.getRowId(), entries);
         }
     }
 
@@ -316,6 +329,7 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
             } else {
                 rowsSoFar += rowsInGroup;
                 if (rowsSoFar > limit) {
+                    entries.discardLastAppend();
                     return;
                 }
                 groupKey = currentKey;

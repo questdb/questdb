@@ -543,6 +543,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getMatViewRefreshMemoryLimitBytes() {
+        return getDelegate().getMatViewRefreshMemoryLimitBytes();
+    }
+
+    @Override
     public long getMatViewRefreshOomRetryTimeout() {
         return getDelegate().getMatViewRefreshOomRetryTimeout();
     }
@@ -840,6 +845,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public long getQueryContinuationWakeIntervalMillis() {
         return getDelegate().getQueryContinuationWakeIntervalMillis();
+    }
+
+    @Override
+    public long getQueryMemoryLimitBytes() {
+        return getDelegate().getQueryMemoryLimitBytes();
     }
 
     @Override
@@ -1413,6 +1423,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getWalApplyMemoryLimitBytes() {
+        return getDelegate().getWalApplyMemoryLimitBytes();
+    }
+
+    @Override
     public long getWalApplyTableTimeQuota() {
         return getDelegate().getWalApplyTableTimeQuota();
     }
@@ -1655,6 +1670,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isReadOnlyInstance() {
         return getDelegate().isReadOnlyInstance();
+    }
+
+    @Override
+    public boolean isSqlDistinctGroupByRewriteEnabled() {
+        return getDelegate().isSqlDistinctGroupByRewriteEnabled();
     }
 
     @Override

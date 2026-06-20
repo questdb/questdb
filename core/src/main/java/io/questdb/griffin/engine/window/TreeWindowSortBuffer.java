@@ -33,8 +33,10 @@ import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.griffin.engine.orderby.LongTreeChain;
 import io.questdb.griffin.engine.orderby.SortKeyEncoder;
 import io.questdb.std.DirectIntList;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.Nullable;
 
 final class TreeWindowSortBuffer implements WindowSortBuffer {
     private final RecordComparator comparator;
@@ -63,7 +65,9 @@ final class TreeWindowSortBuffer implements WindowSortBuffer {
                     configuration.getSqlWindowRowIdPageSize(),
                     configuration.getSqlWindowRowIdMaxBytes(),
                     PropertyKey.CAIRO_SQL_WINDOW_TREE_MAX_BYTES.getPropertyPath(),
-                    PropertyKey.CAIRO_SQL_WINDOW_ROWID_MAX_BYTES.getPropertyPath()
+                    PropertyKey.CAIRO_SQL_WINDOW_ROWID_MAX_BYTES.getPropertyPath(),
+                    // Lazy: heaps allocate on the first reopen() under the bound tracker.
+                    false
             );
         } catch (Throwable th) {
             Misc.freeObjListAndKeepObjects(rankMaps);
@@ -111,6 +115,11 @@ final class TreeWindowSortBuffer implements WindowSortBuffer {
     @Override
     public void reopen() {
         tree.reopen();
+    }
+
+    @Override
+    public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        tree.setMemoryTracker(tracker);
     }
 
     @Override

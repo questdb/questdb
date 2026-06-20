@@ -73,6 +73,8 @@ public class EncodedSortLimitedLightRecordCursorFactory extends AbstractRecordCu
             int timestampIndex
     ) {
         super(metadata);
+        // The build phase never calls recordAt, but emit re-fetches the kept rows from the base.
+        assert base.recordCursorSupportsRandomAccess();
         this.base = base;
         this.loFunction = loFunction;
         this.hiFunction = hiFunction;

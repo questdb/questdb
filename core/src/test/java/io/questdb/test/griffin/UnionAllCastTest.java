@@ -2127,6 +2127,27 @@ public class UnionAllCastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLong128Long128() throws Exception {
+        // The x branch differs from the union metadata only in column b (int vs long), which forces
+        // a cast of the whole branch. generateCastFunctions must emit an identity cast for the
+        // LONG128 column a; omitting it misaligns every later column's cast function.
+        testUnionAll(
+                """
+                        a\tb
+                        00000000-0000-0000-0000-000000000001\t1
+                        00000000-0000-0000-0000-000000000002\t2
+                        00000000-0000-0000-0000-000000000003\t3
+                        00000000-0000-0000-0000-00000000000b\t11
+                        00000000-0000-0000-0000-00000000000c\t12
+                        00000000-0000-0000-0000-00000000000d\t13
+                        """,
+                "create table x as (select to_long128(x, 0::long) a, x::int b from long_sequence(3))",
+                "create table y as (select to_long128(x + 10, 0::long) a, (x + 10)::long b from long_sequence(3))",
+                false
+        );
+    }
+
+    @Test
     public void testLong256Long256() throws Exception {
         testUnionAll(
                 """

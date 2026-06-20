@@ -51,11 +51,13 @@ import io.questdb.griffin.model.WindowExpression;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import org.jetbrains.annotations.Nullable;
 
 public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactory {
 
@@ -647,6 +649,12 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
             sink.val('(').val(arg).val(')');
@@ -926,7 +934,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             timestampIndex = timestampIdx;
 
             capacity = initialCapacity;
-            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            // memory allocates lazily on reopen(), under the tracker bound by the cursor
             firstIdx = 0;
             frameSize = 0;
             sum = 0.0;
@@ -1074,6 +1082,11 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         public void reset() {
             super.reset();
             memory.close();
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            memory.setMemoryTracker(tracker);
         }
 
         @Override
