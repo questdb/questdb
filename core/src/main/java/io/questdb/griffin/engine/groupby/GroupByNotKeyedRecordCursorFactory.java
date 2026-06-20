@@ -148,6 +148,18 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
         }
     }
 
+    /**
+     * Returns true when this factory builds an early-exit non-keyed group-by
+     * cursor, i.e. one that stops scanning the base cursor as soon as the
+     * aggregate value is final (see {@link EarlyExitGroupByNotKeyedRecordCursor}).
+     * That happens for aggregates such as {@code count_distinct} over a constant
+     * or over a fully-enumerated symbol column, where reading further rows cannot
+     * change the result.
+     */
+    public boolean isEarlyExitSupported() {
+        return cursor instanceof EarlyExitGroupByNotKeyedRecordCursor;
+    }
+
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;

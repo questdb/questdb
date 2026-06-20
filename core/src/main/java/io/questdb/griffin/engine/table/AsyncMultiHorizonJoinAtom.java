@@ -258,7 +258,9 @@ public class AsyncMultiHorizonJoinAtom extends BaseAsyncMultiHorizonJoinAtom {
 
     @Override
     protected void closeAggregationState() {
-        shardingCtx.close();
+        // Null-safe: the base ctor calls close() on its error path before this subclass
+        // ctor has assigned shardingCtx, so it can still be null here.
+        Misc.free(shardingCtx);
         Misc.freeObjList(ownerKeyFunctions);
         if (perWorkerKeyFunctions != null) {
             for (int i = 0, n = perWorkerKeyFunctions.size(); i < n; i++) {

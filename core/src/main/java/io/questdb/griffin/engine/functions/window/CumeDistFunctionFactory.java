@@ -415,7 +415,9 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
         ) {
             this.partitionByRecord = partitionByRecord;
             this.partitionBySink = partitionBySink;
-            this.keyColumnTypes = keyColumnTypes;
+            // Snapshot the key types so initRecordComparator() does not read the generator's reused
+            // buffer after it has been rebuilt for a later window column's PARTITION BY.
+            this.keyColumnTypes = copyKeyTypes(keyColumnTypes);
             this.configuration = configuration;
             this.deferredOffsets = deferredOffsets;
             this.initialBufferSize = initialBufferSize;
