@@ -5895,6 +5895,34 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFirstValueDecimal128OverPartitionRowsFrameSnapshotRoundTrip() throws Exception {
+        // first_value(DECIMAL(38,6)) over a bounded ROWS frame - 16-byte ring
+        // element; the sliding 2-preceding window makes the first value change.
+        assertFirstValueDecimalFrameRoundTrip(
+                false,
+                "DECIMAL(38, 6)",
+                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10.000000m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20.000000m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30.000000m), " +
+                        "('2026-08-01T03:00:00.000000Z', 'a', 40.000000m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6.000000m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12.000000m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18.000000m), " +
+                        "('2026-08-01T03:00:00.000000Z', 'b', 24.000000m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t10.000000\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t10.000000\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t10.000000\n" +
+                        "2026-08-01T03:00:00.000000Z\ta\t20.000000\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t6.000000\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t6.000000\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t6.000000\n" +
+                        "2026-08-01T03:00:00.000000Z\tb\t12.000000\n"
+        );
+    }
+
+    @Test
     public void testFirstValueDecimal128OverUnboundedPartitionRowsSnapshotRoundTrip() throws Exception {
         assertFirstValueDecimalUnboundedRoundTrip(
                 false,
@@ -5936,6 +5964,33 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                         "2026-08-01T00:00:00.000000Z\tb\t6.0\n" +
                         "2026-08-01T01:00:00.000000Z\tb\t6.0\n" +
                         "2026-08-01T02:00:00.000000Z\tb\t6.0\n"
+        );
+    }
+
+    @Test
+    public void testFirstValueDecimal16OverPartitionRowsFrameSnapshotRoundTrip() throws Exception {
+        // first_value(DECIMAL(4,1)) over a bounded ROWS frame - SHORT ring element.
+        assertFirstValueDecimalFrameRoundTrip(
+                false,
+                "DECIMAL(4, 1)",
+                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10.0m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20.0m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30.0m), " +
+                        "('2026-08-01T03:00:00.000000Z', 'a', 40.0m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6.0m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12.0m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18.0m), " +
+                        "('2026-08-01T03:00:00.000000Z', 'b', 24.0m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t10.0\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t10.0\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t10.0\n" +
+                        "2026-08-01T03:00:00.000000Z\ta\t20.0\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t6.0\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t6.0\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t6.0\n" +
+                        "2026-08-01T03:00:00.000000Z\tb\t12.0\n"
         );
     }
 
@@ -5985,6 +6040,34 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFirstValueDecimal256OverPartitionRowsFrameSnapshotRoundTrip() throws Exception {
+        // first_value(DECIMAL(60,0)) over a bounded ROWS frame - 32-byte ring
+        // element.
+        assertFirstValueDecimalFrameRoundTrip(
+                false,
+                "DECIMAL(60, 0)",
+                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30m), " +
+                        "('2026-08-01T03:00:00.000000Z', 'a', 40m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18m), " +
+                        "('2026-08-01T03:00:00.000000Z', 'b', 24m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t10\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t10\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t10\n" +
+                        "2026-08-01T03:00:00.000000Z\ta\t20\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t6\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t6\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t6\n" +
+                        "2026-08-01T03:00:00.000000Z\tb\t12\n"
+        );
+    }
+
+    @Test
     public void testFirstValueDecimal256OverUnboundedPartitionRowsSnapshotRoundTrip() throws Exception {
         assertFirstValueDecimalUnboundedRoundTrip(
                 false,
@@ -6025,6 +6108,33 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                         "2026-08-01T00:00:00.000000Z\tb\t6.000\n" +
                         "2026-08-01T01:00:00.000000Z\tb\t6.000\n" +
                         "2026-08-01T02:00:00.000000Z\tb\t6.000\n"
+        );
+    }
+
+    @Test
+    public void testFirstValueDecimal32OverPartitionRowsFrameSnapshotRoundTrip() throws Exception {
+        // first_value(DECIMAL(9,3)) over a bounded ROWS frame - INT ring element.
+        assertFirstValueDecimalFrameRoundTrip(
+                false,
+                "DECIMAL(9, 3)",
+                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10.000m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20.000m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30.000m), " +
+                        "('2026-08-01T03:00:00.000000Z', 'a', 40.000m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6.000m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12.000m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18.000m), " +
+                        "('2026-08-01T03:00:00.000000Z', 'b', 24.000m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t10.000\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t10.000\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t10.000\n" +
+                        "2026-08-01T03:00:00.000000Z\ta\t20.000\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t6.000\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t6.000\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t6.000\n" +
+                        "2026-08-01T03:00:00.000000Z\tb\t12.000\n"
         );
     }
 
@@ -6074,6 +6184,34 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFirstValueDecimal64OverPartitionRowsFrameSnapshotRoundTrip() throws Exception {
+        // first_value(DECIMAL(18,2)) over a bounded ROWS frame - 8-byte (LONG) ring
+        // element.
+        assertFirstValueDecimalFrameRoundTrip(
+                false,
+                "DECIMAL(18, 2)",
+                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10.00m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20.00m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30.00m), " +
+                        "('2026-08-01T03:00:00.000000Z', 'a', 40.00m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6.00m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12.00m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18.00m), " +
+                        "('2026-08-01T03:00:00.000000Z', 'b', 24.00m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t10.00\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t10.00\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t10.00\n" +
+                        "2026-08-01T03:00:00.000000Z\ta\t20.00\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t6.00\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t6.00\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t6.00\n" +
+                        "2026-08-01T03:00:00.000000Z\tb\t12.00\n"
+        );
+    }
+
+    @Test
     public void testFirstValueDecimal64OverUnboundedPartitionRowsSnapshotRoundTrip() throws Exception {
         assertFirstValueDecimalUnboundedRoundTrip(
                 false,
@@ -6114,6 +6252,33 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                         "2026-08-01T00:00:00.000000Z\tb\t6\n" +
                         "2026-08-01T01:00:00.000000Z\tb\t6\n" +
                         "2026-08-01T02:00:00.000000Z\tb\t6\n"
+        );
+    }
+
+    @Test
+    public void testFirstValueDecimal8OverPartitionRowsFrameSnapshotRoundTrip() throws Exception {
+        // first_value(DECIMAL(2,0)) over a bounded ROWS frame - BYTE ring element.
+        assertFirstValueDecimalFrameRoundTrip(
+                false,
+                "DECIMAL(2, 0)",
+                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30m), " +
+                        "('2026-08-01T03:00:00.000000Z', 'a', 40m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18m), " +
+                        "('2026-08-01T03:00:00.000000Z', 'b', 24m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t10\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t10\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t10\n" +
+                        "2026-08-01T03:00:00.000000Z\ta\t20\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t6\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t6\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t6\n" +
+                        "2026-08-01T03:00:00.000000Z\tb\t12\n"
         );
     }
 
@@ -6160,6 +6325,37 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                         "2026-08-01T00:00:00.000000Z\tb\t6.00\n" +
                         "2026-08-01T01:00:00.000000Z\tb\t6.00\n" +
                         "2026-08-01T02:00:00.000000Z\tb\t6.00\n"
+        );
+    }
+
+    @Test
+    public void testFirstValueIgnoreNullsDecimal64OverPartitionRowsFrameSnapshotRoundTrip() throws Exception {
+        // first_value(DECIMAL(18,2)) IGNORE NULLS over a bounded ROWS frame -
+        // exercises the FirstNotNull ROWS subclass (firstNotNullIdx tracking plus
+        // full physical-ring serialization) and skipping a NULL inside the frame.
+        // 'a' has a NULL at row 2; the 2-preceding window keeps the first non-null
+        // at 10.00 until that value falls out of the frame (row 4 -> 30.00).
+        assertFirstValueDecimalFrameRoundTrip(
+                true,
+                "DECIMAL(18, 2)",
+                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10.00m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', null), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30.00m), " +
+                        "('2026-08-01T03:00:00.000000Z', 'a', 40.00m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6.00m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12.00m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18.00m), " +
+                        "('2026-08-01T03:00:00.000000Z', 'b', 24.00m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t10.00\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t10.00\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t10.00\n" +
+                        "2026-08-01T03:00:00.000000Z\ta\t30.00\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t6.00\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t6.00\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t6.00\n" +
+                        "2026-08-01T03:00:00.000000Z\tb\t12.00\n"
         );
     }
 
