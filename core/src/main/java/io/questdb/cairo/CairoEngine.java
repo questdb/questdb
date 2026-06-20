@@ -131,6 +131,7 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
+import io.questdb.std.MemoryTrackerProvider;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjHashSet;
@@ -230,6 +231,10 @@ public class CairoEngine implements Closeable, WriterSource {
     private volatile @NotNull DurableAckRegistry durableAckRegistry = DefaultDurableAckRegistry.INSTANCE;
     private FrameFactory frameFactory;
     private @NotNull MatViewStateStore matViewStateStore = NoOpMatViewStateStore.INSTANCE;
+    // Lazily initialized on first call to getMemoryTrackerProvider(), because the
+    // FactoryProvider that produces it is not bound until config.init(engine, ...)
+    // runs, which is *after* the engine constructor returns.
+    private volatile MemoryTrackerProvider memoryTrackerProvider;
     private volatile Runnable recentWriteTrackerHydrationCallback;
     private @NotNull ViewStateStore viewStateStore = NoOpViewStateStore.INSTANCE;
     private @NotNull WalDirectoryPolicy walDirectoryPolicy = DefaultWalDirectoryPolicy.INSTANCE;
@@ -590,6 +595,10 @@ public class CairoEngine implements Closeable, WriterSource {
         partitionOverwriteControl.clear();
         frameFactory.clear();
         copyExportContext.clear();
+        // Drain the per-workload memory-tracker pool so a tracker acquired in
+        // a previous test does not survive as a retained native block and
+        // trip the test infrastructure's leak checker.
+        Misc.clear(memoryTrackerProvider);
         return b1 & b2 & b3 & b4 & b5 & b6 & b7;
     }
 
@@ -621,6 +630,7 @@ public class CairoEngine implements Closeable, WriterSource {
         Misc.free(settingsStore);
         Misc.free(frameFactory);
         Misc.free(walLocker);
+        Misc.free(memoryTrackerProvider);
         // Defensive: signalClose() already shutdown timerShards in the normal path.
         // halt() is idempotent and ensures the daemon threads are joined even if
         // close() runs without a prior signalClose(). Null guard covers the
@@ -925,6 +935,20 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public Queue<MatViewTimerTask> getMatViewTimerQueue() {
         return matViewTimerQueue;
+    }
+
+    public MemoryTrackerProvider getMemoryTrackerProvider() {
+        MemoryTrackerProvider p = memoryTrackerProvider;
+        if (p == null) {
+            synchronized (this) {
+                p = memoryTrackerProvider;
+                if (p == null) {
+                    p = configuration.getFactoryProvider().getMemoryTrackerProvider(configuration);
+                    memoryTrackerProvider = p;
+                }
+            }
+        }
+        return p;
     }
 
     public MessageBus getMessageBus() {

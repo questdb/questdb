@@ -4250,7 +4250,7 @@ if __name__ == "__main__":
                 pstmt.setString(1, "SELECT symbol,approx_percentile(price, 50, 2) from trades");
                 ResultSet rs = pstmt.executeQuery();
                 sink.clear();
-                assertResultSet("query_id[BIGINT],worker_id[BIGINT],worker_pool[VARCHAR],username[VARCHAR],query_start[TIMESTAMP],state_change[TIMESTAMP],state[VARCHAR],is_wal[BIT],query[VARCHAR]\n",
+                assertResultSet("query_id[BIGINT],worker_id[BIGINT],worker_pool[VARCHAR],username[VARCHAR],query_start[TIMESTAMP],state_change[TIMESTAMP],state[VARCHAR],is_wal[BIT],query[VARCHAR],memory_used[BIGINT],memory_limit[BIGINT]\n",
                         sink, rs
                 );
             }

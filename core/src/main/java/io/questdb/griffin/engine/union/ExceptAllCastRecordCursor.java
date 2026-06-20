@@ -30,8 +30,8 @@ import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
@@ -46,7 +46,7 @@ class ExceptAllCastRecordCursor extends AbstractSetRecordCursor {
 
     public ExceptAllCastRecordCursor(Map map, RecordSink recordSink, ObjList<Function> castFunctionsA, ObjList<Function> castFunctionsB) {
         this.map = map;
-        isOpen = true;
+        isOpen = false;
         this.recordSink = recordSink;
         castRecord = new UnionCastRecord(castFunctionsA, castFunctionsB);
     }
@@ -128,13 +128,14 @@ class ExceptAllCastRecordCursor extends AbstractSetRecordCursor {
         cursorB = Misc.free(cursorB);
     }
 
-    void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionCircuitBreaker circuitBreaker) throws SqlException {
+    void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionContext executionContext) throws SqlException {
         if (!isOpen) {
             isOpen = true;
+            map.setMemoryTracker(executionContext.getMemoryTracker());
             map.reopen();
         }
 
-        super.of(cursorA, cursorB, circuitBreaker);
+        super.of(cursorA, cursorB, executionContext);
         castRecord.of(cursorA.getRecord(), cursorB.getRecord());
         castRecord.setAb(false);
         isCursorBHashed = false;
