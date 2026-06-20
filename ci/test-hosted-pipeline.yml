@@ -38,3 +38,19 @@ stages:
       - CheckChanges
     jobs:
       - template: templates/hosted-jobs.yml
+
+  # Binary smoke test (self-hosted Linux).
+  #
+  # Intent: this is deliberately NOT a per-commit check. Now that the native
+  # libraries are built from source instead of committed, we want a single
+  # end-to-end verification per PR that the packaged distribution actually
+  # builds, starts, and answers a query. It is placed in this on-demand
+  # ("macwin") pipeline -- which is triggered manually (/azp run) once per PR,
+  # typically at the end before merge -- precisely so it does not run on every
+  # push. It runs on self-hosted Linux boxes (they carry the Rust toolchain and
+  # C compiler) independently of the hosted macOS/Windows test jobs above.
+  - stage: BinarySmokeTest
+    displayName: "Binary smoke test"
+    dependsOn: []
+    jobs:
+      - template: templates/binary-smoke-test-jobs.yml

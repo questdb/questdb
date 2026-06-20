@@ -23,6 +23,10 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '17'
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@4d1965c9142484e48d40c19de54b5cba84953a06
+        with:
+          toolchain: nightly-2025-09-24
       - name: Detect local client profile
         id: client
         uses: ./.github/actions/detect-local-client

@@ -3,20 +3,29 @@ FROM debian:bookworm AS builder
 ARG tag_name
 ARG GRAAL_JDK_VERSION=25.0.2
 ARG TARGETARCH
+# Pinned cargo-deny version used to regenerate THIRD_PARTY_LICENSES.txt.
+ARG CARGO_DENY_VERSION=0.19.8
 
 ENV GOSU_VERSION=1.19-go1.25.10
 ENV DEBIAN_FRONTEND=noninteractive
 
-# 1) Base tools + Maven
+# 1) Base tools + Maven + build-essential (for native compilation)
 # `git` is required by buildnumber-maven-plugin (core/pom.xml) at build time
 # to embed the HEAD revision; keep it installed even though the sources now
 # come from the build context rather than a `git clone`.
 RUN apt-get update \
     && apt-get install --no-install-recommends -y \
-       git curl wget gnupg2 ca-certificates lsb-release software-properties-common unzip maven \
+       git curl wget gnupg2 ca-certificates lsb-release software-properties-common unzip maven build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# 2) Download GraalVM CE archive + SHA256, arch-aware
+# 2) Install Rust
+ENV HOME=/root
+RUN curl https://sh.rustup.rs -sSf | sh -s -- -y --no-modify-path --profile minimal
+ENV NO_RUST_PATH="$PATH"
+ENV PATH="$HOME/.cargo/bin:$PATH"
+RUN rustc --version --verbose
+
+# 3) Download GraalVM CE archive + SHA256, arch-aware
 RUN set -eux; \
     : "${TARGETARCH:=amd64}"; \
     case "$TARGETARCH" in \
@@ -33,7 +42,7 @@ RUN set -eux; \
     curl -L -o "${FILENAME}" "${BASE_URL}/${FILENAME}"; \
     curl -L -o "${FILENAME}.sha256" "${BASE_URL}/${FILENAME}.sha256"
 
-# 3) Verify SHA256 and install GraalVM CE
+# 4) Verify SHA256 and install GraalVM CE
 RUN set -eux; \
     : "${TARGETARCH:=amd64}"; \
     case "$TARGETARCH" in \
@@ -59,6 +68,11 @@ RUN echo tag_name ${tag_name:-master}
 WORKDIR /build/questdb
 
 COPY . .
+
+# Refresh the bundled Rust third-party license attributions (shipped in the
+# distribution's legal/ dir and questdb.jar's META-INF) before packaging, so
+# they match the crates linked into libquestdbr. Installs cargo-deny if absent.
+RUN CARGO_DENY_VERSION="${CARGO_DENY_VERSION}" bash ci/generate_third_party_licenses.sh
 
 # Auto-detect how the java-questdb-client dependency must be resolved.
 # If core/pom.xml references a -SNAPSHOT client version, that artifact is not

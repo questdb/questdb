@@ -251,7 +251,7 @@ stages:
               mavenPomFile: "pom.xml"
               mavenOptions: "$(MAVEN_OPTS)"
               goals: "compile"
-              options: "-s $(MAVEN_SETTINGS_FILE) --batch-mode -pl core -am -DskipTests $(CLIENT_PROFILE) -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) $(MAVEN_KEEPALIVE_OPT)"
+              options: "-s $(MAVEN_SETTINGS_FILE) --batch-mode -pl core -am -DskipTests -DskipNative $(CLIENT_PROFILE) -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) $(MAVEN_KEEPALIVE_OPT)"
               jdkVersionOption: $(jdk)
 
           - task: Maven@3

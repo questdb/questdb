@@ -1,0 +1,117 @@
+# Build the QuestDB distribution from source and smoke-test it: start the
+# packaged server and run a query. This exercises the full from-source native
+# build (Rust libquestdbr + the committed C++ lib) and the packaged runtime's
+# native-lib loading from its own lib/ directory -- i.e. the exact artifact
+# users download and run.
+#
+# The same job also runs the C++ glibc check: it dlopen()s the committed
+# libquestdb.so inside an old-glibc container (amazonlinux:2) to confirm the
+# prebuilt C++ library still loads on the oldest supported glibc. The Rust
+# library is built from source on the host, so it always matches and needs no
+# glibc check. Folding it into this job avoids a second checkout.
+#
+# Runs on a self-hosted Linux x64 box, which carries the Rust toolchain, a C
+# compiler, and Docker. OSS publishes only x86 binaries, so there is no arm64
+# leg.
+jobs:
+  - job: BuildAndSmokeTest
+    displayName: "build + smoke test on"
+    workspace:
+      clean: all
+    strategy:
+      # Do NOT set JAVA_HOME here. Matrix variables are read-only at runtime, and
+      # the Maven@3 task below (jdkVersionOption: 1.25) resolves the JDK from
+      # JAVA_HOME_25_X64 and then sets JAVA_HOME itself -- overwriting a read-only
+      # JAVA_HOME is rejected ("Overwriting readonly variable 'JAVA_HOME' is not
+      # permitted"), which fails the build. The smoke-test step sets JAVA_HOME on
+      # its own process env (from JAVA_HOME_25_X64) for the packaged questdb.sh.
+      matrix:
+        linux-x64:
+          poolName: "hetzner-incus"
+          JAVA_HOME_25_X64: "/opt/graalvm-25"
+          glibcImage: "amazonlinux:2"
+          libPath: "core/src/main/resources/io/questdb/bin/linux-x86-64/libquestdb.so"
+    pool:
+      name: $(poolName)
+    timeoutInMinutes: 60
+    condition: eq(variables['System.PullRequest.IsFork'], 'false')
+    variables:
+      jdk: "1.25"
+    steps:
+      - checkout: self
+        fetchDepth: 1
+        lfs: false
+        submodules: true
+      # C++ glibc check: confirm the committed libquestdb.so loads on the oldest
+      # supported glibc. Runs before the build so a glibc regression fails fast.
+      - bash: |
+          set -eux
+          docker run --rm -v "$(Build.SourcesDirectory):/work" "$(glibcImage)" \
+            bash /work/ci/glibc_load_check.sh "$(libPath)"
+        displayName: "C++ glibc check: dlopen committed libquestdb on $(glibcImage)"
+      - script: python3 .github/prepare_rust_env.py --export-cargo-install-env --match core/rust/qdbr/rust-toolchain.toml
+        displayName: "Ensure Rust is installed"
+      # When core pins a -SNAPSHOT questdb-client, build it from the submodule
+      # (sets CLIENT_PROFILE=-P local-client); a released client is fetched from
+      # Maven Central. Without this the build dies at dependency resolution:
+      # questdb-client is a test-scoped dep, and -DskipTests skips only test
+      # *execution*, not the test-compile classpath resolution, so a SNAPSHOT
+      # client that is not on Central (built locally only) fails to resolve.
+      - template: detect-local-client.yml
+      - task: Maven@3
+        displayName: "Build distribution (native libs from source)"
+        inputs:
+          mavenVersionOption: "$(MAVEN_VERSION_OPTION)"
+          mavenPomFile: "pom.xml"
+          mavenOptions: "$(MAVEN_OPTS)"
+          goals: "clean package"
+          options:
+            "-pl core -am -DskipTests -Dhttp.keepAlive=false
+            -P build-web-console,build-binaries $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS)"
+          jdkVersionOption: "$(jdk)"
+      - bash: |
+          set -eux
+          cd core/target
+          archive="$(ls questdb-*-rt-*.gz 2>/dev/null | head -1)"
+          if [ -z "$archive" ]; then
+            echo "No rt-* distribution archive found in core/target"
+            ls -la
+            exit 1
+          fi
+          echo "Smoke-testing distribution: $archive"
+          tar -xzf "$archive"
+          dist_dir="$(ls -d questdb-*-rt-*/ | head -1)"
+          root="$PWD/smoke-root"
+          rm -rf "$root"
+          # The pipeline sets QDB_LOG_W_FILE_LOCATION (test-hosted-pipeline.yml)
+          # to route unit-test JVM logs into a shared tests.log. That env var
+          # overrides w.file.location in the packaged server's conf/log.conf,
+          # whose rolling-file writer requires a `$` in the location -- a plain
+          # tests.log path makes LogRollingFileWriter reject it and the server
+          # never starts. Clear all leaked QDB_LOG_* overrides so the smoke
+          # server uses its own shipped log configuration.
+          for v in $(env | grep -o '^QDB_LOG_[A-Za-z0-9_]*' || true); do unset "$v"; done
+          "${dist_dir}bin/questdb.sh" start -d "$root"
+          ok=0
+          for _ in $(seq 1 60); do
+            if curl -fsS -G --data-urlencode "query=SELECT 1 AS smoke" \
+                 "http://127.0.0.1:9000/exp" -o exp.out; then
+              ok=1
+              break
+            fi
+            sleep 2
+          done
+          echo "--- /exp response ---"; cat exp.out 2>/dev/null || true; echo
+          "${dist_dir}bin/questdb.sh" stop || true
+          if [ "$ok" -ne 1 ]; then
+            echo "ERROR: packaged QuestDB did not serve a query within the timeout"
+            echo "--- server logs ---"; tail -n 200 "$root"/log/* 2>/dev/null || true
+            exit 1
+          fi
+          echo "Smoke test passed: distribution built from source, started, and served a query."
+        displayName: "Smoke test: start packaged server and run a query"
+        env:
+          # questdb.sh needs JAVA_HOME when the bundle ships without an embedded
+          # JRE. JAVA_HOME is intentionally not a matrix variable (see above), so
+          # set it on this step's process env from the per-leg JDK path.
+          JAVA_HOME: $(JAVA_HOME_25_X64)
