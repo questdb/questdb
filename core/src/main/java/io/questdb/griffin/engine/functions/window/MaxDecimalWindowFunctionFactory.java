@@ -71,17 +71,25 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
     static final Decimal256Comparator LESS_THAN_256 = (a, b) -> a.compareTo(b) < 0;
     static final Decimal64Comparator LESS_THAN_64 = (a, b) -> a < b;
     static final ArrayColumnTypes MAX_DECIMAL128_OVER_PARTITION_RANGE_TYPES;
+    static final ArrayColumnTypes MAX_DECIMAL128_OVER_PARTITION_RANGE_TYPES_LV;
     static final ArrayColumnTypes MAX_DECIMAL128_OVER_PARTITION_ROWS_TYPES;
+    static final ArrayColumnTypes MAX_DECIMAL128_OVER_PARTITION_ROWS_TYPES_LV;
     static final ArrayColumnTypes MAX_DECIMAL128_TYPES;
     static final ArrayColumnTypes MAX_DECIMAL128_TYPES_LV;
     static final ArrayColumnTypes MAX_DECIMAL256_OVER_PARTITION_RANGE_TYPES;
+    static final ArrayColumnTypes MAX_DECIMAL256_OVER_PARTITION_RANGE_TYPES_LV;
     static final ArrayColumnTypes MAX_DECIMAL256_OVER_PARTITION_ROWS_TYPES;
+    static final ArrayColumnTypes MAX_DECIMAL256_OVER_PARTITION_ROWS_TYPES_LV;
     static final ArrayColumnTypes MAX_DECIMAL256_TYPES;
     static final ArrayColumnTypes MAX_DECIMAL256_TYPES_LV;
     static final ArrayColumnTypes MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES;
+    static final ArrayColumnTypes MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES_LV;
     static final ArrayColumnTypes MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES;
+    static final ArrayColumnTypes MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES_LV;
     static final ArrayColumnTypes MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES;
+    static final ArrayColumnTypes MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES_LV;
     static final ArrayColumnTypes MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES;
+    static final ArrayColumnTypes MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES_LV;
     static final ArrayColumnTypes MAX_DECIMAL64_TYPES;
     static final ArrayColumnTypes MAX_DECIMAL64_TYPES_LV;
     private static final String SIGNATURE = NAME + "(Ξ)";
@@ -135,12 +143,15 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
                     }
                     int timestampIndex = windowContext.getTimestampIndex();
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = null;
                     MemoryARW mem = null;
                     MemoryARW dequeMem = null;
                     try {
                         map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
-                                rowsLo == Long.MIN_VALUE ? MAX_DECIMAL128_OVER_PARTITION_RANGE_TYPES : MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES);
+                                rowsLo == Long.MIN_VALUE
+                                        ? (liveView ? MAX_DECIMAL128_OVER_PARTITION_RANGE_TYPES_LV : MAX_DECIMAL128_OVER_PARTITION_RANGE_TYPES)
+                                        : (liveView ? MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES_LV : MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES));
                         mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
                         if (rowsLo != Long.MIN_VALUE) {
@@ -149,7 +160,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         }
                         return new Decimal128MaxMinOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
                                 rowsLo, rowsHi, arg, mem, dequeMem, configuration.getSqlWindowInitialRangeBufferSize(),
-                                timestampIndex, comparator, name, argType);
+                                timestampIndex, comparator, name, argType, partitionByKeyTypes, liveView);
                     } catch (Throwable th) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -168,12 +179,15 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, MAX_DECIMAL128_TYPES);
                     return new Decimal128MaxMinOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, comparator, name, argType);
                 } else {
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = null;
                     MemoryARW mem = null;
                     MemoryARW dequeMem = null;
                     try {
                         map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
-                                rowsLo == Long.MIN_VALUE ? MAX_DECIMAL128_OVER_PARTITION_ROWS_TYPES : MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES);
+                                rowsLo == Long.MIN_VALUE
+                                        ? (liveView ? MAX_DECIMAL128_OVER_PARTITION_ROWS_TYPES_LV : MAX_DECIMAL128_OVER_PARTITION_ROWS_TYPES)
+                                        : (liveView ? MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES_LV : MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES));
                         mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
                         if (rowsLo != Long.MIN_VALUE) {
@@ -181,7 +195,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                                     configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
                         }
                         return new Decimal128MaxMinOverPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
-                                rowsLo, rowsHi, arg, mem, dequeMem, comparator, name, argType);
+                                rowsLo, rowsHi, arg, mem, dequeMem, comparator, name, argType, partitionByKeyTypes, liveView);
                     } catch (Throwable th) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -279,12 +293,15 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
                     }
                     int timestampIndex = windowContext.getTimestampIndex();
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = null;
                     MemoryARW mem = null;
                     MemoryARW dequeMem = null;
                     try {
                         map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
-                                rowsLo == Long.MIN_VALUE ? MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES : MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES);
+                                rowsLo == Long.MIN_VALUE
+                                        ? (liveView ? MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES_LV : MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES)
+                                        : (liveView ? MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES_LV : MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES));
                         mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
                         if (rowsLo != Long.MIN_VALUE) {
@@ -293,7 +310,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         }
                         return new Decimal16MaxMinOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
                                 rowsLo, rowsHi, arg, mem, dequeMem, configuration.getSqlWindowInitialRangeBufferSize(),
-                                timestampIndex, comparator, name, argType);
+                                timestampIndex, comparator, name, argType, partitionByKeyTypes, liveView);
                     } catch (Throwable th) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -312,12 +329,15 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, MAX_DECIMAL64_TYPES);
                     return new Decimal16MaxMinOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, comparator, name, argType);
                 } else {
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = null;
                     MemoryARW mem = null;
                     MemoryARW dequeMem = null;
                     try {
                         map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
-                                rowsLo == Long.MIN_VALUE ? MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES : MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES);
+                                rowsLo == Long.MIN_VALUE
+                                        ? (liveView ? MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES_LV : MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES)
+                                        : (liveView ? MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES_LV : MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES));
                         mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
                         if (rowsLo != Long.MIN_VALUE) {
@@ -325,7 +345,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                                     configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
                         }
                         return new Decimal16MaxMinOverPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
-                                rowsLo, rowsHi, arg, mem, dequeMem, comparator, name, argType);
+                                rowsLo, rowsHi, arg, mem, dequeMem, comparator, name, argType, partitionByKeyTypes, liveView);
                     } catch (Throwable th) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -423,12 +443,15 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
                     }
                     int timestampIndex = windowContext.getTimestampIndex();
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = null;
                     MemoryARW mem = null;
                     MemoryARW dequeMem = null;
                     try {
                         map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
-                                rowsLo == Long.MIN_VALUE ? MAX_DECIMAL256_OVER_PARTITION_RANGE_TYPES : MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES);
+                                rowsLo == Long.MIN_VALUE
+                                        ? (liveView ? MAX_DECIMAL256_OVER_PARTITION_RANGE_TYPES_LV : MAX_DECIMAL256_OVER_PARTITION_RANGE_TYPES)
+                                        : (liveView ? MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES_LV : MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES));
                         mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
                         if (rowsLo != Long.MIN_VALUE) {
@@ -437,7 +460,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         }
                         return new Decimal256MaxMinOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
                                 rowsLo, rowsHi, arg, mem, dequeMem, configuration.getSqlWindowInitialRangeBufferSize(),
-                                timestampIndex, comparator, name, argType);
+                                timestampIndex, comparator, name, argType, partitionByKeyTypes, liveView);
                     } catch (Throwable th) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -456,12 +479,15 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, MAX_DECIMAL256_TYPES);
                     return new Decimal256MaxMinOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, comparator, name, argType);
                 } else {
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = null;
                     MemoryARW mem = null;
                     MemoryARW dequeMem = null;
                     try {
                         map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
-                                rowsLo == Long.MIN_VALUE ? MAX_DECIMAL256_OVER_PARTITION_ROWS_TYPES : MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES);
+                                rowsLo == Long.MIN_VALUE
+                                        ? (liveView ? MAX_DECIMAL256_OVER_PARTITION_ROWS_TYPES_LV : MAX_DECIMAL256_OVER_PARTITION_ROWS_TYPES)
+                                        : (liveView ? MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES_LV : MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES));
                         mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
                         if (rowsLo != Long.MIN_VALUE) {
@@ -469,7 +495,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                                     configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
                         }
                         return new Decimal256MaxMinOverPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
-                                rowsLo, rowsHi, arg, mem, dequeMem, comparator, name, argType);
+                                rowsLo, rowsHi, arg, mem, dequeMem, comparator, name, argType, partitionByKeyTypes, liveView);
                     } catch (Throwable th) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -567,12 +593,15 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
                     }
                     int timestampIndex = windowContext.getTimestampIndex();
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = null;
                     MemoryARW mem = null;
                     MemoryARW dequeMem = null;
                     try {
                         map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
-                                rowsLo == Long.MIN_VALUE ? MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES : MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES);
+                                rowsLo == Long.MIN_VALUE
+                                        ? (liveView ? MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES_LV : MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES)
+                                        : (liveView ? MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES_LV : MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES));
                         mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
                         if (rowsLo != Long.MIN_VALUE) {
@@ -581,7 +610,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         }
                         return new Decimal32MaxMinOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
                                 rowsLo, rowsHi, arg, mem, dequeMem, configuration.getSqlWindowInitialRangeBufferSize(),
-                                timestampIndex, comparator, name, argType);
+                                timestampIndex, comparator, name, argType, partitionByKeyTypes, liveView);
                     } catch (Throwable th) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -600,12 +629,15 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, MAX_DECIMAL64_TYPES);
                     return new Decimal32MaxMinOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, comparator, name, argType);
                 } else {
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = null;
                     MemoryARW mem = null;
                     MemoryARW dequeMem = null;
                     try {
                         map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
-                                rowsLo == Long.MIN_VALUE ? MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES : MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES);
+                                rowsLo == Long.MIN_VALUE
+                                        ? (liveView ? MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES_LV : MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES)
+                                        : (liveView ? MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES_LV : MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES));
                         mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
                         if (rowsLo != Long.MIN_VALUE) {
@@ -613,7 +645,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                                     configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
                         }
                         return new Decimal32MaxMinOverPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
-                                rowsLo, rowsHi, arg, mem, dequeMem, comparator, name, argType);
+                                rowsLo, rowsHi, arg, mem, dequeMem, comparator, name, argType, partitionByKeyTypes, liveView);
                     } catch (Throwable th) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -711,12 +743,15 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
                     }
                     int timestampIndex = windowContext.getTimestampIndex();
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = null;
                     MemoryARW mem = null;
                     MemoryARW dequeMem = null;
                     try {
                         map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
-                                rowsLo == Long.MIN_VALUE ? MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES : MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES);
+                                rowsLo == Long.MIN_VALUE
+                                        ? (liveView ? MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES_LV : MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES)
+                                        : (liveView ? MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES_LV : MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES));
                         mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
                         if (rowsLo != Long.MIN_VALUE) {
@@ -725,7 +760,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         }
                         return new Decimal64MaxMinOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
                                 rowsLo, rowsHi, arg, mem, dequeMem, configuration.getSqlWindowInitialRangeBufferSize(),
-                                timestampIndex, comparator, name, argType);
+                                timestampIndex, comparator, name, argType, partitionByKeyTypes, liveView);
                     } catch (Throwable th) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -744,12 +779,15 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, MAX_DECIMAL64_TYPES);
                     return new Decimal64MaxMinOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, comparator, name, argType);
                 } else {
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = null;
                     MemoryARW mem = null;
                     MemoryARW dequeMem = null;
                     try {
                         map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
-                                rowsLo == Long.MIN_VALUE ? MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES : MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES);
+                                rowsLo == Long.MIN_VALUE
+                                        ? (liveView ? MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES_LV : MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES)
+                                        : (liveView ? MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES_LV : MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES));
                         mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
                         if (rowsLo != Long.MIN_VALUE) {
@@ -757,7 +795,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                                     configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
                         }
                         return new Decimal64MaxMinOverPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
-                                rowsLo, rowsHi, arg, mem, dequeMem, comparator, name, argType);
+                                rowsLo, rowsHi, arg, mem, dequeMem, comparator, name, argType, partitionByKeyTypes, liveView);
                     } catch (Throwable th) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -855,12 +893,15 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
                     }
                     int timestampIndex = windowContext.getTimestampIndex();
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = null;
                     MemoryARW mem = null;
                     MemoryARW dequeMem = null;
                     try {
                         map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
-                                rowsLo == Long.MIN_VALUE ? MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES : MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES);
+                                rowsLo == Long.MIN_VALUE
+                                        ? (liveView ? MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES_LV : MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES)
+                                        : (liveView ? MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES_LV : MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES));
                         mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
                         if (rowsLo != Long.MIN_VALUE) {
@@ -869,7 +910,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         }
                         return new Decimal8MaxMinOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
                                 rowsLo, rowsHi, arg, mem, dequeMem, configuration.getSqlWindowInitialRangeBufferSize(),
-                                timestampIndex, comparator, name, argType);
+                                timestampIndex, comparator, name, argType, partitionByKeyTypes, liveView);
                     } catch (Throwable th) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -888,12 +929,15 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, MAX_DECIMAL64_TYPES);
                     return new Decimal8MaxMinOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, comparator, name, argType);
                 } else {
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = null;
                     MemoryARW mem = null;
                     MemoryARW dequeMem = null;
                     try {
                         map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
-                                rowsLo == Long.MIN_VALUE ? MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES : MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES);
+                                rowsLo == Long.MIN_VALUE
+                                        ? (liveView ? MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES_LV : MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES)
+                                        : (liveView ? MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES_LV : MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES));
                         mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
                         if (rowsLo != Long.MIN_VALUE) {
@@ -901,7 +945,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                                     configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
                         }
                         return new Decimal8MaxMinOverPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
-                                rowsLo, rowsHi, arg, mem, dequeMem, comparator, name, argType);
+                                rowsLo, rowsHi, arg, mem, dequeMem, comparator, name, argType, partitionByKeyTypes, liveView);
                     } catch (Throwable th) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -1172,6 +1216,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final boolean frameLoBounded;
         private final LongList freeList = new LongList();
         private final int initialBufferSize;
+        private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
+        private final ArrayColumnTypes mapValueTypes;
         private final long maxDiff;
         private final Decimal128 maxMin = new Decimal128();
         private final MemoryARW memory;
@@ -1198,7 +1245,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 int timestampIdx,
                 Decimal128Comparator comparator,
                 String name,
-                int type
+                int type,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             frameLoBounded = rangeLo != Long.MIN_VALUE;
@@ -1213,7 +1262,28 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.comparator = comparator;
             this.name = name;
             this.type = type;
+            this.liveView = liveView;
             maxMin.ofRawNull();
+            if (liveView) {
+                ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                    keyTypesCopy.add(partitionByKeyTypes.getColumnType(i));
+                }
+                this.keyColumnTypes = keyTypesCopy;
+                final ArrayColumnTypes srcValueTypes = frameLoBounded
+                        ? MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES_LV
+                        : MAX_DECIMAL128_OVER_PARTITION_RANGE_TYPES_LV;
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = srcValueTypes.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(srcValueTypes.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = frameLoBounded ? 9 : 6;
+            } else {
+                this.keyColumnTypes = null;
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
         }
 
         @Override
@@ -1246,6 +1316,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             arg.getDecimal128(record, scratch);
 
             if (mapValue.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    mapValue.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 capacity = initialBufferSize;
                 startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
                 firstIdx = 0;
@@ -1406,13 +1479,43 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
         }
 
         @Override
+        public ColumnTypes getSnapshotKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getSnapshotKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : (frameLoBounded
+                    ? MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES
+                    : MAX_DECIMAL128_OVER_PARTITION_RANGE_TYPES).getColumnCount();
+        }
+
+        @Override
         public int getType() {
             return type;
+        }
+
+        @Override
+        public void onSnapshotRestoreBegin() {
+            super.onSnapshotRestoreBegin();
+            memory.truncate();
+            freeList.clear();
+            if (dequeMemory != null) {
+                dequeMemory.truncate();
+            }
+            dequeFreeList.clear();
         }
 
         @Override
@@ -1438,6 +1541,146 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             if (dequeMemory != null) {
                 dequeMemory.close();
             }
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset. Drop the partition's frame and the deque
+            // (when bounded). Ring slabs stay allocated; the next post-reset
+            // row writes from index 0.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mv = key.findValue();
+            if (mv != null) {
+                mv.putLong(0, 0L);
+                mv.putLong(2, 0L);
+                mv.putLong(4, 0L);
+                if (frameLoBounded) {
+                    mv.putLong(7, 0L);
+                    mv.putLong(8, 0L);
+                } else {
+                    scratch.ofRawNull();
+                    mv.putDecimal128(5, scratch);
+                }
+                if (!mv.isNew() && tombstoneValueIndex >= 0 && mv.getByte(tombstoneValueIndex) != 1) {
+                    mv.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restorePartitionState(MemoryR source, long offset, MapValue mv, int formatVersion) {
+            final long frameSize = source.getLong(offset);
+            offset += Long.BYTES;
+            final long size = source.getLong(offset);
+            offset += Long.BYTES;
+            final long capacity = Math.max(size, initialBufferSize);
+            final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            if (frameLoBounded) {
+                final long dequeSize = source.getLong(offset);
+                offset += Long.BYTES;
+                for (long i = 0; i < size; i++) {
+                    final long rec = newStartOffset + i * RECORD_SIZE;
+                    memory.putLong(rec, source.getLong(offset));
+                    offset += Long.BYTES;
+                    source.getDecimal128(offset, scratch);
+                    memory.putDecimal128(rec + Long.BYTES, scratch.getHigh(), scratch.getLow());
+                    offset += Decimal128.BYTES;
+                }
+                final long dequeCapacity = Math.max(dequeSize, dequeInitialBufferSize);
+                final long newDequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * DEQUE_RECORD_SIZE) - dequeMemory.getPageAddress(0);
+                for (long i = 0; i < dequeSize; i++) {
+                    source.getDecimal128(offset, scratch);
+                    dequeMemory.putDecimal128(newDequeStartOffset + i * DEQUE_RECORD_SIZE, scratch.getHigh(), scratch.getLow());
+                    offset += Decimal128.BYTES;
+                }
+                mv.putLong(0, frameSize);
+                mv.putLong(1, newStartOffset);
+                mv.putLong(2, size);
+                mv.putLong(3, capacity);
+                mv.putLong(4, 0L);
+                mv.putLong(5, newDequeStartOffset);
+                mv.putLong(6, dequeCapacity);
+                mv.putLong(7, 0L);
+                mv.putLong(8, dequeSize);
+            } else {
+                source.getDecimal128(offset, scratch);
+                mv.putDecimal128(5, scratch);
+                offset += Decimal128.BYTES;
+                for (long i = 0; i < size; i++) {
+                    final long rec = newStartOffset + i * RECORD_SIZE;
+                    memory.putLong(rec, source.getLong(offset));
+                    offset += Long.BYTES;
+                    source.getDecimal128(offset, scratch);
+                    memory.putDecimal128(rec + Long.BYTES, scratch.getHigh(), scratch.getLow());
+                    offset += Decimal128.BYTES;
+                }
+                mv.putLong(0, frameSize);
+                mv.putLong(1, newStartOffset);
+                mv.putLong(2, size);
+                mv.putLong(3, capacity);
+                mv.putLong(4, 0L);
+            }
+            if (tombstoneValueIndex >= 0) {
+                mv.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public int snapshotFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public int snapshotMinSupportedVersion() {
+            return 1;
+        }
+
+        @Override
+        public void snapshotPartitionState(MemoryA sink, MapValue mv) {
+            sink.putLong(mv.getLong(0)); // frameSize
+            final long startOffset = mv.getLong(1);
+            final long size = mv.getLong(2);
+            final long capacity = mv.getLong(3);
+            final long firstIdx = mv.getLong(4);
+            sink.putLong(size);
+            if (frameLoBounded) {
+                final long dequeStartOffset = mv.getLong(5);
+                final long dequeCapacity = mv.getLong(6);
+                final long dequeStartIndex = mv.getLong(7);
+                final long dequeEndIndex = mv.getLong(8);
+                final long dequeSize = dequeEndIndex - dequeStartIndex;
+                sink.putLong(dequeSize);
+                for (long i = 0; i < size; i++) {
+                    final long rec = startOffset + ((firstIdx + i) % capacity) * RECORD_SIZE;
+                    sink.putLong(memory.getLong(rec));
+                    memory.getDecimal128(rec + Long.BYTES, scratch);
+                    sink.putDecimal128(scratch.getHigh(), scratch.getLow());
+                }
+                for (long i = 0; i < dequeSize; i++) {
+                    dequeMemory.getDecimal128(dequeStartOffset + ((dequeStartIndex + i) % dequeCapacity) * DEQUE_RECORD_SIZE, scratch);
+                    sink.putDecimal128(scratch.getHigh(), scratch.getLow());
+                }
+            } else {
+                mv.getDecimal128(5, scratch);
+                sink.putDecimal128(scratch.getHigh(), scratch.getLow());
+                for (long i = 0; i < size; i++) {
+                    final long rec = startOffset + ((firstIdx + i) % capacity) * RECORD_SIZE;
+                    sink.putLong(memory.getLong(rec));
+                    memory.getDecimal128(rec + Long.BYTES, scratch);
+                    sink.putDecimal128(scratch.getHigh(), scratch.getLow());
+                }
+            }
+        }
+
+        @Override
+        public boolean supportsSnapshot() {
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -1487,7 +1730,10 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final boolean frameLoBounded;
         private final int frameSize;
         private final Decimal128 hiValue = new Decimal128();
+        private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
         private final Decimal128 loValue = new Decimal128();
+        private final ArrayColumnTypes mapValueTypes;
         private final Decimal128 max = new Decimal128();
         private final Decimal128 maxMin = new Decimal128();
         private final MemoryARW memory;
@@ -1507,7 +1753,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 MemoryARW dequeMemory,
                 Decimal128Comparator comparator,
                 String name,
-                int type
+                int type,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             if (rowsLo > Long.MIN_VALUE) {
@@ -1527,12 +1775,36 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.comparator = comparator;
             this.name = name;
             this.type = type;
+            this.liveView = liveView;
+            if (liveView) {
+                ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                    keyTypesCopy.add(partitionByKeyTypes.getColumnType(i));
+                }
+                this.keyColumnTypes = keyTypesCopy;
+                final ArrayColumnTypes srcValueTypes = frameLoBounded
+                        ? MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES_LV
+                        : MAX_DECIMAL128_OVER_PARTITION_ROWS_TYPES_LV;
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = srcValueTypes.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(srcValueTypes.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = frameLoBounded ? 5 : 3;
+            } else {
+                this.keyColumnTypes = null;
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
         }
 
         @Override
         public void close() {
             super.close();
             memory.close();
+            if (dequeMemory != null) {
+                dequeMemory.close();
+            }
         }
 
         @Override
@@ -1549,6 +1821,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             long dequeEndIndex = 0;
 
             if (value.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    value.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 loIdx = 0;
                 startOffset = memory.appendAddressFor((long) bufferSize * Decimal128.BYTES) - memory.getPageAddress(0);
                 if (frameIncludesCurrentValue && !scratch.isNull()) {
@@ -1642,13 +1917,41 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
         }
 
         @Override
+        public ColumnTypes getSnapshotKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getSnapshotKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : (frameLoBounded
+                    ? MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES
+                    : MAX_DECIMAL128_OVER_PARTITION_ROWS_TYPES).getColumnCount();
+        }
+
+        @Override
         public int getType() {
             return type;
+        }
+
+        @Override
+        public void onSnapshotRestoreBegin() {
+            super.onSnapshotRestoreBegin();
+            memory.truncate();
+            if (dequeMemory != null) {
+                dequeMemory.truncate();
+            }
         }
 
         @Override
@@ -1671,6 +1974,123 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             if (dequeMemory != null) {
                 dequeMemory.close();
             }
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset. Null out the fixed-size ring and drop the deque
+            // (when bounded). The ring slab stays allocated; the next post-reset
+            // row overwrites it.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mv = key.findValue();
+            if (mv != null) {
+                final long startOffset = mv.getLong(1);
+                mv.putLong(0, 0L);
+                nullScratch.ofRawNull();
+                for (int i = 0; i < bufferSize; i++) {
+                    memory.putDecimal128(startOffset + (long) i * Decimal128.BYTES, nullScratch.getHigh(), nullScratch.getLow());
+                }
+                if (frameLoBounded) {
+                    mv.putLong(3, 0L);
+                    mv.putLong(4, 0L);
+                } else {
+                    nullScratch.ofRawNull();
+                    mv.putDecimal128(2, nullScratch);
+                }
+                if (!mv.isNew() && tombstoneValueIndex >= 0 && mv.getByte(tombstoneValueIndex) != 1) {
+                    mv.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restorePartitionState(MemoryR source, long offset, MapValue mv, int formatVersion) {
+            final long loIdx = source.getLong(offset);
+            offset += Long.BYTES;
+            final long newStartOffset = memory.appendAddressFor((long) bufferSize * Decimal128.BYTES) - memory.getPageAddress(0);
+            if (frameLoBounded) {
+                final long dequeStartIndex = source.getLong(offset);
+                offset += Long.BYTES;
+                final long dequeEndIndex = source.getLong(offset);
+                offset += Long.BYTES;
+                for (int i = 0; i < bufferSize; i++) {
+                    source.getDecimal128(offset, scratch);
+                    memory.putDecimal128(newStartOffset + (long) i * Decimal128.BYTES, scratch.getHigh(), scratch.getLow());
+                    offset += Decimal128.BYTES;
+                }
+                final long newDequeStartOffset = dequeMemory.appendAddressFor((long) dequeBufferSize * Decimal128.BYTES) - dequeMemory.getPageAddress(0);
+                for (int i = 0; i < dequeBufferSize; i++) {
+                    source.getDecimal128(offset, scratch);
+                    dequeMemory.putDecimal128(newDequeStartOffset + (long) i * Decimal128.BYTES, scratch.getHigh(), scratch.getLow());
+                    offset += Decimal128.BYTES;
+                }
+                mv.putLong(0, loIdx);
+                mv.putLong(1, newStartOffset);
+                mv.putLong(2, newDequeStartOffset);
+                mv.putLong(3, dequeStartIndex);
+                mv.putLong(4, dequeEndIndex);
+            } else {
+                source.getDecimal128(offset, scratch);
+                mv.putDecimal128(2, scratch);
+                offset += Decimal128.BYTES;
+                for (int i = 0; i < bufferSize; i++) {
+                    source.getDecimal128(offset, scratch);
+                    memory.putDecimal128(newStartOffset + (long) i * Decimal128.BYTES, scratch.getHigh(), scratch.getLow());
+                    offset += Decimal128.BYTES;
+                }
+                mv.putLong(0, loIdx);
+                mv.putLong(1, newStartOffset);
+            }
+            if (tombstoneValueIndex >= 0) {
+                mv.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public int snapshotFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public int snapshotMinSupportedVersion() {
+            return 1;
+        }
+
+        @Override
+        public void snapshotPartitionState(MemoryA sink, MapValue mv) {
+            sink.putLong(mv.getLong(0)); // loIdx
+            final long startOffset = mv.getLong(1);
+            if (frameLoBounded) {
+                sink.putLong(mv.getLong(3)); // dequeStartIndex
+                sink.putLong(mv.getLong(4)); // dequeEndIndex
+                for (int i = 0; i < bufferSize; i++) {
+                    memory.getDecimal128(startOffset + (long) i * Decimal128.BYTES, scratch);
+                    sink.putDecimal128(scratch.getHigh(), scratch.getLow());
+                }
+                final long dequeStartOffset = mv.getLong(2);
+                for (int i = 0; i < dequeBufferSize; i++) {
+                    dequeMemory.getDecimal128(dequeStartOffset + (long) i * Decimal128.BYTES, scratch);
+                    sink.putDecimal128(scratch.getHigh(), scratch.getLow());
+                }
+            } else {
+                mv.getDecimal128(2, scratch);
+                sink.putDecimal128(scratch.getHigh(), scratch.getLow());
+                for (int i = 0; i < bufferSize; i++) {
+                    memory.getDecimal128(startOffset + (long) i * Decimal128.BYTES, scratch);
+                    sink.putDecimal128(scratch.getHigh(), scratch.getLow());
+                }
+            }
+        }
+
+        @Override
+        public boolean supportsSnapshot() {
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -2659,6 +3079,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final boolean frameLoBounded;
         private final LongList freeList = new LongList();
         private final int initialBufferSize;
+        private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
+        private final ArrayColumnTypes mapValueTypes;
         private final long maxDiff;
         private final MemoryARW memory;
         private final RingBufferDesc memoryDesc = new RingBufferDesc();
@@ -2681,7 +3104,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 int timestampIdx,
                 Decimal64Comparator comparator,
                 String name,
-                int type
+                int type,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             frameLoBounded = rangeLo != Long.MIN_VALUE;
@@ -2696,6 +3121,27 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.comparator = comparator;
             this.name = name;
             this.type = type;
+            this.liveView = liveView;
+            if (liveView) {
+                ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                    keyTypesCopy.add(partitionByKeyTypes.getColumnType(i));
+                }
+                this.keyColumnTypes = keyTypesCopy;
+                final ArrayColumnTypes srcValueTypes = frameLoBounded
+                        ? MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES_LV
+                        : MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES_LV;
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = srcValueTypes.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(srcValueTypes.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = frameLoBounded ? 9 : 6;
+            } else {
+                this.keyColumnTypes = null;
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
         }
 
         @Override
@@ -2728,6 +3174,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             short s = arg.getDecimal16(record);
 
             if (mapValue.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    mapValue.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 capacity = initialBufferSize;
                 startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
                 firstIdx = 0;
@@ -2882,13 +3331,43 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
         }
 
         @Override
+        public ColumnTypes getSnapshotKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getSnapshotKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : (frameLoBounded
+                    ? MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES
+                    : MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES).getColumnCount();
+        }
+
+        @Override
         public int getType() {
             return type;
+        }
+
+        @Override
+        public void onSnapshotRestoreBegin() {
+            super.onSnapshotRestoreBegin();
+            memory.truncate();
+            freeList.clear();
+            if (dequeMemory != null) {
+                dequeMemory.truncate();
+            }
+            dequeFreeList.clear();
         }
 
         @Override
@@ -2912,6 +3391,137 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             if (dequeMemory != null) {
                 dequeMemory.close();
             }
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset. Drop the partition's frame and the deque
+            // (when bounded). Ring slabs stay allocated; the next post-reset
+            // row writes from index 0.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mv = key.findValue();
+            if (mv != null) {
+                mv.putLong(0, 0L);
+                mv.putLong(2, 0L);
+                mv.putLong(4, 0L);
+                if (frameLoBounded) {
+                    mv.putLong(7, 0L);
+                    mv.putLong(8, 0L);
+                } else {
+                    mv.putLong(5, Decimals.DECIMAL16_NULL);
+                }
+                if (!mv.isNew() && tombstoneValueIndex >= 0 && mv.getByte(tombstoneValueIndex) != 1) {
+                    mv.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restorePartitionState(MemoryR source, long offset, MapValue mv, int formatVersion) {
+            final long frameSize = source.getLong(offset);
+            offset += Long.BYTES;
+            final long size = source.getLong(offset);
+            offset += Long.BYTES;
+            final long capacity = Math.max(size, initialBufferSize);
+            final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            if (frameLoBounded) {
+                final long dequeSize = source.getLong(offset);
+                offset += Long.BYTES;
+                for (long i = 0; i < size; i++) {
+                    final long rec = newStartOffset + i * RECORD_SIZE;
+                    memory.putLong(rec, source.getLong(offset));
+                    offset += Long.BYTES;
+                    memory.putShort(rec + Long.BYTES, source.getShort(offset));
+                    offset += Short.BYTES;
+                }
+                final long dequeCapacity = Math.max(dequeSize, dequeInitialBufferSize);
+                final long newDequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * DEQUE_RECORD_SIZE) - dequeMemory.getPageAddress(0);
+                for (long i = 0; i < dequeSize; i++) {
+                    dequeMemory.putShort(newDequeStartOffset + i * DEQUE_RECORD_SIZE, source.getShort(offset));
+                    offset += Short.BYTES;
+                }
+                mv.putLong(0, frameSize);
+                mv.putLong(1, newStartOffset);
+                mv.putLong(2, size);
+                mv.putLong(3, capacity);
+                mv.putLong(4, 0L);
+                mv.putLong(5, newDequeStartOffset);
+                mv.putLong(6, dequeCapacity);
+                mv.putLong(7, 0L);
+                mv.putLong(8, dequeSize);
+            } else {
+                mv.putLong(5, source.getShort(offset));
+                offset += Short.BYTES;
+                for (long i = 0; i < size; i++) {
+                    final long rec = newStartOffset + i * RECORD_SIZE;
+                    memory.putLong(rec, source.getLong(offset));
+                    offset += Long.BYTES;
+                    memory.putShort(rec + Long.BYTES, source.getShort(offset));
+                    offset += Short.BYTES;
+                }
+                mv.putLong(0, frameSize);
+                mv.putLong(1, newStartOffset);
+                mv.putLong(2, size);
+                mv.putLong(3, capacity);
+                mv.putLong(4, 0L);
+            }
+            if (tombstoneValueIndex >= 0) {
+                mv.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public int snapshotFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public int snapshotMinSupportedVersion() {
+            return 1;
+        }
+
+        @Override
+        public void snapshotPartitionState(MemoryA sink, MapValue mv) {
+            sink.putLong(mv.getLong(0)); // frameSize
+            final long startOffset = mv.getLong(1);
+            final long size = mv.getLong(2);
+            final long capacity = mv.getLong(3);
+            final long firstIdx = mv.getLong(4);
+            sink.putLong(size);
+            if (frameLoBounded) {
+                final long dequeStartOffset = mv.getLong(5);
+                final long dequeCapacity = mv.getLong(6);
+                final long dequeStartIndex = mv.getLong(7);
+                final long dequeEndIndex = mv.getLong(8);
+                final long dequeSize = dequeEndIndex - dequeStartIndex;
+                sink.putLong(dequeSize);
+                for (long i = 0; i < size; i++) {
+                    final long rec = startOffset + ((firstIdx + i) % capacity) * RECORD_SIZE;
+                    sink.putLong(memory.getLong(rec));
+                    sink.putShort(memory.getShort(rec + Long.BYTES));
+                }
+                for (long i = 0; i < dequeSize; i++) {
+                    sink.putShort(dequeMemory.getShort(dequeStartOffset + ((dequeStartIndex + i) % dequeCapacity) * DEQUE_RECORD_SIZE));
+                }
+            } else {
+                sink.putShort((short) mv.getLong(5));
+                for (long i = 0; i < size; i++) {
+                    final long rec = startOffset + ((firstIdx + i) % capacity) * RECORD_SIZE;
+                    sink.putLong(memory.getLong(rec));
+                    sink.putShort(memory.getShort(rec + Long.BYTES));
+                }
+            }
+        }
+
+        @Override
+        public boolean supportsSnapshot() {
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -2954,6 +3564,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
         private final int frameSize;
+        private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
+        private final ArrayColumnTypes mapValueTypes;
         private final MemoryARW memory;
         private final String name;
         private final int type;
@@ -2970,7 +3583,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 MemoryARW dequeMemory,
                 Decimal64Comparator comparator,
                 String name,
-                int type
+                int type,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             if (rowsLo > Long.MIN_VALUE) {
@@ -2990,12 +3605,36 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.comparator = comparator;
             this.name = name;
             this.type = type;
+            this.liveView = liveView;
+            if (liveView) {
+                ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                    keyTypesCopy.add(partitionByKeyTypes.getColumnType(i));
+                }
+                this.keyColumnTypes = keyTypesCopy;
+                final ArrayColumnTypes srcValueTypes = frameLoBounded
+                        ? MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES_LV
+                        : MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES_LV;
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = srcValueTypes.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(srcValueTypes.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = frameLoBounded ? 5 : 3;
+            } else {
+                this.keyColumnTypes = null;
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
         }
 
         @Override
         public void close() {
             super.close();
             memory.close();
+            if (dequeMemory != null) {
+                dequeMemory.close();
+            }
         }
 
         @Override
@@ -3012,6 +3651,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             long dequeEndIndex = 0;
 
             if (value.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    value.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 loIdx = 0;
                 startOffset = memory.appendAddressFor((long) bufferSize * Short.BYTES) - memory.getPageAddress(0);
                 if (frameIncludesCurrentValue && s != Decimals.DECIMAL16_NULL) {
@@ -3094,13 +3736,41 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
         }
 
         @Override
+        public ColumnTypes getSnapshotKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getSnapshotKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : (frameLoBounded
+                    ? MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES
+                    : MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES).getColumnCount();
+        }
+
+        @Override
         public int getType() {
             return type;
+        }
+
+        @Override
+        public void onSnapshotRestoreBegin() {
+            super.onSnapshotRestoreBegin();
+            memory.truncate();
+            if (dequeMemory != null) {
+                dequeMemory.truncate();
+            }
         }
 
         @Override
@@ -3121,6 +3791,113 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             if (dequeMemory != null) {
                 dequeMemory.close();
             }
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset. Null out the fixed-size ring and drop the deque
+            // (when bounded). The ring slab stays allocated; the next post-reset
+            // row overwrites it.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mv = key.findValue();
+            if (mv != null) {
+                final long startOffset = mv.getLong(1);
+                mv.putLong(0, 0L);
+                for (int i = 0; i < bufferSize; i++) {
+                    memory.putShort(startOffset + (long) i * Short.BYTES, Decimals.DECIMAL16_NULL);
+                }
+                if (frameLoBounded) {
+                    mv.putLong(3, 0L);
+                    mv.putLong(4, 0L);
+                } else {
+                    mv.putLong(2, Decimals.DECIMAL16_NULL);
+                }
+                if (!mv.isNew() && tombstoneValueIndex >= 0 && mv.getByte(tombstoneValueIndex) != 1) {
+                    mv.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restorePartitionState(MemoryR source, long offset, MapValue mv, int formatVersion) {
+            final long loIdx = source.getLong(offset);
+            offset += Long.BYTES;
+            final long newStartOffset = memory.appendAddressFor((long) bufferSize * Short.BYTES) - memory.getPageAddress(0);
+            if (frameLoBounded) {
+                final long dequeStartIndex = source.getLong(offset);
+                offset += Long.BYTES;
+                final long dequeEndIndex = source.getLong(offset);
+                offset += Long.BYTES;
+                for (int i = 0; i < bufferSize; i++) {
+                    memory.putShort(newStartOffset + (long) i * Short.BYTES, source.getShort(offset));
+                    offset += Short.BYTES;
+                }
+                final long newDequeStartOffset = dequeMemory.appendAddressFor((long) dequeBufferSize * Short.BYTES) - dequeMemory.getPageAddress(0);
+                for (int i = 0; i < dequeBufferSize; i++) {
+                    dequeMemory.putShort(newDequeStartOffset + (long) i * Short.BYTES, source.getShort(offset));
+                    offset += Short.BYTES;
+                }
+                mv.putLong(0, loIdx);
+                mv.putLong(1, newStartOffset);
+                mv.putLong(2, newDequeStartOffset);
+                mv.putLong(3, dequeStartIndex);
+                mv.putLong(4, dequeEndIndex);
+            } else {
+                mv.putLong(2, source.getShort(offset));
+                offset += Short.BYTES;
+                for (int i = 0; i < bufferSize; i++) {
+                    memory.putShort(newStartOffset + (long) i * Short.BYTES, source.getShort(offset));
+                    offset += Short.BYTES;
+                }
+                mv.putLong(0, loIdx);
+                mv.putLong(1, newStartOffset);
+            }
+            if (tombstoneValueIndex >= 0) {
+                mv.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public int snapshotFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public int snapshotMinSupportedVersion() {
+            return 1;
+        }
+
+        @Override
+        public void snapshotPartitionState(MemoryA sink, MapValue mv) {
+            sink.putLong(mv.getLong(0)); // loIdx
+            final long startOffset = mv.getLong(1);
+            if (frameLoBounded) {
+                sink.putLong(mv.getLong(3)); // dequeStartIndex
+                sink.putLong(mv.getLong(4)); // dequeEndIndex
+                for (int i = 0; i < bufferSize; i++) {
+                    sink.putShort(memory.getShort(startOffset + (long) i * Short.BYTES));
+                }
+                final long dequeStartOffset = mv.getLong(2);
+                for (int i = 0; i < dequeBufferSize; i++) {
+                    sink.putShort(dequeMemory.getShort(dequeStartOffset + (long) i * Short.BYTES));
+                }
+            } else {
+                sink.putShort((short) mv.getLong(2));
+                for (int i = 0; i < bufferSize; i++) {
+                    sink.putShort(memory.getShort(startOffset + (long) i * Short.BYTES));
+                }
+            }
+        }
+
+        @Override
+        public boolean supportsSnapshot() {
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -4060,6 +4837,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final boolean frameLoBounded;
         private final LongList freeList = new LongList();
         private final int initialBufferSize;
+        private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
+        private final ArrayColumnTypes mapValueTypes;
         private final long maxDiff;
         private final Decimal256 maxMin = new Decimal256();
         private final MemoryARW memory;
@@ -4086,7 +4866,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 int timestampIdx,
                 Decimal256Comparator comparator,
                 String name,
-                int type
+                int type,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             frameLoBounded = rangeLo != Long.MIN_VALUE;
@@ -4101,7 +4883,28 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.comparator = comparator;
             this.name = name;
             this.type = type;
+            this.liveView = liveView;
             maxMin.ofRawNull();
+            if (liveView) {
+                ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                    keyTypesCopy.add(partitionByKeyTypes.getColumnType(i));
+                }
+                this.keyColumnTypes = keyTypesCopy;
+                final ArrayColumnTypes srcValueTypes = frameLoBounded
+                        ? MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES_LV
+                        : MAX_DECIMAL256_OVER_PARTITION_RANGE_TYPES_LV;
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = srcValueTypes.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(srcValueTypes.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = frameLoBounded ? 9 : 6;
+            } else {
+                this.keyColumnTypes = null;
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
         }
 
         @Override
@@ -4134,6 +4937,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             arg.getDecimal256(record, scratch);
 
             if (mapValue.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    mapValue.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 capacity = initialBufferSize;
                 startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
                 firstIdx = 0;
@@ -4294,13 +5100,43 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
         }
 
         @Override
+        public ColumnTypes getSnapshotKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getSnapshotKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : (frameLoBounded
+                    ? MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES
+                    : MAX_DECIMAL256_OVER_PARTITION_RANGE_TYPES).getColumnCount();
+        }
+
+        @Override
         public int getType() {
             return type;
+        }
+
+        @Override
+        public void onSnapshotRestoreBegin() {
+            super.onSnapshotRestoreBegin();
+            memory.truncate();
+            freeList.clear();
+            if (dequeMemory != null) {
+                dequeMemory.truncate();
+            }
+            dequeFreeList.clear();
         }
 
         @Override
@@ -4328,6 +5164,146 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             if (dequeMemory != null) {
                 dequeMemory.close();
             }
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset. Drop the partition's frame and the deque
+            // (when bounded). Ring slabs stay allocated; the next post-reset
+            // row writes from index 0.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mv = key.findValue();
+            if (mv != null) {
+                mv.putLong(0, 0L);
+                mv.putLong(2, 0L);
+                mv.putLong(4, 0L);
+                if (frameLoBounded) {
+                    mv.putLong(7, 0L);
+                    mv.putLong(8, 0L);
+                } else {
+                    scratch.ofRawNull();
+                    mv.putDecimal256(5, scratch);
+                }
+                if (!mv.isNew() && tombstoneValueIndex >= 0 && mv.getByte(tombstoneValueIndex) != 1) {
+                    mv.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restorePartitionState(MemoryR source, long offset, MapValue mv, int formatVersion) {
+            final long frameSize = source.getLong(offset);
+            offset += Long.BYTES;
+            final long size = source.getLong(offset);
+            offset += Long.BYTES;
+            final long capacity = Math.max(size, initialBufferSize);
+            final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            if (frameLoBounded) {
+                final long dequeSize = source.getLong(offset);
+                offset += Long.BYTES;
+                for (long i = 0; i < size; i++) {
+                    final long rec = newStartOffset + i * RECORD_SIZE;
+                    memory.putLong(rec, source.getLong(offset));
+                    offset += Long.BYTES;
+                    source.getDecimal256(offset, scratch);
+                    memory.putDecimal256(rec + Long.BYTES, scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
+                    offset += Decimal256.BYTES;
+                }
+                final long dequeCapacity = Math.max(dequeSize, dequeInitialBufferSize);
+                final long newDequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * DEQUE_RECORD_SIZE) - dequeMemory.getPageAddress(0);
+                for (long i = 0; i < dequeSize; i++) {
+                    source.getDecimal256(offset, scratch);
+                    dequeMemory.putDecimal256(newDequeStartOffset + i * DEQUE_RECORD_SIZE, scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
+                    offset += Decimal256.BYTES;
+                }
+                mv.putLong(0, frameSize);
+                mv.putLong(1, newStartOffset);
+                mv.putLong(2, size);
+                mv.putLong(3, capacity);
+                mv.putLong(4, 0L);
+                mv.putLong(5, newDequeStartOffset);
+                mv.putLong(6, dequeCapacity);
+                mv.putLong(7, 0L);
+                mv.putLong(8, dequeSize);
+            } else {
+                source.getDecimal256(offset, scratch);
+                mv.putDecimal256(5, scratch);
+                offset += Decimal256.BYTES;
+                for (long i = 0; i < size; i++) {
+                    final long rec = newStartOffset + i * RECORD_SIZE;
+                    memory.putLong(rec, source.getLong(offset));
+                    offset += Long.BYTES;
+                    source.getDecimal256(offset, scratch);
+                    memory.putDecimal256(rec + Long.BYTES, scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
+                    offset += Decimal256.BYTES;
+                }
+                mv.putLong(0, frameSize);
+                mv.putLong(1, newStartOffset);
+                mv.putLong(2, size);
+                mv.putLong(3, capacity);
+                mv.putLong(4, 0L);
+            }
+            if (tombstoneValueIndex >= 0) {
+                mv.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public int snapshotFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public int snapshotMinSupportedVersion() {
+            return 1;
+        }
+
+        @Override
+        public void snapshotPartitionState(MemoryA sink, MapValue mv) {
+            sink.putLong(mv.getLong(0)); // frameSize
+            final long startOffset = mv.getLong(1);
+            final long size = mv.getLong(2);
+            final long capacity = mv.getLong(3);
+            final long firstIdx = mv.getLong(4);
+            sink.putLong(size);
+            if (frameLoBounded) {
+                final long dequeStartOffset = mv.getLong(5);
+                final long dequeCapacity = mv.getLong(6);
+                final long dequeStartIndex = mv.getLong(7);
+                final long dequeEndIndex = mv.getLong(8);
+                final long dequeSize = dequeEndIndex - dequeStartIndex;
+                sink.putLong(dequeSize);
+                for (long i = 0; i < size; i++) {
+                    final long rec = startOffset + ((firstIdx + i) % capacity) * RECORD_SIZE;
+                    sink.putLong(memory.getLong(rec));
+                    memory.getDecimal256(rec + Long.BYTES, scratch);
+                    sink.putDecimal256(scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
+                }
+                for (long i = 0; i < dequeSize; i++) {
+                    dequeMemory.getDecimal256(dequeStartOffset + ((dequeStartIndex + i) % dequeCapacity) * DEQUE_RECORD_SIZE, scratch);
+                    sink.putDecimal256(scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
+                }
+            } else {
+                mv.getDecimal256(5, scratch);
+                sink.putDecimal256(scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
+                for (long i = 0; i < size; i++) {
+                    final long rec = startOffset + ((firstIdx + i) % capacity) * RECORD_SIZE;
+                    sink.putLong(memory.getLong(rec));
+                    memory.getDecimal256(rec + Long.BYTES, scratch);
+                    sink.putDecimal256(scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
+                }
+            }
+        }
+
+        @Override
+        public boolean supportsSnapshot() {
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -4377,7 +5353,10 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final boolean frameLoBounded;
         private final int frameSize;
         private final Decimal256 hiValue = new Decimal256();
+        private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
         private final Decimal256 loValue = new Decimal256();
+        private final ArrayColumnTypes mapValueTypes;
         private final Decimal256 max = new Decimal256();
         private final Decimal256 maxMin = new Decimal256();
         private final MemoryARW memory;
@@ -4397,7 +5376,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 MemoryARW dequeMemory,
                 Decimal256Comparator comparator,
                 String name,
-                int type
+                int type,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             if (rowsLo > Long.MIN_VALUE) {
@@ -4417,12 +5398,36 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.comparator = comparator;
             this.name = name;
             this.type = type;
+            this.liveView = liveView;
+            if (liveView) {
+                ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                    keyTypesCopy.add(partitionByKeyTypes.getColumnType(i));
+                }
+                this.keyColumnTypes = keyTypesCopy;
+                final ArrayColumnTypes srcValueTypes = frameLoBounded
+                        ? MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES_LV
+                        : MAX_DECIMAL256_OVER_PARTITION_ROWS_TYPES_LV;
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = srcValueTypes.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(srcValueTypes.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = frameLoBounded ? 5 : 3;
+            } else {
+                this.keyColumnTypes = null;
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
         }
 
         @Override
         public void close() {
             super.close();
             memory.close();
+            if (dequeMemory != null) {
+                dequeMemory.close();
+            }
         }
 
         @Override
@@ -4439,6 +5444,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             long dequeEndIndex = 0;
 
             if (value.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    value.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 loIdx = 0;
                 startOffset = memory.appendAddressFor((long) bufferSize * Decimal256.BYTES) - memory.getPageAddress(0);
                 if (frameIncludesCurrentValue && !scratch.isNull()) {
@@ -4532,13 +5540,41 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
         }
 
         @Override
+        public ColumnTypes getSnapshotKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getSnapshotKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : (frameLoBounded
+                    ? MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES
+                    : MAX_DECIMAL256_OVER_PARTITION_ROWS_TYPES).getColumnCount();
+        }
+
+        @Override
         public int getType() {
             return type;
+        }
+
+        @Override
+        public void onSnapshotRestoreBegin() {
+            super.onSnapshotRestoreBegin();
+            memory.truncate();
+            if (dequeMemory != null) {
+                dequeMemory.truncate();
+            }
         }
 
         @Override
@@ -4563,6 +5599,123 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             if (dequeMemory != null) {
                 dequeMemory.close();
             }
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset. Null out the fixed-size ring and drop the deque
+            // (when bounded). The ring slab stays allocated; the next post-reset
+            // row overwrites it.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mv = key.findValue();
+            if (mv != null) {
+                final long startOffset = mv.getLong(1);
+                mv.putLong(0, 0L);
+                nullScratch.ofRawNull();
+                for (int i = 0; i < bufferSize; i++) {
+                    memory.putDecimal256(startOffset + (long) i * Decimal256.BYTES, nullScratch.getHh(), nullScratch.getHl(), nullScratch.getLh(), nullScratch.getLl());
+                }
+                if (frameLoBounded) {
+                    mv.putLong(3, 0L);
+                    mv.putLong(4, 0L);
+                } else {
+                    nullScratch.ofRawNull();
+                    mv.putDecimal256(2, nullScratch);
+                }
+                if (!mv.isNew() && tombstoneValueIndex >= 0 && mv.getByte(tombstoneValueIndex) != 1) {
+                    mv.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restorePartitionState(MemoryR source, long offset, MapValue mv, int formatVersion) {
+            final long loIdx = source.getLong(offset);
+            offset += Long.BYTES;
+            final long newStartOffset = memory.appendAddressFor((long) bufferSize * Decimal256.BYTES) - memory.getPageAddress(0);
+            if (frameLoBounded) {
+                final long dequeStartIndex = source.getLong(offset);
+                offset += Long.BYTES;
+                final long dequeEndIndex = source.getLong(offset);
+                offset += Long.BYTES;
+                for (int i = 0; i < bufferSize; i++) {
+                    source.getDecimal256(offset, scratch);
+                    memory.putDecimal256(newStartOffset + (long) i * Decimal256.BYTES, scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
+                    offset += Decimal256.BYTES;
+                }
+                final long newDequeStartOffset = dequeMemory.appendAddressFor((long) dequeBufferSize * Decimal256.BYTES) - dequeMemory.getPageAddress(0);
+                for (int i = 0; i < dequeBufferSize; i++) {
+                    source.getDecimal256(offset, scratch);
+                    dequeMemory.putDecimal256(newDequeStartOffset + (long) i * Decimal256.BYTES, scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
+                    offset += Decimal256.BYTES;
+                }
+                mv.putLong(0, loIdx);
+                mv.putLong(1, newStartOffset);
+                mv.putLong(2, newDequeStartOffset);
+                mv.putLong(3, dequeStartIndex);
+                mv.putLong(4, dequeEndIndex);
+            } else {
+                source.getDecimal256(offset, scratch);
+                mv.putDecimal256(2, scratch);
+                offset += Decimal256.BYTES;
+                for (int i = 0; i < bufferSize; i++) {
+                    source.getDecimal256(offset, scratch);
+                    memory.putDecimal256(newStartOffset + (long) i * Decimal256.BYTES, scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
+                    offset += Decimal256.BYTES;
+                }
+                mv.putLong(0, loIdx);
+                mv.putLong(1, newStartOffset);
+            }
+            if (tombstoneValueIndex >= 0) {
+                mv.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public int snapshotFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public int snapshotMinSupportedVersion() {
+            return 1;
+        }
+
+        @Override
+        public void snapshotPartitionState(MemoryA sink, MapValue mv) {
+            sink.putLong(mv.getLong(0)); // loIdx
+            final long startOffset = mv.getLong(1);
+            if (frameLoBounded) {
+                sink.putLong(mv.getLong(3)); // dequeStartIndex
+                sink.putLong(mv.getLong(4)); // dequeEndIndex
+                for (int i = 0; i < bufferSize; i++) {
+                    memory.getDecimal256(startOffset + (long) i * Decimal256.BYTES, scratch);
+                    sink.putDecimal256(scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
+                }
+                final long dequeStartOffset = mv.getLong(2);
+                for (int i = 0; i < dequeBufferSize; i++) {
+                    dequeMemory.getDecimal256(dequeStartOffset + (long) i * Decimal256.BYTES, scratch);
+                    sink.putDecimal256(scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
+                }
+            } else {
+                mv.getDecimal256(2, scratch);
+                sink.putDecimal256(scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
+                for (int i = 0; i < bufferSize; i++) {
+                    memory.getDecimal256(startOffset + (long) i * Decimal256.BYTES, scratch);
+                    sink.putDecimal256(scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
+                }
+            }
+        }
+
+        @Override
+        public boolean supportsSnapshot() {
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -5561,6 +6714,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final boolean frameLoBounded;
         private final LongList freeList = new LongList();
         private final int initialBufferSize;
+        private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
+        private final ArrayColumnTypes mapValueTypes;
         private final long maxDiff;
         private final MemoryARW memory;
         private final RingBufferDesc memoryDesc = new RingBufferDesc();
@@ -5583,7 +6739,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 int timestampIdx,
                 Decimal64Comparator comparator,
                 String name,
-                int type
+                int type,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             frameLoBounded = rangeLo != Long.MIN_VALUE;
@@ -5598,6 +6756,27 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.comparator = comparator;
             this.name = name;
             this.type = type;
+            this.liveView = liveView;
+            if (liveView) {
+                ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                    keyTypesCopy.add(partitionByKeyTypes.getColumnType(i));
+                }
+                this.keyColumnTypes = keyTypesCopy;
+                final ArrayColumnTypes srcValueTypes = frameLoBounded
+                        ? MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES_LV
+                        : MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES_LV;
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = srcValueTypes.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(srcValueTypes.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = frameLoBounded ? 9 : 6;
+            } else {
+                this.keyColumnTypes = null;
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
         }
 
         @Override
@@ -5630,6 +6809,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             int i = arg.getDecimal32(record);
 
             if (mapValue.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    mapValue.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 capacity = initialBufferSize;
                 startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
                 firstIdx = 0;
@@ -5784,13 +6966,43 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
         }
 
         @Override
+        public ColumnTypes getSnapshotKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getSnapshotKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : (frameLoBounded
+                    ? MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES
+                    : MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES).getColumnCount();
+        }
+
+        @Override
         public int getType() {
             return type;
+        }
+
+        @Override
+        public void onSnapshotRestoreBegin() {
+            super.onSnapshotRestoreBegin();
+            memory.truncate();
+            freeList.clear();
+            if (dequeMemory != null) {
+                dequeMemory.truncate();
+            }
+            dequeFreeList.clear();
         }
 
         @Override
@@ -5814,6 +7026,137 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             if (dequeMemory != null) {
                 dequeMemory.close();
             }
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset. Drop the partition's frame and the deque
+            // (when bounded). Ring slabs stay allocated; the next post-reset
+            // row writes from index 0.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mv = key.findValue();
+            if (mv != null) {
+                mv.putLong(0, 0L);
+                mv.putLong(2, 0L);
+                mv.putLong(4, 0L);
+                if (frameLoBounded) {
+                    mv.putLong(7, 0L);
+                    mv.putLong(8, 0L);
+                } else {
+                    mv.putLong(5, Decimals.DECIMAL32_NULL);
+                }
+                if (!mv.isNew() && tombstoneValueIndex >= 0 && mv.getByte(tombstoneValueIndex) != 1) {
+                    mv.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restorePartitionState(MemoryR source, long offset, MapValue mv, int formatVersion) {
+            final long frameSize = source.getLong(offset);
+            offset += Long.BYTES;
+            final long size = source.getLong(offset);
+            offset += Long.BYTES;
+            final long capacity = Math.max(size, initialBufferSize);
+            final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            if (frameLoBounded) {
+                final long dequeSize = source.getLong(offset);
+                offset += Long.BYTES;
+                for (long i = 0; i < size; i++) {
+                    final long rec = newStartOffset + i * RECORD_SIZE;
+                    memory.putLong(rec, source.getLong(offset));
+                    offset += Long.BYTES;
+                    memory.putInt(rec + Long.BYTES, source.getInt(offset));
+                    offset += Integer.BYTES;
+                }
+                final long dequeCapacity = Math.max(dequeSize, dequeInitialBufferSize);
+                final long newDequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * DEQUE_RECORD_SIZE) - dequeMemory.getPageAddress(0);
+                for (long i = 0; i < dequeSize; i++) {
+                    dequeMemory.putInt(newDequeStartOffset + i * DEQUE_RECORD_SIZE, source.getInt(offset));
+                    offset += Integer.BYTES;
+                }
+                mv.putLong(0, frameSize);
+                mv.putLong(1, newStartOffset);
+                mv.putLong(2, size);
+                mv.putLong(3, capacity);
+                mv.putLong(4, 0L);
+                mv.putLong(5, newDequeStartOffset);
+                mv.putLong(6, dequeCapacity);
+                mv.putLong(7, 0L);
+                mv.putLong(8, dequeSize);
+            } else {
+                mv.putLong(5, source.getInt(offset));
+                offset += Integer.BYTES;
+                for (long i = 0; i < size; i++) {
+                    final long rec = newStartOffset + i * RECORD_SIZE;
+                    memory.putLong(rec, source.getLong(offset));
+                    offset += Long.BYTES;
+                    memory.putInt(rec + Long.BYTES, source.getInt(offset));
+                    offset += Integer.BYTES;
+                }
+                mv.putLong(0, frameSize);
+                mv.putLong(1, newStartOffset);
+                mv.putLong(2, size);
+                mv.putLong(3, capacity);
+                mv.putLong(4, 0L);
+            }
+            if (tombstoneValueIndex >= 0) {
+                mv.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public int snapshotFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public int snapshotMinSupportedVersion() {
+            return 1;
+        }
+
+        @Override
+        public void snapshotPartitionState(MemoryA sink, MapValue mv) {
+            sink.putLong(mv.getLong(0)); // frameSize
+            final long startOffset = mv.getLong(1);
+            final long size = mv.getLong(2);
+            final long capacity = mv.getLong(3);
+            final long firstIdx = mv.getLong(4);
+            sink.putLong(size);
+            if (frameLoBounded) {
+                final long dequeStartOffset = mv.getLong(5);
+                final long dequeCapacity = mv.getLong(6);
+                final long dequeStartIndex = mv.getLong(7);
+                final long dequeEndIndex = mv.getLong(8);
+                final long dequeSize = dequeEndIndex - dequeStartIndex;
+                sink.putLong(dequeSize);
+                for (long i = 0; i < size; i++) {
+                    final long rec = startOffset + ((firstIdx + i) % capacity) * RECORD_SIZE;
+                    sink.putLong(memory.getLong(rec));
+                    sink.putInt(memory.getInt(rec + Long.BYTES));
+                }
+                for (long i = 0; i < dequeSize; i++) {
+                    sink.putInt(dequeMemory.getInt(dequeStartOffset + ((dequeStartIndex + i) % dequeCapacity) * DEQUE_RECORD_SIZE));
+                }
+            } else {
+                sink.putInt((int) mv.getLong(5));
+                for (long i = 0; i < size; i++) {
+                    final long rec = startOffset + ((firstIdx + i) % capacity) * RECORD_SIZE;
+                    sink.putLong(memory.getLong(rec));
+                    sink.putInt(memory.getInt(rec + Long.BYTES));
+                }
+            }
+        }
+
+        @Override
+        public boolean supportsSnapshot() {
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -5856,6 +7199,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
         private final int frameSize;
+        private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
+        private final ArrayColumnTypes mapValueTypes;
         private final MemoryARW memory;
         private final String name;
         private final int type;
@@ -5872,7 +7218,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 MemoryARW dequeMemory,
                 Decimal64Comparator comparator,
                 String name,
-                int type
+                int type,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             if (rowsLo > Long.MIN_VALUE) {
@@ -5892,12 +7240,36 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.comparator = comparator;
             this.name = name;
             this.type = type;
+            this.liveView = liveView;
+            if (liveView) {
+                ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                    keyTypesCopy.add(partitionByKeyTypes.getColumnType(i));
+                }
+                this.keyColumnTypes = keyTypesCopy;
+                final ArrayColumnTypes srcValueTypes = frameLoBounded
+                        ? MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES_LV
+                        : MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES_LV;
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = srcValueTypes.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(srcValueTypes.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = frameLoBounded ? 5 : 3;
+            } else {
+                this.keyColumnTypes = null;
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
         }
 
         @Override
         public void close() {
             super.close();
             memory.close();
+            if (dequeMemory != null) {
+                dequeMemory.close();
+            }
         }
 
         @Override
@@ -5914,6 +7286,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             long dequeEndIndex = 0;
 
             if (value.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    value.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 loIdx = 0;
                 startOffset = memory.appendAddressFor((long) bufferSize * Integer.BYTES) - memory.getPageAddress(0);
                 if (frameIncludesCurrentValue && i != Decimals.DECIMAL32_NULL) {
@@ -5996,13 +7371,41 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
         }
 
         @Override
+        public ColumnTypes getSnapshotKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getSnapshotKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : (frameLoBounded
+                    ? MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES
+                    : MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES).getColumnCount();
+        }
+
+        @Override
         public int getType() {
             return type;
+        }
+
+        @Override
+        public void onSnapshotRestoreBegin() {
+            super.onSnapshotRestoreBegin();
+            memory.truncate();
+            if (dequeMemory != null) {
+                dequeMemory.truncate();
+            }
         }
 
         @Override
@@ -6023,6 +7426,113 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             if (dequeMemory != null) {
                 dequeMemory.close();
             }
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset. Null out the fixed-size ring and drop the deque
+            // (when bounded). The ring slab stays allocated; the next post-reset
+            // row overwrites it.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mv = key.findValue();
+            if (mv != null) {
+                final long startOffset = mv.getLong(1);
+                mv.putLong(0, 0L);
+                for (int i = 0; i < bufferSize; i++) {
+                    memory.putInt(startOffset + (long) i * Integer.BYTES, Decimals.DECIMAL32_NULL);
+                }
+                if (frameLoBounded) {
+                    mv.putLong(3, 0L);
+                    mv.putLong(4, 0L);
+                } else {
+                    mv.putLong(2, Decimals.DECIMAL32_NULL);
+                }
+                if (!mv.isNew() && tombstoneValueIndex >= 0 && mv.getByte(tombstoneValueIndex) != 1) {
+                    mv.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restorePartitionState(MemoryR source, long offset, MapValue mv, int formatVersion) {
+            final long loIdx = source.getLong(offset);
+            offset += Long.BYTES;
+            final long newStartOffset = memory.appendAddressFor((long) bufferSize * Integer.BYTES) - memory.getPageAddress(0);
+            if (frameLoBounded) {
+                final long dequeStartIndex = source.getLong(offset);
+                offset += Long.BYTES;
+                final long dequeEndIndex = source.getLong(offset);
+                offset += Long.BYTES;
+                for (int i = 0; i < bufferSize; i++) {
+                    memory.putInt(newStartOffset + (long) i * Integer.BYTES, source.getInt(offset));
+                    offset += Integer.BYTES;
+                }
+                final long newDequeStartOffset = dequeMemory.appendAddressFor((long) dequeBufferSize * Integer.BYTES) - dequeMemory.getPageAddress(0);
+                for (int i = 0; i < dequeBufferSize; i++) {
+                    dequeMemory.putInt(newDequeStartOffset + (long) i * Integer.BYTES, source.getInt(offset));
+                    offset += Integer.BYTES;
+                }
+                mv.putLong(0, loIdx);
+                mv.putLong(1, newStartOffset);
+                mv.putLong(2, newDequeStartOffset);
+                mv.putLong(3, dequeStartIndex);
+                mv.putLong(4, dequeEndIndex);
+            } else {
+                mv.putLong(2, source.getInt(offset));
+                offset += Integer.BYTES;
+                for (int i = 0; i < bufferSize; i++) {
+                    memory.putInt(newStartOffset + (long) i * Integer.BYTES, source.getInt(offset));
+                    offset += Integer.BYTES;
+                }
+                mv.putLong(0, loIdx);
+                mv.putLong(1, newStartOffset);
+            }
+            if (tombstoneValueIndex >= 0) {
+                mv.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public int snapshotFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public int snapshotMinSupportedVersion() {
+            return 1;
+        }
+
+        @Override
+        public void snapshotPartitionState(MemoryA sink, MapValue mv) {
+            sink.putLong(mv.getLong(0)); // loIdx
+            final long startOffset = mv.getLong(1);
+            if (frameLoBounded) {
+                sink.putLong(mv.getLong(3)); // dequeStartIndex
+                sink.putLong(mv.getLong(4)); // dequeEndIndex
+                for (int i = 0; i < bufferSize; i++) {
+                    sink.putInt(memory.getInt(startOffset + (long) i * Integer.BYTES));
+                }
+                final long dequeStartOffset = mv.getLong(2);
+                for (int i = 0; i < dequeBufferSize; i++) {
+                    sink.putInt(dequeMemory.getInt(dequeStartOffset + (long) i * Integer.BYTES));
+                }
+            } else {
+                sink.putInt((int) mv.getLong(2));
+                for (int i = 0; i < bufferSize; i++) {
+                    sink.putInt(memory.getInt(startOffset + (long) i * Integer.BYTES));
+                }
+            }
+        }
+
+        @Override
+        public boolean supportsSnapshot() {
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -6939,6 +8449,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final boolean frameLoBounded;
         private final LongList freeList = new LongList();
         private final int initialBufferSize;
+        private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
+        private final ArrayColumnTypes mapValueTypes;
         private final long maxDiff;
         private final MemoryARW memory;
         private final RingBufferDesc memoryDesc = new RingBufferDesc();
@@ -6961,7 +8474,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 int timestampIdx,
                 Decimal64Comparator comparator,
                 String name,
-                int type
+                int type,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             frameLoBounded = rangeLo != Long.MIN_VALUE;
@@ -6976,6 +8491,27 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.comparator = comparator;
             this.name = name;
             this.type = type;
+            this.liveView = liveView;
+            if (liveView) {
+                ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                    keyTypesCopy.add(partitionByKeyTypes.getColumnType(i));
+                }
+                this.keyColumnTypes = keyTypesCopy;
+                final ArrayColumnTypes srcValueTypes = frameLoBounded
+                        ? MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES_LV
+                        : MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES_LV;
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = srcValueTypes.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(srcValueTypes.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = frameLoBounded ? 9 : 6;
+            } else {
+                this.keyColumnTypes = null;
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
         }
 
         @Override
@@ -7008,6 +8544,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             long d = arg.getDecimal64(record);
 
             if (mapValue.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    mapValue.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 capacity = initialBufferSize;
                 startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
                 firstIdx = 0;
@@ -7162,13 +8701,43 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
         }
 
         @Override
+        public ColumnTypes getSnapshotKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getSnapshotKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : (frameLoBounded
+                    ? MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES
+                    : MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES).getColumnCount();
+        }
+
+        @Override
         public int getType() {
             return type;
+        }
+
+        @Override
+        public void onSnapshotRestoreBegin() {
+            super.onSnapshotRestoreBegin();
+            memory.truncate();
+            freeList.clear();
+            if (dequeMemory != null) {
+                dequeMemory.truncate();
+            }
+            dequeFreeList.clear();
         }
 
         @Override
@@ -7192,6 +8761,137 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             if (dequeMemory != null) {
                 dequeMemory.close();
             }
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset. Drop the partition's frame and the deque
+            // (when bounded). Ring slabs stay allocated; the next post-reset
+            // row writes from index 0.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mv = key.findValue();
+            if (mv != null) {
+                mv.putLong(0, 0L);
+                mv.putLong(2, 0L);
+                mv.putLong(4, 0L);
+                if (frameLoBounded) {
+                    mv.putLong(7, 0L);
+                    mv.putLong(8, 0L);
+                } else {
+                    mv.putLong(5, Decimals.DECIMAL64_NULL);
+                }
+                if (!mv.isNew() && tombstoneValueIndex >= 0 && mv.getByte(tombstoneValueIndex) != 1) {
+                    mv.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restorePartitionState(MemoryR source, long offset, MapValue mv, int formatVersion) {
+            final long frameSize = source.getLong(offset);
+            offset += Long.BYTES;
+            final long size = source.getLong(offset);
+            offset += Long.BYTES;
+            final long capacity = Math.max(size, initialBufferSize);
+            final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            if (frameLoBounded) {
+                final long dequeSize = source.getLong(offset);
+                offset += Long.BYTES;
+                for (long i = 0; i < size; i++) {
+                    final long rec = newStartOffset + i * RECORD_SIZE;
+                    memory.putLong(rec, source.getLong(offset));
+                    offset += Long.BYTES;
+                    memory.putLong(rec + Long.BYTES, source.getLong(offset));
+                    offset += Long.BYTES;
+                }
+                final long dequeCapacity = Math.max(dequeSize, dequeInitialBufferSize);
+                final long newDequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * DEQUE_RECORD_SIZE) - dequeMemory.getPageAddress(0);
+                for (long i = 0; i < dequeSize; i++) {
+                    dequeMemory.putLong(newDequeStartOffset + i * DEQUE_RECORD_SIZE, source.getLong(offset));
+                    offset += Long.BYTES;
+                }
+                mv.putLong(0, frameSize);
+                mv.putLong(1, newStartOffset);
+                mv.putLong(2, size);
+                mv.putLong(3, capacity);
+                mv.putLong(4, 0L);
+                mv.putLong(5, newDequeStartOffset);
+                mv.putLong(6, dequeCapacity);
+                mv.putLong(7, 0L);
+                mv.putLong(8, dequeSize);
+            } else {
+                mv.putLong(5, source.getLong(offset));
+                offset += Long.BYTES;
+                for (long i = 0; i < size; i++) {
+                    final long rec = newStartOffset + i * RECORD_SIZE;
+                    memory.putLong(rec, source.getLong(offset));
+                    offset += Long.BYTES;
+                    memory.putLong(rec + Long.BYTES, source.getLong(offset));
+                    offset += Long.BYTES;
+                }
+                mv.putLong(0, frameSize);
+                mv.putLong(1, newStartOffset);
+                mv.putLong(2, size);
+                mv.putLong(3, capacity);
+                mv.putLong(4, 0L);
+            }
+            if (tombstoneValueIndex >= 0) {
+                mv.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public int snapshotFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public int snapshotMinSupportedVersion() {
+            return 1;
+        }
+
+        @Override
+        public void snapshotPartitionState(MemoryA sink, MapValue mv) {
+            sink.putLong(mv.getLong(0)); // frameSize
+            final long startOffset = mv.getLong(1);
+            final long size = mv.getLong(2);
+            final long capacity = mv.getLong(3);
+            final long firstIdx = mv.getLong(4);
+            sink.putLong(size);
+            if (frameLoBounded) {
+                final long dequeStartOffset = mv.getLong(5);
+                final long dequeCapacity = mv.getLong(6);
+                final long dequeStartIndex = mv.getLong(7);
+                final long dequeEndIndex = mv.getLong(8);
+                final long dequeSize = dequeEndIndex - dequeStartIndex;
+                sink.putLong(dequeSize);
+                for (long i = 0; i < size; i++) {
+                    final long rec = startOffset + ((firstIdx + i) % capacity) * RECORD_SIZE;
+                    sink.putLong(memory.getLong(rec));
+                    sink.putLong(memory.getLong(rec + Long.BYTES));
+                }
+                for (long i = 0; i < dequeSize; i++) {
+                    sink.putLong(dequeMemory.getLong(dequeStartOffset + ((dequeStartIndex + i) % dequeCapacity) * DEQUE_RECORD_SIZE));
+                }
+            } else {
+                sink.putLong((long) mv.getLong(5));
+                for (long i = 0; i < size; i++) {
+                    final long rec = startOffset + ((firstIdx + i) % capacity) * RECORD_SIZE;
+                    sink.putLong(memory.getLong(rec));
+                    sink.putLong(memory.getLong(rec + Long.BYTES));
+                }
+            }
+        }
+
+        @Override
+        public boolean supportsSnapshot() {
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -7235,6 +8935,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
         private final int frameSize;
+        private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
+        private final ArrayColumnTypes mapValueTypes;
         private final MemoryARW memory;
         private final String name;
         private final int type;
@@ -7251,7 +8954,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 MemoryARW dequeMemory,
                 Decimal64Comparator comparator,
                 String name,
-                int type
+                int type,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             if (rowsLo > Long.MIN_VALUE) {
@@ -7271,12 +8976,36 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.comparator = comparator;
             this.name = name;
             this.type = type;
+            this.liveView = liveView;
+            if (liveView) {
+                ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                    keyTypesCopy.add(partitionByKeyTypes.getColumnType(i));
+                }
+                this.keyColumnTypes = keyTypesCopy;
+                final ArrayColumnTypes srcValueTypes = frameLoBounded
+                        ? MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES_LV
+                        : MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES_LV;
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = srcValueTypes.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(srcValueTypes.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = frameLoBounded ? 5 : 3;
+            } else {
+                this.keyColumnTypes = null;
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
         }
 
         @Override
         public void close() {
             super.close();
             memory.close();
+            if (dequeMemory != null) {
+                dequeMemory.close();
+            }
         }
 
         @Override
@@ -7293,6 +9022,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             long dequeEndIndex = 0;
 
             if (value.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    value.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 loIdx = 0;
                 startOffset = memory.appendAddressFor((long) bufferSize * Long.BYTES) - memory.getPageAddress(0);
                 if (frameIncludesCurrentValue && d != Decimals.DECIMAL64_NULL) {
@@ -7375,13 +9107,41 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
         }
 
         @Override
+        public ColumnTypes getSnapshotKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getSnapshotKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : (frameLoBounded
+                    ? MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES
+                    : MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES).getColumnCount();
+        }
+
+        @Override
         public int getType() {
             return type;
+        }
+
+        @Override
+        public void onSnapshotRestoreBegin() {
+            super.onSnapshotRestoreBegin();
+            memory.truncate();
+            if (dequeMemory != null) {
+                dequeMemory.truncate();
+            }
         }
 
         @Override
@@ -7402,6 +9162,113 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             if (dequeMemory != null) {
                 dequeMemory.close();
             }
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset. Null out the fixed-size ring and drop the deque
+            // (when bounded). The ring slab stays allocated; the next post-reset
+            // row overwrites it.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mv = key.findValue();
+            if (mv != null) {
+                final long startOffset = mv.getLong(1);
+                mv.putLong(0, 0L);
+                for (int i = 0; i < bufferSize; i++) {
+                    memory.putLong(startOffset + (long) i * Long.BYTES, Decimals.DECIMAL64_NULL);
+                }
+                if (frameLoBounded) {
+                    mv.putLong(3, 0L);
+                    mv.putLong(4, 0L);
+                } else {
+                    mv.putLong(2, Decimals.DECIMAL64_NULL);
+                }
+                if (!mv.isNew() && tombstoneValueIndex >= 0 && mv.getByte(tombstoneValueIndex) != 1) {
+                    mv.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restorePartitionState(MemoryR source, long offset, MapValue mv, int formatVersion) {
+            final long loIdx = source.getLong(offset);
+            offset += Long.BYTES;
+            final long newStartOffset = memory.appendAddressFor((long) bufferSize * Long.BYTES) - memory.getPageAddress(0);
+            if (frameLoBounded) {
+                final long dequeStartIndex = source.getLong(offset);
+                offset += Long.BYTES;
+                final long dequeEndIndex = source.getLong(offset);
+                offset += Long.BYTES;
+                for (int i = 0; i < bufferSize; i++) {
+                    memory.putLong(newStartOffset + (long) i * Long.BYTES, source.getLong(offset));
+                    offset += Long.BYTES;
+                }
+                final long newDequeStartOffset = dequeMemory.appendAddressFor((long) dequeBufferSize * Long.BYTES) - dequeMemory.getPageAddress(0);
+                for (int i = 0; i < dequeBufferSize; i++) {
+                    dequeMemory.putLong(newDequeStartOffset + (long) i * Long.BYTES, source.getLong(offset));
+                    offset += Long.BYTES;
+                }
+                mv.putLong(0, loIdx);
+                mv.putLong(1, newStartOffset);
+                mv.putLong(2, newDequeStartOffset);
+                mv.putLong(3, dequeStartIndex);
+                mv.putLong(4, dequeEndIndex);
+            } else {
+                mv.putLong(2, source.getLong(offset));
+                offset += Long.BYTES;
+                for (int i = 0; i < bufferSize; i++) {
+                    memory.putLong(newStartOffset + (long) i * Long.BYTES, source.getLong(offset));
+                    offset += Long.BYTES;
+                }
+                mv.putLong(0, loIdx);
+                mv.putLong(1, newStartOffset);
+            }
+            if (tombstoneValueIndex >= 0) {
+                mv.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public int snapshotFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public int snapshotMinSupportedVersion() {
+            return 1;
+        }
+
+        @Override
+        public void snapshotPartitionState(MemoryA sink, MapValue mv) {
+            sink.putLong(mv.getLong(0)); // loIdx
+            final long startOffset = mv.getLong(1);
+            if (frameLoBounded) {
+                sink.putLong(mv.getLong(3)); // dequeStartIndex
+                sink.putLong(mv.getLong(4)); // dequeEndIndex
+                for (int i = 0; i < bufferSize; i++) {
+                    sink.putLong(memory.getLong(startOffset + (long) i * Long.BYTES));
+                }
+                final long dequeStartOffset = mv.getLong(2);
+                for (int i = 0; i < dequeBufferSize; i++) {
+                    sink.putLong(dequeMemory.getLong(dequeStartOffset + (long) i * Long.BYTES));
+                }
+            } else {
+                sink.putLong((long) mv.getLong(2));
+                for (int i = 0; i < bufferSize; i++) {
+                    sink.putLong(memory.getLong(startOffset + (long) i * Long.BYTES));
+                }
+            }
+        }
+
+        @Override
+        public boolean supportsSnapshot() {
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -8321,6 +10188,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final boolean frameLoBounded;
         private final LongList freeList = new LongList();
         private final int initialBufferSize;
+        private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
+        private final ArrayColumnTypes mapValueTypes;
         private final long maxDiff;
         private final MemoryARW memory;
         private final RingBufferDesc memoryDesc = new RingBufferDesc();
@@ -8343,7 +10213,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 int timestampIdx,
                 Decimal64Comparator comparator,
                 String name,
-                int type
+                int type,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             frameLoBounded = rangeLo != Long.MIN_VALUE;
@@ -8358,6 +10230,27 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.comparator = comparator;
             this.name = name;
             this.type = type;
+            this.liveView = liveView;
+            if (liveView) {
+                ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                    keyTypesCopy.add(partitionByKeyTypes.getColumnType(i));
+                }
+                this.keyColumnTypes = keyTypesCopy;
+                final ArrayColumnTypes srcValueTypes = frameLoBounded
+                        ? MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES_LV
+                        : MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES_LV;
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = srcValueTypes.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(srcValueTypes.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = frameLoBounded ? 9 : 6;
+            } else {
+                this.keyColumnTypes = null;
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
         }
 
         @Override
@@ -8390,6 +10283,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             byte b = arg.getDecimal8(record);
 
             if (mapValue.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    mapValue.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 capacity = initialBufferSize;
                 startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
                 firstIdx = 0;
@@ -8544,13 +10440,43 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
         }
 
         @Override
+        public ColumnTypes getSnapshotKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getSnapshotKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : (frameLoBounded
+                    ? MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES
+                    : MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES).getColumnCount();
+        }
+
+        @Override
         public int getType() {
             return type;
+        }
+
+        @Override
+        public void onSnapshotRestoreBegin() {
+            super.onSnapshotRestoreBegin();
+            memory.truncate();
+            freeList.clear();
+            if (dequeMemory != null) {
+                dequeMemory.truncate();
+            }
+            dequeFreeList.clear();
         }
 
         @Override
@@ -8574,6 +10500,137 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             if (dequeMemory != null) {
                 dequeMemory.close();
             }
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset. Drop the partition's frame and the deque
+            // (when bounded). Ring slabs stay allocated; the next post-reset
+            // row writes from index 0.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mv = key.findValue();
+            if (mv != null) {
+                mv.putLong(0, 0L);
+                mv.putLong(2, 0L);
+                mv.putLong(4, 0L);
+                if (frameLoBounded) {
+                    mv.putLong(7, 0L);
+                    mv.putLong(8, 0L);
+                } else {
+                    mv.putLong(5, Decimals.DECIMAL8_NULL);
+                }
+                if (!mv.isNew() && tombstoneValueIndex >= 0 && mv.getByte(tombstoneValueIndex) != 1) {
+                    mv.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restorePartitionState(MemoryR source, long offset, MapValue mv, int formatVersion) {
+            final long frameSize = source.getLong(offset);
+            offset += Long.BYTES;
+            final long size = source.getLong(offset);
+            offset += Long.BYTES;
+            final long capacity = Math.max(size, initialBufferSize);
+            final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            if (frameLoBounded) {
+                final long dequeSize = source.getLong(offset);
+                offset += Long.BYTES;
+                for (long i = 0; i < size; i++) {
+                    final long rec = newStartOffset + i * RECORD_SIZE;
+                    memory.putLong(rec, source.getLong(offset));
+                    offset += Long.BYTES;
+                    memory.putByte(rec + Long.BYTES, source.getByte(offset));
+                    offset += Byte.BYTES;
+                }
+                final long dequeCapacity = Math.max(dequeSize, dequeInitialBufferSize);
+                final long newDequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * DEQUE_RECORD_SIZE) - dequeMemory.getPageAddress(0);
+                for (long i = 0; i < dequeSize; i++) {
+                    dequeMemory.putByte(newDequeStartOffset + i * DEQUE_RECORD_SIZE, source.getByte(offset));
+                    offset += Byte.BYTES;
+                }
+                mv.putLong(0, frameSize);
+                mv.putLong(1, newStartOffset);
+                mv.putLong(2, size);
+                mv.putLong(3, capacity);
+                mv.putLong(4, 0L);
+                mv.putLong(5, newDequeStartOffset);
+                mv.putLong(6, dequeCapacity);
+                mv.putLong(7, 0L);
+                mv.putLong(8, dequeSize);
+            } else {
+                mv.putLong(5, source.getByte(offset));
+                offset += Byte.BYTES;
+                for (long i = 0; i < size; i++) {
+                    final long rec = newStartOffset + i * RECORD_SIZE;
+                    memory.putLong(rec, source.getLong(offset));
+                    offset += Long.BYTES;
+                    memory.putByte(rec + Long.BYTES, source.getByte(offset));
+                    offset += Byte.BYTES;
+                }
+                mv.putLong(0, frameSize);
+                mv.putLong(1, newStartOffset);
+                mv.putLong(2, size);
+                mv.putLong(3, capacity);
+                mv.putLong(4, 0L);
+            }
+            if (tombstoneValueIndex >= 0) {
+                mv.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public int snapshotFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public int snapshotMinSupportedVersion() {
+            return 1;
+        }
+
+        @Override
+        public void snapshotPartitionState(MemoryA sink, MapValue mv) {
+            sink.putLong(mv.getLong(0)); // frameSize
+            final long startOffset = mv.getLong(1);
+            final long size = mv.getLong(2);
+            final long capacity = mv.getLong(3);
+            final long firstIdx = mv.getLong(4);
+            sink.putLong(size);
+            if (frameLoBounded) {
+                final long dequeStartOffset = mv.getLong(5);
+                final long dequeCapacity = mv.getLong(6);
+                final long dequeStartIndex = mv.getLong(7);
+                final long dequeEndIndex = mv.getLong(8);
+                final long dequeSize = dequeEndIndex - dequeStartIndex;
+                sink.putLong(dequeSize);
+                for (long i = 0; i < size; i++) {
+                    final long rec = startOffset + ((firstIdx + i) % capacity) * RECORD_SIZE;
+                    sink.putLong(memory.getLong(rec));
+                    sink.putByte(memory.getByte(rec + Long.BYTES));
+                }
+                for (long i = 0; i < dequeSize; i++) {
+                    sink.putByte(dequeMemory.getByte(dequeStartOffset + ((dequeStartIndex + i) % dequeCapacity) * DEQUE_RECORD_SIZE));
+                }
+            } else {
+                sink.putByte((byte) mv.getLong(5));
+                for (long i = 0; i < size; i++) {
+                    final long rec = startOffset + ((firstIdx + i) % capacity) * RECORD_SIZE;
+                    sink.putLong(memory.getLong(rec));
+                    sink.putByte(memory.getByte(rec + Long.BYTES));
+                }
+            }
+        }
+
+        @Override
+        public boolean supportsSnapshot() {
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -8617,6 +10674,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
         private final int frameSize;
+        private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
+        private final ArrayColumnTypes mapValueTypes;
         private final MemoryARW memory;
         private final String name;
         private final int type;
@@ -8633,7 +10693,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 MemoryARW dequeMemory,
                 Decimal64Comparator comparator,
                 String name,
-                int type
+                int type,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             if (rowsLo > Long.MIN_VALUE) {
@@ -8653,12 +10715,36 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.comparator = comparator;
             this.name = name;
             this.type = type;
+            this.liveView = liveView;
+            if (liveView) {
+                ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                    keyTypesCopy.add(partitionByKeyTypes.getColumnType(i));
+                }
+                this.keyColumnTypes = keyTypesCopy;
+                final ArrayColumnTypes srcValueTypes = frameLoBounded
+                        ? MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES_LV
+                        : MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES_LV;
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = srcValueTypes.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(srcValueTypes.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = frameLoBounded ? 5 : 3;
+            } else {
+                this.keyColumnTypes = null;
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
         }
 
         @Override
         public void close() {
             super.close();
             memory.close();
+            if (dequeMemory != null) {
+                dequeMemory.close();
+            }
         }
 
         @Override
@@ -8675,6 +10761,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             long dequeEndIndex = 0;
 
             if (value.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    value.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 loIdx = 0;
                 startOffset = memory.appendAddressFor((long) bufferSize * Byte.BYTES) - memory.getPageAddress(0);
                 if (frameIncludesCurrentValue && b != Decimals.DECIMAL8_NULL) {
@@ -8757,13 +10846,41 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
         }
 
         @Override
+        public ColumnTypes getSnapshotKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getSnapshotKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : (frameLoBounded
+                    ? MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES
+                    : MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES).getColumnCount();
+        }
+
+        @Override
         public int getType() {
             return type;
+        }
+
+        @Override
+        public void onSnapshotRestoreBegin() {
+            super.onSnapshotRestoreBegin();
+            memory.truncate();
+            if (dequeMemory != null) {
+                dequeMemory.truncate();
+            }
         }
 
         @Override
@@ -8784,6 +10901,113 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             if (dequeMemory != null) {
                 dequeMemory.close();
             }
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset. Null out the fixed-size ring and drop the deque
+            // (when bounded). The ring slab stays allocated; the next post-reset
+            // row overwrites it.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mv = key.findValue();
+            if (mv != null) {
+                final long startOffset = mv.getLong(1);
+                mv.putLong(0, 0L);
+                for (int i = 0; i < bufferSize; i++) {
+                    memory.putByte(startOffset + (long) i * Byte.BYTES, Decimals.DECIMAL8_NULL);
+                }
+                if (frameLoBounded) {
+                    mv.putLong(3, 0L);
+                    mv.putLong(4, 0L);
+                } else {
+                    mv.putLong(2, Decimals.DECIMAL8_NULL);
+                }
+                if (!mv.isNew() && tombstoneValueIndex >= 0 && mv.getByte(tombstoneValueIndex) != 1) {
+                    mv.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restorePartitionState(MemoryR source, long offset, MapValue mv, int formatVersion) {
+            final long loIdx = source.getLong(offset);
+            offset += Long.BYTES;
+            final long newStartOffset = memory.appendAddressFor((long) bufferSize * Byte.BYTES) - memory.getPageAddress(0);
+            if (frameLoBounded) {
+                final long dequeStartIndex = source.getLong(offset);
+                offset += Long.BYTES;
+                final long dequeEndIndex = source.getLong(offset);
+                offset += Long.BYTES;
+                for (int i = 0; i < bufferSize; i++) {
+                    memory.putByte(newStartOffset + (long) i * Byte.BYTES, source.getByte(offset));
+                    offset += Byte.BYTES;
+                }
+                final long newDequeStartOffset = dequeMemory.appendAddressFor((long) dequeBufferSize * Byte.BYTES) - dequeMemory.getPageAddress(0);
+                for (int i = 0; i < dequeBufferSize; i++) {
+                    dequeMemory.putByte(newDequeStartOffset + (long) i * Byte.BYTES, source.getByte(offset));
+                    offset += Byte.BYTES;
+                }
+                mv.putLong(0, loIdx);
+                mv.putLong(1, newStartOffset);
+                mv.putLong(2, newDequeStartOffset);
+                mv.putLong(3, dequeStartIndex);
+                mv.putLong(4, dequeEndIndex);
+            } else {
+                mv.putLong(2, source.getByte(offset));
+                offset += Byte.BYTES;
+                for (int i = 0; i < bufferSize; i++) {
+                    memory.putByte(newStartOffset + (long) i * Byte.BYTES, source.getByte(offset));
+                    offset += Byte.BYTES;
+                }
+                mv.putLong(0, loIdx);
+                mv.putLong(1, newStartOffset);
+            }
+            if (tombstoneValueIndex >= 0) {
+                mv.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public int snapshotFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public int snapshotMinSupportedVersion() {
+            return 1;
+        }
+
+        @Override
+        public void snapshotPartitionState(MemoryA sink, MapValue mv) {
+            sink.putLong(mv.getLong(0)); // loIdx
+            final long startOffset = mv.getLong(1);
+            if (frameLoBounded) {
+                sink.putLong(mv.getLong(3)); // dequeStartIndex
+                sink.putLong(mv.getLong(4)); // dequeEndIndex
+                for (int i = 0; i < bufferSize; i++) {
+                    sink.putByte(memory.getByte(startOffset + (long) i * Byte.BYTES));
+                }
+                final long dequeStartOffset = mv.getLong(2);
+                for (int i = 0; i < dequeBufferSize; i++) {
+                    sink.putByte(dequeMemory.getByte(dequeStartOffset + (long) i * Byte.BYTES));
+                }
+            } else {
+                sink.putByte((byte) mv.getLong(2));
+                for (int i = 0; i < bufferSize; i++) {
+                    sink.putByte(memory.getByte(startOffset + (long) i * Byte.BYTES));
+                }
+            }
+        }
+
+        @Override
+        public boolean supportsSnapshot() {
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -9605,20 +11829,56 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES.add(ColumnType.LONG);
         MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES.add(ColumnType.LONG);
 
+        // Live-view unbounded-preceding RANGE layout for Decimal8/16/32/64. Slots
+        // 0-4 are frame bookkeeping; slot 5 keeps the running max/min in a LONG
+        // (the narrow widths store the raw decimal bits there). Slot 6 is the
+        // anchor-driven tombstone.
+        MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES_LV = new ArrayColumnTypes();
+        for (int i = 0; i < 6; i++) {
+            MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES_LV.add(ColumnType.LONG);
+        }
+        MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES_LV.add(ColumnType.BYTE); // slot 6: tombstone
+
         MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES = new ArrayColumnTypes();
         for (int i = 0; i < 9; i++) {
             MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES.add(ColumnType.LONG);
         }
+
+        // Live-view bounded RANGE layout. Nine LONG bookkeeping slots (frame plus
+        // deque metadata) shared by every width, with a trailing tombstone slot.
+        MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES_LV = new ArrayColumnTypes();
+        for (int i = 0; i < 9; i++) {
+            MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES_LV.add(ColumnType.LONG);
+        }
+        MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES_LV.add(ColumnType.BYTE); // slot 9: tombstone
 
         MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES = new ArrayColumnTypes();
         MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES.add(ColumnType.LONG);
         MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES.add(ColumnType.LONG);
         MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES.add(ColumnType.LONG);
 
+        // Live-view unbounded-preceding ROWS layout for Decimal8/16/32/64. Slot 0
+        // is loIdx, slot 1 startOffset, slot 2 the running max/min in a LONG, slot
+        // 3 the tombstone.
+        MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES_LV = new ArrayColumnTypes();
+        MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES_LV.add(ColumnType.LONG);
+        MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES_LV.add(ColumnType.LONG);
+        MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES_LV.add(ColumnType.LONG);
+        MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES_LV.add(ColumnType.BYTE); // slot 3: tombstone
+
         MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES = new ArrayColumnTypes();
         for (int i = 0; i < 5; i++) {
             MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES.add(ColumnType.LONG);
         }
+
+        // Live-view bounded ROWS layout. Five LONG bookkeeping slots (loIdx,
+        // startOffset, deque metadata) shared by every width, with a trailing
+        // tombstone slot.
+        MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES_LV = new ArrayColumnTypes();
+        for (int i = 0; i < 5; i++) {
+            MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES_LV.add(ColumnType.LONG);
+        }
+        MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES_LV.add(ColumnType.BYTE); // slot 5: tombstone
 
         MAX_DECIMAL128_TYPES = new ArrayColumnTypes();
         MAX_DECIMAL128_TYPES.add(ColumnType.DECIMAL128);
@@ -9635,10 +11895,29 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         MAX_DECIMAL128_OVER_PARTITION_RANGE_TYPES.add(ColumnType.LONG);
         MAX_DECIMAL128_OVER_PARTITION_RANGE_TYPES.add(ColumnType.DECIMAL128);
 
+        // Live-view unbounded-preceding RANGE layout for Decimal128. Slots 0-4 are
+        // frame bookkeeping, slot 5 the running max/min (DECIMAL128), slot 6 the
+        // tombstone.
+        MAX_DECIMAL128_OVER_PARTITION_RANGE_TYPES_LV = new ArrayColumnTypes();
+        for (int i = 0; i < 5; i++) {
+            MAX_DECIMAL128_OVER_PARTITION_RANGE_TYPES_LV.add(ColumnType.LONG);
+        }
+        MAX_DECIMAL128_OVER_PARTITION_RANGE_TYPES_LV.add(ColumnType.DECIMAL128); // slot 5: max/min value
+        MAX_DECIMAL128_OVER_PARTITION_RANGE_TYPES_LV.add(ColumnType.BYTE);       // slot 6: tombstone
+
         MAX_DECIMAL128_OVER_PARTITION_ROWS_TYPES = new ArrayColumnTypes();
         MAX_DECIMAL128_OVER_PARTITION_ROWS_TYPES.add(ColumnType.LONG);
         MAX_DECIMAL128_OVER_PARTITION_ROWS_TYPES.add(ColumnType.LONG);
         MAX_DECIMAL128_OVER_PARTITION_ROWS_TYPES.add(ColumnType.DECIMAL128);
+
+        // Live-view unbounded-preceding ROWS layout for Decimal128. Slot 0 loIdx,
+        // slot 1 startOffset, slot 2 the running max/min (DECIMAL128), slot 3 the
+        // tombstone.
+        MAX_DECIMAL128_OVER_PARTITION_ROWS_TYPES_LV = new ArrayColumnTypes();
+        MAX_DECIMAL128_OVER_PARTITION_ROWS_TYPES_LV.add(ColumnType.LONG);
+        MAX_DECIMAL128_OVER_PARTITION_ROWS_TYPES_LV.add(ColumnType.LONG);
+        MAX_DECIMAL128_OVER_PARTITION_ROWS_TYPES_LV.add(ColumnType.DECIMAL128); // slot 2: max/min value
+        MAX_DECIMAL128_OVER_PARTITION_ROWS_TYPES_LV.add(ColumnType.BYTE);       // slot 3: tombstone
 
         MAX_DECIMAL256_TYPES = new ArrayColumnTypes();
         MAX_DECIMAL256_TYPES.add(ColumnType.DECIMAL256);
@@ -9655,9 +11934,28 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         MAX_DECIMAL256_OVER_PARTITION_RANGE_TYPES.add(ColumnType.LONG);
         MAX_DECIMAL256_OVER_PARTITION_RANGE_TYPES.add(ColumnType.DECIMAL256);
 
+        // Live-view unbounded-preceding RANGE layout for Decimal256. Slots 0-4 are
+        // frame bookkeeping, slot 5 the running max/min (DECIMAL256), slot 6 the
+        // tombstone.
+        MAX_DECIMAL256_OVER_PARTITION_RANGE_TYPES_LV = new ArrayColumnTypes();
+        for (int i = 0; i < 5; i++) {
+            MAX_DECIMAL256_OVER_PARTITION_RANGE_TYPES_LV.add(ColumnType.LONG);
+        }
+        MAX_DECIMAL256_OVER_PARTITION_RANGE_TYPES_LV.add(ColumnType.DECIMAL256); // slot 5: max/min value
+        MAX_DECIMAL256_OVER_PARTITION_RANGE_TYPES_LV.add(ColumnType.BYTE);       // slot 6: tombstone
+
         MAX_DECIMAL256_OVER_PARTITION_ROWS_TYPES = new ArrayColumnTypes();
         MAX_DECIMAL256_OVER_PARTITION_ROWS_TYPES.add(ColumnType.LONG);
         MAX_DECIMAL256_OVER_PARTITION_ROWS_TYPES.add(ColumnType.LONG);
         MAX_DECIMAL256_OVER_PARTITION_ROWS_TYPES.add(ColumnType.DECIMAL256);
+
+        // Live-view unbounded-preceding ROWS layout for Decimal256. Slot 0 loIdx,
+        // slot 1 startOffset, slot 2 the running max/min (DECIMAL256), slot 3 the
+        // tombstone.
+        MAX_DECIMAL256_OVER_PARTITION_ROWS_TYPES_LV = new ArrayColumnTypes();
+        MAX_DECIMAL256_OVER_PARTITION_ROWS_TYPES_LV.add(ColumnType.LONG);
+        MAX_DECIMAL256_OVER_PARTITION_ROWS_TYPES_LV.add(ColumnType.LONG);
+        MAX_DECIMAL256_OVER_PARTITION_ROWS_TYPES_LV.add(ColumnType.DECIMAL256); // slot 2: max/min value
+        MAX_DECIMAL256_OVER_PARTITION_ROWS_TYPES_LV.add(ColumnType.BYTE);       // slot 3: tombstone
     }
 }

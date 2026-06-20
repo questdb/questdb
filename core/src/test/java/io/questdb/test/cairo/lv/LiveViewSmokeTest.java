@@ -205,6 +205,54 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
         });
     }
 
+    private void assertMaxMinDecimalFrameRoundTrip(
+            String fnName,
+            String decimalType,
+            String frameClause,
+            String insertValues,
+            String expectedRows
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, d " + decimalType + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, " + fnName + "(d) OVER w AS a FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts " + frameClause + ")");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, sym, d) VALUES " + insertValues);
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                assertQuery("SELECT ts, sym, a FROM lv ORDER BY sym, ts").noLeakCheck().expectSize().returns(expectedRows);
+
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                WindowFunction fn = unwrapWindowFunctions(lv).getQuick(0);
+                Assert.assertTrue(fn.supportsSnapshot());
+                Map fnMap = fn.getPartitionMap();
+                Assert.assertEquals(2L, fnMap.size());
+
+                try (MemoryCARW s1 = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                     MemoryCARW s2 = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+                    LiveViewFunctionSnapshot.write(s1, fn);
+                    final long len = s1.getAppendOffset();
+                    fn.toTop();
+                    Assert.assertEquals(0L, fnMap.size());
+                    LiveViewFunctionSnapshot.restore(s1, 0L, fn, 1);
+                    Assert.assertEquals(2L, fnMap.size());
+                    LiveViewFunctionSnapshot.write(s2, fn);
+                    Assert.assertEquals(len, s2.getAppendOffset());
+                    for (long i = 0; i < len; i++) {
+                        Assert.assertEquals("snapshot byte mismatch at " + i, s1.getByte(i), s2.getByte(i));
+                    }
+                }
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
     private void assertSumDecimalFrameRoundTrip(
             String decimalType,
             String frameClause,
@@ -4829,6 +4877,342 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                         "2026-08-01T00:00:00.000000Z\tb\t6\n" +
                         "2026-08-01T01:00:00.000000Z\tb\t9\n" +
                         "2026-08-01T02:00:00.000000Z\tb\t12\n"
+        );
+    }
+
+    @Test
+    public void testMaxDecimal128OverPartitionRangeFrameSnapshotRoundTrip() throws Exception {
+        // max(DECIMAL(38,6)) over a bounded RANGE frame - DECIMAL128 ring element +
+        // monotonic deque.
+        assertMaxMinDecimalFrameRoundTrip(
+                "max",
+                "DECIMAL(38, 6)",
+                "RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10.000000m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20.000000m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30.000000m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6.000000m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12.000000m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18.000000m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t10.000000\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t20.000000\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t30.000000\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t6.000000\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t12.000000\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t18.000000\n"
+        );
+    }
+
+    @Test
+    public void testMaxDecimal128OverPartitionRowsFrameSnapshotRoundTrip() throws Exception {
+        // max(DECIMAL(38,6)) over a bounded ROWS frame - DECIMAL128 ring element +
+        // monotonic deque.
+        assertMaxMinDecimalFrameRoundTrip(
+                "max",
+                "DECIMAL(38, 6)",
+                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10.000000m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20.000000m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30.000000m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6.000000m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12.000000m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18.000000m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t10.000000\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t20.000000\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t30.000000\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t6.000000\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t12.000000\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t18.000000\n"
+        );
+    }
+
+    @Test
+    public void testMaxDecimal16OverPartitionRangeFrameSnapshotRoundTrip() throws Exception {
+        // max(DECIMAL(4,1)) over a bounded RANGE frame - SHORT ring element +
+        // monotonic deque.
+        assertMaxMinDecimalFrameRoundTrip(
+                "max",
+                "DECIMAL(4, 1)",
+                "RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10.0m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20.0m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30.0m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6.0m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12.0m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18.0m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t10.0\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t20.0\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t30.0\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t6.0\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t12.0\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t18.0\n"
+        );
+    }
+
+    @Test
+    public void testMaxDecimal16OverPartitionRowsFrameSnapshotRoundTrip() throws Exception {
+        // max(DECIMAL(4,1)) over a bounded ROWS frame - SHORT ring element +
+        // monotonic deque.
+        assertMaxMinDecimalFrameRoundTrip(
+                "max",
+                "DECIMAL(4, 1)",
+                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10.0m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20.0m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30.0m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6.0m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12.0m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18.0m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t10.0\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t20.0\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t30.0\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t6.0\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t12.0\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t18.0\n"
+        );
+    }
+
+    @Test
+    public void testMaxDecimal256OverPartitionRangeFrameSnapshotRoundTrip() throws Exception {
+        // max(DECIMAL(60,0)) over a bounded RANGE frame - DECIMAL256 ring element +
+        // monotonic deque.
+        assertMaxMinDecimalFrameRoundTrip(
+                "max",
+                "DECIMAL(60, 0)",
+                "RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t10\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t20\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t30\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t6\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t12\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t18\n"
+        );
+    }
+
+    @Test
+    public void testMaxDecimal256OverPartitionRowsFrameSnapshotRoundTrip() throws Exception {
+        // max(DECIMAL(60,0)) over a bounded ROWS frame - DECIMAL256 ring element +
+        // monotonic deque.
+        assertMaxMinDecimalFrameRoundTrip(
+                "max",
+                "DECIMAL(60, 0)",
+                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t10\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t20\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t30\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t6\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t12\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t18\n"
+        );
+    }
+
+    @Test
+    public void testMaxDecimal32OverPartitionRangeFrameSnapshotRoundTrip() throws Exception {
+        // max(DECIMAL(9,3)) over a bounded RANGE frame - INT ring element +
+        // monotonic deque.
+        assertMaxMinDecimalFrameRoundTrip(
+                "max",
+                "DECIMAL(9, 3)",
+                "RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10.000m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20.000m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30.000m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6.000m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12.000m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18.000m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t10.000\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t20.000\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t30.000\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t6.000\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t12.000\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t18.000\n"
+        );
+    }
+
+    @Test
+    public void testMaxDecimal32OverPartitionRowsFrameSnapshotRoundTrip() throws Exception {
+        // max(DECIMAL(9,3)) over a bounded ROWS frame - INT ring element +
+        // monotonic deque.
+        assertMaxMinDecimalFrameRoundTrip(
+                "max",
+                "DECIMAL(9, 3)",
+                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10.000m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20.000m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30.000m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6.000m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12.000m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18.000m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t10.000\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t20.000\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t30.000\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t6.000\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t12.000\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t18.000\n"
+        );
+    }
+
+    @Test
+    public void testMaxDecimal64OverPartitionRangeFrameSnapshotRoundTrip() throws Exception {
+        // max(DECIMAL(18,2)) over a bounded RANGE frame - LONG ring element +
+        // monotonic deque.
+        assertMaxMinDecimalFrameRoundTrip(
+                "max",
+                "DECIMAL(18, 2)",
+                "RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10.00m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20.00m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30.00m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6.00m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12.00m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18.00m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t10.00\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t20.00\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t30.00\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t6.00\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t12.00\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t18.00\n"
+        );
+    }
+
+    @Test
+    public void testMaxDecimal64OverPartitionRowsFrameSnapshotRoundTrip() throws Exception {
+        // max(DECIMAL(18,2)) over a bounded ROWS frame - LONG ring element +
+        // monotonic deque.
+        assertMaxMinDecimalFrameRoundTrip(
+                "max",
+                "DECIMAL(18, 2)",
+                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10.00m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20.00m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30.00m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6.00m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12.00m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18.00m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t10.00\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t20.00\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t30.00\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t6.00\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t12.00\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t18.00\n"
+        );
+    }
+
+    @Test
+    public void testMaxDecimal8OverPartitionRangeFrameSnapshotRoundTrip() throws Exception {
+        // max(DECIMAL(2,0)) over a bounded RANGE frame - BYTE ring element +
+        // monotonic deque.
+        assertMaxMinDecimalFrameRoundTrip(
+                "max",
+                "DECIMAL(2, 0)",
+                "RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t10\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t20\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t30\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t6\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t12\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t18\n"
+        );
+    }
+
+    @Test
+    public void testMaxDecimal8OverPartitionRowsFrameSnapshotRoundTrip() throws Exception {
+        // max(DECIMAL(2,0)) over a bounded ROWS frame - BYTE ring element +
+        // monotonic deque.
+        assertMaxMinDecimalFrameRoundTrip(
+                "max",
+                "DECIMAL(2, 0)",
+                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t10\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t20\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t30\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t6\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t12\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t18\n"
+        );
+    }
+
+    @Test
+    public void testMinDecimal64OverPartitionRangeFrameSnapshotRoundTrip() throws Exception {
+        // min(DECIMAL(18,2)) over a bounded RANGE frame - min reuses Max's classes;
+        // the LESS_THAN comparator yields the running minimum. Increasing values keep
+        // a 3-element deque live at snapshot time.
+        assertMaxMinDecimalFrameRoundTrip(
+                "min",
+                "DECIMAL(18, 2)",
+                "RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10.00m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20.00m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30.00m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6.00m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12.00m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18.00m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t10.00\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t10.00\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t10.00\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t6.00\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t6.00\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t6.00\n"
+        );
+    }
+
+    @Test
+    public void testMinDecimal64OverPartitionRowsFrameSnapshotRoundTrip() throws Exception {
+        // min(DECIMAL(18,2)) over a bounded ROWS frame - min reuses Max's classes.
+        assertMaxMinDecimalFrameRoundTrip(
+                "min",
+                "DECIMAL(18, 2)",
+                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10.00m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20.00m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30.00m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6.00m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12.00m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18.00m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t10.00\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t10.00\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t10.00\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t6.00\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t6.00\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t6.00\n"
         );
     }
 
