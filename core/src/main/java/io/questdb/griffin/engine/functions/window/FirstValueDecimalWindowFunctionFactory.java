@@ -30,6 +30,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
+import io.questdb.cairo.lv.LiveViewSnapshotKeyCodec;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
@@ -39,7 +40,9 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryARW;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -62,11 +65,21 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
     public static final String NAME = "first_value";
     private static final ArrayColumnTypes FIRST_NOT_NULL_OVER_PARTITION_ROWS_TYPES;
     private static final ArrayColumnTypes FIRST_VALUE_DECIMAL128_TYPES;
+    // Live-view value layouts for the unbounded-preceding accumulator. Each keeps
+    // the captured value at its native width in slot 0, an "initialized" flag in
+    // slot 1 (distinguishes a captured value from a post-anchor-reset partition
+    // awaiting recapture), and an anchor-driven tombstone in slot 2.
+    private static final ArrayColumnTypes FIRST_VALUE_DECIMAL128_TYPES_LV;
     private static final ArrayColumnTypes FIRST_VALUE_DECIMAL16_TYPES;
+    private static final ArrayColumnTypes FIRST_VALUE_DECIMAL16_TYPES_LV;
     private static final ArrayColumnTypes FIRST_VALUE_DECIMAL256_TYPES;
+    private static final ArrayColumnTypes FIRST_VALUE_DECIMAL256_TYPES_LV;
     private static final ArrayColumnTypes FIRST_VALUE_DECIMAL32_TYPES;
+    private static final ArrayColumnTypes FIRST_VALUE_DECIMAL32_TYPES_LV;
     private static final ArrayColumnTypes FIRST_VALUE_DECIMAL64_TYPES;
+    private static final ArrayColumnTypes FIRST_VALUE_DECIMAL64_TYPES_LV;
     private static final ArrayColumnTypes FIRST_VALUE_DECIMAL8_TYPES;
+    private static final ArrayColumnTypes FIRST_VALUE_DECIMAL8_TYPES_LV;
     private static final ArrayColumnTypes FIRST_VALUE_OVER_PARTITION_RANGE_TYPES;
     private static final ArrayColumnTypes FIRST_VALUE_OVER_PARTITION_ROWS_TYPES;
     private static final String SIGNATURE = NAME + "(Ξ)";
@@ -157,9 +170,11 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                         throw th;
                     }
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL128_TYPES);
+                    final boolean liveView = windowContext.isLiveView();
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                            liveView ? FIRST_VALUE_DECIMAL128_TYPES_LV : FIRST_VALUE_DECIMAL128_TYPES);
                     try {
-                        return new Decimal128FirstNotNullOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                        return new Decimal128FirstNotNullOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         throw th;
@@ -190,9 +205,11 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                 }
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL128_TYPES);
+                    final boolean liveView = windowContext.isLiveView();
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                            liveView ? FIRST_VALUE_DECIMAL128_TYPES_LV : FIRST_VALUE_DECIMAL128_TYPES);
                     try {
-                        return new Decimal128FirstNotNullOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                        return new Decimal128FirstNotNullOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         throw th;
@@ -284,9 +301,11 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                         throw th;
                     }
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL128_TYPES);
+                    final boolean liveView = windowContext.isLiveView();
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                            liveView ? FIRST_VALUE_DECIMAL128_TYPES_LV : FIRST_VALUE_DECIMAL128_TYPES);
                     try {
-                        return new Decimal128FirstValueOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                        return new Decimal128FirstValueOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         throw th;
@@ -317,9 +336,11 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                 }
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL128_TYPES);
+                    final boolean liveView = windowContext.isLiveView();
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                            liveView ? FIRST_VALUE_DECIMAL128_TYPES_LV : FIRST_VALUE_DECIMAL128_TYPES);
                     try {
-                        return new Decimal128FirstValueOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                        return new Decimal128FirstValueOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         throw th;
@@ -413,9 +434,11 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                         throw th;
                     }
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL16_TYPES);
+                    final boolean liveView = windowContext.isLiveView();
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                            liveView ? FIRST_VALUE_DECIMAL16_TYPES_LV : FIRST_VALUE_DECIMAL16_TYPES);
                     try {
-                        return new Decimal16FirstNotNullOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                        return new Decimal16FirstNotNullOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         throw th;
@@ -446,9 +469,11 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                 }
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL16_TYPES);
+                    final boolean liveView = windowContext.isLiveView();
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                            liveView ? FIRST_VALUE_DECIMAL16_TYPES_LV : FIRST_VALUE_DECIMAL16_TYPES);
                     try {
-                        return new Decimal16FirstNotNullOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                        return new Decimal16FirstNotNullOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         throw th;
@@ -541,9 +566,11 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                         throw th;
                     }
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL16_TYPES);
+                    final boolean liveView = windowContext.isLiveView();
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                            liveView ? FIRST_VALUE_DECIMAL16_TYPES_LV : FIRST_VALUE_DECIMAL16_TYPES);
                     try {
-                        return new Decimal16FirstValueOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                        return new Decimal16FirstValueOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         throw th;
@@ -574,9 +601,11 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                 }
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL16_TYPES);
+                    final boolean liveView = windowContext.isLiveView();
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                            liveView ? FIRST_VALUE_DECIMAL16_TYPES_LV : FIRST_VALUE_DECIMAL16_TYPES);
                     try {
-                        return new Decimal16FirstValueOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                        return new Decimal16FirstValueOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         throw th;
@@ -671,9 +700,11 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                         throw th;
                     }
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL256_TYPES);
+                    final boolean liveView = windowContext.isLiveView();
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                            liveView ? FIRST_VALUE_DECIMAL256_TYPES_LV : FIRST_VALUE_DECIMAL256_TYPES);
                     try {
-                        return new Decimal256FirstNotNullOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                        return new Decimal256FirstNotNullOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         throw th;
@@ -704,9 +735,11 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                 }
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL256_TYPES);
+                    final boolean liveView = windowContext.isLiveView();
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                            liveView ? FIRST_VALUE_DECIMAL256_TYPES_LV : FIRST_VALUE_DECIMAL256_TYPES);
                     try {
-                        return new Decimal256FirstNotNullOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                        return new Decimal256FirstNotNullOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         throw th;
@@ -798,9 +831,11 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                         throw th;
                     }
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL256_TYPES);
+                    final boolean liveView = windowContext.isLiveView();
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                            liveView ? FIRST_VALUE_DECIMAL256_TYPES_LV : FIRST_VALUE_DECIMAL256_TYPES);
                     try {
-                        return new Decimal256FirstValueOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                        return new Decimal256FirstValueOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         throw th;
@@ -831,9 +866,11 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                 }
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL256_TYPES);
+                    final boolean liveView = windowContext.isLiveView();
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                            liveView ? FIRST_VALUE_DECIMAL256_TYPES_LV : FIRST_VALUE_DECIMAL256_TYPES);
                     try {
-                        return new Decimal256FirstValueOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                        return new Decimal256FirstValueOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         throw th;
@@ -927,9 +964,11 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                         throw th;
                     }
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL32_TYPES);
+                    final boolean liveView = windowContext.isLiveView();
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                            liveView ? FIRST_VALUE_DECIMAL32_TYPES_LV : FIRST_VALUE_DECIMAL32_TYPES);
                     try {
-                        return new Decimal32FirstNotNullOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                        return new Decimal32FirstNotNullOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         throw th;
@@ -960,9 +999,11 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                 }
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL32_TYPES);
+                    final boolean liveView = windowContext.isLiveView();
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                            liveView ? FIRST_VALUE_DECIMAL32_TYPES_LV : FIRST_VALUE_DECIMAL32_TYPES);
                     try {
-                        return new Decimal32FirstNotNullOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                        return new Decimal32FirstNotNullOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         throw th;
@@ -1055,9 +1096,11 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                         throw th;
                     }
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL32_TYPES);
+                    final boolean liveView = windowContext.isLiveView();
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                            liveView ? FIRST_VALUE_DECIMAL32_TYPES_LV : FIRST_VALUE_DECIMAL32_TYPES);
                     try {
-                        return new Decimal32FirstValueOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                        return new Decimal32FirstValueOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         throw th;
@@ -1088,9 +1131,11 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                 }
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL32_TYPES);
+                    final boolean liveView = windowContext.isLiveView();
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                            liveView ? FIRST_VALUE_DECIMAL32_TYPES_LV : FIRST_VALUE_DECIMAL32_TYPES);
                     try {
-                        return new Decimal32FirstValueOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                        return new Decimal32FirstValueOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         throw th;
@@ -1185,9 +1230,11 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                         throw th;
                     }
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL64_TYPES);
+                    final boolean liveView = windowContext.isLiveView();
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                            liveView ? FIRST_VALUE_DECIMAL64_TYPES_LV : FIRST_VALUE_DECIMAL64_TYPES);
                     try {
-                        return new Decimal64FirstNotNullOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                        return new Decimal64FirstNotNullOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         throw th;
@@ -1218,9 +1265,11 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                 }
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL64_TYPES);
+                    final boolean liveView = windowContext.isLiveView();
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                            liveView ? FIRST_VALUE_DECIMAL64_TYPES_LV : FIRST_VALUE_DECIMAL64_TYPES);
                     try {
-                        return new Decimal64FirstNotNullOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                        return new Decimal64FirstNotNullOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         throw th;
@@ -1313,9 +1362,11 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                         throw th;
                     }
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL64_TYPES);
+                    final boolean liveView = windowContext.isLiveView();
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                            liveView ? FIRST_VALUE_DECIMAL64_TYPES_LV : FIRST_VALUE_DECIMAL64_TYPES);
                     try {
-                        return new Decimal64FirstValueOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                        return new Decimal64FirstValueOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         throw th;
@@ -1346,9 +1397,11 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                 }
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL64_TYPES);
+                    final boolean liveView = windowContext.isLiveView();
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                            liveView ? FIRST_VALUE_DECIMAL64_TYPES_LV : FIRST_VALUE_DECIMAL64_TYPES);
                     try {
-                        return new Decimal64FirstValueOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                        return new Decimal64FirstValueOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         throw th;
@@ -1443,9 +1496,11 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                         throw th;
                     }
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL8_TYPES);
+                    final boolean liveView = windowContext.isLiveView();
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                            liveView ? FIRST_VALUE_DECIMAL8_TYPES_LV : FIRST_VALUE_DECIMAL8_TYPES);
                     try {
-                        return new Decimal8FirstNotNullOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                        return new Decimal8FirstNotNullOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         throw th;
@@ -1476,9 +1531,11 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                 }
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL8_TYPES);
+                    final boolean liveView = windowContext.isLiveView();
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                            liveView ? FIRST_VALUE_DECIMAL8_TYPES_LV : FIRST_VALUE_DECIMAL8_TYPES);
                     try {
-                        return new Decimal8FirstNotNullOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                        return new Decimal8FirstNotNullOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         throw th;
@@ -1571,9 +1628,11 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                         throw th;
                     }
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL8_TYPES);
+                    final boolean liveView = windowContext.isLiveView();
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                            liveView ? FIRST_VALUE_DECIMAL8_TYPES_LV : FIRST_VALUE_DECIMAL8_TYPES);
                     try {
-                        return new Decimal8FirstValueOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                        return new Decimal8FirstValueOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         throw th;
@@ -1604,9 +1663,11 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                 }
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL8_TYPES);
+                    final boolean liveView = windowContext.isLiveView();
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes,
+                            liveView ? FIRST_VALUE_DECIMAL8_TYPES_LV : FIRST_VALUE_DECIMAL8_TYPES);
                     try {
-                        return new Decimal8FirstValueOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                        return new Decimal8FirstValueOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType, partitionByKeyTypes, liveView, configuration);
                     } catch (Throwable th) {
                         Misc.free(map);
                         throw th;
@@ -2126,8 +2187,17 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
 
     static class Decimal128FirstNotNullOverUnboundedPartitionRowsFrameFunction extends Decimal128FirstValueOverUnboundedPartitionRowsFrameFunction {
 
-        public Decimal128FirstNotNullOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int type) {
-            super(map, partitionByRecord, partitionBySink, arg, type);
+        public Decimal128FirstNotNullOverUnboundedPartitionRowsFrameFunction(
+                Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                Function arg,
+                int type,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView,
+                CairoConfiguration configuration
+        ) {
+            super(map, partitionByRecord, partitionBySink, arg, type, partitionByKeyTypes, liveView, configuration);
         }
 
         @Override
@@ -2135,17 +2205,39 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
-            MapValue mapValue = key.findValue();
-            if (mapValue != null) {
-                mapValue.getDecimal128(0, value);
-            } else {
-                arg.getDecimal128(record, scratch);
-                if (!scratch.isNull()) {
-                    mapValue = key.createValue();
-                    mapValue.putDecimal128(0, scratch);
-                    value.copyFrom(scratch);
+            if (liveView) {
+                MapValue mapValue = key.createValue();
+                boolean isNew = mapValue.isNew();
+                if (isNew) {
+                    mapValue.putByte(tombstoneValueIndex, (byte) 0);
+                }
+                if (isNew || mapValue.getByte(1) == 0) {
+                    arg.getDecimal128(record, scratch);
+                    if (!scratch.isNull()) {
+                        mapValue.putDecimal128(0, scratch);
+                        mapValue.putByte(1, (byte) 1);
+                        value.copyFrom(scratch);
+                    } else {
+                        value.ofRawNull();
+                        mapValue.putDecimal128(0, value);
+                        mapValue.putByte(1, (byte) 0);
+                    }
                 } else {
-                    value.ofRawNull();
+                    mapValue.getDecimal128(0, value);
+                }
+            } else {
+                MapValue mapValue = key.findValue();
+                if (mapValue != null) {
+                    mapValue.getDecimal128(0, value);
+                } else {
+                    arg.getDecimal128(record, scratch);
+                    if (!scratch.isNull()) {
+                        mapValue = key.createValue();
+                        mapValue.putDecimal128(0, scratch);
+                        value.copyFrom(scratch);
+                    } else {
+                        value.ofRawNull();
+                    }
                 }
             }
         }
@@ -3049,13 +3141,48 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
 
     static class Decimal128FirstValueOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
+        protected final CairoConfiguration configuration;
+        protected final ArrayColumnTypes keyColumnTypes;
+        protected final boolean liveView;
+        protected final ArrayColumnTypes mapValueTypes;
         protected final Decimal128 scratch = new Decimal128();
         protected final int type;
         protected final Decimal128 value = new Decimal128();
 
-        public Decimal128FirstValueOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int type) {
+        public Decimal128FirstValueOverUnboundedPartitionRowsFrameFunction(
+                Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                Function arg,
+                int type,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView,
+                CairoConfiguration configuration
+        ) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.type = type;
+            this.liveView = liveView;
+            this.configuration = configuration;
+            this.keyColumnTypes = new ArrayColumnTypes();
+            for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                this.keyColumnTypes.add(partitionByKeyTypes.getColumnType(i));
+            }
+            if (liveView) {
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = FIRST_VALUE_DECIMAL128_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(FIRST_VALUE_DECIMAL128_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 2;
+            } else {
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            return MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
         }
 
         @Override
@@ -3064,9 +3191,16 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
             MapValue mapValue = key.createValue();
-            if (mapValue.isNew()) {
+            boolean isNew = mapValue.isNew();
+            if (isNew && tombstoneValueIndex >= 0) {
+                mapValue.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            if (isNew || (liveView && mapValue.getByte(1) == 0)) {
                 arg.getDecimal128(record, value);
                 mapValue.putDecimal128(0, value);
+                if (liveView) {
+                    mapValue.putByte(1, (byte) 1);
+                }
             } else {
                 mapValue.getDecimal128(0, value);
             }
@@ -3083,8 +3217,25 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public ColumnTypes getSnapshotKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getSnapshotKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : FIRST_VALUE_DECIMAL128_TYPES.getColumnCount();
         }
 
         @Override
@@ -3098,6 +3249,58 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             long addr = spi.getAddress(recordOffset, columnIndex);
             Unsafe.putLong(addr, value.getHigh());
             Unsafe.putLong(addr + Long.BYTES, value.getLow());
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset. Mark the partition uninitialized so the next
+            // computeNext recaptures the first value on the post-reset row.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mv = key.findValue();
+            if (mv != null) {
+                mv.putByte(1, (byte) 0);
+                if (!mv.isNew() && tombstoneValueIndex >= 0 && mv.getByte(tombstoneValueIndex) != 1) {
+                    mv.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
+            source.getDecimal128(offset, scratch);
+            value.putDecimal128(0, scratch);
+            offset += 2 * Long.BYTES;
+            value.putByte(1, source.getByte(offset));
+            offset += Byte.BYTES;
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public int snapshotFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public int snapshotMinSupportedVersion() {
+            return 1;
+        }
+
+        @Override
+        public void snapshotPartitionState(MemoryA sink, MapValue value) {
+            value.getDecimal128(0, scratch);
+            sink.putDecimal128(scratch.getHigh(), scratch.getLow());
+            sink.putByte(value.getByte(1));
+        }
+
+        @Override
+        public boolean supportsSnapshot() {
+            return LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -3586,8 +3789,17 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
 
     static class Decimal16FirstNotNullOverUnboundedPartitionRowsFrameFunction extends Decimal16FirstValueOverUnboundedPartitionRowsFrameFunction {
 
-        public Decimal16FirstNotNullOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int type) {
-            super(map, partitionByRecord, partitionBySink, arg, type);
+        public Decimal16FirstNotNullOverUnboundedPartitionRowsFrameFunction(
+                Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                Function arg,
+                int type,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView,
+                CairoConfiguration configuration
+        ) {
+            super(map, partitionByRecord, partitionBySink, arg, type, partitionByKeyTypes, liveView, configuration);
         }
 
         @Override
@@ -3595,17 +3807,39 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
-            MapValue mapValue = key.findValue();
-            if (mapValue != null) {
-                value = mapValue.getShort(0);
-            } else {
-                short d = arg.getDecimal16(record);
-                if (d != Decimals.DECIMAL16_NULL) {
-                    mapValue = key.createValue();
-                    mapValue.putShort(0, d);
-                    value = d;
+            if (liveView) {
+                MapValue mapValue = key.createValue();
+                boolean isNew = mapValue.isNew();
+                if (isNew) {
+                    mapValue.putByte(tombstoneValueIndex, (byte) 0);
+                }
+                if (isNew || mapValue.getByte(1) == 0) {
+                    short d = arg.getDecimal16(record);
+                    if (d != Decimals.DECIMAL16_NULL) {
+                        mapValue.putShort(0, d);
+                        mapValue.putByte(1, (byte) 1);
+                        value = d;
+                    } else {
+                        mapValue.putShort(0, Decimals.DECIMAL16_NULL);
+                        mapValue.putByte(1, (byte) 0);
+                        value = Decimals.DECIMAL16_NULL;
+                    }
                 } else {
-                    value = Decimals.DECIMAL16_NULL;
+                    value = mapValue.getShort(0);
+                }
+            } else {
+                MapValue mapValue = key.findValue();
+                if (mapValue != null) {
+                    value = mapValue.getShort(0);
+                } else {
+                    short d = arg.getDecimal16(record);
+                    if (d != Decimals.DECIMAL16_NULL) {
+                        mapValue = key.createValue();
+                        mapValue.putShort(0, d);
+                        value = d;
+                    } else {
+                        value = Decimals.DECIMAL16_NULL;
+                    }
                 }
             }
         }
@@ -4489,12 +4723,47 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
 
     static class Decimal16FirstValueOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
+        protected final CairoConfiguration configuration;
+        protected final ArrayColumnTypes keyColumnTypes;
+        protected final boolean liveView;
+        protected final ArrayColumnTypes mapValueTypes;
         protected final int type;
         protected short value = Decimals.DECIMAL16_NULL;
 
-        public Decimal16FirstValueOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int type) {
+        public Decimal16FirstValueOverUnboundedPartitionRowsFrameFunction(
+                Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                Function arg,
+                int type,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView,
+                CairoConfiguration configuration
+        ) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.type = type;
+            this.liveView = liveView;
+            this.configuration = configuration;
+            this.keyColumnTypes = new ArrayColumnTypes();
+            for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                this.keyColumnTypes.add(partitionByKeyTypes.getColumnType(i));
+            }
+            if (liveView) {
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = FIRST_VALUE_DECIMAL16_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(FIRST_VALUE_DECIMAL16_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 2;
+            } else {
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            return MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
         }
 
         @Override
@@ -4503,9 +4772,16 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
             MapValue mapValue = key.createValue();
-            if (mapValue.isNew()) {
+            boolean isNew = mapValue.isNew();
+            if (isNew && tombstoneValueIndex >= 0) {
+                mapValue.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            if (isNew || (liveView && mapValue.getByte(1) == 0)) {
                 value = arg.getDecimal16(record);
                 mapValue.putShort(0, value);
+                if (liveView) {
+                    mapValue.putByte(1, (byte) 1);
+                }
             } else {
                 value = mapValue.getShort(0);
             }
@@ -4522,8 +4798,25 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public ColumnTypes getSnapshotKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getSnapshotKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : FIRST_VALUE_DECIMAL16_TYPES.getColumnCount();
         }
 
         @Override
@@ -4535,6 +4828,56 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.putShort(spi.getAddress(recordOffset, columnIndex), value);
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset. Mark the partition uninitialized so the next
+            // computeNext recaptures the first value on the post-reset row.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mv = key.findValue();
+            if (mv != null) {
+                mv.putByte(1, (byte) 0);
+                if (!mv.isNew() && tombstoneValueIndex >= 0 && mv.getByte(tombstoneValueIndex) != 1) {
+                    mv.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
+            value.putShort(0, source.getShort(offset));
+            offset += Short.BYTES;
+            value.putByte(1, source.getByte(offset));
+            offset += Byte.BYTES;
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public int snapshotFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public int snapshotMinSupportedVersion() {
+            return 1;
+        }
+
+        @Override
+        public void snapshotPartitionState(MemoryA sink, MapValue value) {
+            sink.putShort(value.getShort(0));
+            sink.putByte(value.getByte(1));
+        }
+
+        @Override
+        public boolean supportsSnapshot() {
+            return LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -5064,8 +5407,17 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
 
     static class Decimal256FirstNotNullOverUnboundedPartitionRowsFrameFunction extends Decimal256FirstValueOverUnboundedPartitionRowsFrameFunction {
 
-        public Decimal256FirstNotNullOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int type) {
-            super(map, partitionByRecord, partitionBySink, arg, type);
+        public Decimal256FirstNotNullOverUnboundedPartitionRowsFrameFunction(
+                Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                Function arg,
+                int type,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView,
+                CairoConfiguration configuration
+        ) {
+            super(map, partitionByRecord, partitionBySink, arg, type, partitionByKeyTypes, liveView, configuration);
         }
 
         @Override
@@ -5073,17 +5425,39 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
-            MapValue mapValue = key.findValue();
-            if (mapValue != null) {
-                mapValue.getDecimal256(0, value);
-            } else {
-                arg.getDecimal256(record, scratch);
-                if (!scratch.isNull()) {
-                    mapValue = key.createValue();
-                    mapValue.putDecimal256(0, scratch);
-                    value.copyRaw(scratch);
+            if (liveView) {
+                MapValue mapValue = key.createValue();
+                boolean isNew = mapValue.isNew();
+                if (isNew) {
+                    mapValue.putByte(tombstoneValueIndex, (byte) 0);
+                }
+                if (isNew || mapValue.getByte(1) == 0) {
+                    arg.getDecimal256(record, scratch);
+                    if (!scratch.isNull()) {
+                        mapValue.putDecimal256(0, scratch);
+                        mapValue.putByte(1, (byte) 1);
+                        value.copyRaw(scratch);
+                    } else {
+                        value.ofRawNull();
+                        mapValue.putDecimal256(0, value);
+                        mapValue.putByte(1, (byte) 0);
+                    }
                 } else {
-                    value.ofRawNull();
+                    mapValue.getDecimal256(0, value);
+                }
+            } else {
+                MapValue mapValue = key.findValue();
+                if (mapValue != null) {
+                    mapValue.getDecimal256(0, value);
+                } else {
+                    arg.getDecimal256(record, scratch);
+                    if (!scratch.isNull()) {
+                        mapValue = key.createValue();
+                        mapValue.putDecimal256(0, scratch);
+                        value.copyRaw(scratch);
+                    } else {
+                        value.ofRawNull();
+                    }
                 }
             }
         }
@@ -6005,13 +6379,48 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
 
     static class Decimal256FirstValueOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
+        protected final CairoConfiguration configuration;
+        protected final ArrayColumnTypes keyColumnTypes;
+        protected final boolean liveView;
+        protected final ArrayColumnTypes mapValueTypes;
         protected final Decimal256 scratch = new Decimal256();
         protected final int type;
         protected final Decimal256 value = new Decimal256();
 
-        public Decimal256FirstValueOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int type) {
+        public Decimal256FirstValueOverUnboundedPartitionRowsFrameFunction(
+                Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                Function arg,
+                int type,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView,
+                CairoConfiguration configuration
+        ) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.type = type;
+            this.liveView = liveView;
+            this.configuration = configuration;
+            this.keyColumnTypes = new ArrayColumnTypes();
+            for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                this.keyColumnTypes.add(partitionByKeyTypes.getColumnType(i));
+            }
+            if (liveView) {
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = FIRST_VALUE_DECIMAL256_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(FIRST_VALUE_DECIMAL256_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 2;
+            } else {
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            return MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
         }
 
         @Override
@@ -6020,9 +6429,16 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
             MapValue mapValue = key.createValue();
-            if (mapValue.isNew()) {
+            boolean isNew = mapValue.isNew();
+            if (isNew && tombstoneValueIndex >= 0) {
+                mapValue.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            if (isNew || (liveView && mapValue.getByte(1) == 0)) {
                 arg.getDecimal256(record, value);
                 mapValue.putDecimal256(0, value);
+                if (liveView) {
+                    mapValue.putByte(1, (byte) 1);
+                }
             } else {
                 mapValue.getDecimal256(0, value);
             }
@@ -6039,8 +6455,25 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public ColumnTypes getSnapshotKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getSnapshotKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : FIRST_VALUE_DECIMAL256_TYPES.getColumnCount();
         }
 
         @Override
@@ -6056,6 +6489,58 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             Unsafe.putLong(addr + Long.BYTES, value.getHl());
             Unsafe.putLong(addr + 2 * Long.BYTES, value.getLh());
             Unsafe.putLong(addr + 3 * Long.BYTES, value.getLl());
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset. Mark the partition uninitialized so the next
+            // computeNext recaptures the first value on the post-reset row.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mv = key.findValue();
+            if (mv != null) {
+                mv.putByte(1, (byte) 0);
+                if (!mv.isNew() && tombstoneValueIndex >= 0 && mv.getByte(tombstoneValueIndex) != 1) {
+                    mv.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
+            source.getDecimal256(offset, scratch);
+            value.putDecimal256(0, scratch);
+            offset += 4 * Long.BYTES;
+            value.putByte(1, source.getByte(offset));
+            offset += Byte.BYTES;
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public int snapshotFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public int snapshotMinSupportedVersion() {
+            return 1;
+        }
+
+        @Override
+        public void snapshotPartitionState(MemoryA sink, MapValue value) {
+            value.getDecimal256(0, scratch);
+            sink.putDecimal256(scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
+            sink.putByte(value.getByte(1));
+        }
+
+        @Override
+        public boolean supportsSnapshot() {
+            return LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -6546,8 +7031,17 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
 
     static class Decimal32FirstNotNullOverUnboundedPartitionRowsFrameFunction extends Decimal32FirstValueOverUnboundedPartitionRowsFrameFunction {
 
-        public Decimal32FirstNotNullOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int type) {
-            super(map, partitionByRecord, partitionBySink, arg, type);
+        public Decimal32FirstNotNullOverUnboundedPartitionRowsFrameFunction(
+                Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                Function arg,
+                int type,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView,
+                CairoConfiguration configuration
+        ) {
+            super(map, partitionByRecord, partitionBySink, arg, type, partitionByKeyTypes, liveView, configuration);
         }
 
         @Override
@@ -6555,17 +7049,39 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
-            MapValue mapValue = key.findValue();
-            if (mapValue != null) {
-                value = mapValue.getInt(0);
-            } else {
-                int d = arg.getDecimal32(record);
-                if (d != Decimals.DECIMAL32_NULL) {
-                    mapValue = key.createValue();
-                    mapValue.putInt(0, d);
-                    value = d;
+            if (liveView) {
+                MapValue mapValue = key.createValue();
+                boolean isNew = mapValue.isNew();
+                if (isNew) {
+                    mapValue.putByte(tombstoneValueIndex, (byte) 0);
+                }
+                if (isNew || mapValue.getByte(1) == 0) {
+                    int d = arg.getDecimal32(record);
+                    if (d != Decimals.DECIMAL32_NULL) {
+                        mapValue.putInt(0, d);
+                        mapValue.putByte(1, (byte) 1);
+                        value = d;
+                    } else {
+                        mapValue.putInt(0, Decimals.DECIMAL32_NULL);
+                        mapValue.putByte(1, (byte) 0);
+                        value = Decimals.DECIMAL32_NULL;
+                    }
                 } else {
-                    value = Decimals.DECIMAL32_NULL;
+                    value = mapValue.getInt(0);
+                }
+            } else {
+                MapValue mapValue = key.findValue();
+                if (mapValue != null) {
+                    value = mapValue.getInt(0);
+                } else {
+                    int d = arg.getDecimal32(record);
+                    if (d != Decimals.DECIMAL32_NULL) {
+                        mapValue = key.createValue();
+                        mapValue.putInt(0, d);
+                        value = d;
+                    } else {
+                        value = Decimals.DECIMAL32_NULL;
+                    }
                 }
             }
         }
@@ -7449,12 +7965,47 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
 
     static class Decimal32FirstValueOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
+        protected final CairoConfiguration configuration;
+        protected final ArrayColumnTypes keyColumnTypes;
+        protected final boolean liveView;
+        protected final ArrayColumnTypes mapValueTypes;
         protected final int type;
         protected int value = Decimals.DECIMAL32_NULL;
 
-        public Decimal32FirstValueOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int type) {
+        public Decimal32FirstValueOverUnboundedPartitionRowsFrameFunction(
+                Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                Function arg,
+                int type,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView,
+                CairoConfiguration configuration
+        ) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.type = type;
+            this.liveView = liveView;
+            this.configuration = configuration;
+            this.keyColumnTypes = new ArrayColumnTypes();
+            for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                this.keyColumnTypes.add(partitionByKeyTypes.getColumnType(i));
+            }
+            if (liveView) {
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = FIRST_VALUE_DECIMAL32_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(FIRST_VALUE_DECIMAL32_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 2;
+            } else {
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            return MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
         }
 
         @Override
@@ -7463,9 +8014,16 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
             MapValue mapValue = key.createValue();
-            if (mapValue.isNew()) {
+            boolean isNew = mapValue.isNew();
+            if (isNew && tombstoneValueIndex >= 0) {
+                mapValue.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            if (isNew || (liveView && mapValue.getByte(1) == 0)) {
                 value = arg.getDecimal32(record);
                 mapValue.putInt(0, value);
+                if (liveView) {
+                    mapValue.putByte(1, (byte) 1);
+                }
             } else {
                 value = mapValue.getInt(0);
             }
@@ -7482,8 +8040,25 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public ColumnTypes getSnapshotKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getSnapshotKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : FIRST_VALUE_DECIMAL32_TYPES.getColumnCount();
         }
 
         @Override
@@ -7495,6 +8070,56 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.putInt(spi.getAddress(recordOffset, columnIndex), value);
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset. Mark the partition uninitialized so the next
+            // computeNext recaptures the first value on the post-reset row.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mv = key.findValue();
+            if (mv != null) {
+                mv.putByte(1, (byte) 0);
+                if (!mv.isNew() && tombstoneValueIndex >= 0 && mv.getByte(tombstoneValueIndex) != 1) {
+                    mv.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
+            value.putInt(0, source.getInt(offset));
+            offset += Integer.BYTES;
+            value.putByte(1, source.getByte(offset));
+            offset += Byte.BYTES;
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public int snapshotFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public int snapshotMinSupportedVersion() {
+            return 1;
+        }
+
+        @Override
+        public void snapshotPartitionState(MemoryA sink, MapValue value) {
+            sink.putInt(value.getInt(0));
+            sink.putByte(value.getByte(1));
+        }
+
+        @Override
+        public boolean supportsSnapshot() {
+            return LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -7980,8 +8605,17 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
 
     static class Decimal64FirstNotNullOverUnboundedPartitionRowsFrameFunction extends Decimal64FirstValueOverUnboundedPartitionRowsFrameFunction {
 
-        public Decimal64FirstNotNullOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int type) {
-            super(map, partitionByRecord, partitionBySink, arg, type);
+        public Decimal64FirstNotNullOverUnboundedPartitionRowsFrameFunction(
+                Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                Function arg,
+                int type,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView,
+                CairoConfiguration configuration
+        ) {
+            super(map, partitionByRecord, partitionBySink, arg, type, partitionByKeyTypes, liveView, configuration);
         }
 
         @Override
@@ -7989,17 +8623,39 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
-            MapValue mapValue = key.findValue();
-            if (mapValue != null) {
-                value = mapValue.getLong(0);
-            } else {
-                long d = arg.getDecimal64(record);
-                if (d != Decimals.DECIMAL64_NULL) {
-                    mapValue = key.createValue();
-                    mapValue.putLong(0, d);
-                    value = d;
+            if (liveView) {
+                MapValue mapValue = key.createValue();
+                boolean isNew = mapValue.isNew();
+                if (isNew) {
+                    mapValue.putByte(tombstoneValueIndex, (byte) 0);
+                }
+                if (isNew || mapValue.getByte(1) == 0) {
+                    long d = arg.getDecimal64(record);
+                    if (d != Decimals.DECIMAL64_NULL) {
+                        mapValue.putLong(0, d);
+                        mapValue.putByte(1, (byte) 1);
+                        value = d;
+                    } else {
+                        mapValue.putLong(0, Decimals.DECIMAL64_NULL);
+                        mapValue.putByte(1, (byte) 0);
+                        value = Decimals.DECIMAL64_NULL;
+                    }
                 } else {
-                    value = Decimals.DECIMAL64_NULL;
+                    value = mapValue.getLong(0);
+                }
+            } else {
+                MapValue mapValue = key.findValue();
+                if (mapValue != null) {
+                    value = mapValue.getLong(0);
+                } else {
+                    long d = arg.getDecimal64(record);
+                    if (d != Decimals.DECIMAL64_NULL) {
+                        mapValue = key.createValue();
+                        mapValue.putLong(0, d);
+                        value = d;
+                    } else {
+                        value = Decimals.DECIMAL64_NULL;
+                    }
                 }
             }
         }
@@ -8883,12 +9539,47 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
 
     static class Decimal64FirstValueOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
+        protected final CairoConfiguration configuration;
+        protected final ArrayColumnTypes keyColumnTypes;
+        protected final boolean liveView;
+        protected final ArrayColumnTypes mapValueTypes;
         protected final int type;
         protected long value = Decimals.DECIMAL64_NULL;
 
-        public Decimal64FirstValueOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int type) {
+        public Decimal64FirstValueOverUnboundedPartitionRowsFrameFunction(
+                Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                Function arg,
+                int type,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView,
+                CairoConfiguration configuration
+        ) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.type = type;
+            this.liveView = liveView;
+            this.configuration = configuration;
+            this.keyColumnTypes = new ArrayColumnTypes();
+            for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                this.keyColumnTypes.add(partitionByKeyTypes.getColumnType(i));
+            }
+            if (liveView) {
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = FIRST_VALUE_DECIMAL64_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(FIRST_VALUE_DECIMAL64_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 2;
+            } else {
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            return MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
         }
 
         @Override
@@ -8897,9 +9588,16 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
             MapValue mapValue = key.createValue();
-            if (mapValue.isNew()) {
+            boolean isNew = mapValue.isNew();
+            if (isNew && tombstoneValueIndex >= 0) {
+                mapValue.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            if (isNew || (liveView && mapValue.getByte(1) == 0)) {
                 value = arg.getDecimal64(record);
                 mapValue.putLong(0, value);
+                if (liveView) {
+                    mapValue.putByte(1, (byte) 1);
+                }
             } else {
                 value = mapValue.getLong(0);
             }
@@ -8916,8 +9614,25 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public ColumnTypes getSnapshotKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getSnapshotKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : FIRST_VALUE_DECIMAL64_TYPES.getColumnCount();
         }
 
         @Override
@@ -8929,6 +9644,56 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), value);
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset. Mark the partition uninitialized so the next
+            // computeNext recaptures the first value on the post-reset row.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mv = key.findValue();
+            if (mv != null) {
+                mv.putByte(1, (byte) 0);
+                if (!mv.isNew() && tombstoneValueIndex >= 0 && mv.getByte(tombstoneValueIndex) != 1) {
+                    mv.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
+            value.putLong(0, source.getLong(offset));
+            offset += Long.BYTES;
+            value.putByte(1, source.getByte(offset));
+            offset += Byte.BYTES;
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public int snapshotFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public int snapshotMinSupportedVersion() {
+            return 1;
+        }
+
+        @Override
+        public void snapshotPartitionState(MemoryA sink, MapValue value) {
+            sink.putLong(value.getLong(0));
+            sink.putByte(value.getByte(1));
+        }
+
+        @Override
+        public boolean supportsSnapshot() {
+            return LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -9414,8 +10179,17 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
 
     static class Decimal8FirstNotNullOverUnboundedPartitionRowsFrameFunction extends Decimal8FirstValueOverUnboundedPartitionRowsFrameFunction {
 
-        public Decimal8FirstNotNullOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int type) {
-            super(map, partitionByRecord, partitionBySink, arg, type);
+        public Decimal8FirstNotNullOverUnboundedPartitionRowsFrameFunction(
+                Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                Function arg,
+                int type,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView,
+                CairoConfiguration configuration
+        ) {
+            super(map, partitionByRecord, partitionBySink, arg, type, partitionByKeyTypes, liveView, configuration);
         }
 
         @Override
@@ -9423,17 +10197,39 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
-            MapValue mapValue = key.findValue();
-            if (mapValue != null) {
-                value = mapValue.getByte(0);
-            } else {
-                byte d = arg.getDecimal8(record);
-                if (d != Decimals.DECIMAL8_NULL) {
-                    mapValue = key.createValue();
-                    mapValue.putByte(0, d);
-                    value = d;
+            if (liveView) {
+                MapValue mapValue = key.createValue();
+                boolean isNew = mapValue.isNew();
+                if (isNew) {
+                    mapValue.putByte(tombstoneValueIndex, (byte) 0);
+                }
+                if (isNew || mapValue.getByte(1) == 0) {
+                    byte d = arg.getDecimal8(record);
+                    if (d != Decimals.DECIMAL8_NULL) {
+                        mapValue.putByte(0, d);
+                        mapValue.putByte(1, (byte) 1);
+                        value = d;
+                    } else {
+                        mapValue.putByte(0, Decimals.DECIMAL8_NULL);
+                        mapValue.putByte(1, (byte) 0);
+                        value = Decimals.DECIMAL8_NULL;
+                    }
                 } else {
-                    value = Decimals.DECIMAL8_NULL;
+                    value = mapValue.getByte(0);
+                }
+            } else {
+                MapValue mapValue = key.findValue();
+                if (mapValue != null) {
+                    value = mapValue.getByte(0);
+                } else {
+                    byte d = arg.getDecimal8(record);
+                    if (d != Decimals.DECIMAL8_NULL) {
+                        mapValue = key.createValue();
+                        mapValue.putByte(0, d);
+                        value = d;
+                    } else {
+                        value = Decimals.DECIMAL8_NULL;
+                    }
                 }
             }
         }
@@ -10317,12 +11113,47 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
 
     static class Decimal8FirstValueOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
+        protected final CairoConfiguration configuration;
+        protected final ArrayColumnTypes keyColumnTypes;
+        protected final boolean liveView;
+        protected final ArrayColumnTypes mapValueTypes;
         protected final int type;
         protected byte value = Decimals.DECIMAL8_NULL;
 
-        public Decimal8FirstValueOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int type) {
+        public Decimal8FirstValueOverUnboundedPartitionRowsFrameFunction(
+                Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                Function arg,
+                int type,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView,
+                CairoConfiguration configuration
+        ) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.type = type;
+            this.liveView = liveView;
+            this.configuration = configuration;
+            this.keyColumnTypes = new ArrayColumnTypes();
+            for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                this.keyColumnTypes.add(partitionByKeyTypes.getColumnType(i));
+            }
+            if (liveView) {
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = FIRST_VALUE_DECIMAL8_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(FIRST_VALUE_DECIMAL8_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 2;
+            } else {
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            return MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
         }
 
         @Override
@@ -10331,9 +11162,16 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
             MapValue mapValue = key.createValue();
-            if (mapValue.isNew()) {
+            boolean isNew = mapValue.isNew();
+            if (isNew && tombstoneValueIndex >= 0) {
+                mapValue.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            if (isNew || (liveView && mapValue.getByte(1) == 0)) {
                 value = arg.getDecimal8(record);
                 mapValue.putByte(0, value);
+                if (liveView) {
+                    mapValue.putByte(1, (byte) 1);
+                }
             } else {
                 value = mapValue.getByte(0);
             }
@@ -10350,8 +11188,25 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public ColumnTypes getSnapshotKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getSnapshotKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : FIRST_VALUE_DECIMAL8_TYPES.getColumnCount();
         }
 
         @Override
@@ -10363,6 +11218,56 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.putByte(spi.getAddress(recordOffset, columnIndex), value);
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset. Mark the partition uninitialized so the next
+            // computeNext recaptures the first value on the post-reset row.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mv = key.findValue();
+            if (mv != null) {
+                mv.putByte(1, (byte) 0);
+                if (!mv.isNew() && tombstoneValueIndex >= 0 && mv.getByte(tombstoneValueIndex) != 1) {
+                    mv.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
+            value.putByte(0, source.getByte(offset));
+            offset += Byte.BYTES;
+            value.putByte(1, source.getByte(offset));
+            offset += Byte.BYTES;
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public int snapshotFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public int snapshotMinSupportedVersion() {
+            return 1;
+        }
+
+        @Override
+        public void snapshotPartitionState(MemoryA sink, MapValue value) {
+            sink.putByte(value.getByte(0));
+            sink.putByte(value.getByte(1));
+        }
+
+        @Override
+        public boolean supportsSnapshot() {
+            return LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -10446,20 +11351,50 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         FIRST_VALUE_DECIMAL64_TYPES = new ArrayColumnTypes();
         FIRST_VALUE_DECIMAL64_TYPES.add(ColumnType.LONG);
 
+        FIRST_VALUE_DECIMAL64_TYPES_LV = new ArrayColumnTypes();
+        FIRST_VALUE_DECIMAL64_TYPES_LV.add(ColumnType.LONG); // slot 0: captured value
+        FIRST_VALUE_DECIMAL64_TYPES_LV.add(ColumnType.BYTE); // slot 1: initialized flag
+        FIRST_VALUE_DECIMAL64_TYPES_LV.add(ColumnType.BYTE); // slot 2: tombstone (anchor-driven compaction)
+
         FIRST_VALUE_DECIMAL8_TYPES = new ArrayColumnTypes();
         FIRST_VALUE_DECIMAL8_TYPES.add(ColumnType.BYTE);
+
+        FIRST_VALUE_DECIMAL8_TYPES_LV = new ArrayColumnTypes();
+        FIRST_VALUE_DECIMAL8_TYPES_LV.add(ColumnType.BYTE); // slot 0: captured value
+        FIRST_VALUE_DECIMAL8_TYPES_LV.add(ColumnType.BYTE); // slot 1: initialized flag
+        FIRST_VALUE_DECIMAL8_TYPES_LV.add(ColumnType.BYTE); // slot 2: tombstone (anchor-driven compaction)
 
         FIRST_VALUE_DECIMAL16_TYPES = new ArrayColumnTypes();
         FIRST_VALUE_DECIMAL16_TYPES.add(ColumnType.SHORT);
 
+        FIRST_VALUE_DECIMAL16_TYPES_LV = new ArrayColumnTypes();
+        FIRST_VALUE_DECIMAL16_TYPES_LV.add(ColumnType.SHORT); // slot 0: captured value
+        FIRST_VALUE_DECIMAL16_TYPES_LV.add(ColumnType.BYTE);  // slot 1: initialized flag
+        FIRST_VALUE_DECIMAL16_TYPES_LV.add(ColumnType.BYTE);  // slot 2: tombstone (anchor-driven compaction)
+
         FIRST_VALUE_DECIMAL32_TYPES = new ArrayColumnTypes();
         FIRST_VALUE_DECIMAL32_TYPES.add(ColumnType.INT);
+
+        FIRST_VALUE_DECIMAL32_TYPES_LV = new ArrayColumnTypes();
+        FIRST_VALUE_DECIMAL32_TYPES_LV.add(ColumnType.INT);  // slot 0: captured value
+        FIRST_VALUE_DECIMAL32_TYPES_LV.add(ColumnType.BYTE); // slot 1: initialized flag
+        FIRST_VALUE_DECIMAL32_TYPES_LV.add(ColumnType.BYTE); // slot 2: tombstone (anchor-driven compaction)
 
         FIRST_VALUE_DECIMAL128_TYPES = new ArrayColumnTypes();
         FIRST_VALUE_DECIMAL128_TYPES.add(ColumnType.DECIMAL128);
 
+        FIRST_VALUE_DECIMAL128_TYPES_LV = new ArrayColumnTypes();
+        FIRST_VALUE_DECIMAL128_TYPES_LV.add(ColumnType.DECIMAL128); // slot 0: captured value
+        FIRST_VALUE_DECIMAL128_TYPES_LV.add(ColumnType.BYTE);       // slot 1: initialized flag
+        FIRST_VALUE_DECIMAL128_TYPES_LV.add(ColumnType.BYTE);       // slot 2: tombstone (anchor-driven compaction)
+
         FIRST_VALUE_DECIMAL256_TYPES = new ArrayColumnTypes();
         FIRST_VALUE_DECIMAL256_TYPES.add(ColumnType.DECIMAL256);
+
+        FIRST_VALUE_DECIMAL256_TYPES_LV = new ArrayColumnTypes();
+        FIRST_VALUE_DECIMAL256_TYPES_LV.add(ColumnType.DECIMAL256); // slot 0: captured value
+        FIRST_VALUE_DECIMAL256_TYPES_LV.add(ColumnType.BYTE);       // slot 1: initialized flag
+        FIRST_VALUE_DECIMAL256_TYPES_LV.add(ColumnType.BYTE);       // slot 2: tombstone (anchor-driven compaction)
 
         FIRST_VALUE_OVER_PARTITION_RANGE_TYPES = new ArrayColumnTypes();
         FIRST_VALUE_OVER_PARTITION_RANGE_TYPES.add(ColumnType.LONG);

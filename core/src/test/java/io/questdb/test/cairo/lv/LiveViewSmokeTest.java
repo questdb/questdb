@@ -205,6 +205,58 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
         });
     }
 
+    // Drives a partitioned unbounded-preceding (anchor) first_value(DECIMAL) live
+    // view: asserts the captured first value is correct (also proving
+    // CREATE-accept), then performs a byte-exact snapshot/restore round-trip of
+    // the function's partition state (write -> toTop -> restore -> write again,
+    // comparing the two payloads). Covers both RESPECT NULLS and IGNORE NULLS.
+    private void assertFirstValueDecimalUnboundedRoundTrip(
+            boolean ignoreNulls,
+            String decimalType,
+            String insertValues,
+            String expectedRows
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, d " + decimalType + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, first_value(d)" + (ignoreNulls ? " IGNORE NULLS" : "") + " OVER w AS a FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, sym, d) VALUES " + insertValues);
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                assertQuery("SELECT ts, sym, a FROM lv ORDER BY sym, ts").noLeakCheck().expectSize().returns(expectedRows);
+
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                WindowFunction fn = lv.getAnchorWindow().getFunctions().getQuick(0);
+                Assert.assertTrue(fn.supportsSnapshot());
+                Map fnMap = fn.getPartitionMap();
+                Assert.assertEquals(2L, fnMap.size());
+
+                try (MemoryCARW s1 = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                     MemoryCARW s2 = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+                    LiveViewFunctionSnapshot.write(s1, fn);
+                    final long len = s1.getAppendOffset();
+                    fn.toTop();
+                    Assert.assertEquals(0L, fnMap.size());
+                    LiveViewFunctionSnapshot.restore(s1, 0L, fn, 1);
+                    Assert.assertEquals(2L, fnMap.size());
+                    LiveViewFunctionSnapshot.write(s2, fn);
+                    Assert.assertEquals(len, s2.getAppendOffset());
+                    for (long i = 0; i < len; i++) {
+                        Assert.assertEquals("snapshot byte mismatch at " + i, s1.getByte(i), s2.getByte(i));
+                    }
+                }
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
     private void assertMaxMinDecimalFrameRoundTrip(
             String fnName,
             String decimalType,
@@ -5619,6 +5671,299 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
             execute("DROP LIVE VIEW lv");
         });
+    }
+
+    @Test
+    public void testAnchorFirstValueDecimal128RestoresAcrossRestart() throws Exception {
+        // Restart-restore for the Decimal128 (16-byte value slot) snapshot payload.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym INT, d DECIMAL(38, 6)) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, first_value(d) OVER w AS f FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, sym, d) VALUES " +
+                        "('2026-10-01T00:00:00.000000Z', 1, 10.000000m), " +
+                        "('2026-10-01T01:00:00.000000Z', 1, 20.000000m)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            Assert.assertTrue(engine.getLiveViewRegistry().getViewInstance("lv").isCheckpointRestoreAttempted());
+
+            // first_value stays 10.000000: the captured value survived the restart.
+            setCurrentMicros(200_000L);
+            execute("INSERT INTO base (ts, sym, d) VALUES ('2026-10-01T02:00:00.000000Z', 1, 30.000000m)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            assertQuery("SELECT ts, sym, f FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\tf\n" +
+                            "2026-10-01T00:00:00.000000Z\t1\t10.000000\n" +
+                            "2026-10-01T01:00:00.000000Z\t1\t10.000000\n" +
+                            "2026-10-01T02:00:00.000000Z\t1\t10.000000\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testAnchorResetsFirstValueDecimal128AcrossDayBoundary() throws Exception {
+        // first_value over a DECIMAL(38,6) column (DECIMAL128 storage).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x DECIMAL(38, 6), sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, sym, first_value(x) OVER w AS f FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            execute("INSERT INTO base (ts, x, sym) VALUES " +
+                    "('2026-08-01T00:00:00.000000Z', 10.000000m, 'a'), " +
+                    "('2026-08-01T01:00:00.000000Z', 20.000000m, 'a'), " +
+                    "('2026-08-02T00:00:00.000000Z', 100.000000m, 'a'), " +
+                    "('2026-08-02T01:00:00.000000Z', 200.000000m, 'a')");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            assertQuery("SELECT ts, sym, f FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\tf\n" +
+                            "2026-08-01T00:00:00.000000Z\ta\t10.000000\n" +
+                            "2026-08-01T01:00:00.000000Z\ta\t10.000000\n" +
+                            "2026-08-02T00:00:00.000000Z\ta\t100.000000\n" +
+                            "2026-08-02T01:00:00.000000Z\ta\t100.000000\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testAnchorResetsFirstValueDecimal64AcrossDayBoundary() throws Exception {
+        // first_value over a DECIMAL(18,2) column (DECIMAL64 storage, LONG value slot).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x DECIMAL(18, 2), sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, sym, first_value(x) OVER w AS f FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            // Day 1 first_value sticks to 10.00; day 2 resets to the new first
+            // row (100.00). Without anchor reset day 2 would keep 10.00.
+            execute("INSERT INTO base (ts, x, sym) VALUES " +
+                    "('2026-08-01T00:00:00.000000Z', 10.00m, 'a'), " +
+                    "('2026-08-01T01:00:00.000000Z', 20.00m, 'a'), " +
+                    "('2026-08-01T02:00:00.000000Z', 30.00m, 'a'), " +
+                    "('2026-08-02T00:00:00.000000Z', 100.00m, 'a'), " +
+                    "('2026-08-02T01:00:00.000000Z', 200.00m, 'a')");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            assertQuery("SELECT ts, sym, f FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\tf\n" +
+                            "2026-08-01T00:00:00.000000Z\ta\t10.00\n" +
+                            "2026-08-01T01:00:00.000000Z\ta\t10.00\n" +
+                            "2026-08-01T02:00:00.000000Z\ta\t10.00\n" +
+                            "2026-08-02T00:00:00.000000Z\ta\t100.00\n" +
+                            "2026-08-02T01:00:00.000000Z\ta\t100.00\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testAnchorResetsFirstValueIgnoreNullsDecimal64AcrossDayBoundary() throws Exception {
+        // first_value IGNORE NULLS over DECIMAL(18,2): the FirstNotNull path skips
+        // leading NULLs and, on each anchor reset, recaptures the first non-null of
+        // the new day. Without the reset, day 2 would keep day 1's 20.00.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x DECIMAL(18, 2), sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, sym, first_value(x) IGNORE NULLS OVER w AS f FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            execute("INSERT INTO base (ts, x, sym) VALUES " +
+                    "('2026-08-01T00:00:00.000000Z', NULL, 'a'), " +
+                    "('2026-08-01T01:00:00.000000Z', 20.00m, 'a'), " +
+                    "('2026-08-01T02:00:00.000000Z', 30.00m, 'a'), " +
+                    "('2026-08-02T00:00:00.000000Z', NULL, 'a'), " +
+                    "('2026-08-02T01:00:00.000000Z', 100.00m, 'a')");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            assertQuery("SELECT ts, sym, f FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\tf\n" +
+                            "2026-08-01T00:00:00.000000Z\ta\t\n" +
+                            "2026-08-01T01:00:00.000000Z\ta\t20.00\n" +
+                            "2026-08-01T02:00:00.000000Z\ta\t20.00\n" +
+                            "2026-08-02T00:00:00.000000Z\ta\t\n" +
+                            "2026-08-02T01:00:00.000000Z\ta\t100.00\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testFirstValueDecimal128OverUnboundedPartitionRowsSnapshotRoundTrip() throws Exception {
+        assertFirstValueDecimalUnboundedRoundTrip(
+                false,
+                "DECIMAL(38, 6)",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10.000000m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20.000000m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30.000000m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6.000000m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12.000000m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18.000000m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t10.000000\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t10.000000\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t10.000000\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t6.000000\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t6.000000\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t6.000000\n"
+        );
+    }
+
+    @Test
+    public void testFirstValueDecimal16OverUnboundedPartitionRowsSnapshotRoundTrip() throws Exception {
+        assertFirstValueDecimalUnboundedRoundTrip(
+                false,
+                "DECIMAL(4, 1)",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10.0m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20.0m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30.0m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6.0m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12.0m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18.0m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t10.0\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t10.0\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t10.0\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t6.0\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t6.0\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t6.0\n"
+        );
+    }
+
+    @Test
+    public void testFirstValueDecimal256OverUnboundedPartitionRowsSnapshotRoundTrip() throws Exception {
+        assertFirstValueDecimalUnboundedRoundTrip(
+                false,
+                "DECIMAL(60, 0)",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t10\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t10\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t10\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t6\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t6\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t6\n"
+        );
+    }
+
+    @Test
+    public void testFirstValueDecimal32OverUnboundedPartitionRowsSnapshotRoundTrip() throws Exception {
+        assertFirstValueDecimalUnboundedRoundTrip(
+                false,
+                "DECIMAL(9, 3)",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10.000m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20.000m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30.000m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6.000m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12.000m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18.000m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t10.000\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t10.000\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t10.000\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t6.000\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t6.000\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t6.000\n"
+        );
+    }
+
+    @Test
+    public void testFirstValueDecimal64OverUnboundedPartitionRowsSnapshotRoundTrip() throws Exception {
+        assertFirstValueDecimalUnboundedRoundTrip(
+                false,
+                "DECIMAL(18, 2)",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10.00m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20.00m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30.00m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6.00m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12.00m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18.00m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t10.00\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t10.00\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t10.00\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t6.00\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t6.00\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t6.00\n"
+        );
+    }
+
+    @Test
+    public void testFirstValueDecimal8OverUnboundedPartitionRowsSnapshotRoundTrip() throws Exception {
+        assertFirstValueDecimalUnboundedRoundTrip(
+                false,
+                "DECIMAL(2, 0)",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t10\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t10\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t10\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t6\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t6\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t6\n"
+        );
+    }
+
+    @Test
+    public void testFirstValueIgnoreNullsDecimal64OverUnboundedPartitionRowsSnapshotRoundTrip() throws Exception {
+        // IGNORE NULLS variant: 'a' has a leading NULL (first non-null is 20.00),
+        // 'b' is null-free (first is 6.00). Exercises the FirstNotNull LV path and
+        // its snapshot payload.
+        assertFirstValueDecimalUnboundedRoundTrip(
+                true,
+                "DECIMAL(18, 2)",
+                "('2026-08-01T00:00:00.000000Z', 'a', NULL), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20.00m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30.00m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6.00m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12.00m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18.00m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t20.00\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t20.00\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t6.00\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t6.00\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t6.00\n"
+        );
     }
 
     @Test
