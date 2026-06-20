@@ -49,11 +49,13 @@ import io.questdb.griffin.model.WindowExpression;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Type-agnostic building blocks shared by the max/min window functions over DATE and TIMESTAMP
@@ -872,6 +874,15 @@ public class MaxMinWindowFunctionFactoryHelper {
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+            if (dequeMemory != null) {
+                dequeMemory.setMemoryTracker(tracker);
+            }
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
             sink.val('(').val(arg).val(')');
@@ -1176,7 +1187,7 @@ public class MaxMinWindowFunctionFactoryHelper {
             timestampIndex = timestampIdx;
 
             capacity = initialCapacity;
-            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            // memory allocates lazily on reopen(), under the tracker bound by the cursor
             firstIdx = 0;
             frameSize = 0;
             maxMin = Numbers.LONG_NULL;
@@ -1184,7 +1195,7 @@ public class MaxMinWindowFunctionFactoryHelper {
             if (frameLoBounded) {
                 this.dequeMemory = dequeMemory;
                 dequeCapacity = initialCapacity;
-                dequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * Long.BYTES) - dequeMemory.getPageAddress(0);
+                // dequeMemory allocates lazily on reopen(), under the tracker bound by the cursor
             }
             this.comparator = comparator;
             this.name = name;
@@ -1364,6 +1375,14 @@ public class MaxMinWindowFunctionFactoryHelper {
             memory.close();
             if (dequeMemory != null) {
                 dequeMemory.close();
+            }
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            memory.setMemoryTracker(tracker);
+            if (dequeMemory != null) {
+                dequeMemory.setMemoryTracker(tracker);
             }
         }
 

@@ -59,6 +59,7 @@ import io.questdb.std.DirectLongLongSortedList;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -225,7 +226,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 base.getMetadata(),
                 pageFrameCursor,
                 executionContext.getMessageBus(),
-                executionContext.getCircuitBreaker()
+                executionContext.getCircuitBreaker(),
+                executionContext.getMemoryTracker()
         );
     }
 
@@ -473,15 +475,25 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 RecordMetadata metadata,
                 PageFrameCursor frameCursor,
                 MessageBus bus,
-                SqlExecutionCircuitBreaker circuitBreaker
+                SqlExecutionCircuitBreaker circuitBreaker,
+                MemoryTracker memoryTracker
         ) {
             this.frameCursor = frameCursor;
             this.bus = bus;
             this.circuitBreaker = circuitBreaker;
             frameAddressCache.of(metadata, frameCursor.getColumnMapping(), frameCursor.isExternal());
             for (int i = 0; i < workerCount; i++) {
-                frameMemoryPools.getQuick(i).of(frameAddressCache);
+                final PageFrameMemoryPool pool = frameMemoryPools.getQuick(i);
+                pool.setMemoryTracker(memoryTracker);
+                pool.of(frameAddressCache);
             }
+            // Note: only the per-worker page-frame pools are bound to the per-query tracker. The
+            // Rosti hash tables (pRosti), which hold this operator's dominant, cardinality-scaled
+            // allocation, are deliberately left on the global RSS counter: Rosti grows inside
+            // native C with its own OOM path, so it cannot throw at the offending allocation site
+            // the way the wired allocators do. A runaway keyed vectorized GROUP BY is therefore
+            // backstopped by the global RSS limit, not the per-query limit. Wiring Rosti is a
+            // follow-up (see the PR tradeoffs), consistent with how COPY TO is deferred.
             frameCount = 0;
             isRostiBuilt = false;
             return this;

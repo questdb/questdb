@@ -61,9 +61,11 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.Nullable;
 
 public class RankFunctionFactory extends AbstractWindowFunctionFactory {
 
@@ -503,16 +505,22 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
                 this.rankMaps = SortKeyEncoder.createRankMaps(orderByMetadata, compactOrderIndices);
                 chainTypes.add(ColumnType.LONG);
                 chainTypes.add(ColumnType.LONG);
+                // Lazy: reopen() allocates the backing after setMemoryTracker() binds
+                // the per-query tracker, keeping malloc/free on the per-query counter.
                 this.map = MapFactory.createUnorderedMap(
                         configuration,
                         keyColumnTypes,
-                        chainTypes
+                        chainTypes,
+                        false,
+                        false
                 );
             } else { // for CachedWindowRecordCursorFactory
                 map = MapFactory.createUnorderedMap(
                         configuration,
                         keyColumnTypes,
-                        RANK_COLUMN_TYPES
+                        RANK_COLUMN_TYPES,
+                        false,
+                        false
                 );
                 this.recordComparator = sqlGenerator.getRecordComparatorCompiler().newInstance(metadata, orderIndices);
                 this.rankMaps = SortKeyEncoder.createRankMaps(metadata, orderIndices);
@@ -563,6 +571,13 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void setColumnIndex(int columnIndex) {
             this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            if (map != null) {
+                map.setMemoryTracker(tracker);
+            }
         }
 
         @Override

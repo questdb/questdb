@@ -78,7 +78,8 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
             this.excludedSymbolKeys = new IntHashSet(shrinkToCapacity);
         }
         this.foundKeys = new IntHashSet(shrinkToCapacity);
-        this.rowIds = new DirectLongList(shrinkToCapacity, MemoryTag.NATIVE_LONG_LIST);
+        // keepClosed=true: rowIds is allocated lazily on the first reopen() under the bound tracker.
+        this.rowIds = new DirectLongList(shrinkToCapacity, MemoryTag.NATIVE_LONG_LIST, true);
     }
 
     @Override
@@ -112,6 +113,7 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
     @Override
     public void of(PageFrameCursor pageFrameCursor, SqlExecutionContext executionContext) throws SqlException {
         this.frameCursor = pageFrameCursor;
+        rowIds.setMemoryTracker(executionContext.getMemoryTracker());
         rowIds.reopen();
         recordA.of(pageFrameCursor);
         recordB.of(pageFrameCursor);
@@ -157,7 +159,7 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
         }
         areRecordsFound = false;
         // prepare for page frame iteration
-        super.init();
+        super.init(executionContext.getMemoryTracker());
     }
 
     @Override

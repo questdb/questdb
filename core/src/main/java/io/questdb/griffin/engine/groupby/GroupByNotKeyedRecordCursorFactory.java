@@ -96,15 +96,27 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        RecordCursor baseCursor = cursor.baseCursor;
-        if (baseCursor == null) {
-            baseCursor = base.getCursor(executionContext);
+        // The base cursor is shared with getSharedCursor and opened by whichever runs first, so
+        // close the cursor on a breach only when this call opened it.
+        if (cursor.baseCursor == null) {
+            cursor.baseCursor = base.getCursor(executionContext);
+            try {
+                return cursor.of(cursor.baseCursor, executionContext);
+            } catch (Throwable th) {
+                cursor.close();
+                throw th;
+            }
         }
+        // getSharedCursor opened cursor.baseCursor first (e.g. it sits on the build side of a
+        // hash join, which opens before the probe side that holds this primary getCursor). cursor.of()
+        // reopens the allocator and then runs Function.init, which can throw; guard it so the reopened
+        // allocator is freed under the current per-query tracker instead of being deferred to factory
+        // close, by which point the tracker may have been recycled to another query.
         try {
-            return cursor.of(baseCursor, executionContext);
-        } catch (Throwable e) {
-            Misc.free(baseCursor);
-            throw e;
+            return cursor.of(cursor.baseCursor, executionContext);
+        } catch (Throwable th) {
+            cursor.close();
+            throw th;
         }
     }
 
@@ -297,7 +309,10 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
                 GroupByFunctionsUpdater groupByFunctionsUpdater
         ) {
             this.groupByFunctionsUpdater = groupByFunctionsUpdater;
-            this.allocator = GroupByAllocatorFactory.createAllocator(configuration);
+            // Lazy variant: the allocator's chunk index is not allocated until the
+            // first cursor's of() binds a MemoryTracker and calls reopen(), keeping
+            // per-query alloc/free accounting symmetric from the very first cursor.
+            this.allocator = GroupByAllocatorFactory.createAllocator(configuration, false);
             GroupByUtils.setAllocator(groupByFunctions, allocator);
         }
 
@@ -350,6 +365,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
             this.isExhausted = false;
             this.isValueBuilt = false;
             this.circuitBreaker = executionContext.getCircuitBreaker();
+            allocator.setMemoryTracker(executionContext.getMemoryTracker());
             allocator.reopen();
             Function.init(groupByFunctions, baseCursor, executionContext, null);
             return this;

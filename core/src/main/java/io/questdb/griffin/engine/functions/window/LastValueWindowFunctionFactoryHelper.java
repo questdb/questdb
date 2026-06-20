@@ -48,11 +48,13 @@ import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.WindowExpression;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Type-agnostic building blocks shared by the last_value window function over DATE and TIMESTAMP
@@ -2485,6 +2487,12 @@ public class LastValueWindowFunctionFactoryHelper {
             freeList.clear();
         }
 
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
         /**
          * Appends this function's plan representation to the given PlanSink.
          * <p>
@@ -2765,7 +2773,7 @@ public class LastValueWindowFunctionFactoryHelper {
             initialCapacity = configuration.getSqlWindowStorePageSize() / RECORD_SIZE;
             capacity = initialCapacity;
             memory = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(), configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            // memory allocates lazily on reopen(), under the tracker bound by the cursor
             firstIdx = 0;
         }
 
@@ -2923,6 +2931,11 @@ public class LastValueWindowFunctionFactoryHelper {
         public void reset() {
             super.reset();
             memory.close();
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            memory.setMemoryTracker(tracker);
         }
 
         /**

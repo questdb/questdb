@@ -40,6 +40,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.SymbolTranslatingRecord;
 import io.questdb.griffin.model.JoinContext;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rows;
@@ -101,12 +102,18 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
         TimeFrameCursor slaveCursor = null;
         try {
             slaveCursor = slaveFactory.getTimeFrameCursor(executionContext);
+            // Bind the per-query tracker before of(); the cursor's of()
+            // reopens its SingleRecordSinks, so the first malloc lands
+            // under the bound tracker.
+            cursor.setMemoryTracker(executionContext.getMemoryTracker());
             slaveCursor.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
             cursor.of(masterCursor, slaveCursor, executionContext.getCircuitBreaker());
             return cursor;
         } catch (Throwable th) {
             Misc.free(slaveCursor);
             Misc.free(masterCursor);
+            // of() reopens the sinks before adopting the cursors, so close() here frees only the partial heap.
+            Misc.free(cursor);
             throw th;
         }
     }
@@ -173,18 +180,11 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
 
         @Override
         public void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
+            // Reopen the sinks before super.of() adopts the cursors so an open-time breach frees each exactly once.
+            masterSinkTarget.reopen();
+            slaveSinkTarget.reopen();
             super.of(masterCursor, slaveCursor, circuitBreaker);
             masterKeyRecord = masterRecord;
-            try {
-                // reopen() allocates the sink heaps lazily; if the second one trips the RSS
-                // limit, close the first so a failed getCursor() does not orphan its memory.
-                masterSinkTarget.reopen();
-                slaveSinkTarget.reopen();
-            } catch (Throwable th) {
-                masterSinkTarget.close();
-                slaveSinkTarget.close();
-                throw th;
-            }
             if (symbolTranslatingRecord != null) {
                 symbolTranslatingRecord.initSources(masterCursor, slaveCursor);
                 symbolTranslatingRecord.of(masterRecord);
@@ -192,6 +192,12 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
             } else {
                 symbolShortCircuit.of(slaveCursor);
             }
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            masterSinkTarget.setMemoryTracker(tracker);
+            slaveSinkTarget.setMemoryTracker(tracker);
         }
 
         @Override
