@@ -33,11 +33,13 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.std.MemoryPages;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -69,11 +71,31 @@ public class RecordTreeChain implements Closeable, Mutable, Reopenable {
             String keyHeapConfigKey,
             String valueHeapConfigKey
     ) {
+        this(columnTypes, recordSink, comparator, keyPageSize, maxKeyHeapBytes, valuePageSize, maxValueHeapBytes, keyHeapConfigKey, valueHeapConfigKey, true);
+    }
+
+    public RecordTreeChain(
+            @NotNull ColumnTypes columnTypes,
+            @NotNull RecordSink recordSink,
+            @NotNull RecordComparator comparator,
+            long keyPageSize,
+            long maxKeyHeapBytes,
+            long valuePageSize,
+            long maxValueHeapBytes,
+            String keyHeapConfigKey,
+            String valueHeapConfigKey,
+            boolean openOnInit
+    ) {
         try {
             this.comparator = comparator;
             // MemoryPages can't hold a block straddling its ceilPow2 page (config rejects sub-block key pages).
             assert Numbers.ceilPow2(keyPageSize) >= BLOCK_SIZE;
-            this.mem = new MemoryPages(keyPageSize, derivePageBudget(keyPageSize, maxKeyHeapBytes), keyHeapConfigKey);
+            // Both children participate in the per-query lifetime:
+            // - MemoryPages threads openOnInit so its key heap is allocated
+            //   lazily under whatever MemoryTracker is bound at cursor start.
+            // - RecordChain's inner MemoryCARW is lazy by construction (no
+            //   native alloc until first write), so it does not need a knob.
+            this.mem = new MemoryPages(keyPageSize, derivePageBudget(keyPageSize, maxKeyHeapBytes), keyHeapConfigKey, openOnInit);
             this.recordChain = new RecordChain(
                     columnTypes,
                     recordSink,
@@ -158,6 +180,11 @@ public class RecordTreeChain implements Closeable, Mutable, Reopenable {
     @Override
     public void reopen() {
         mem.reopen();
+    }
+
+    public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        mem.setMemoryTracker(tracker);
+        recordChain.setMemoryTracker(tracker);
     }
 
     public long size() {

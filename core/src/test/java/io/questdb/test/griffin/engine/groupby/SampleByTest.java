@@ -17823,9 +17823,12 @@ public class SampleByTest extends AbstractCairoTest {
                                             errors.incrementAndGet();
                                         }
                                     }
-                                    haltLatch.countDown();
+                                } catch (Throwable e) {
+                                    e.printStackTrace(System.out);
+                                    errors.incrementAndGet();
                                 } finally {
                                     Path.clearThreadLocals();
+                                    haltLatch.countDown();
                                 }
                             }).start();
                         }

@@ -31,8 +31,8 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.ObjList;
 
 class UnionRecordCursor extends AbstractSetRecordCursor implements NoRandomAccessRecordCursor {
@@ -52,7 +52,7 @@ class UnionRecordCursor extends AbstractSetRecordCursor implements NoRandomAcces
             this.record = new UnionRecord();
         }
         this.map = map;
-        this.isOpen = true;
+        this.isOpen = false;
         this.recordSink = recordSink;
     }
 
@@ -123,12 +123,13 @@ class UnionRecordCursor extends AbstractSetRecordCursor implements NoRandomAcces
         return nextMethod.next();
     }
 
-    void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionCircuitBreaker circuitBreaker) throws SqlException {
+    void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionContext executionContext) throws SqlException {
         if (!isOpen) {
             this.isOpen = true;
+            this.map.setMemoryTracker(executionContext.getMemoryTracker());
             this.map.reopen();
         }
-        super.of(cursorA, cursorB, circuitBreaker);
+        super.of(cursorA, cursorB, executionContext);
         this.record.of(cursorA.getRecord(), cursorB.getRecord());
         toTop();
     }

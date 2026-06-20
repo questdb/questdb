@@ -27,10 +27,12 @@ package io.questdb.griffin.engine.groupby;
 import io.questdb.cairo.CairoException;
 import io.questdb.std.DirectLongLongHashMap;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.bytes.Bytes;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Thread-unsafe allocator implementation.
@@ -50,17 +52,26 @@ public class FastGroupByAllocator implements GroupByAllocator {
     private final long maxChunkSize;
     private long allocated;
     private long lim;
+    // Per-query native memory tracker bound by the owning factory at cursor start.
+    // Null when no per-query limit applies; all Unsafe.{malloc,realloc,free} calls
+    // degrade to the global-only overloads in that case.
+    @Nullable
+    private MemoryTracker memoryTracker;
     private long ptr;
 
     public FastGroupByAllocator(long defaultChunkSize, long maxChunkSize) {
-        this(defaultChunkSize, maxChunkSize, true);
+        this(defaultChunkSize, maxChunkSize, true, true);
     }
 
     public FastGroupByAllocator(long defaultChunkSize, long maxChunkSize, boolean aligned) {
+        this(defaultChunkSize, maxChunkSize, aligned, true);
+    }
+
+    public FastGroupByAllocator(long defaultChunkSize, long maxChunkSize, boolean aligned, boolean openOnInit) {
         this.defaultChunkSize = defaultChunkSize;
         this.maxChunkSize = maxChunkSize;
         this.aligned = aligned;
-        this.chunks = new DirectLongLongHashMap(8, 0.7, 0, 0, MemoryTag.NATIVE_GROUP_BY_FUNCTION);
+        this.chunks = new DirectLongLongHashMap(8, 0.7, 0, 0, MemoryTag.NATIVE_GROUP_BY_FUNCTION, openOnInit);
     }
 
     // Allocated chunks total (bytes).
@@ -72,7 +83,11 @@ public class FastGroupByAllocator implements GroupByAllocator {
     @Override
     public void clear() {
         _close();
-        chunks.restoreInitialCapacity();
+        // Skip restoring a closed index: re-mallocing it under an already-exhausted tracker would
+        // breach again mid-cleanup (reopen() reallocates it before the next use).
+        if (chunks.isOpen()) {
+            chunks.restoreInitialCapacity();
+        }
     }
 
     @Override
@@ -92,7 +107,7 @@ public class FastGroupByAllocator implements GroupByAllocator {
             long chunkSize = chunks.valueAt(index);
             if (size == chunkSize) {
                 // We're lucky! We can free the whole chunk.
-                Unsafe.free(ptr, chunkSize, MemoryTag.NATIVE_GROUP_BY_FUNCTION);
+                Unsafe.free(ptr, chunkSize, MemoryTag.NATIVE_GROUP_BY_FUNCTION, memoryTracker);
                 chunks.removeAt(index);
                 allocated -= chunkSize;
                 if (this.ptr == alignMaybe(ptr + chunkSize)) {
@@ -115,7 +130,7 @@ public class FastGroupByAllocator implements GroupByAllocator {
         }
 
         long chunkSize = Math.max(size, defaultChunkSize);
-        long allocatedPtr = Unsafe.malloc(chunkSize, MemoryTag.NATIVE_GROUP_BY_FUNCTION);
+        long allocatedPtr = Unsafe.malloc(chunkSize, MemoryTag.NATIVE_GROUP_BY_FUNCTION, memoryTracker);
         chunks.put(allocatedPtr, chunkSize);
         allocated += chunkSize;
         ptr = alignMaybe(allocatedPtr + size);
@@ -150,7 +165,7 @@ public class FastGroupByAllocator implements GroupByAllocator {
                 long chunkSize = chunks.valueAt(index);
                 if (chunkSize == oldSize) {
                     // Nice, we can reallocate the whole chunk.
-                    long chunkPtr = Unsafe.realloc(ptr, chunkSize, newSize, MemoryTag.NATIVE_GROUP_BY_FUNCTION);
+                    long chunkPtr = Unsafe.realloc(ptr, chunkSize, newSize, MemoryTag.NATIVE_GROUP_BY_FUNCTION, memoryTracker);
                     allocated += newSize - chunkSize;
                     chunks.removeAt(index);
                     chunks.put(chunkPtr, newSize);
@@ -172,15 +187,27 @@ public class FastGroupByAllocator implements GroupByAllocator {
         chunks.reopen();
     }
 
+    @Override
+    public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        this.memoryTracker = tracker;
+        chunks.setMemoryTracker(tracker);
+    }
+
     private void _close() {
-        for (int i = 0, n = chunks.capacity(); i < n; i++) {
-            long ptr = chunks.keyAtRaw(i);
-            if (ptr != 0) {
-                long size = chunks.valueAtRaw(i);
-                Unsafe.free(ptr, size, MemoryTag.NATIVE_GROUP_BY_FUNCTION);
+        // The chunk index is lazy (openOnInit=false). An allocator closed without
+        // ever being reopened (e.g. a SAMPLE BY subquery factory torn down on a
+        // codegen error path) has an unallocated index, so guard the raw
+        // iteration that frees the chunks. close() still releases the skeleton.
+        if (chunks.isOpen()) {
+            for (int i = 0, n = chunks.capacity(); i < n; i++) {
+                long ptr = chunks.keyAtRaw(i);
+                if (ptr != 0) {
+                    long size = chunks.valueAtRaw(i);
+                    Unsafe.free(ptr, size, MemoryTag.NATIVE_GROUP_BY_FUNCTION, memoryTracker);
+                }
             }
+            chunks.clear();
         }
-        chunks.clear();
         allocated = 0;
         ptr = lim = 0;
     }

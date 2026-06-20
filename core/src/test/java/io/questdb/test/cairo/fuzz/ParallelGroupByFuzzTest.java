@@ -48,6 +48,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.QueryAssertion;
@@ -2719,6 +2720,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                 th.printStackTrace(System.out);
                                 errors.put(threadId, th);
                             } finally {
+                                Path.clearThreadLocals();
                                 haltLatch.countDown();
                             }
                         }).start();
@@ -3842,6 +3844,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                 th.printStackTrace(System.out);
                                 errors.put(threadId, th);
                             } finally {
+                                Path.clearThreadLocals();
                                 haltLatch.countDown();
                             }
                         }).start();
@@ -3912,6 +3915,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                 th.printStackTrace(System.out);
                                 errors.put(threadId, th);
                             } finally {
+                                Path.clearThreadLocals();
                                 haltLatch.countDown();
                             }
                         }).start();

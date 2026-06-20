@@ -33,11 +33,13 @@ import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.Nullable;
 
 public final class SingleRecordSink implements RecordSinkSPI, Mutable, Reopenable {
     private static final int INITIAL_CAPACITY_BYTES = 8;
@@ -46,6 +48,12 @@ public final class SingleRecordSink implements RecordSinkSPI, Mutable, Reopenabl
     private long appendAddress;
     private long heapLimit;
     private long heapStart;
+    // Per-query native memory tracker bound by the owning factory at cursor
+    // open time. Null when no per-query limit applies. The class is lazy by
+    // design (constructor does not allocate; reopen() does), so the factory
+    // sequence is setMemoryTracker(...) followed by reopen().
+    @Nullable
+    private MemoryTracker memoryTracker;
 
     public SingleRecordSink(long maxHeapSizeBytes, int memoryTag) {
         this.memoryTag = memoryTag;
@@ -60,7 +68,7 @@ public final class SingleRecordSink implements RecordSinkSPI, Mutable, Reopenabl
     @Override
     public void close() {
         if (appendAddress != 0) {
-            Unsafe.free(heapStart, heapLimit - heapStart, memoryTag);
+            Unsafe.free(heapStart, heapLimit - heapStart, memoryTag, memoryTracker);
             appendAddress = 0;
             heapStart = 0;
         }
@@ -273,10 +281,14 @@ public final class SingleRecordSink implements RecordSinkSPI, Mutable, Reopenabl
     @Override
     public void reopen() {
         if (appendAddress == 0) {
-            heapStart = Unsafe.malloc(INITIAL_CAPACITY_BYTES, memoryTag);
+            heapStart = Unsafe.malloc(INITIAL_CAPACITY_BYTES, memoryTag, memoryTracker);
             heapLimit = heapStart + INITIAL_CAPACITY_BYTES;
         }
         appendAddress = heapStart;
+    }
+
+    public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        this.memoryTracker = tracker;
     }
 
     @Override
@@ -308,7 +320,7 @@ public final class SingleRecordSink implements RecordSinkSPI, Mutable, Reopenabl
         if (newCapacity > maxHeapSize) {
             throw LimitOverflowException.instance().put("limit of ").put(maxHeapSize).put(" memory exceeded in ASOF join");
         }
-        long newAddress = Unsafe.realloc(heapStart, currentCapacity, newCapacity, memoryTag);
+        long newAddress = Unsafe.realloc(heapStart, currentCapacity, newCapacity, memoryTag, memoryTracker);
 
         long delta = newAddress - heapStart;
         this.heapStart = newAddress;

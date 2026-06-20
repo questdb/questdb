@@ -567,6 +567,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getMatViewRefreshMemoryLimitBytes() {
+        return 0;
+    }
+
+    @Override
     public long getMatViewRefreshOomRetryTimeout() {
         return 200;
     }
@@ -843,6 +848,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public long getQueryContinuationWakeIntervalMillis() {
         return 1_000L;
+    }
+
+    @Override
+    public long getQueryMemoryLimitBytes() {
+        return 0;
     }
 
     @Override
@@ -1409,6 +1419,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getWalApplyMemoryLimitBytes() {
+        return 0;
+    }
+
+    @Override
     public long getWalApplyTableTimeQuota() {
         return 1000L;
     }
@@ -1645,6 +1660,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean isReadOnlyInstance() {
         return false;
+    }
+
+    @Override
+    public boolean isSqlDistinctGroupByRewriteEnabled() {
+        return true;
     }
 
     @Override
