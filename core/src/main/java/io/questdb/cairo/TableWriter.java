@@ -7208,18 +7208,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final long partitionSize = txWriter.getPartitionRowCountByTimestamp(timestamp);
         final long columnTop = columnVersionWriter.getColumnTop(timestamp, columnIndex);
 
-        // Invariant: on a parquet partition the indexed SYMBOL's columnTop
-        // is either 0 (column has data from row 0) or partitionSize (column
-        // is all-NULL in this partition). zeroColumnTopsAfterParquetRewrite
-        // collapses every intermediate 0 < columnTop < partitionSize down
-        // to 0 at convert time, so the merged decode below can rely on
-        // columnTop == 0 whenever it executes. A future ATTACH PARQUET /
-        // restore path that bypasses that routine must restore this
-        // invariant before reaching here, or the rowLo formula at the
-        // decodeRowGroup call would truncate the covered columns.
-        assert columnTop == 0 || columnTop == partitionSize
+        // Invariant: on a parquet partition the indexed SYMBOL's columnTop is
+        // one of three values. 0 (column has data from row 0):
+        // zeroColumnTopsAfterParquetRewrite collapses every intermediate
+        // 0 < columnTop < partitionSize down to 0 at convert time, so the merged
+        // decode below can rely on columnTop == 0 whenever it executes.
+        // partitionSize (an explicit column-version record marks the column
+        // all-NULL in this partition). -1 (getColumnTop's "column does not exist
+        // in this partition" sentinel, returned when the column was added in a
+        // later partition and has no record here). The guard below skips both -1
+        // and partitionSize -- there is nothing to index -- so only 0 reaches the
+        // decode. A future ATTACH PARQUET / restore path that bypasses
+        // zeroColumnTopsAfterParquetRewrite must restore this invariant before
+        // reaching here, or the rowLo formula at the decodeRowGroup call would
+        // truncate the covered columns.
+        assert columnTop == -1 || columnTop == 0 || columnTop == partitionSize
                 : "parquet partition indexed SYMBOL columnTop=" + columnTop
-                + " is neither 0 nor partitionSize=" + partitionSize
+                + " is none of -1, 0 or partitionSize=" + partitionSize
                 + " (timestamp=" + timestamp + ", columnIndex=" + columnIndex + ")";
 
         if (columnTop > -1 && partitionSize > columnTop) {
@@ -9497,11 +9502,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             } // end while(srcOoo < srcOooMax)
 
             // at this point we should know the last partition row count
-            partitionTimestampHi = Math.max(partitionTimestampHi, txWriter.getCurrentPartitionMaxTimestamp(o3TimestampMax));
-
             if (!isCommitReplaceMode()) {
+                partitionTimestampHi = Math.max(partitionTimestampHi, txWriter.getCurrentPartitionMaxTimestamp(o3TimestampMax));
                 txWriter.updateMaxTimestamp(Math.max(txWriter.getMaxTimestamp(), o3TimestampMax));
             } else if (replaceMaxTimestamp != Long.MIN_VALUE) {
+                // Derive partitionTimestampHi from the actual highest written timestamp, not
+                // o3TimestampMax (the replace-range high boundary, which is Long.MAX_VALUE - 1 for
+                // an open-ended range and overflows getCurrentPartitionMaxTimestamp). Otherwise a
+                // replace that appends partitions above the previous last partition leaves
+                // partitionTimestampHi stale, finishO3Commit skips switching the active partition,
+                // and the next commit reuses the previous partition's column descriptors.
+                partitionTimestampHi = Math.max(partitionTimestampHi, txWriter.getCurrentPartitionMaxTimestamp(replaceMaxTimestamp));
                 txWriter.updateMaxTimestamp(replaceMaxTimestamp);
             }
         } catch (Throwable th) {
