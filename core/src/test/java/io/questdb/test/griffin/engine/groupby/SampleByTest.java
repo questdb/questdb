@@ -6483,6 +6483,56 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByFirstLastReturnsValuesWhenTimestampNotProjected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL INDEX, val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t
+                    SELECT ('s' || (x % 5)::STRING)::SYMBOL AS sym,
+                           (x * 3)::LONG AS val,
+                           timestamp_sequence('2024-01-01T00:00:00.000000Z', 600_000_000) AS ts
+                    FROM long_sequence(60)""");
+
+            // Reference: with the designated timestamp projected, first()/last() are correct.
+            // This selects the same SampleByFirstLast factory.
+            assertQuery(
+                    "SELECT ts, sym, first(val) fv, last(val) lv FROM t WHERE sym = 's1' SAMPLE BY 1h ALIGN TO FIRST OBSERVATION"
+            ).timestamp("ts").noRandomAccess().returns("""
+                    ts\tsym\tfv\tlv
+                    2024-01-01T00:00:00.000000Z\ts1\t3\t18
+                    2024-01-01T01:00:00.000000Z\ts1\t33\t33
+                    2024-01-01T02:00:00.000000Z\ts1\t48\t48
+                    2024-01-01T03:00:00.000000Z\ts1\t63\t63
+                    2024-01-01T04:00:00.000000Z\ts1\t78\t78
+                    2024-01-01T05:00:00.000000Z\ts1\t93\t108
+                    2024-01-01T06:00:00.000000Z\ts1\t123\t123
+                    2024-01-01T07:00:00.000000Z\ts1\t138\t138
+                    2024-01-01T08:00:00.000000Z\ts1\t153\t153
+                    2024-01-01T09:00:00.000000Z\ts1\t168\t168
+                    """);
+
+            // Without the designated timestamp projected, the data-record path used to alias the
+            // trailing last(val) onto the bucket-start timestamp for the middle buckets. The first
+            // and final buckets travel through the cross-frame record and were always correct.
+            assertQuery(
+                    "SELECT sym, first(val) fv, last(val) lv FROM t WHERE sym = 's1' SAMPLE BY 1h ALIGN TO FIRST OBSERVATION"
+            ).noRandomAccess().returns("""
+                    sym\tfv\tlv
+                    s1\t3\t18
+                    s1\t33\t33
+                    s1\t48\t48
+                    s1\t63\t63
+                    s1\t78\t78
+                    s1\t93\t108
+                    s1\t123\t123
+                    s1\t138\t138
+                    s1\t153\t153
+                    s1\t168\t168
+                    """);
+        });
+    }
+
+    @Test
     public void testSampleByFirstLastWithNonTsOrFilteredSymbolColumn() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
