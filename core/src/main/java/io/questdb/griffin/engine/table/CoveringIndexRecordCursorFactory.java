@@ -141,13 +141,18 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         int[] requiredIncludeIndices = buildRequiredIncludeIndices(queryColToIncludeIdx);
 
         int[] symInclCols = findSymbolIncludeCols(queryColToIncludeIdx, metadata);
-        if (keyValueFuncs != null) {
-            this.resolvedKeys = new IntList(keyValueFuncs.size());
-            int multiKeyCapacity = keyValueFuncs.size();
+        // Read the owned defensive copy (this.keyValueFuncs), never the pooled parameter. The two are
+        // content-identical here (compiling thread owns the model exclusively during construction), but
+        // the copy is the reference this factory owns and frees in close(); using it consistently avoids
+        // a refactor hazard if the defensive copy above is ever changed or removed.
+        final ObjList<Function> keyValueFuncsCopy = this.keyValueFuncs;
+        if (keyValueFuncsCopy != null) {
+            this.resolvedKeys = new IntList(keyValueFuncsCopy.size());
+            int multiKeyCapacity = keyValueFuncsCopy.size();
             if (reader != null) {
                 SymbolMapReader smr = reader.getSymbolMapReader(indexColumnIndex);
-                for (int i = 0, n = keyValueFuncs.size(); i < n; i++) {
-                    Function f = keyValueFuncs.getQuick(i);
+                for (int i = 0, n = keyValueFuncsCopy.size(); i < n; i++) {
+                    Function f = keyValueFuncsCopy.getQuick(i);
                     int key = f.isRuntimeConstant() ? SymbolTable.VALUE_NOT_FOUND : smr.keyOf(f.getStrA(null));
                     resolvedKeys.add(key);
                 }
