@@ -39,6 +39,7 @@ import io.questdb.jit.CompiledFilter;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
@@ -263,14 +264,17 @@ public class AsyncFilterContext implements Closeable {
         }
     }
 
-    public void initMemoryPools(PageFrameAddressCache pageFrameAddressCache) {
-        initMemoryPools(pageFrameAddressCache, ParquetDecodeHint.MONOTONIC);
+    public void initMemoryPools(PageFrameAddressCache pageFrameAddressCache, MemoryTracker memoryTracker) {
+        initMemoryPools(pageFrameAddressCache, memoryTracker, ParquetDecodeHint.MONOTONIC);
     }
 
-    public void initMemoryPools(PageFrameAddressCache pageFrameAddressCache, ParquetDecodeHint ownerHint) {
+    public void initMemoryPools(PageFrameAddressCache pageFrameAddressCache, MemoryTracker memoryTracker, ParquetDecodeHint ownerHint) {
+        ownerMemoryPool.setMemoryTracker(memoryTracker);
         ownerMemoryPool.of(pageFrameAddressCache, ownerHint);
         for (int i = 0, n = perWorkerMemoryPools.size(); i < n; i++) {
-            perWorkerMemoryPools.getQuick(i).of(pageFrameAddressCache, ParquetDecodeHint.MONOTONIC);
+            final PageFrameMemoryPool pool = perWorkerMemoryPools.getQuick(i);
+            pool.setMemoryTracker(memoryTracker);
+            pool.of(pageFrameAddressCache, ParquetDecodeHint.MONOTONIC);
         }
     }
 

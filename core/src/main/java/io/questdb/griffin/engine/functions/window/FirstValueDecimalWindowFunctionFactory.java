@@ -52,10 +52,12 @@ import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import org.jetbrains.annotations.Nullable;
 
 public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFunctionFactory {
 
@@ -2505,6 +2507,12 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
             sink.val('(').val(arg).val(')');
@@ -2739,7 +2747,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             this.frameIncludesCurrentValue = rangeHi == 0;
             this.type = type;
             capacity = initialCapacity;
-            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            // memory allocates lazily on reopen(), under the tracker bound by the cursor
             firstIdx = 0;
             size = 0;
             firstValue.ofRawNull();
@@ -2862,6 +2870,11 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         public void reset() {
             super.reset();
             memory.close();
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            memory.setMemoryTracker(tracker);
         }
 
         @Override
@@ -3954,6 +3967,12 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
             sink.val('(').val(arg).val(')');
@@ -4189,7 +4208,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             this.frameIncludesCurrentValue = rangeHi == 0;
             this.type = type;
             capacity = initialCapacity;
-            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            // memory allocates lazily on reopen(), under the tracker bound by the cursor
             firstIdx = 0;
             size = 0;
             firstValue = Decimals.DECIMAL16_NULL;
@@ -4307,6 +4326,11 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         public void reset() {
             super.reset();
             memory.close();
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            memory.setMemoryTracker(tracker);
         }
 
         @Override
@@ -5451,6 +5475,12 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
             sink.val('(').val(arg).val(')');
@@ -5689,7 +5719,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             this.frameIncludesCurrentValue = rangeHi == 0;
             this.type = type;
             capacity = initialCapacity;
-            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            // memory allocates lazily on reopen(), under the tracker bound by the cursor
             firstIdx = 0;
             size = 0;
             firstValue.ofRawNull();
@@ -5814,6 +5844,11 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         public void reset() {
             super.reset();
             memory.close();
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            memory.setMemoryTracker(tracker);
         }
 
         @Override
@@ -6914,6 +6949,12 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
             sink.val('(').val(arg).val(')');
@@ -7149,7 +7190,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             this.frameIncludesCurrentValue = rangeHi == 0;
             this.type = type;
             capacity = initialCapacity;
-            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            // memory allocates lazily on reopen(), under the tracker bound by the cursor
             firstIdx = 0;
             size = 0;
             firstValue = Decimals.DECIMAL32_NULL;
@@ -7267,6 +7308,11 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         public void reset() {
             super.reset();
             memory.close();
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            memory.setMemoryTracker(tracker);
         }
 
         @Override
@@ -8348,6 +8394,12 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
             sink.val('(').val(arg).val(')');
@@ -8583,7 +8635,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             this.frameIncludesCurrentValue = rangeHi == 0;
             this.type = type;
             capacity = initialCapacity;
-            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            // memory allocates lazily on reopen(), under the tracker bound by the cursor
             firstIdx = 0;
             size = 0;
             firstValue = Decimals.DECIMAL64_NULL;
@@ -8701,6 +8753,11 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         public void reset() {
             super.reset();
             memory.close();
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            memory.setMemoryTracker(tracker);
         }
 
         @Override
@@ -9782,6 +9839,12 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
             sink.val('(').val(arg).val(')');
@@ -10017,7 +10080,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             this.frameIncludesCurrentValue = rangeHi == 0;
             this.type = type;
             capacity = initialCapacity;
-            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            // memory allocates lazily on reopen(), under the tracker bound by the cursor
             firstIdx = 0;
             size = 0;
             firstValue = Decimals.DECIMAL8_NULL;
@@ -10135,6 +10198,11 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         public void reset() {
             super.reset();
             memory.close();
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            memory.setMemoryTracker(tracker);
         }
 
         @Override

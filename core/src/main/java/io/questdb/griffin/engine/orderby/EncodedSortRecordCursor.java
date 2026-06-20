@@ -150,7 +150,17 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
 
     @Override
     public void of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
+        // The tracker is rebound unconditionally below (outside the !isOpen guard) because
+        // the ctor opens eagerly with isOpen=true, so an inside-guard bind would leave the
+        // first query untracked. A second of() without an intervening close() would then
+        // rebind onto still-charged backing and underflow the per-query counter on free.
+        // close()/forceClose() null baseCursor, so a null field here means fresh-or-closed.
+        assert this.baseCursor == null : "of() without intervening close(): rebinding the memory tracker would underflow the per-query counter";
         this.baseCursor = baseCursor;
+        // Wire only the row-count-scaled allocators; keyHeap stays global-counter only as it is
+        // bounded by maxEntryMemBytes (see the throwLimitOverflow check below).
+        entryMem.setMemoryTracker(executionContext.getMemoryTracker());
+        recordChain.setMemoryTracker(executionContext.getMemoryTracker());
         if (!isOpen) {
             isOpen = true;
             entryMem.reopen();
