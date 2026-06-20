@@ -297,13 +297,16 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         ) {
             super(functions);
             try {
-                isOpen = true;
+                // Lazy variants (openOnInit=false): start closed so of() allocates the backing
+                // under the bound MemoryTracker on the first cursor, keeping the per-query counter
+                // balanced between malloc and the matching free at cursor close.
+                isOpen = false;
                 // this is the map itself, which we must not forget to free when factory closes
-                recordKeyMap = MapFactory.createOrderedMap(configuration, keyTypes);
+                recordKeyMap = MapFactory.createOrderedMap(configuration, keyTypes, null, false);
                 // data map will contain rounded timestamp value as last key column
                 keyTypes.add(timestampType);
-                dataMap = MapFactory.createOrderedMap(configuration, keyTypes, valueTypes);
-                allocator = GroupByAllocatorFactory.createAllocator(configuration);
+                dataMap = MapFactory.createOrderedMap(configuration, keyTypes, valueTypes, false);
+                allocator = GroupByAllocatorFactory.createAllocator(configuration, false);
                 GroupByUtils.setAllocator(groupByFunctions, allocator);
 
                 this.timezoneNameFunc = timezoneNameFunc;
@@ -351,8 +354,11 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             super.of(managedCursor, dataMap.getCursor());
             if (!isOpen) {
                 isOpen = true;
+                recordKeyMap.setMemoryTracker(executionContext.getMemoryTracker());
                 recordKeyMap.reopen();
+                dataMap.setMemoryTracker(executionContext.getMemoryTracker());
                 dataMap.reopen();
+                allocator.setMemoryTracker(executionContext.getMemoryTracker());
                 allocator.reopen();
             }
             circuitBreaker = executionContext.getCircuitBreaker();

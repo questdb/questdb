@@ -54,7 +54,6 @@ import io.questdb.griffin.engine.groupby.FlyweightMapValue;
 import io.questdb.griffin.engine.groupby.GroupByColumnSink;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByLongList;
-import io.questdb.griffin.engine.table.TablePageFrameCursor;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.BytecodeAssembler;
@@ -159,7 +158,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         this.joinMetadata = joinMetadata;
         this.cursor = new AsyncWindowJoinRecordCursor(
                 groupByFunctions,
-                slaveFactory.getMetadata(),
+                slaveFactory,
                 columnIndex,
                 columnSplit,
                 masterFilter != null
@@ -270,9 +269,16 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final int masterOrder = masterFactory.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
         final int slaveOrder = slaveFactory.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
-        final TablePageFrameCursor slaveFrameCursor = (TablePageFrameCursor) slaveFactory.getPageFrameCursor(executionContext, slaveOrder);
-        cursor.of(execute(executionContext, collectSubSeq, masterOrder), slaveFrameCursor, executionContext);
-        return cursor;
+        final PageFrameSequence<AsyncWindowJoinAtom> masterFrameSequence = execute(executionContext, collectSubSeq, masterOrder);
+        try {
+            cursor.of(masterFrameSequence, slaveOrder, executionContext);
+            return cursor;
+        } catch (Throwable th) {
+            // On a mid-reopen breach, close() drains the partially reopened atom and resets isOpen
+            // so the cached factory stays reusable.
+            cursor.close();
+            throw th;
+        }
     }
 
     @Override

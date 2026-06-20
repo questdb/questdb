@@ -52,7 +52,10 @@ class SortedLightRecordCursor implements DelegatingRecordCursor {
         this.comparator = comparator;
         // assign it once, it's the same instance anyway
         this.chainCursor = chain.getCursor();
-        this.isOpen = true;
+        // Lazy variant: the chain skeleton is constructed but the key/value heaps
+        // are not allocated yet. The first of() call binds the MemoryTracker and
+        // calls chain.reopen() to allocate the initial backing under it.
+        this.isOpen = false;
         this.rankMaps = rankMaps;
     }
 
@@ -108,6 +111,7 @@ class SortedLightRecordCursor implements DelegatingRecordCursor {
         baseCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
         if (!isOpen) {
             isOpen = true;
+            chain.setMemoryTracker(executionContext.getMemoryTracker());
             chain.reopen();
         } else {
             chain.clear();

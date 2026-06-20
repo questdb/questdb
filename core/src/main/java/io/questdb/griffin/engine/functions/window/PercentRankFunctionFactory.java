@@ -52,9 +52,11 @@ import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.IntList;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * percent_rank() window function.
@@ -371,10 +373,14 @@ public class PercentRankFunctionFactory extends AbstractWindowFunctionFactory {
                                          ObjList<ExpressionNode> orderBy,
                                          IntList orderByDirection) throws SqlException {
             IntList indices = orderIndices != null ? orderIndices : sqlGenerator.toOrderIndices(metadata, orderBy, orderByDirection);
+            // Lazy: reopen() allocates the backing after setMemoryTracker() binds
+            // the per-query tracker, keeping malloc/free on the per-query counter.
             map = MapFactory.createUnorderedMap(
                     configuration,
                     keyColumnTypes,
-                    PERCENT_RANK_COLUMN_TYPES
+                    PERCENT_RANK_COLUMN_TYPES,
+                    false,
+                    false
             );
             this.recordComparator = sqlGenerator.getRecordComparatorCompiler().newInstance(metadata, indices);
             this.rankMaps = SortKeyEncoder.createRankMaps(metadata, indices);
@@ -453,6 +459,13 @@ public class PercentRankFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void setColumnIndex(int columnIndex) {
             this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            if (map != null) {
+                map.setMemoryTracker(tracker);
+            }
         }
 
         @Override

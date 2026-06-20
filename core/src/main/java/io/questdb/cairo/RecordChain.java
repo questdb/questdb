@@ -42,6 +42,7 @@ import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -370,6 +371,17 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
     @Override
     public void recordAt(Record record, long row) {
         ((RecordChainRecord) record).of(rowToDataOffset(row));
+    }
+
+    /**
+     * Binds the per-query native memory tracker. The chain is lazy by design
+     * (the inner MemoryCARW does not allocate native memory until the first
+     * write), so factories can safely set the tracker between cursors as long
+     * as the chain's backing has been released first via {@link #clear()} or
+     * {@link #close()}.
+     */
+    public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        mem.setMemoryTracker(tracker);
     }
 
     public void setSymbolTableResolver(SymbolTableSource resolver) {

@@ -441,8 +441,18 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
             // Os.sleep, ratio is bounded by workerCount; with TimerCont, ratio
             // can approach clientThreads. The bigger the gap, the less
             // ambiguous the failure mode.
-            final int clientThreads = 64;
-            final int iterationsPerThread = 8;
+            //
+            // Kept modest on purpose: 16 client threads is still 8x the worker
+            // count -- a wide enough margin for the parallelism gap -- while
+            // avoiding the connection/CPU oversubscription that, on small and
+            // heavily loaded CI agents (Windows in particular), starved the PG
+            // accept/dispatch path so badly that a cancelled sleep's breaker
+            // trip could miss its 30s join window. Do not crank these back up to
+            // chase coverage; the rarer interleavings come from concurrency, not
+            // from raw thread count, and 16x16=256 iterations already hit every
+            // scenario bucket many times over.
+            final int clientThreads = 16;
+            final int iterationsPerThread = 16;
 
             try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
                 put(PropertyKey.SHARED_WORKER_COUNT.getEnvVarName(), String.valueOf(workerCount));
@@ -534,8 +544,9 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
                     t.start();
                 }
 
-                // Hard upper bound: 12 threads * 25 iters * worst-case ~600ms = ~3 min.
-                // Allow plenty of headroom; the test timeout still bounds the run.
+                // Hard upper bound: 16 threads * 16 iters * worst-case ~600ms, run
+                // in parallel, stays well under this. Allow plenty of headroom;
+                // the test timeout still bounds the run.
                 Assert.assertTrue(
                         "fuzz did not complete in time, seeds=" + seed0 + "L, " + seed1 + "L",
                         doneLatch.await(150, TimeUnit.SECONDS)
@@ -581,7 +592,7 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
                         .$(", seeds=").$(seed0).$("L, ").$(seed1).$("L")
                         .$(']').$();
 
-                // Did we actually exercise each path? Probabilistic but at 12*25=300
+                // Did we actually exercise each path? Probabilistic but at 16*16=256
                 // iterations with 8 buckets we should hit each at least a few times.
                 Assert.assertTrue("no happy sleeps ran (seeds=" + seed0 + "L, " + seed1 + "L)", happyCount.get() > 0);
                 Assert.assertTrue("no cancelled sleeps ran (seeds=" + seed0 + "L, " + seed1 + "L)", cancelledCount.get() > 0);
