@@ -25,8 +25,8 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.CarrierLocal;
+import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
@@ -128,11 +128,11 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
                 SqlException.$(position, msg)
                 :
                 SqlException.$(position, "found [tok='")
-                .put(tok)
-                .put("', len=")
-                .put(tok.length())
-                .put("] ")
-                .put(msg);
+                        .put(tok)
+                        .put("', len=")
+                        .put(tok.length())
+                        .put("] ")
+                        .put(msg);
     }
 
     public static SqlException position(int position) {

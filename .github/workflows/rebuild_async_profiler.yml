@@ -55,7 +55,7 @@ jobs:
           apt-get install git file -y
 
       - name: Checkout repository with submodules
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           submodules: true
           fetch-depth: 0
@@ -110,7 +110,7 @@ jobs:
           file asprof jfrconv
 
       - name: Upload binaries
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: asprof-${{ matrix.platform }}
           path: |
@@ -124,16 +124,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Download x86-64 binaries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: asprof-linux-x86-64
           path: core/src/main/bin/linux-x86-64/
 
       - name: Download aarch64 binaries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: asprof-linux-aarch64
           path: core/src/main/bin/linux-aarch64/

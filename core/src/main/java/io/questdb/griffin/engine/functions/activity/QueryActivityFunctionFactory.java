@@ -43,6 +43,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 
@@ -140,6 +141,8 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
             private final StringSink query = new StringSink();
             private long changedAtNs;
             private boolean isWAL;
+            private long memoryLimit;
+            private long memoryUsed;
             private boolean poolNameIsNull;
             private boolean principalIsNull;
             private long queryId;
@@ -182,6 +185,10 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
                     return queryId;
                 } else if (col == 1) {
                     return workerId;
+                } else if (col == 9) {
+                    return memoryUsed;
+                } else if (col == 10) {
+                    return memoryLimit;
                 }
 
                 return Record.super.getLong(col);
@@ -235,6 +242,8 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
                 changedAtNs = 0;
                 state = QueryRegistry.Entry.State.IDLE;
                 isWAL = false;
+                memoryUsed = Numbers.LONG_NULL;
+                memoryLimit = Numbers.LONG_NULL;
             }
 
             private CharSequence getPrincipal() {
@@ -266,6 +275,10 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
                 this.registeredAtNs = entry.getRegisteredAtNs();
                 this.changedAtNs = entry.getChangedAtNs();
                 this.isWAL = entry.isWAL();
+                // Best-effort memory snapshot; NULL when no tracker is bound. See
+                // the memoryTracker field note in QueryRegistry.Entry.
+                this.memoryUsed = entry.getMemoryUsed();
+                this.memoryLimit = entry.getMemoryLimit();
 
                 final CharSequence entryPoolName = entry.getPoolName();
                 if (!copy(entryPoolName, poolName)) {
@@ -325,6 +338,8 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
         metadata.add(new TableColumnMetadata("state", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("is_wal", ColumnType.BOOLEAN));
         metadata.add(new TableColumnMetadata("query", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("memory_used", ColumnType.LONG));
+        metadata.add(new TableColumnMetadata("memory_limit", ColumnType.LONG));
         METADATA = metadata;
     }
 }

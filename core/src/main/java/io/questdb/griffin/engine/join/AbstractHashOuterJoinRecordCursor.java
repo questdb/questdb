@@ -51,7 +51,7 @@ public abstract class AbstractHashOuterJoinRecordCursor extends AbstractJoinCurs
             RecordChain slaveChain
     ) {
         super(columnSplit);
-        isOpen = true;
+        isOpen = false;
         this.joinKeyMap = joinKeyMap;
         this.slaveChain = slaveChain;
     }
@@ -143,12 +143,24 @@ public abstract class AbstractHashOuterJoinRecordCursor extends AbstractJoinCurs
     }
 
     protected void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        if (!isOpen) {
-            isOpen = true;
-            joinKeyMap.reopen();
-        }
+        ofWithoutAdopt(masterCursor, slaveCursor, sqlExecutionContext);
         this.masterCursor = masterCursor;
         this.slaveCursor = slaveCursor;
+    }
+
+    // Sets up the per-run join state from the master/slave cursors without adopting them into the owned
+    // fields, letting a filtered subclass run its throwing filter.init() and adopt the cursors last.
+    protected void ofWithoutAdopt(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        if (!isOpen) {
+            isOpen = true;
+            joinKeyMap.setMemoryTracker(sqlExecutionContext.getMemoryTracker());
+            joinKeyMap.reopen();
+        }
+        // Bind the per-query tracker before any slaveChain write. The chain's
+        // inner MemoryCARW is lazy by construction, so the next chain.put()
+        // triggers a malloc that lands under this tracker. After the cursor's
+        // close(), the chain's backing is freed against the same tracker.
+        slaveChain.setMemoryTracker(sqlExecutionContext.getMemoryTracker());
         this.circuitBreaker = sqlExecutionContext.getCircuitBreaker();
         masterRecord = masterCursor.getRecord();
         slaveRecord = slaveChain.getRecord();

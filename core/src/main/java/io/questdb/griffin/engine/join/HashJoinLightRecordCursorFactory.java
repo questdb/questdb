@@ -114,11 +114,14 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             }
 
             slaveCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
-            cursor.of(masterCursor, slaveCursor, executionContext.getCircuitBreaker(), swapped);
+            cursor.of(masterCursor, slaveCursor, executionContext, swapped);
             return cursor;
         } catch (Throwable e) {
             Misc.free(slaveCursor);
             Misc.free(masterCursor);
+            // of() binds the per-query tracker and reopens the join map + slave chain before it can throw;
+            // close() frees them under that tracker and resets isOpen so the factory is reusable.
+            Misc.free(cursor);
             throw e;
         }
     }
@@ -202,10 +205,12 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
         public HashJoinRecordCursor(int columnSplit, CairoConfiguration configuration, ColumnTypes joinColumnTypes, ColumnTypes valueTypes) {
             super(columnSplit);
             try {
-                isOpen = true;
                 record = new JoinRecord(columnSplit);
-                joinKeyMap = MapFactory.createUnorderedMap(configuration, joinColumnTypes, valueTypes);
-                slaveChain = new LongChain(configuration.getSqlHashJoinLightValuePageSize(), configuration.getSqlHashJoinLightValueMaxPages());
+                // Lazy variant: the map skeleton is constructed but the native backing is not
+                // allocated until the first cursor's of() binds a MemoryTracker and reopens it.
+                joinKeyMap = MapFactory.createUnorderedMap(configuration, joinColumnTypes, valueTypes, false, false);
+                slaveChain = new LongChain(configuration.getSqlHashJoinLightValuePageSize(), configuration.getSqlHashJoinLightValueMaxPages(), true);
+                isOpen = false;
             } catch (Throwable th) {
                 close();
                 throw th;
@@ -323,15 +328,17 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             }
         }
 
-        private void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker, boolean swapped) {
+        private void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext executionContext, boolean swapped) {
             if (!isOpen) {
                 isOpen = true;
+                joinKeyMap.setMemoryTracker(executionContext.getMemoryTracker());
                 joinKeyMap.reopen();
+                slaveChain.setMemoryTracker(executionContext.getMemoryTracker());
                 slaveChain.reopen();
             }
             this.masterCursor = masterCursor;
             this.slaveCursor = slaveCursor;
-            this.circuitBreaker = circuitBreaker;
+            this.circuitBreaker = executionContext.getCircuitBreaker();
             masterRecord = masterCursor.getRecord();
             slaveRecord = slaveCursor.getRecordB();
             this.swapped = swapped;

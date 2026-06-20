@@ -691,7 +691,7 @@ impl ParquetDecoder {
                 .append(varchar_slice_page_bufs);
         }
 
-        column_chunk_bufs.refresh_ptrs();
+        column_chunk_bufs.refresh_ptrs()?;
         if FILL_NULLS {
             Ok(row_group_hi - row_group_lo)
         } else {
@@ -857,7 +857,7 @@ impl ParquetDecoder {
                 .append(varchar_slice_page_bufs);
         }
 
-        column_chunk_bufs.refresh_ptrs();
+        column_chunk_bufs.refresh_ptrs()?;
         Ok(row_count)
     }
 
