@@ -230,6 +230,11 @@ public class AsyncMultiHorizonJoinAtom extends BaseAsyncMultiHorizonJoinAtom {
 
     @Override
     public void reopen() {
+        // Bind the per-query tracker (captured in the base init()) on the sharding context
+        // before reopening it, so the per-worker fragment maps and destination shards count
+        // their growth against the per-query limit. The base reopen() binds the allocators
+        // and ASOF maps.
+        shardingCtx.setMemoryTracker(memoryTracker);
         shardingCtx.reopen();
         super.reopen();
     }

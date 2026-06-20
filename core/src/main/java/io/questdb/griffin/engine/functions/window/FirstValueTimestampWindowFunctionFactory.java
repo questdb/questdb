@@ -49,10 +49,12 @@ import io.questdb.griffin.model.WindowExpression;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import org.jetbrains.annotations.Nullable;
 
 // Returns value evaluated at the row that is the first row of the window frame.
 public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunctionFactory {
@@ -1913,6 +1915,12 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
             freeList.clear();
         }
 
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
         /**
          * Appends a textual plan representation of this window function to the given PlanSink.
          * <p>
@@ -2269,7 +2277,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
                     configuration.getSqlWindowStoreMaxPages(),
                     MemoryTag.NATIVE_CIRCULAR_BUFFER
             );
-            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            // memory allocates lazily on reopen(), under the tracker bound by the cursor
             firstIdx = 0;
             frameSize = 0;
             frameIncludesCurrentValue = rangeHi == 0;
@@ -2465,6 +2473,11 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
         public void reset() {
             super.reset();
             memory.close();
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            memory.setMemoryTracker(tracker);
         }
 
         /**

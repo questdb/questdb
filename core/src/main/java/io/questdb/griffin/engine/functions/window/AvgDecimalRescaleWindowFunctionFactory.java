@@ -53,11 +53,13 @@ import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import org.jetbrains.annotations.Nullable;
 
 import java.math.RoundingMode;
 
@@ -1365,6 +1367,12 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName()).val('(').val(arg).val(',').val(targetScale).val(')');
             sink.val(" over (partition by ").val(partitionByRecord.getFunctions());
@@ -1650,7 +1658,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                 this.targetType = targetType;
                 this.position = position;
                 capacity = initialCapacity;
-                startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+                // memory allocates lazily on reopen(), under the tracker bound by the cursor
                 firstIdx = 0;
                 frameSize = 0;
                 acc.ofRaw(0);
@@ -1826,6 +1834,11 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         public void reset() {
             super.reset();
             memory.close();
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            memory.setMemoryTracker(tracker);
         }
 
         @Override
@@ -2844,6 +2857,12 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName()).val('(').val(arg).val(',').val(targetScale).val(')');
             sink.val(" over (partition by ").val(partitionByRecord.getFunctions());
@@ -3143,7 +3162,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                 this.targetType = targetType;
                 this.position = position;
                 capacity = initialCapacity;
-                startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+                // memory allocates lazily on reopen(), under the tracker bound by the cursor
                 firstIdx = 0;
                 frameSize = 0;
                 acc.ofRaw(0);
@@ -3348,6 +3367,11 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         public void reset() {
             super.reset();
             memory.close();
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            memory.setMemoryTracker(tracker);
         }
 
         @Override
@@ -4369,6 +4393,12 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName()).val('(').val(arg).val(',').val(targetScale).val(')');
             sink.val(" over (partition by ").val(partitionByRecord.getFunctions());
@@ -4652,7 +4682,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                 this.targetType = targetType;
                 this.position = position;
                 capacity = initialCapacity;
-                startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+                // memory allocates lazily on reopen(), under the tracker bound by the cursor
                 firstIdx = 0;
                 frameSize = 0;
                 acc.ofRaw(0);
@@ -4819,6 +4849,11 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         public void reset() {
             super.reset();
             memory.close();
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            memory.setMemoryTracker(tracker);
         }
 
         @Override
@@ -5787,6 +5822,12 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName()).val('(').val(arg).val(',').val(targetScale).val(')');
             sink.val(" over (partition by ").val(partitionByRecord.getFunctions());
@@ -6075,7 +6116,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                 this.targetType = targetType;
                 this.position = position;
                 capacity = initialCapacity;
-                startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+                // memory allocates lazily on reopen(), under the tracker bound by the cursor
                 firstIdx = 0;
                 frameSize = 0;
                 acc.ofRaw(0);
@@ -6269,6 +6310,11 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         public void reset() {
             super.reset();
             memory.close();
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            memory.setMemoryTracker(tracker);
         }
 
         @Override
@@ -7289,6 +7335,12 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
             sink.val('(').val(arg).val(", ").val(targetScale).val(')');
@@ -7570,7 +7622,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                 this.targetType = targetType;
                 this.position = position;
                 capacity = initialCapacity;
-                startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+                // memory allocates lazily on reopen(), under the tracker bound by the cursor
                 firstIdx = 0;
                 frameSize = 0;
                 acc.ofRaw(0, 0, 0, 0);
@@ -7750,6 +7802,11 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         public void reset() {
             super.reset();
             memory.close();
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            memory.setMemoryTracker(tracker);
         }
 
         @Override
@@ -8816,6 +8873,12 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName()).val('(').val(arg).val(',').val(targetScale).val(')');
             sink.val(" over (partition by ").val(partitionByRecord.getFunctions());
@@ -9126,7 +9189,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                 this.targetType = targetType;
                 this.position = position;
                 capacity = initialCapacity;
-                startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+                // memory allocates lazily on reopen(), under the tracker bound by the cursor
                 firstIdx = 0;
                 frameSize = 0;
                 acc.ofRaw(0);
@@ -9342,6 +9405,11 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         public void reset() {
             super.reset();
             memory.close();
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            memory.setMemoryTracker(tracker);
         }
 
         @Override

@@ -45,6 +45,7 @@ import io.questdb.std.Hash;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Transient;
@@ -122,6 +123,12 @@ public class UnorderedVarcharMap implements Map, Reopenable {
     private long mask;
     private long memLimit; // Hash table memory limit pointer.
     private long memStart; // Hash table memory start pointer.
+    // Per-query native memory tracker bound by the owning factory at cursor start.
+    // Null when no per-query limit applies; all Unsafe.{malloc,realloc,free} calls
+    // degrade to the global-only overloads in that case. setMemoryTracker() also
+    // binds the key-byte arena (allocator); only the tiny keySink scratch buffer is not.
+    @Nullable
+    private MemoryTracker memoryTracker;
     private int nResizes;
     private int size = 0;
 
@@ -133,7 +140,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             long allocatorDefaultChunkSize,
             long allocatorMaxChunkSize
     ) {
-        this(valueTypes, keyCapacity, loadFactor, maxResizes, MemoryTag.NATIVE_UNORDERED_MAP, allocatorDefaultChunkSize, allocatorMaxChunkSize, false);
+        this(valueTypes, keyCapacity, loadFactor, maxResizes, MemoryTag.NATIVE_UNORDERED_MAP, allocatorDefaultChunkSize, allocatorMaxChunkSize, false, true);
     }
 
     public UnorderedVarcharMap(
@@ -145,7 +152,20 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             long allocatorMaxChunkSize,
             boolean isDeferredKeyCopy
     ) {
-        this(valueTypes, keyCapacity, loadFactor, maxResizes, MemoryTag.NATIVE_UNORDERED_MAP, allocatorDefaultChunkSize, allocatorMaxChunkSize, isDeferredKeyCopy);
+        this(valueTypes, keyCapacity, loadFactor, maxResizes, MemoryTag.NATIVE_UNORDERED_MAP, allocatorDefaultChunkSize, allocatorMaxChunkSize, isDeferredKeyCopy, true);
+    }
+
+    public UnorderedVarcharMap(
+            @Transient @Nullable ColumnTypes valueTypes,
+            int keyCapacity,
+            double loadFactor,
+            int maxResizes,
+            long allocatorDefaultChunkSize,
+            long allocatorMaxChunkSize,
+            boolean isDeferredKeyCopy,
+            boolean openOnInit
+    ) {
+        this(valueTypes, keyCapacity, loadFactor, maxResizes, MemoryTag.NATIVE_UNORDERED_MAP, allocatorDefaultChunkSize, allocatorMaxChunkSize, isDeferredKeyCopy, openOnInit);
     }
 
     UnorderedVarcharMap(
@@ -156,7 +176,8 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             int memoryTag,
             long allocatorDefaultChunkSize,
             long allocatorMaxChunkSize,
-            boolean isDeferredKeyCopy
+            boolean isDeferredKeyCopy,
+            boolean openOnInit
     ) {
         assert loadFactor > 0 && loadFactor < 1d;
 
@@ -164,11 +185,8 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             this.isDeferredKeyCopy = isDeferredKeyCopy;
             this.memoryTag = memoryTag;
             this.loadFactor = loadFactor;
-            this.keyCapacity = (int) (keyCapacity / loadFactor);
-            this.keyCapacity = this.initialKeyCapacity = Math.max(Numbers.ceilPow2(this.keyCapacity), MIN_KEY_CAPACITY);
+            this.initialKeyCapacity = Math.max(Numbers.ceilPow2((int) (keyCapacity / loadFactor)), MIN_KEY_CAPACITY);
             this.maxResizes = maxResizes;
-            mask = this.keyCapacity - 1;
-            free = (int) (this.keyCapacity * loadFactor);
             nResizes = 0;
 
             long valueOffset = 0;
@@ -192,12 +210,26 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             this.valueSize = valueSize;
 
             this.entrySize = Bytes.align8b(KEY_SIZE + valueSize);
-            final long sizeBytes = entrySize * this.keyCapacity;
-            validateBatchAddressable(sizeBytes);
-            memStart = Unsafe.malloc(sizeBytes, memoryTag);
-            Vect.memset(memStart, sizeBytes, 0);
-            memLimit = memStart + sizeBytes;
-            keySink = new DirectByteSink(KEY_SINK_INITIAL_CAPACITY, memoryTag);
+            // Validate against initialKeyCapacity so both eager and lazy modes catch the
+            // overflow up front, before any cursor opens.
+            validateBatchAddressable(entrySize * this.initialKeyCapacity);
+            // Honor the lazy contract: when openOnInit is false the key arena stays
+            // unallocated until the first reopen() (which inflates it via
+            // restoreInitialCapacity), so a never-opened map allocates nothing.
+            keySink = new DirectByteSink(KEY_SINK_INITIAL_CAPACITY, memoryTag, !openOnInit);
+
+            if (openOnInit) {
+                this.keyCapacity = this.initialKeyCapacity;
+                mask = this.keyCapacity - 1;
+                free = (int) (this.keyCapacity * loadFactor);
+                final long sizeBytes = entrySize * this.keyCapacity;
+                memStart = Unsafe.malloc(sizeBytes, memoryTag, memoryTracker);
+                Vect.memset(memStart, sizeBytes, 0);
+                memLimit = memStart + sizeBytes;
+            }
+            // else: memStart / memLimit stay 0, keyCapacity stays 0; first reopen()
+            // allocates initial backing under whatever MemoryTracker is bound at that
+            // time. keySink retains its initial capacity across the close/reopen cycle.
 
             value = new FlyweightPackedMapValue(valueSize, valueOffsets);
             value2 = new FlyweightPackedMapValue(valueSize, valueOffsets);
@@ -206,7 +238,11 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             record = new UnorderedVarcharMapRecord(valueSize, valueOffsets, value, valueTypes);
             cursor = new UnorderedVarcharMapCursor(record, this);
             key = new Key();
-            allocator = new FastGroupByAllocator(allocatorDefaultChunkSize, allocatorMaxChunkSize, false);
+            // Honor the lazy contract: when openOnInit is false the allocator's chunk
+            // index stays unallocated until the first reopen(), so a never-opened map
+            // (e.g. a hash-join factory built at codegen but never executed) leaks
+            // nothing when its owner skips close() for an unopened cursor.
+            allocator = new FastGroupByAllocator(allocatorDefaultChunkSize, allocatorMaxChunkSize, false, openOnInit);
         } catch (Throwable th) {
             close();
             throw th;
@@ -241,12 +277,12 @@ public class UnorderedVarcharMap implements Map, Reopenable {
     @Override
     public void close() {
         if (memStart != 0) {
-            memLimit = memStart = Unsafe.free(memStart, memLimit - memStart, memoryTag);
+            memLimit = memStart = Unsafe.free(memStart, memLimit - memStart, memoryTag, memoryTracker);
             free = 0;
             size = 0;
         }
         if (batchEmptyValueStart != 0) {
-            batchEmptyValueStart = Unsafe.free(batchEmptyValueStart, valueSize, memoryTag);
+            batchEmptyValueStart = Unsafe.free(batchEmptyValueStart, valueSize, memoryTag, memoryTracker);
         }
         Misc.free(keySink);
         Misc.free(allocator);
@@ -456,9 +492,9 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             final long sizeBytes = entrySize * initialKeyCapacity;
             long newMemStart;
             if (memStart == 0) {
-                newMemStart = Unsafe.malloc(sizeBytes, memoryTag);
+                newMemStart = Unsafe.malloc(sizeBytes, memoryTag, memoryTracker);
             } else {
-                newMemStart = Unsafe.realloc(memStart, memLimit - memStart, sizeBytes, memoryTag);
+                newMemStart = Unsafe.realloc(memStart, memLimit - memStart, sizeBytes, memoryTag, memoryTracker);
             }
             memStart = newMemStart;
             memLimit = memStart + sizeBytes;
@@ -474,12 +510,12 @@ public class UnorderedVarcharMap implements Map, Reopenable {
     @Override
     public void setBatchEmptyValue(GroupByFunctionsUpdater updater) {
         if (batchEmptyValueStart != 0) {
-            batchEmptyValueStart = Unsafe.free(batchEmptyValueStart, valueSize, memoryTag);
+            batchEmptyValueStart = Unsafe.free(batchEmptyValueStart, valueSize, memoryTag, memoryTracker);
         }
         if (updater == null || valueSize == 0) {
             return;
         }
-        final long buf = Unsafe.malloc(valueSize, memoryTag);
+        final long buf = Unsafe.malloc(valueSize, memoryTag, memoryTracker);
         try {
             Vect.memset(buf, valueSize, 0);
             // Populate the empty value into the scratch buffer using value as a flyweight.
@@ -497,13 +533,13 @@ public class UnorderedVarcharMap implements Map, Reopenable {
                 }
             }
             if (allZero) {
-                Unsafe.free(buf, valueSize, memoryTag);
+                Unsafe.free(buf, valueSize, memoryTag, memoryTracker);
             } else {
                 batchEmptyValueStart = buf;
             }
         } catch (Throwable th) {
             if (batchEmptyValueStart != buf) {
-                Unsafe.free(buf, valueSize, memoryTag);
+                Unsafe.free(buf, valueSize, memoryTag, memoryTracker);
             }
             throw th;
         }
@@ -516,6 +552,15 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             throw CairoException.nonCritical().put("map capacity overflow");
         }
         rehash(Numbers.ceilPow2((int) requiredCapacity));
+    }
+
+    @Override
+    public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        this.memoryTracker = tracker;
+        // Bind the key-byte arena too -- for a high-cardinality GROUP BY <varchar>
+        // it holds the dominant allocation. setMemoryTracker() precedes reopen(), so
+        // its malloc/free accounting stays symmetric.
+        allocator.setMemoryTracker(tracker);
     }
 
     @Override
@@ -716,7 +761,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
 
         final long newSizeBytes = entrySize * newKeyCapacity;
         validateBatchAddressable(newSizeBytes);
-        final long newMemStart = Unsafe.malloc(newSizeBytes, memoryTag);
+        final long newMemStart = Unsafe.malloc(newSizeBytes, memoryTag, memoryTracker);
         final long newMemLimit = newMemStart + newSizeBytes;
         Vect.memset(newMemStart, newSizeBytes, 0);
         final int newMask = (int) newKeyCapacity - 1;
@@ -738,7 +783,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             Unsafe.copyMemory(addr, newAddr, entrySize);
         }
 
-        Unsafe.free(memStart, memLimit - memStart, memoryTag);
+        Unsafe.free(memStart, memLimit - memStart, memoryTag, memoryTracker);
 
         memStart = newMemStart;
         memLimit = newMemStart + newSizeBytes;

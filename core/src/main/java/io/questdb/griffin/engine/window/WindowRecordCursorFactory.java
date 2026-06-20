@@ -35,6 +35,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.AbstractVirtualFunctionRecordCursor;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
@@ -88,8 +89,14 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor baseCursor = base.getCursor(executionContext);
-        cursor.of(baseCursor, executionContext);
-        return cursor;
+        try {
+            cursor.of(baseCursor, executionContext);
+            return cursor;
+        } catch (Throwable th) {
+            // free partial allocations under the still-bound per-query tracker on a failed open
+            cursor.close();
+            throw th;
+        }
     }
 
     @Override
@@ -144,7 +151,9 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
 
         public WindowRecordCursor(ObjList<Function> functions, boolean supportsRandomAccess) {
             super(functions, supportsRandomAccess);
-            this.isOpen = true;
+            // Start closed so the first of() binds the per-query tracker on each
+            // window function and reopens its (lazy) per-partition map under it.
+            this.isOpen = false;
         }
 
         @Override
@@ -198,12 +207,14 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
             circuitBreaker = executionContext.getCircuitBreaker();
             if (!isOpen) {
                 isOpen = true;
-                try {
-                    reopen(functions);
-                } catch (Throwable t) {
-                    close();
-                    throw t;
+                // Bind the per-query tracker on each window function's per-partition
+                // map before reopen() allocates the map backing under it. A breach here (or
+                // in Function.init below) propagates to getCursor, which closes the cursor.
+                final MemoryTracker memoryTracker = executionContext.getMemoryTracker();
+                for (int i = 0; i < windowFunctionsCount; i++) {
+                    windowFunctions.getQuick(i).setMemoryTracker(memoryTracker);
                 }
+                reopen(functions);
             }
             Function.init(functions, baseCursor, executionContext, null);
         }

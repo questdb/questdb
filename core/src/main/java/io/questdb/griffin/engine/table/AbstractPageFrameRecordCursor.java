@@ -34,6 +34,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -124,8 +125,9 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
         frameCursor.toTop();
     }
 
-    protected void init() {
+    protected void init(@Nullable MemoryTracker memoryTracker) {
         frameAddressCache.of(metadata, frameCursor.getColumnMapping(), frameCursor.isExternal());
+        frameMemoryPool.setMemoryTracker(memoryTracker);
         frameMemoryPool.of(frameAddressCache);
         frameCount = 0;
         frameCursor.toTop();

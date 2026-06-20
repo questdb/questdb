@@ -49,10 +49,12 @@ import io.questdb.griffin.model.WindowExpression;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import org.jetbrains.annotations.Nullable;
 
 // Returns value evaluated at the row that is the last row of the window frame.
 public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunctionFactory {
@@ -2528,6 +2530,12 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
             freeList.clear();
         }
 
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
         /**
          * Appends this function's plan representation to the given PlanSink.
          * <p>
@@ -2827,7 +2835,7 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
             initialCapacity = configuration.getSqlWindowStorePageSize() / RECORD_SIZE;
             capacity = initialCapacity;
             memory = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(), configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            // memory allocates lazily on reopen(), under the tracker bound by the cursor
             firstIdx = 0;
         }
 
@@ -3004,6 +3012,11 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
         public void reset() {
             super.reset();
             memory.close();
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            memory.setMemoryTracker(tracker);
         }
 
         /**

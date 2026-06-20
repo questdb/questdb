@@ -63,6 +63,7 @@ import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimal64;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -1144,6 +1145,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
+        public @Nullable MemoryTracker getMemoryTracker() {
+            return sqlExecutionContext.getMemoryTracker();
+        }
+
+        @Override
         public long getMicrosecondTimestamp() {
             return sqlExecutionContext.getMicrosecondTimestamp();
         }
@@ -1337,6 +1343,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         @Override
         public void setJitMode(int jitMode) {
             sqlExecutionContext.setJitMode(jitMode);
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            sqlExecutionContext.setMemoryTracker(tracker);
         }
 
         @Override

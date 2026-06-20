@@ -44,6 +44,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.griffin.engine.orderby.SortKeyEncoder;
 import io.questdb.std.IntList;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -199,8 +200,14 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor baseCursor = base.getCursor(executionContext);
-        cursor.of(baseCursor, executionContext);
-        return cursor;
+        try {
+            cursor.of(baseCursor, executionContext);
+            return cursor;
+        } catch (Throwable th) {
+            // free partial allocations under the still-bound per-query tracker on a failed open
+            cursor.close();
+            throw th;
+        }
     }
 
     @Override
@@ -310,7 +317,9 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
             this.columnIndexes = columnIndexes;
             this.recordChain = recordChain;
             this.recordChain.setSymbolTableResolver(this);
-            this.isOpen = true;
+            // Lazy: the first of() binds the MemoryTracker on each sort buffer and
+            // reopens it, so the per-query counter charges every byte symmetrically.
+            this.isOpen = false;
             this.sortBuffers = sortBuffers;
         }
 
@@ -507,7 +516,14 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
             if (!isOpen) {
                 isOpen = true;
                 recordChain.setSymbolTableResolver(this);
-                reopenSortBuffers();
+                // Bind the per-query tracker on the record store, sort buffers and each
+                // window function's map before their backing is allocated under it.
+                final MemoryTracker memoryTracker = executionContext.getMemoryTracker();
+                recordChain.setMemoryTracker(memoryTracker);
+                reopenSortBuffers(memoryTracker);
+                for (int i = 0, n = allFunctions.size(); i < n; i++) {
+                    allFunctions.getQuick(i).setMemoryTracker(memoryTracker);
+                }
                 reopen(allFunctions);
             }
             Function.init(allFunctions, this, executionContext, null);
@@ -525,9 +541,12 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
             }
         }
 
-        private void reopenSortBuffers() {
+        private void reopenSortBuffers(MemoryTracker memoryTracker) {
             for (int i = 0; i < orderedGroupCount; i++) {
-                sortBuffers.getQuick(i).reopen();
+                final WindowSortBuffer buffer = sortBuffers.getQuick(i);
+                // Bind before reopen() so the first allocation is charged to the tracker.
+                buffer.setMemoryTracker(memoryTracker);
+                buffer.reopen();
             }
         }
     }
