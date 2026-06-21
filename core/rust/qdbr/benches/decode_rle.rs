@@ -40,7 +40,7 @@ impl BenchAllocator {
     fn new() -> Self {
         let mem_tracking = Box::new(MemTracking::new());
         let tagged_used = Box::new(AtomicUsize::new(0));
-        let allocator = QdbAllocator::new(&*mem_tracking, &*tagged_used, 65);
+        let allocator = QdbAllocator::new(&*mem_tracking, std::ptr::null(), &*tagged_used, 65);
         Self {
             _mem_tracking: mem_tracking,
             _tagged_used: tagged_used,

@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -122,6 +123,7 @@ public class FirstLastUnderContentionTest extends AbstractCairoTest {
                             } catch (Throwable th) {
                                 errors.put(threadId, th);
                             } finally {
+                                Path.clearThreadLocals();
                                 latch.countDown();
                             }
                         }, "firstlast-" + threadId).start();
