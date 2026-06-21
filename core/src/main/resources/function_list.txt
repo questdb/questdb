@@ -786,6 +786,7 @@ io.questdb.griffin.engine.functions.str.PositionVarcharFunctionFactory
 # ^
 io.questdb.griffin.engine.functions.math.PowDoubleFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.AllTablesFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.AllTablesPartitionsFunctionFactory
 io.questdb.griffin.engine.functions.table.TableColumnsFunctionFactory
 io.questdb.griffin.engine.functions.table.TablePartitionsFunctionFactory
 io.questdb.griffin.engine.functions.table.TableStorageFunctionFactory
