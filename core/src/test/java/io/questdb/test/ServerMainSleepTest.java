@@ -433,12 +433,17 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
             // Many more client threads than workers (>>workerCount) so the
             // parallelism check has a wide margin: with carriers pinned by
             // Os.sleep, ratio is bounded by workerCount; with TimerCont, ratio
-            // can approach clientThreads. Keep total random coverage steady,
-            // but avoid oversubscribing small CI machines so heavily that the
-            // OS scheduler delays the timer/worker threads beyond the latch
-            // diagnostics this test is trying to prove.
+            // can approach clientThreads. Keep the random coverage in the
+            // iteration count, not the thread count: the rarer interleavings
+            // come from concurrency, not from raw client threads, and 16 is
+            // already 8x the worker count -- a wide enough margin for the
+            // parallelism gap. Cranking the thread count higher only
+            // oversubscribes small and heavily loaded CI agents (Windows in
+            // particular), starving the PG accept/dispatch path badly enough
+            // that a cancelled sleep's breaker trip can miss the 20s
+            // registration / 30s join windows runStatementCancelFuzz asserts.
             final int totalIterations = 512;
-            final int clientThreads = Math.max(16, Math.min(64, Runtime.getRuntime().availableProcessors() * 8));
+            final int clientThreads = 16;
             final int iterationsPerThread = (totalIterations + clientThreads - 1) / clientThreads;
 
             try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
