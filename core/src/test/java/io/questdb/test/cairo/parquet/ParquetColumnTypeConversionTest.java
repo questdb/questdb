@@ -1585,6 +1585,87 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * ASOF JOIN whose ON key is a lazily converted parquet column. The existing JOIN coverage
+     * ({@link #testAsyncHorizonJoinKeyedOverAlteredParquetColumn} and the WINDOW/MULTI-HORIZON
+     * siblings) always joins on the unconverted {@code sym} and only aggregates the converted
+     * {@code val}, so the converted column is never read as a join equality key. Here {@code val}
+     * is the ASOF key, so the join driver must pull each master row's key through the lazy
+     * var-to-fixed conversion before probing the slave's key map; reading the raw parquet STRING
+     * bytes as INT would mis-key the lookup. Parity against the native control {@code nt} pins it.
+     * Master rows live in 2024-01-02 (the parquet partition); the slave {@code quotes} carries
+     * keys 1..50 timestamped in 2024-01-01, so master {@code val} 1..50 match a preceding quote
+     * and 51..100 fall through to a NULL price.
+     */
+    @Test
+    public void testJoinOnConvertedKeyAsof() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                execute("CREATE TABLE nt (val STRING, sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("CREATE TABLE pt (val STRING, sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("CREATE TABLE quotes (k INT, px DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                String insertLeft = """
+                        INSERT INTO $T
+                        SELECT x::STRING AS val,
+                               ('s' || (x % 5)::STRING)::SYMBOL AS sym,
+                               timestamp_sequence('2024-01-02T00:00:00.000000Z', 60_000_000) AS ts
+                        FROM long_sequence(100)""";
+                execute(insertLeft.replace("$T", "nt"));
+                execute(insertLeft.replace("$T", "pt"));
+                execute("""
+                        INSERT INTO quotes
+                        SELECT x::INT AS k, (x * 1.5) AS px,
+                               timestamp_sequence('2024-01-01T00:00:00.000000Z', 1_000_000) AS ts
+                        FROM long_sequence(50)""");
+                drainWalQueue();
+                execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-02'");
+                drainWalQueue();
+                execute("ALTER TABLE nt ALTER COLUMN val TYPE INT");
+                execute("ALTER TABLE pt ALTER COLUMN val TYPE INT");
+                drainWalQueue();
+                String query = """
+                        SELECT t.ts, t.val, t.sym, q.px
+                        FROM $T t
+                        ASOF JOIN quotes q ON (t.val = q.k)
+                        ORDER BY t.ts""";
+                assertSqlCursors(query.replace("$T", "nt"), query.replace("$T", "pt"));
+            } finally {
+                tryDrop("nt");
+                tryDrop("pt");
+                tryDrop("quotes");
+            }
+        });
+    }
+
+    /**
+     * INNER hash JOIN whose ON key is a lazily converted parquet column, covering both a
+     * fixed converted key (STRING-&gt;INT) and a var converted key (INT-&gt;STRING). See
+     * {@link #assertEquiJoinOnConvertedKeyParity} for the shared setup and why the converted
+     * column being the equality key (rather than an aggregated/filtered column) is the point.
+     */
+    @Test
+    public void testJoinOnConvertedKeyInner() throws Exception {
+        assertMemoryLeak(() -> {
+            assertEquiJoinOnConvertedKeyParity("STRING", "INT", "JOIN");
+            assertEquiJoinOnConvertedKeyParity("INT", "STRING", "JOIN");
+        });
+    }
+
+    /**
+     * LEFT OUTER hash JOIN whose ON key is a lazily converted parquet column, covering both a
+     * fixed converted key (STRING-&gt;INT) and a var converted key (INT-&gt;STRING). The dim
+     * table holds only even keys, so the odd-keyed master rows exercise the unmatched-row path
+     * (NULL on the slave side) in addition to the matched path. See
+     * {@link #assertEquiJoinOnConvertedKeyParity}.
+     */
+    @Test
+    public void testJoinOnConvertedKeyLeftOuter() throws Exception {
+        assertMemoryLeak(() -> {
+            assertEquiJoinOnConvertedKeyParity("STRING", "INT", "LEFT JOIN");
+            assertEquiJoinOnConvertedKeyParity("INT", "STRING", "LEFT JOIN");
+        });
+    }
+
     @Test
     public void testLongToOtherFixedTypes() throws Exception {
         assertMemoryLeak(() -> {
@@ -2599,6 +2680,183 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     /**
+     * Var-to-fixed counterpart of {@link #testIntToStringConvertToNativeMultiRowGroup}.
+     * <p>
+     * The var-to-fixed arm of {@code TableWriter.produceNativeFromParquet} converts each row
+     * group's freshly decoded var buffer to fixed values with
+     * {@code O3PartitionJob.convertVarColumnToFixed} and appends the result to the destination
+     * fixed file. {@code convertVarColumnToFixed} reads every value through the row group's own
+     * aux vector, whose entry offsets are relative to that row group's local data buffer (the
+     * first entry of each row group starts at offset 0). If a later row group's decode were
+     * keyed off the wrong base -- a stale running offset, or reusing row group 0's data buffer --
+     * rows beyond the first row group would parse the bytes of row group 0 and read back the
+     * wrong integers.
+     * <p>
+     * The existing var-to-fixed coverage ({@link #testStringToFixed}) uses few enough rows that
+     * the whole partition fits in one row group, so the per-row-group decode is never exercised.
+     * This test forces a tiny row group size and uses 12 rows whose source strings have distinct
+     * values and varying widths, so the partition spans three row groups. After
+     * {@code ALTER COLUMN ... TYPE INT} and {@code CONVERT PARTITION TO NATIVE}, every row must
+     * read back as the integer parsed from its own source string.
+     */
+    @Test
+    public void testVarToFixedConvertToNativeMultiRowGroup() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(() -> {
+            for (String source : new String[]{"STRING", "VARCHAR"}) {
+                try {
+                    execute("CREATE TABLE pt (val " + source + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                    // 12 rows in one partition, row group size 4 => three row groups. Source widths
+                    // vary within and across row groups so the per-row-group aux offsets are
+                    // non-trivial; values are distinct so cross-row-group contamination would show
+                    // up as a wrong integer.
+                    execute("""
+                            INSERT INTO pt VALUES
+                            ('1',      '2024-01-01T00:00:01.000000Z'),
+                            ('22',     '2024-01-01T00:00:02.000000Z'),
+                            ('333',    '2024-01-01T00:00:03.000000Z'),
+                            ('4444',   '2024-01-01T00:00:04.000000Z'),
+                            ('50000',  '2024-01-01T00:00:05.000000Z'),
+                            ('6',      '2024-01-01T00:00:06.000000Z'),
+                            ('77',     '2024-01-01T00:00:07.000000Z'),
+                            ('888',    '2024-01-01T00:00:08.000000Z'),
+                            ('9999',   '2024-01-01T00:00:09.000000Z'),
+                            ('101010', '2024-01-01T00:00:10.000000Z'),
+                            ('11',     '2024-01-01T00:00:11.000000Z'),
+                            (NULL,     '2024-01-01T00:00:12.000000Z')""");
+                    drainWalQueue();
+
+                    execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                    drainWalQueue();
+
+                    execute("ALTER TABLE pt ALTER COLUMN val TYPE INT");
+                    drainWalQueue();
+
+                    String expected = """
+                            val\tts
+                            1\t2024-01-01T00:00:01.000000Z
+                            22\t2024-01-01T00:00:02.000000Z
+                            333\t2024-01-01T00:00:03.000000Z
+                            4444\t2024-01-01T00:00:04.000000Z
+                            50000\t2024-01-01T00:00:05.000000Z
+                            6\t2024-01-01T00:00:06.000000Z
+                            77\t2024-01-01T00:00:07.000000Z
+                            888\t2024-01-01T00:00:08.000000Z
+                            9999\t2024-01-01T00:00:09.000000Z
+                            101010\t2024-01-01T00:00:10.000000Z
+                            11\t2024-01-01T00:00:11.000000Z
+                            null\t2024-01-01T00:00:12.000000Z
+                            """;
+
+                    // Lazy parquet read: the partition is still parquet, decoded per row group on
+                    // the fly. Pins multi-row-group correctness of the lazy var->fixed path.
+                    assertQuery("SELECT val, ts FROM pt").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(expected);
+
+                    // Eager rewrite: materializes the var->fixed conversion through
+                    // produceNativeFromParquet, so subsequent reads hit the native files.
+                    execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+                    drainWalQueue();
+
+                    assertQuery("SELECT val, ts FROM pt").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(expected);
+                } finally {
+                    tryDrop("pt");
+                }
+            }
+        });
+    }
+
+    /**
+     * Var-to-var counterpart of {@link #testIntToStringConvertToNativeMultiRowGroup}, on the arm
+     * of {@code TableWriter.produceNativeFromParquet} that appends Rust's per-row-group decode of
+     * the target var format directly (STRING&lt;-&gt;VARCHAR).
+     * <p>
+     * That arm tracks {@code dataVecBytesWritten} across row groups and rebases each row group's
+     * aux vector with {@code shiftCopyAuxVector(-dataVecBytesWritten, ...)} plus the leading-entry
+     * trim -- the exact running-offset bookkeeping the fixed-to-var arm in
+     * {@link #testIntToStringConvertToNativeMultiRowGroup} pins. Without it, aux entries for row
+     * groups beyond the first carry offsets relative to the start of their own local data buffer
+     * (zero for the first entry of each row group), so later row groups read back the bytes of
+     * row group 0.
+     * <p>
+     * The existing var-to-var coverage ({@link #testStringToVarchar}, {@link #testVarcharToString})
+     * fits the whole partition in one row group, so the running offset is never exercised. This
+     * test forces a tiny row group size and uses 12 distinct values -- several wider than the
+     * 9-byte VARCHAR inline limit ({@code VarcharTypeDriver.VARCHAR_MAX_BYTES_FULLY_INLINED}) in
+     * every row group, so the VARCHAR data vector accumulates a non-zero running offset across all
+     * three row groups, and several multi-byte UTF-8 so a byte-vs-char offset confusion would
+     * surface. After {@code ALTER COLUMN ... TYPE} and {@code CONVERT PARTITION TO NATIVE}, every
+     * row must read back its own value.
+     */
+    @Test
+    public void testVarToVarConvertToNativeMultiRowGroup() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(() -> {
+            // Both directions go through the same append-decoded-var arm; the rendered text is
+            // identical because var->var changes only the in-memory encoding, not the content.
+            for (String[] pair : new String[][]{{"STRING", "VARCHAR"}, {"VARCHAR", "STRING"}}) {
+                String source = pair[0];
+                String target = pair[1];
+                try {
+                    execute("CREATE TABLE pt (val " + source + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                    // 12 rows in one partition, row group size 4 => three row groups. Widths vary
+                    // within and across row groups; every row group carries values longer than the
+                    // 9-byte VARCHAR inline limit; non-ASCII spans the 2-, 3- and 4-byte UTF-8
+                    // classes.
+                    execute("""
+                            INSERT INTO pt VALUES
+                            ('alpha_value_1',     '2024-01-01T00:00:01.000000Z'),
+                            ('b',                 '2024-01-01T00:00:02.000000Z'),
+                            ('gamma_value_33',    '2024-01-01T00:00:03.000000Z'),
+                            ('café',              '2024-01-01T00:00:04.000000Z'),
+                            ('delta_value_5555',  '2024-01-01T00:00:05.000000Z'),
+                            ('тест',              '2024-01-01T00:00:06.000000Z'),
+                            ('epsilon_value_7',   '2024-01-01T00:00:07.000000Z'),
+                            ('日本語',             '2024-01-01T00:00:08.000000Z'),
+                            ('zeta_value_999999', '2024-01-01T00:00:09.000000Z'),
+                            ('emoji 🦆 duck', '2024-01-01T00:00:10.000000Z'),
+                            ('eta_value_11',      '2024-01-01T00:00:11.000000Z'),
+                            (NULL,                '2024-01-01T00:00:12.000000Z')""");
+                    drainWalQueue();
+
+                    execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                    drainWalQueue();
+
+                    execute("ALTER TABLE pt ALTER COLUMN val TYPE " + target);
+                    drainWalQueue();
+
+                    String expected = """
+                            val\tts
+                            alpha_value_1\t2024-01-01T00:00:01.000000Z
+                            b\t2024-01-01T00:00:02.000000Z
+                            gamma_value_33\t2024-01-01T00:00:03.000000Z
+                            café\t2024-01-01T00:00:04.000000Z
+                            delta_value_5555\t2024-01-01T00:00:05.000000Z
+                            тест\t2024-01-01T00:00:06.000000Z
+                            epsilon_value_7\t2024-01-01T00:00:07.000000Z
+                            日本語\t2024-01-01T00:00:08.000000Z
+                            zeta_value_999999\t2024-01-01T00:00:09.000000Z
+                            emoji 🦆 duck\t2024-01-01T00:00:10.000000Z
+                            eta_value_11\t2024-01-01T00:00:11.000000Z
+                            \t2024-01-01T00:00:12.000000Z
+                            """;
+
+                    // Lazy parquet read: per-row-group decode on the fly.
+                    assertQuery("SELECT val, ts FROM pt").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(expected);
+
+                    // Eager rewrite: materializes the var->var append through produceNativeFromParquet,
+                    // exercising the dataVecBytesWritten running offset across the three row groups.
+                    execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+                    drainWalQueue();
+
+                    assertQuery("SELECT val, ts FROM pt").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(expected);
+                } finally {
+                    tryDrop("pt");
+                }
+            }
+        });
+    }
+
+    /**
      * Var-source mirror of {@link #testFixedWithAllEncodings}. STRING and VARCHAR columns
      * stored under each writer-supported parquet encoding must round-trip identically
      * through both the native and lazy-parquet conversion paths. This exercises the
@@ -3204,6 +3462,61 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
         } finally {
             tryDrop("nt");
             tryDrop("pt");
+        }
+    }
+
+    /**
+     * Shared body for the equi-JOIN-on-converted-key tests. Builds a native control {@code nt}
+     * and a parquet {@code pt} with a {@code val} column, converts {@code pt}'s partition to
+     * parquet, then ALTERs {@code val} from {@code sourceType} to {@code targetType} on both --
+     * on {@code pt} the parquet keeps the source storage, so reads go through the lazy
+     * conversion. A small native {@code dim} table holds the join key {@code k} (of
+     * {@code targetType}) for the even values 2,4,...,100 only.
+     * <p>
+     * The query joins on the converted column itself ({@code t.val = d.k}), the case the rest of
+     * the JOIN suite never exercises (it always joins on the unconverted {@code sym}). The join
+     * driver must read each {@code pt} row's key through the lazy conversion before hashing/probing;
+     * reading the raw parquet bytes of the source type would mis-key the match. Because {@code dim}
+     * carries only even keys, an INNER join keeps the even-valued rows while a LEFT join also
+     * surfaces the odd-valued rows with a NULL slave side. Parity against {@code nt} pins both.
+     *
+     * @param joinClause {@code "JOIN"} (inner) or {@code "LEFT JOIN"} (left outer).
+     */
+    private void assertEquiJoinOnConvertedKeyParity(String sourceType, String targetType, String joinClause) throws Exception {
+        try {
+            execute("CREATE TABLE nt (val " + sourceType + ", sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE pt (val " + sourceType + ", sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE dim (k " + targetType + ", label SYMBOL)");
+            String insertLeft = """
+                    INSERT INTO $T
+                    SELECT x::%s AS val,
+                           ('s' || (x %% 5)::STRING)::SYMBOL AS sym,
+                           timestamp_sequence('2024-01-01T00:00:00.000000Z', 60_000_000) AS ts
+                    FROM long_sequence(100)""".formatted(sourceType);
+            execute(insertLeft.replace("$T", "nt"));
+            execute(insertLeft.replace("$T", "pt"));
+            // Even keys only: 2,4,...,100. The converted target representation matches t.val
+            // (e.g. STRING->INT yields INT 2; INT->STRING yields STRING "2").
+            execute("""
+                    INSERT INTO dim
+                    SELECT (x * 2)::%s AS k, ('d' || (x * 2)::STRING)::SYMBOL AS label
+                    FROM long_sequence(50)""".formatted(targetType));
+            drainWalQueue();
+            execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            execute("ALTER TABLE nt ALTER COLUMN val TYPE " + targetType);
+            execute("ALTER TABLE pt ALTER COLUMN val TYPE " + targetType);
+            drainWalQueue();
+            String query = """
+                    SELECT t.ts, t.val, t.sym, d.label
+                    FROM $T t
+                    %s dim d ON (t.val = d.k)
+                    ORDER BY t.ts""".formatted(joinClause);
+            assertSqlCursors(query.replace("$T", "nt"), query.replace("$T", "pt"));
+        } finally {
+            tryDrop("nt");
+            tryDrop("pt");
+            tryDrop("dim");
         }
     }
 

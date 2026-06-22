@@ -1704,7 +1704,7 @@ impl ParquetDecoder {
             // and post_convert stamps the target sentinel over them.
             let leading_nulls = column_top
                 .saturating_sub(accumulated_size + row_group_lo as usize)
-                .min((row_group_hi - row_group_lo) as usize);
+                .min(row_group_hi.saturating_sub(row_group_lo) as usize);
             // Surface the count to Java (read via chunkColumnTopOffset) for lazy fixed->var
             // conversions, where the source has no in-band null and Java must emit NULL here.
             column_chunk_bufs.column_top = leading_nulls;
@@ -1770,7 +1770,7 @@ impl ParquetDecoder {
         }
 
         let output_count = if FILL_NULLS {
-            (row_group_hi - row_group_lo) as usize
+            row_group_hi.saturating_sub(row_group_lo) as usize
         } else {
             rows_filter.len()
         };
@@ -1894,7 +1894,7 @@ impl ParquetDecoder {
             // contiguous leading prefix of the (possibly compacted) buffer.
             let window_column_top = column_top
                 .saturating_sub(accumulated_size + row_group_lo as usize)
-                .min((row_group_hi - row_group_lo) as usize);
+                .min(row_group_hi.saturating_sub(row_group_lo) as usize);
             let leading_nulls = if FILL_NULLS {
                 window_column_top
             } else {
@@ -2209,7 +2209,7 @@ impl ParquetDecoder {
 
         column_chunk_bufs.refresh_ptrs();
         if FILL_NULLS {
-            Ok(row_group_hi - row_group_lo)
+            Ok(row_group_hi.saturating_sub(row_group_lo))
         } else {
             Ok(filter_count)
         }
