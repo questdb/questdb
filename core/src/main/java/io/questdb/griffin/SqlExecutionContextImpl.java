@@ -49,6 +49,7 @@ import io.questdb.std.Decimal256;
 import io.questdb.std.Decimal64;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntStack;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjStack;
 import io.questdb.std.Rnd;
@@ -92,6 +93,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private int intervalFunctionType;
     private int jitMode;
     private boolean liveViewCompile;
+    private MemoryTracker memoryTracker;
     private long nowMicros;
     private long nowNanos;
     // Timestamp type only for now() function, used by NowFunctionFactory
@@ -260,6 +262,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public int getJitMode() {
         return jitMode;
+    }
+
+    @Override
+    public @Nullable MemoryTracker getMemoryTracker() {
+        return memoryTracker;
     }
 
     @Override
@@ -450,6 +457,9 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.allowNonDeterministicFunction = true;
         this.validationOnly = false;
         this.validationSecurityContext = null;
+        // QueryRegistry owns the tracker lifecycle; null it defensively so an error
+        // unwinding between register() and unregister() cannot leak it into reuse.
+        this.memoryTracker = null;
         // Defensive: a query reusing this per-connection context must never inherit a
         // stale supervisor from a prior query. QueryProgress restores it in the finally of
         // cursor open; reset() is a backstop for reused per-connection contexts if that
@@ -502,6 +512,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     public void setLiveViewCompile(boolean value) {
         this.liveViewCompile = value;
         this.windowContext.setLiveView(value);
+    }
+
+    @Override
+    public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        this.memoryTracker = tracker;
     }
 
     @Override

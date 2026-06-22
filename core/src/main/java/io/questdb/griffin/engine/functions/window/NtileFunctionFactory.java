@@ -49,10 +49,12 @@ import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.WindowExpression;
 import io.questdb.std.IntList;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * ntile(n) window function.
@@ -111,10 +113,14 @@ public class NtileFunctionFactory extends AbstractWindowFunctionFactory {
         int bucketCount = (int) bucketCountLong;
 
         if (windowContext.getPartitionByRecord() != null) {
+            // Lazy: reopen() allocates the backing after setMemoryTracker() binds
+            // the per-query tracker, keeping malloc/free on the per-query counter.
             Map map = MapFactory.createUnorderedMap(
                     configuration,
                     windowContext.getPartitionByKeyTypes(),
-                    NTILE_COLUMN_TYPES
+                    NTILE_COLUMN_TYPES,
+                    false,
+                    false
             );
             try {
                 return new NtileOverPartitionFunction(
@@ -353,6 +359,13 @@ public class NtileFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void setColumnIndex(int columnIndex) {
             this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            if (map != null) {
+                map.setMemoryTracker(tracker);
+            }
         }
 
         @Override

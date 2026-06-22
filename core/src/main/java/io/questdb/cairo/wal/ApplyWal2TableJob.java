@@ -55,6 +55,7 @@ import io.questdb.mp.Job;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Transient;
@@ -406,6 +407,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
         try (TransactionLogCursor transactionLogCursor = tableSequencerAPI.getCursor(tableToken, writer.getAppliedSeqTxn())) {
             TableMetadataChangeLog structuralChangeCursor = null;
+            // WAL_APPLY tracker for the batch; SQL applied below inherits it. Acquired
+            // after the cursor open (so that can't leak it), released in the finally.
+            final MemoryTracker memoryTracker = operationExecutor.acquireMemoryTracker(tableToken.getTableId());
             try {
                 int iTransaction = 0;
                 int totalTransactionCount = 0;
@@ -642,6 +646,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 engine.getTableSequencerAPI().updateWriterTxns(tableToken, writer.getSeqTxn(), writer.getSeqTxn());
                 throw th;
             } finally {
+                operationExecutor.releaseMemoryTracker(memoryTracker);
                 Misc.free(structuralChangeCursor);
             }
         }

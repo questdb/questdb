@@ -104,6 +104,7 @@ open module io.questdb {
     exports io.questdb.cairo.vm.api;
     exports io.questdb.cairo.mig;
     exports io.questdb.griffin.engine.join;
+    exports io.questdb.griffin.engine.union;
     exports io.questdb.griffin.engine.ops;
     exports io.questdb.cairo.sql.async;
     exports io.questdb.cutlass.http.client;

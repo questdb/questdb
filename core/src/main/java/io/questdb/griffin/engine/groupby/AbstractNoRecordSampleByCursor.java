@@ -95,7 +95,10 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         this.recordFunctions = recordFunctions;
         this.groupByFunctions = groupByFunctions;
         this.groupByFunctionsUpdater = groupByFunctionsUpdater;
-        this.allocator = GroupByAllocatorFactory.createAllocator(configuration);
+        // Lazy variant: the allocator's chunk index is not allocated until the
+        // first cursor's of() binds a MemoryTracker and calls reopen(), keeping
+        // per-query alloc/free accounting symmetric from the very first cursor.
+        this.allocator = GroupByAllocatorFactory.createAllocator(configuration, false);
         GroupByUtils.setAllocator(groupByFunctions, allocator);
     }
 
@@ -129,6 +132,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         areTimestampsInitialized = false;
         sampleFromFunc.init(baseCursor, executionContext);
         sampleToFunc.init(baseCursor, executionContext);
+        allocator.setMemoryTracker(executionContext.getMemoryTracker());
         allocator.reopen();
     }
 

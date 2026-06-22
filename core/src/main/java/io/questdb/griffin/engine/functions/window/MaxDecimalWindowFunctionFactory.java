@@ -56,10 +56,12 @@ import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import org.jetbrains.annotations.Nullable;
 
 public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFactory {
 
@@ -1630,6 +1632,15 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+            if (dequeMemory != null) {
+                dequeMemory.setMemoryTracker(tracker);
+            }
+        }
+
+        @Override
         public int snapshotFormatVersion() {
             return 1;
         }
@@ -2175,14 +2186,14 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             minDiff = Math.abs(rangeHi);
             timestampIndex = timestampIdx;
             capacity = initialCapacity;
-            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            // memory allocates lazily on reopen(), under the tracker bound by the cursor
             firstIdx = 0;
             frameSize = 0;
             maxMin.ofRawNull();
             if (frameLoBounded) {
                 this.dequeMemory = dequeMemory;
                 dequeCapacity = initialCapacity;
-                dequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * Decimal128.BYTES) - dequeMemory.getPageAddress(0);
+                // dequeMemory allocates lazily on reopen(), under the tracker bound by the cursor
             }
             this.comparator = comparator;
             this.name = name;
@@ -2362,6 +2373,14 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             memory.close();
             if (dequeMemory != null) {
                 dequeMemory.close();
+            }
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            memory.setMemoryTracker(tracker);
+            if (dequeMemory != null) {
+                dequeMemory.setMemoryTracker(tracker);
             }
         }
 
@@ -3475,6 +3494,15 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+            if (dequeMemory != null) {
+                dequeMemory.setMemoryTracker(tracker);
+            }
+        }
+
+        @Override
         public int snapshotFormatVersion() {
             return 1;
         }
@@ -3973,14 +4001,14 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             minDiff = Math.abs(rangeHi);
             timestampIndex = timestampIdx;
             capacity = initialCapacity;
-            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            // memory allocates lazily on reopen(), under the tracker bound by the cursor
             firstIdx = 0;
             frameSize = 0;
             maxMin = Decimals.DECIMAL16_NULL;
             if (frameLoBounded) {
                 this.dequeMemory = dequeMemory;
                 dequeCapacity = initialCapacity;
-                dequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * Short.BYTES) - dequeMemory.getPageAddress(0);
+                // dequeMemory allocates lazily on reopen(), under the tracker bound by the cursor
             }
             this.comparator = comparator;
             this.name = name;
@@ -4152,6 +4180,14 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             memory.close();
             if (dequeMemory != null) {
                 dequeMemory.close();
+            }
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            memory.setMemoryTracker(tracker);
+            if (dequeMemory != null) {
+                dequeMemory.setMemoryTracker(tracker);
             }
         }
 
@@ -5253,6 +5289,15 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+            if (dequeMemory != null) {
+                dequeMemory.setMemoryTracker(tracker);
+            }
+        }
+
+        @Override
         public int snapshotFormatVersion() {
             return 1;
         }
@@ -5800,14 +5845,14 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             minDiff = Math.abs(rangeHi);
             timestampIndex = timestampIdx;
             capacity = initialCapacity;
-            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            // memory allocates lazily on reopen(), under the tracker bound by the cursor
             firstIdx = 0;
             frameSize = 0;
             maxMin.ofRawNull();
             if (frameLoBounded) {
                 this.dequeMemory = dequeMemory;
                 dequeCapacity = initialCapacity;
-                dequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * Decimal256.BYTES) - dequeMemory.getPageAddress(0);
+                // dequeMemory allocates lazily on reopen(), under the tracker bound by the cursor
             }
             this.comparator = comparator;
             this.name = name;
@@ -5989,6 +6034,14 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             memory.close();
             if (dequeMemory != null) {
                 dequeMemory.close();
+            }
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            memory.setMemoryTracker(tracker);
+            if (dequeMemory != null) {
+                dequeMemory.setMemoryTracker(tracker);
             }
         }
 
@@ -7110,6 +7163,15 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+            if (dequeMemory != null) {
+                dequeMemory.setMemoryTracker(tracker);
+            }
+        }
+
+        @Override
         public int snapshotFormatVersion() {
             return 1;
         }
@@ -7608,14 +7670,14 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             minDiff = Math.abs(rangeHi);
             timestampIndex = timestampIdx;
             capacity = initialCapacity;
-            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            // memory allocates lazily on reopen(), under the tracker bound by the cursor
             firstIdx = 0;
             frameSize = 0;
             maxMin = Decimals.DECIMAL32_NULL;
             if (frameLoBounded) {
                 this.dequeMemory = dequeMemory;
                 dequeCapacity = initialCapacity;
-                dequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * Integer.BYTES) - dequeMemory.getPageAddress(0);
+                // dequeMemory allocates lazily on reopen(), under the tracker bound by the cursor
             }
             this.comparator = comparator;
             this.name = name;
@@ -7787,6 +7849,14 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             memory.close();
             if (dequeMemory != null) {
                 dequeMemory.close();
+            }
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            memory.setMemoryTracker(tracker);
+            if (dequeMemory != null) {
+                dequeMemory.setMemoryTracker(tracker);
             }
         }
 
@@ -8845,6 +8915,15 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+            if (dequeMemory != null) {
+                dequeMemory.setMemoryTracker(tracker);
+            }
+        }
+
+        @Override
         public int snapshotFormatVersion() {
             return 1;
         }
@@ -9345,14 +9424,14 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             minDiff = Math.abs(rangeHi);
             timestampIndex = timestampIdx;
             capacity = initialCapacity;
-            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            // memory allocates lazily on reopen(), under the tracker bound by the cursor
             firstIdx = 0;
             frameSize = 0;
             maxMin = Decimals.DECIMAL64_NULL;
             if (frameLoBounded) {
                 this.dequeMemory = dequeMemory;
                 dequeCapacity = initialCapacity;
-                dequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * Long.BYTES) - dequeMemory.getPageAddress(0);
+                // dequeMemory allocates lazily on reopen(), under the tracker bound by the cursor
             }
             this.comparator = comparator;
             this.name = name;
@@ -9524,6 +9603,14 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             memory.close();
             if (dequeMemory != null) {
                 dequeMemory.close();
+            }
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            memory.setMemoryTracker(tracker);
+            if (dequeMemory != null) {
+                dequeMemory.setMemoryTracker(tracker);
             }
         }
 
@@ -10584,6 +10671,15 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+            if (dequeMemory != null) {
+                dequeMemory.setMemoryTracker(tracker);
+            }
+        }
+
+        @Override
         public int snapshotFormatVersion() {
             return 1;
         }
@@ -11084,14 +11180,14 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             minDiff = Math.abs(rangeHi);
             timestampIndex = timestampIdx;
             capacity = initialCapacity;
-            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            // memory allocates lazily on reopen(), under the tracker bound by the cursor
             firstIdx = 0;
             frameSize = 0;
             maxMin = Decimals.DECIMAL8_NULL;
             if (frameLoBounded) {
                 this.dequeMemory = dequeMemory;
                 dequeCapacity = initialCapacity;
-                dequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * Byte.BYTES) - dequeMemory.getPageAddress(0);
+                // dequeMemory allocates lazily on reopen(), under the tracker bound by the cursor
             }
             this.comparator = comparator;
             this.name = name;
@@ -11263,6 +11359,14 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             memory.close();
             if (dequeMemory != null) {
                 dequeMemory.close();
+            }
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            memory.setMemoryTracker(tracker);
+            if (dequeMemory != null) {
+                dequeMemory.setMemoryTracker(tracker);
             }
         }
 

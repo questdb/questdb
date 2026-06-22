@@ -8002,7 +8002,7 @@ public class SqlOptimiser implements Mutable {
             return model;
         }
 
-        if (model.isDistinct()) {
+        if (model.isDistinct() && configuration.isSqlDistinctGroupByRewriteEnabled()) {
             // bingo
             // create wrapper models
             final IQueryModel wrapperNested = queryModelPool.next();
@@ -11034,8 +11034,23 @@ public class SqlOptimiser implements Mutable {
                             final QueryColumn currentColumn = model.getAliasToColumnMap().get(currentAlias);
                             currentColumn.of(currentColumn.getAlias(), nestedColumn.getAst());
 
-                            final int nestedColumnIndex = nestedModel.getColumnAliasIndex(nestedColumn.getAlias());
+                            final CharSequence liftedAlias = nestedColumn.getAlias();
+                            final int nestedColumnIndex = nestedModel.getColumnAliasIndex(liftedAlias);
                             nestedModel.removeColumn(nestedColumnIndex);
+                            // The lifted key now lives in the outer VIRTUAL, so the nested GROUP BY
+                            // no longer has a key column matching it. Drop the stale alias reference
+                            // left behind in the nested GROUP BY list; validateGroupByColumns rejects
+                            // a LITERAL key whose alias is missing from the model. Expression keys
+                            // (e.g. ClientIP - 1) remain because validateGroupByColumns matches them
+                            // against the surviving base column instead.
+                            final ObjList<ExpressionNode> nestedGroupBy = nestedModel.getGroupBy();
+                            for (int gi = 0, gn = nestedGroupBy.size(); gi < gn; gi++) {
+                                final ExpressionNode groupByNode = nestedGroupBy.getQuick(gi);
+                                if (groupByNode.type == LITERAL && Chars.equalsIgnoreCase(groupByNode.token, liftedAlias)) {
+                                    nestedGroupBy.remove(gi);
+                                    break;
+                                }
+                            }
                         }
                     }
                 }

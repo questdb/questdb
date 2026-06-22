@@ -168,10 +168,19 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
 
     @Override
     public void of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
+        // The tracker is rebound unconditionally below (outside the !isOpen guard) because
+        // the ctor opens eagerly with isOpen=true; binding inside the guard would leave the
+        // first query untracked. A second of() without an intervening close() would rebind
+        // onto still-charged backing and underflow the per-query counter on free. close()
+        // nulls baseCursor, so a null field here means fresh-or-closed.
+        assert this.baseCursor == null : "of() without intervening close(): rebinding the memory tracker would underflow the per-query counter";
         // Take ownership before reopen() can throw: on a reopen OOM, close()
         // must find baseCursor here to free it instead of leaking it.
         this.baseCursor = baseCursor;
         this.baseRecord = baseCursor.getRecord();
+        // Bind the tracker before any entry-buffer allocation: the first open grows the buffer
+        // lazily in beginAppend (reopen is skipped as isOpen starts true), a reuse re-allocates via reopen.
+        entries.setMemoryTracker(executionContext.getMemoryTracker());
         if (!isOpen) {
             isOpen = true;
             entries.reopen();

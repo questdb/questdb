@@ -52,11 +52,13 @@ import io.questdb.griffin.model.WindowExpression;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import org.jetbrains.annotations.Nullable;
 
 public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory {
 
@@ -1164,6 +1166,15 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
                     && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+            if (dequeMemory != null) {
+                dequeMemory.setMemoryTracker(tracker);
+            }
+        }
+
         /**
          * Appends a textual plan fragment describing this window function to the provided PlanSink.
          * <p>
@@ -1760,15 +1771,14 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
             timestampIndex = timestampIdx;
 
             capacity = initialCapacity;
-            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            // memory allocates lazily on reopen(), under the tracker bound by the cursor
             firstIdx = 0;
             frameSize = 0;
             maxMin = Numbers.LONG_NULL;
 
             if (frameLoBounded) {
                 this.dequeMemory = dequeMemory;
-                dequeCapacity = initialCapacity;
-                dequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * Long.BYTES) - dequeMemory.getPageAddress(0);
+                // dequeMemory allocates lazily on reopen(), under the tracker bound by the cursor
             }
             this.comparator = comparator;
             this.name = name;
@@ -2010,6 +2020,14 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
             memory.close();
             if (dequeMemory != null) {
                 dequeMemory.close();
+            }
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            memory.setMemoryTracker(tracker);
+            if (dequeMemory != null) {
+                dequeMemory.setMemoryTracker(tracker);
             }
         }
 

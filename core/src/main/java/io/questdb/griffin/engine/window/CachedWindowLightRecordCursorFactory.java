@@ -43,6 +43,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -105,7 +106,9 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
             }
             baseRowIds = new DirectLongList(
                     Math.max(configuration.getSqlWindowStorePageSize() / Long.BYTES, 1),
-                    MemoryTag.NATIVE_DEFAULT
+                    MemoryTag.NATIVE_DEFAULT,
+                    // Lazy: reopen() allocates under the tracker bound by the first of().
+                    true
             );
             this.cursor = new CachedWindowLightRecordCursor(
                     columnIndexes,
@@ -206,8 +209,14 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor baseCursor = base.getCursor(executionContext);
-        cursor.of(baseCursor, executionContext);
-        return cursor;
+        try {
+            cursor.of(baseCursor, executionContext);
+            return cursor;
+        } catch (Throwable th) {
+            // free partial allocations under the still-bound per-query tracker on a failed open
+            cursor.close();
+            throw th;
+        }
     }
 
     @Override
@@ -332,7 +341,10 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
             this.recordA = new WindowLightRecord(sourceMap);
             this.recordB = new WindowLightRecord(sourceMap);
             this.lightSpi = new LightWindowSPI(sourceMap, narrowChain, baseRowIds);
-            this.isOpen = true;
+            // Lazy: the first of() binds the tracker and reopens the chain, row-id list,
+            // sort buffers and window-function maps. Starting open would skip that first
+            // reopen() and read a closed partition map.
+            this.isOpen = false;
         }
 
         @Override
@@ -560,8 +572,16 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
             baseRowIds.clear();
             if (!isOpen) {
                 isOpen = true;
+                // Bind the per-query tracker on the narrow chain, row-id list, sort
+                // buffers and window-function maps before their backing is allocated.
+                final MemoryTracker memoryTracker = executionContext.getMemoryTracker();
+                narrowChain.setMemoryTracker(memoryTracker);
+                baseRowIds.setMemoryTracker(memoryTracker);
                 baseRowIds.reopen();
-                reopenSortBuffers();
+                reopenSortBuffers(memoryTracker);
+                for (int i = 0, n = allFunctions.size(); i < n; i++) {
+                    allFunctions.getQuick(i).setMemoryTracker(memoryTracker);
+                }
                 reopen(allFunctions);
             }
             recordA.of(baseCursor.getRecord(), narrowChain.getRecord(), -1);
@@ -599,9 +619,12 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
             }
         }
 
-        private void reopenSortBuffers() {
+        private void reopenSortBuffers(MemoryTracker memoryTracker) {
             for (int i = 0; i < orderedGroupCount; i++) {
-                sortBuffers.getQuick(i).reopen();
+                final WindowSortBuffer buffer = sortBuffers.getQuick(i);
+                // Bind before reopen() so the first allocation is charged to the tracker.
+                buffer.setMemoryTracker(memoryTracker);
+                buffer.reopen();
             }
         }
     }

@@ -357,6 +357,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean matViewParallelExecutionEnabled;
     private final long matViewRefreshIntervalsUpdatePeriod;
     private final int matViewRefreshMaxClusters;
+    private final long matViewRefreshMemoryLimitBytes;
     private final boolean matViewRefreshMissingWalFilesFatal;
     private final long matViewRefreshOomRetryTimeout;
     private final WorkerPoolConfiguration matViewRefreshPoolConfiguration = new PropMatViewsRefreshPoolConfiguration();
@@ -438,6 +439,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final PublicPassthroughConfiguration publicPassthroughConfiguration = new PropPublicPassthroughConfiguration();
     private final int queryCacheEventQueueCapacity;
     private final long queryContinuationWakeIntervalMillis;
+    private final long queryMemoryLimitBytes;
     private final boolean queryWithinLatestByOptimisationEnabled;
     private final int qwpEgressForcedZstdLevel;
     private final int qwpMaxRowsPerTable;
@@ -614,6 +616,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final VolumeDefinitions volumeDefinitions = new VolumeDefinitions();
     private final boolean walApplyEnabled;
     private final int walApplyLookAheadTransactionCount;
+    private final long walApplyMemoryLimitBytes;
     private final WorkerPoolConfiguration walApplyPoolConfiguration = new PropWalApplyPoolConfiguration();
     private final long walApplySleepTimeout;
     private final long walApplyTableTimeQuota;
@@ -1662,6 +1665,9 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.matViewRowsPerQueryEstimate = getLong(properties, env, PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, 1_000_000L);
             this.matViewMaxRefreshIntervals = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_INTERVALS, 100);
             this.matViewRefreshMaxClusters = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_MAX_CLUSTERS, 32);
+            this.queryMemoryLimitBytes = getLongSize(properties, env, PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
+            this.matViewRefreshMemoryLimitBytes = getLongSize(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_MEMORY_LIMIT_BYTES, 0);
+            this.walApplyMemoryLimitBytes = getLongSize(properties, env, PropertyKey.CAIRO_WAL_APPLY_MEMORY_LIMIT_BYTES, 0);
             this.sqlCompileViewModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_COMPILE_VIEW_MODEL_POOL_CAPACITY, 8);
             this.sqlCopyBufferSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_COPY_BUFFER_SIZE, 2 * Numbers.SIZE_1MB);
             this.columnPurgeQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_QUEUE_CAPACITY, 128);
@@ -2547,12 +2553,23 @@ public class PropServerConfiguration implements ServerConfiguration {
                 : getIntSize(properties, env, deprecatedMaxPagesKey, Integer.MAX_VALUE);
 
         if (isPropertyExplicitlySet(properties, env, deprecatedMaxPagesKey)) {
-            return pageSize * (long) mainMaxPages;
+            return pagesToBytesSaturating(pageSize, mainMaxPages);
         }
         if (hasAlias && isPropertyExplicitlySet(properties, env, deprecatedAliasMaxPagesKey)) {
-            return pageSize * (long) aliasMaxPages;
+            return pagesToBytesSaturating(pageSize, aliasMaxPages);
         }
         return Long.MAX_VALUE;
+    }
+
+    private static long pagesToBytesSaturating(long pageSize, int maxPages) {
+        final long bytes = pageSize * (long) maxPages;
+        // An absurdly large explicit page size combined with a high deprecated
+        // *_MAX_PAGES value can overflow a signed long; saturate so the derived
+        // byte cap never wraps negative.
+        if (pageSize != 0 && bytes / pageSize != maxPages) {
+            return Long.MAX_VALUE;
+        }
+        return bytes;
     }
 
     private int getCommitMode(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key) {
@@ -4206,6 +4223,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getMatViewRefreshMemoryLimitBytes() {
+            return matViewRefreshMemoryLimitBytes;
+        }
+
+        @Override
         public long getMatViewRefreshOomRetryTimeout() {
             return matViewRefreshOomRetryTimeout;
         }
@@ -4503,6 +4525,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getQueryContinuationWakeIntervalMillis() {
             return queryContinuationWakeIntervalMillis;
+        }
+
+        @Override
+        public long getQueryMemoryLimitBytes() {
+            return queryMemoryLimitBytes;
         }
 
         @Override
@@ -5071,6 +5098,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getWalApplyMemoryLimitBytes() {
+            return walApplyMemoryLimitBytes;
+        }
+
+        @Override
         public long getWalApplyTableTimeQuota() {
             return walApplyTableTimeQuota;
         }
@@ -5318,6 +5350,14 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isReadOnlyInstance() {
             return isReadOnlyInstance;
+        }
+
+        @Override
+        public boolean isSqlDistinctGroupByRewriteEnabled() {
+            // No production property backs this seam: the rewrite is always on in
+            // a running server. Only tests override it (to reach
+            // DistinctTimeSeriesRecordCursorFactory) via a CairoConfiguration subclass.
+            return true;
         }
 
         @Override
