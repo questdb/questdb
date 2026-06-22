@@ -357,8 +357,8 @@ public class WalUtils {
     public static void writeRebaseNewMarker(FilesFacade ff, Path tableDirPath) {
         final int len = tableDirPath.size();
         try {
-            if (!ff.exists(tableDirPath.concat(REBASE_NEW_FILE_NAME).$())) {
-                ff.touch(tableDirPath.$());
+            if (!ff.exists(tableDirPath.concat(REBASE_NEW_FILE_NAME).$()) && !ff.touch(tableDirPath.$())) {
+                throw CairoException.critical(ff.errno()).put("could not create rebase-new marker [path=").put(tableDirPath).put(']');
             }
         } finally {
             tableDirPath.trimTo(len);
@@ -373,8 +373,8 @@ public class WalUtils {
     public static void writeRebaseSourceMarker(FilesFacade ff, Path tableDirPath) {
         final int len = tableDirPath.size();
         try {
-            if (!ff.exists(tableDirPath.concat(REBASE_SOURCE_FILE_NAME).$())) {
-                ff.touch(tableDirPath.$());
+            if (!ff.exists(tableDirPath.concat(REBASE_SOURCE_FILE_NAME).$()) && !ff.touch(tableDirPath.$())) {
+                throw CairoException.critical(ff.errno()).put("could not create rebase-source marker [path=").put(tableDirPath).put(']');
             }
         } finally {
             tableDirPath.trimTo(len);
@@ -433,6 +433,7 @@ public class WalUtils {
         if (Chars.equals(name, TableUtils.TODO_FILE_NAME)
                 || Chars.equals(name, CONVERT_FILE_NAME)
                 || Chars.equals(name, REBASE_NEW_FILE_NAME)
+                || Chars.equals(name, REBASE_SOURCE_FILE_NAME)
                 || Chars.equals(name, TableUtils.TXN_SCOREBOARD_FILE_NAME)) {
             return false;
         }
