@@ -135,82 +135,96 @@ public class QwpEgressCreditFlowTest extends AbstractQwpBootstrapTest {
      * on macOS. The JUnit timeout turns a stall into a fast failure instead of the
      * 20-minute global test timeout.
      */
-    @Test(timeout = 240_000)
+    @Test(timeout = 600_000)
     public void testCreditFlowNoStallUnderForcedFragmentation() throws Exception {
-        // Pin a small send chunk: forces every batch send to park on
-        // write-backpressure, which is what drives the WRITE <-> READ churn that
-        // exposes the dispatcher stall. recvChunk stays larger so CREDIT frames
-        // arrive promptly.
-        sendChunk = 16;
-        recvChunk = 64;
-        TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startFragmented()) {
-                serverMain.execute(
-                        "CREATE TABLE big AS (SELECT x AS id, CAST(x * 1.5 AS DOUBLE) AS v, " +
-                                "x::TIMESTAMP AS ts " +
-                                "FROM long_sequence(200000)) TIMESTAMP(ts) PARTITION BY DAY WAL");
-                serverMain.awaitTable("big");
+        // The stall is a race, rare even on macOS, so reproduce the exact failing
+        // shape -- a single connection streaming 500k rows under a 4 KiB credit --
+        // many times across a couple of small send-fragmentation sizes. A small
+        // sendChunk forces every batch send to park on write-backpressure, which
+        // drives the WRITE <-> READ interest churn that exposes the dispatcher
+        // stall. Linux (epoll) and Windows are unaffected and finish in seconds.
+        final int rowCount = 500_000;
+        final int[] sendChunks = {8, 24, 64, 160};
+        final int queriesPerChunk = 10;
 
-                // Diagnostic watchdog: if a single query makes no progress for 90s
-                // (the stall), dump every thread stack to stdout so the CI log
-                // captures where the server network worker is parked, then let the
-                // JUnit timeout fail the test. Never fires on the healthy path
-                // (a query completes in a few seconds).
-                final long[] lastProgressMs = {System.currentTimeMillis()};
-                final boolean[] stop = {false};
-                Thread watchdog = new Thread(() -> {
-                    while (!stop[0]) {
-                        Os.sleep(2_000);
-                        if (!stop[0] && System.currentTimeMillis() - lastProgressMs[0] > 90_000) {
-                            StringBuilder sb = new StringBuilder("\nQWP CREDIT-FLOW STALL THREAD DUMP\n");
-                            for (java.util.Map.Entry<Thread, StackTraceElement[]> e : Thread.getAllStackTraces().entrySet()) {
-                                sb.append('"').append(e.getKey().getName()).append("\" ").append(e.getKey().getState()).append('\n');
-                                for (StackTraceElement st : e.getValue()) {
-                                    sb.append("    at ").append(st).append('\n');
-                                }
-                                sb.append('\n');
-                            }
-                            System.out.println(sb);
-                            return;
+        // Diagnostic watchdog: if a single query makes no progress for 60s (the
+        // stall), dump every thread stack to stdout so the CI log captures where
+        // the server network worker is parked. Never fires on the healthy path
+        // (a query completes in a few seconds). A separate "too slow but not
+        // stalled" timeout would show NO dump, distinguishing it from a real stall.
+        final long[] lastProgressMs = {System.currentTimeMillis()};
+        final boolean[] stop = {false};
+        Thread watchdog = new Thread(() -> {
+            boolean dumped = false;
+            while (!stop[0]) {
+                Os.sleep(2_000);
+                if (!dumped && !stop[0] && System.currentTimeMillis() - lastProgressMs[0] > 60_000) {
+                    StringBuilder sb = new StringBuilder("\nQWP CREDIT-FLOW STALL THREAD DUMP\n");
+                    for (java.util.Map.Entry<Thread, StackTraceElement[]> e : Thread.getAllStackTraces().entrySet()) {
+                        sb.append('"').append(e.getKey().getName()).append("\" ").append(e.getKey().getState()).append('\n');
+                        for (StackTraceElement st : e.getValue()) {
+                            sb.append("    at ").append(st).append('\n');
                         }
+                        sb.append('\n');
                     }
-                }, "qwp-credit-flow-watchdog");
-                watchdog.setDaemon(true);
-                watchdog.start();
-
-                try {
-                    for (int iter = 0; iter < 6; iter++) {
-                        lastProgressMs[0] = System.currentTimeMillis();
-                        try (QwpQueryClient client = QwpQueryClient.fromConfig(
-                                        "ws::addr=127.0.0.1:" + HTTP_PORT + ";")
-                                .withInitialCredit(4 * 1024)) {
-                            client.connect();
-                            final int[] rows = {0};
-                            final int queryIndex = iter;
-                            client.execute("SELECT * FROM big", new QwpColumnBatchHandler() {
-                                @Override
-                                public void onBatch(QwpColumnBatch batch) {
-                                    rows[0] += batch.getRowCount();
-                                }
-
-                                @Override
-                                public void onEnd(long totalRows) {
-                                }
-
-                                @Override
-                                public void onError(byte status, String message) {
-                                    Assert.fail("credit-flow query " + queryIndex + " error: " + message);
-                                }
-                            });
-                            Assert.assertEquals(200_000, rows[0]);
-                        }
-                    }
-                } finally {
-                    stop[0] = true;
-                    watchdog.interrupt();
+                    System.out.println(sb);
+                    dumped = true;
                 }
             }
-        });
+        }, "qwp-credit-flow-watchdog");
+        watchdog.setDaemon(true);
+        watchdog.start();
+
+        try {
+            TestUtils.assertMemoryLeak(() -> {
+                for (int c = 0; c < sendChunks.length; c++) {
+                    sendChunk = sendChunks[c];
+                    recvChunk = 64;
+                    // Servers in this loop share one data dir, so give each
+                    // fragmentation size its own table to avoid "table already exists".
+                    final String table = "big" + c;
+                    try (final TestServerMain serverMain = startFragmented()) {
+                        serverMain.execute(
+                                "CREATE TABLE IF NOT EXISTS " + table + " AS (SELECT x AS id, CAST(x * 1.5 AS DOUBLE) AS v, " +
+                                        "x::TIMESTAMP AS ts " +
+                                        "FROM long_sequence(" + rowCount + ")) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                        serverMain.awaitTable(table);
+
+                        for (int iter = 0; iter < queriesPerChunk; iter++) {
+                            lastProgressMs[0] = System.currentTimeMillis();
+                            final int sc = sendChunks[c];
+                            final int queryIndex = iter;
+                            try (QwpQueryClient client = QwpQueryClient.fromConfig(
+                                            "ws::addr=127.0.0.1:" + HTTP_PORT + ";")
+                                    .withInitialCredit(4 * 1024)) {
+                                client.connect();
+                                final int[] rows = {0};
+                                client.execute("SELECT * FROM " + table, new QwpColumnBatchHandler() {
+                                    @Override
+                                    public void onBatch(QwpColumnBatch batch) {
+                                        rows[0] += batch.getRowCount();
+                                    }
+
+                                    @Override
+                                    public void onEnd(long totalRows) {
+                                    }
+
+                                    @Override
+                                    public void onError(byte status, String message) {
+                                        Assert.fail("credit-flow query [sendChunk=" + sc
+                                                + ", iter=" + queryIndex + "] error: " + message);
+                                    }
+                                });
+                                Assert.assertEquals(rowCount, rows[0]);
+                            }
+                        }
+                    }
+                }
+            });
+        } finally {
+            stop[0] = true;
+            watchdog.interrupt();
+        }
     }
 
     @Test
