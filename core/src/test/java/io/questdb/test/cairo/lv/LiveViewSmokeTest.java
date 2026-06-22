@@ -461,6 +461,61 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
         });
     }
 
+    // Drives a partitioned bounded-frame last_value(TIMESTAMP|DATE) live view:
+    // asserts the windowed value is correct (also proving CREATE-accept), then
+    // performs a byte-exact snapshot/restore round-trip of the function's
+    // partition state (write -> toTop -> restore -> write again, comparing).
+    // The frame must end strictly before the current row (e.g. N PRECEDING AND
+    // M PRECEDING): a frame ending AT the current row routes to the un-migrated
+    // IncludeCurrent shape and is rejected at CREATE.
+    private void assertLastValueTimestampDateFrameRoundTrip(
+            String valueType,
+            String frameClause,
+            boolean ignoreNulls,
+            String insertValues,
+            String expectedRows
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, v " + valueType + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, last_value(v)" + (ignoreNulls ? " IGNORE NULLS" : "") + " OVER w AS a FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts " + frameClause + ")");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, sym, v) VALUES " + insertValues);
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                assertQuery("SELECT ts, sym, a FROM lv ORDER BY sym, ts").noLeakCheck().expectSize().returns(expectedRows);
+
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                WindowFunction fn = unwrapWindowFunctions(lv).getQuick(0);
+                Assert.assertTrue(fn.supportsSnapshot());
+                Map fnMap = fn.getPartitionMap();
+                Assert.assertEquals(2L, fnMap.size());
+
+                try (MemoryCARW s1 = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                     MemoryCARW s2 = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+                    LiveViewFunctionSnapshot.write(s1, fn);
+                    final long len = s1.getAppendOffset();
+                    fn.toTop();
+                    Assert.assertEquals(0L, fnMap.size());
+                    LiveViewFunctionSnapshot.restore(s1, 0L, fn, 1);
+                    Assert.assertEquals(2L, fnMap.size());
+                    LiveViewFunctionSnapshot.write(s2, fn);
+                    Assert.assertEquals(len, s2.getAppendOffset());
+                    for (long i = 0; i < len; i++) {
+                        Assert.assertEquals("snapshot byte mismatch at " + i, s1.getByte(i), s2.getByte(i));
+                    }
+                }
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
     // Drives a partitioned bounded-frame max/min(TIMESTAMP|DATE) live view:
     // asserts the windowed value is correct (also proving CREATE-accept), then
     // performs a byte-exact snapshot/restore round-trip of the function's
@@ -5831,6 +5886,150 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                         "2026-08-01T00:00:00.000000Z\tb\t2026-03-06T00:00:00.000000Z\n" +
                         "2026-08-01T01:00:00.000000Z\tb\t2026-03-06T00:00:00.000000Z\n" +
                         "2026-08-01T02:00:00.000000Z\tb\t2026-03-06T00:00:00.000000Z\n"
+        );
+    }
+
+    @Test
+    public void testLastValueDateOverPartitionRangeFrameSnapshotRoundTrip() throws Exception {
+        // last_value(DATE) over a bounded RANGE frame ending before the current row -
+        // RESPECT NULLS, variable-size ring.
+        assertLastValueTimestampDateFrameRoundTrip(
+                "DATE",
+                "RANGE BETWEEN '3' HOUR PRECEDING AND '1' HOUR PRECEDING",
+                false,
+                "('2026-08-01T00:00:00.000000Z', 'a', '2026-01-10T00:00:00.000Z'::date), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', '2026-01-20T00:00:00.000Z'::date), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', '2026-01-30T00:00:00.000Z'::date), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', '2026-03-06T00:00:00.000Z'::date), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', '2026-03-12T00:00:00.000Z'::date), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', '2026-03-18T00:00:00.000Z'::date)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t2026-01-10T00:00:00.000Z\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t2026-01-20T00:00:00.000Z\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t2026-03-06T00:00:00.000Z\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t2026-03-12T00:00:00.000Z\n"
+        );
+    }
+
+    @Test
+    public void testLastValueDateOverPartitionRowsFrameSnapshotRoundTrip() throws Exception {
+        // last_value(DATE) over a bounded ROWS frame ending before the current row -
+        // RESPECT NULLS, fixed-size ring.
+        assertLastValueTimestampDateFrameRoundTrip(
+                "DATE",
+                "ROWS BETWEEN 3 PRECEDING AND 1 PRECEDING",
+                false,
+                "('2026-08-01T00:00:00.000000Z', 'a', '2026-01-10T00:00:00.000Z'::date), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', '2026-01-20T00:00:00.000Z'::date), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', '2026-01-30T00:00:00.000Z'::date), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', '2026-03-06T00:00:00.000Z'::date), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', '2026-03-12T00:00:00.000Z'::date), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', '2026-03-18T00:00:00.000Z'::date)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t2026-01-10T00:00:00.000Z\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t2026-01-20T00:00:00.000Z\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t2026-03-06T00:00:00.000Z\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t2026-03-12T00:00:00.000Z\n"
+        );
+    }
+
+    @Test
+    public void testLastValueIgnoreNullsTimestampOverPartitionRangeFrameSnapshotRoundTrip() throws Exception {
+        // last_value(TIMESTAMP) IGNORE NULLS over a bounded RANGE frame ending at the current
+        // row - the FirstNotNull-style IGNORE base, skipping a NULL inside the frame.
+        assertLastValueTimestampDateFrameRoundTrip(
+                "TIMESTAMP",
+                "RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW",
+                true,
+                "('2026-08-01T00:00:00.000000Z', 'a', '2026-01-10T00:00:00.000000Z'), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', null), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', '2026-01-30T00:00:00.000000Z'), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', '2026-03-06T00:00:00.000000Z'), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', null), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', '2026-03-18T00:00:00.000000Z')",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t2026-01-10T00:00:00.000000Z\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t2026-01-10T00:00:00.000000Z\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t2026-01-30T00:00:00.000000Z\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t2026-03-06T00:00:00.000000Z\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t2026-03-06T00:00:00.000000Z\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t2026-03-18T00:00:00.000000Z\n"
+        );
+    }
+
+    @Test
+    public void testLastValueIgnoreNullsTimestampOverPartitionRowsFrameSnapshotRoundTrip() throws Exception {
+        // last_value(TIMESTAMP) IGNORE NULLS over a bounded ROWS frame ending at the current
+        // row - skips a NULL inside the frame.
+        assertLastValueTimestampDateFrameRoundTrip(
+                "TIMESTAMP",
+                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW",
+                true,
+                "('2026-08-01T00:00:00.000000Z', 'a', '2026-01-10T00:00:00.000000Z'), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', null), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', '2026-01-30T00:00:00.000000Z'), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', '2026-03-06T00:00:00.000000Z'), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', null), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', '2026-03-18T00:00:00.000000Z')",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t2026-01-10T00:00:00.000000Z\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t2026-01-10T00:00:00.000000Z\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t2026-01-30T00:00:00.000000Z\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t2026-03-06T00:00:00.000000Z\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t2026-03-06T00:00:00.000000Z\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t2026-03-18T00:00:00.000000Z\n"
+        );
+    }
+
+    @Test
+    public void testLastValueTimestampOverPartitionRangeFrameSnapshotRoundTrip() throws Exception {
+        // last_value(TIMESTAMP) over a bounded RANGE frame ending before the current row -
+        // RESPECT NULLS, variable-size ring.
+        assertLastValueTimestampDateFrameRoundTrip(
+                "TIMESTAMP",
+                "RANGE BETWEEN '3' HOUR PRECEDING AND '1' HOUR PRECEDING",
+                false,
+                "('2026-08-01T00:00:00.000000Z', 'a', '2026-01-10T00:00:00.000000Z'), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', '2026-01-20T00:00:00.000000Z'), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', '2026-01-30T00:00:00.000000Z'), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', '2026-03-06T00:00:00.000000Z'), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', '2026-03-12T00:00:00.000000Z'), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', '2026-03-18T00:00:00.000000Z')",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t2026-01-10T00:00:00.000000Z\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t2026-01-20T00:00:00.000000Z\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t2026-03-06T00:00:00.000000Z\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t2026-03-12T00:00:00.000000Z\n"
+        );
+    }
+
+    @Test
+    public void testLastValueTimestampOverPartitionRowsFrameSnapshotRoundTrip() throws Exception {
+        // last_value(TIMESTAMP) over a bounded ROWS frame ending before the current row -
+        // RESPECT NULLS, fixed-size ring.
+        assertLastValueTimestampDateFrameRoundTrip(
+                "TIMESTAMP",
+                "ROWS BETWEEN 3 PRECEDING AND 1 PRECEDING",
+                false,
+                "('2026-08-01T00:00:00.000000Z', 'a', '2026-01-10T00:00:00.000000Z'), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', '2026-01-20T00:00:00.000000Z'), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', '2026-01-30T00:00:00.000000Z'), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', '2026-03-06T00:00:00.000000Z'), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', '2026-03-12T00:00:00.000000Z'), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', '2026-03-18T00:00:00.000000Z')",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t2026-01-10T00:00:00.000000Z\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t2026-01-20T00:00:00.000000Z\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t2026-03-06T00:00:00.000000Z\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t2026-03-12T00:00:00.000000Z\n"
         );
     }
 
