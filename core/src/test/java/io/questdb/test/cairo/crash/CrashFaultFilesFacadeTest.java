@@ -34,6 +34,27 @@ public class CrashFaultFilesFacadeTest extends AbstractTest {
     }
 
     @Test
+    public void testArmCrashThrowsAfterNthDurabilityOp() throws Exception {
+        final CrashFaultFilesFacade ff = new CrashFaultFilesFacade();
+        final String dir = temp.newFolder("crashroot3").getAbsolutePath();
+        try (Path path = new Path().of(dir).concat("c.d")) {
+            long fd = ff.openRW(path.$(), CairoConfiguration.O_NONE);
+            ff.armCrashAt(2); // crash on the 2nd durability op
+            try {
+                ff.fsync(fd); // op 1
+                try {
+                    ff.fsync(fd); // op 2 -> throws
+                    Assert.fail("expected CrashSimulationError");
+                } catch (CrashSimulationError expected) {
+                    Assert.assertEquals(2, ff.durabilityOpCount());
+                }
+            } finally {
+                ff.close(fd);
+            }
+        }
+    }
+
+    @Test
     public void testBaselineKeepsPriorDataAndTornTailZeroesRange() throws Exception {
         final CrashFaultFilesFacade ff = new CrashFaultFilesFacade();
         final String dir = temp.newFolder("crashroot2").getAbsolutePath();

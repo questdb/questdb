@@ -29,6 +29,9 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     private final Map<String, Long> durableSize = new HashMap<>();
     private final Map<String, List<long[]>> tornTails = new HashMap<>();
 
+    private int durabilityOps = 0;
+    private int crashAtOp = -1; // -1 = disarmed
+
     // openCleanRW and openAppend are intentionally not overridden; they are not used on the commit path this harness exercises.
     @Override
     public long openRW(LPSZ name, int opts) {
@@ -58,6 +61,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     public void fsync(long fd) {
         super.fsync(fd);
         recordDurable(fd);
+        bumpDurabilityOp();
     }
 
     @Override
@@ -68,6 +72,13 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         if (p != null && size >= 0L) {
             durableSize.put(p, size);
         }
+        bumpDurabilityOp();
+    }
+
+    @Override
+    public void msync(long addr, long len, boolean async) {
+        super.msync(addr, len, async);
+        bumpDurabilityOp();
     }
 
     /** Clear all tracked fd→path and durable-size state (for reuse across crash/retry cycles). */
@@ -75,6 +86,8 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         fdToPath.clear();
         durableSize.clear();
         tornTails.clear();
+        durabilityOps = 0;
+        crashAtOp = -1;
     }
 
     /** Record current sizes of all files under dbRoot as durable ("prior committed, log-journaled"). */
@@ -118,6 +131,24 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
                 throw new UncheckedIOException(e);
             }
         });
+    }
+
+    /** Arm a simulated crash: throw CrashSimulationError on the n-th durability op (fsync/fsyncAndClose/msync). */
+    public void armCrashAt(int n) {
+        this.crashAtOp = n;
+    }
+
+    /** Number of durability ops (fsync/fsyncAndClose/msync) observed so far. */
+    public int durabilityOpCount() {
+        return durabilityOps;
+    }
+
+    private void bumpDurabilityOp() {
+        durabilityOps++;
+        if (crashAtOp > 0 && durabilityOps >= crashAtOp) {
+            crashAtOp = -1; // one-shot
+            throw new CrashSimulationError(durabilityOps);
+        }
     }
 
     private void recordDurable(long fd) {
