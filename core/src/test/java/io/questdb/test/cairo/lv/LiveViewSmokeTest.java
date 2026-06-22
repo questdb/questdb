@@ -673,6 +673,110 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
         });
     }
 
+    // Drives a partitioned anchored-unbounded nth_value(DECIMAL) live view (the
+    // OverUnboundedPartitionFrameFunction shape, reached via a bare ANCHOR =
+    // default UNBOUNDED PRECEDING AND CURRENT ROW frame): asserts the nth value is
+    // correct (proving CREATE-accept), then a byte-exact write/toTop/restore/write
+    // round-trip of the partition state.
+    private void assertNthValueDecimalAnchoredRoundTrip(
+            String decimalType,
+            int nthN,
+            String insertValues,
+            String expectedRows
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, d " + decimalType + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, nth_value(d, " + nthN + ") OVER w AS a FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, sym, d) VALUES " + insertValues);
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                assertQuery("SELECT ts, sym, a FROM lv ORDER BY sym, ts").noLeakCheck().expectSize().returns(expectedRows);
+
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                WindowFunction fn = lv.getAnchorWindow().getFunctions().getQuick(0);
+                Assert.assertTrue(fn.supportsSnapshot());
+                Map fnMap = fn.getPartitionMap();
+                Assert.assertEquals(2L, fnMap.size());
+
+                try (MemoryCARW s1 = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                     MemoryCARW s2 = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+                    LiveViewFunctionSnapshot.write(s1, fn);
+                    final long len = s1.getAppendOffset();
+                    fn.toTop();
+                    Assert.assertEquals(0L, fnMap.size());
+                    LiveViewFunctionSnapshot.restore(s1, 0L, fn, 1);
+                    Assert.assertEquals(2L, fnMap.size());
+                    LiveViewFunctionSnapshot.write(s2, fn);
+                    Assert.assertEquals(len, s2.getAppendOffset());
+                    for (long i = 0; i < len; i++) {
+                        Assert.assertEquals("snapshot byte mismatch at " + i, s1.getByte(i), s2.getByte(i));
+                    }
+                }
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    // Drives a partitioned bounded/unbounded-frame nth_value(DECIMAL) live view
+    // (the RANGE, bounded-ROWS, or unbounded-ROWS partition shapes): asserts the
+    // nth value is correct (proving CREATE-accept), then a byte-exact
+    // write/toTop/restore/write round-trip of the partition state.
+    private void assertNthValueDecimalFrameRoundTrip(
+            String decimalType,
+            int nthN,
+            String frameClause,
+            String insertValues,
+            String expectedRows
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, d " + decimalType + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, nth_value(d, " + nthN + ") OVER w AS a FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts " + frameClause + ")");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, sym, d) VALUES " + insertValues);
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                assertQuery("SELECT ts, sym, a FROM lv ORDER BY sym, ts").noLeakCheck().expectSize().returns(expectedRows);
+
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                WindowFunction fn = unwrapWindowFunctions(lv).getQuick(0);
+                Assert.assertTrue(fn.supportsSnapshot());
+                Map fnMap = fn.getPartitionMap();
+                Assert.assertEquals(2L, fnMap.size());
+
+                try (MemoryCARW s1 = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                     MemoryCARW s2 = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+                    LiveViewFunctionSnapshot.write(s1, fn);
+                    final long len = s1.getAppendOffset();
+                    fn.toTop();
+                    Assert.assertEquals(0L, fnMap.size());
+                    LiveViewFunctionSnapshot.restore(s1, 0L, fn, 1);
+                    Assert.assertEquals(2L, fnMap.size());
+                    LiveViewFunctionSnapshot.write(s2, fn);
+                    Assert.assertEquals(len, s2.getAppendOffset());
+                    for (long i = 0; i < len; i++) {
+                        Assert.assertEquals("snapshot byte mismatch at " + i, s1.getByte(i), s2.getByte(i));
+                    }
+                }
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
     private void assertSumDecimalFrameRoundTrip(
             String decimalType,
             String frameClause,
@@ -9217,6 +9321,421 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
             execute("DROP LIVE VIEW lv");
         });
+    }
+
+    @Test
+    public void testNthValueDecimal128AnchoredSnapshotRoundTrip() throws Exception {
+        assertNthValueDecimalAnchoredRoundTrip(
+                "DECIMAL(38, 6)",
+                2,
+                "('2026-08-01T00:00:00.000000Z', 'a', 10.000000m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20.000000m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30.000000m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6.000000m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12.000000m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18.000000m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t20.000000\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t20.000000\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t12.000000\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t12.000000\n"
+        );
+    }
+
+    @Test
+    public void testNthValueDecimal128OverPartitionRangeFrameSnapshotRoundTrip() throws Exception {
+        assertNthValueDecimalFrameRoundTrip(
+                "DECIMAL(38, 6)",
+                2,
+                "RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10.000000m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20.000000m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30.000000m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6.000000m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12.000000m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18.000000m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t20.000000\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t20.000000\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t12.000000\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t12.000000\n"
+        );
+    }
+
+    @Test
+    public void testNthValueDecimal128OverPartitionRowsFrameSnapshotRoundTrip() throws Exception {
+        assertNthValueDecimalFrameRoundTrip(
+                "DECIMAL(38, 6)",
+                2,
+                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10.000000m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20.000000m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30.000000m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6.000000m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12.000000m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18.000000m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t20.000000\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t20.000000\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t12.000000\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t12.000000\n"
+        );
+    }
+
+    @Test
+    public void testNthValueDecimal128OverPartitionRowsUnboundedSnapshotRoundTrip() throws Exception {
+        assertNthValueDecimalFrameRoundTrip(
+                "DECIMAL(38, 6)",
+                2,
+                "ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10.000000m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20.000000m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30.000000m), " +
+                        "('2026-08-01T03:00:00.000000Z', 'a', 40.000000m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6.000000m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12.000000m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18.000000m), " +
+                        "('2026-08-01T03:00:00.000000Z', 'b', 24.000000m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t20.000000\n" +
+                        "2026-08-01T03:00:00.000000Z\ta\t20.000000\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t12.000000\n" +
+                        "2026-08-01T03:00:00.000000Z\tb\t12.000000\n"
+        );
+    }
+
+    @Test
+    public void testNthValueDecimal16OverPartitionRangeFrameSnapshotRoundTrip() throws Exception {
+        assertNthValueDecimalFrameRoundTrip(
+                "DECIMAL(4, 1)",
+                2,
+                "RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10.0m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20.0m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30.0m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6.0m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12.0m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18.0m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t20.0\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t20.0\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t12.0\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t12.0\n"
+        );
+    }
+
+    @Test
+    public void testNthValueDecimal16OverPartitionRowsFrameSnapshotRoundTrip() throws Exception {
+        assertNthValueDecimalFrameRoundTrip(
+                "DECIMAL(4, 1)",
+                2,
+                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10.0m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20.0m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30.0m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6.0m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12.0m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18.0m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t20.0\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t20.0\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t12.0\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t12.0\n"
+        );
+    }
+
+    @Test
+    public void testNthValueDecimal256AnchoredSnapshotRoundTrip() throws Exception {
+        assertNthValueDecimalAnchoredRoundTrip(
+                "DECIMAL(60, 0)",
+                2,
+                "('2026-08-01T00:00:00.000000Z', 'a', 10m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t20\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t20\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t12\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t12\n"
+        );
+    }
+
+    @Test
+    public void testNthValueDecimal256OverPartitionRangeFrameSnapshotRoundTrip() throws Exception {
+        assertNthValueDecimalFrameRoundTrip(
+                "DECIMAL(60, 0)",
+                2,
+                "RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t20\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t20\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t12\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t12\n"
+        );
+    }
+
+    @Test
+    public void testNthValueDecimal256OverPartitionRowsFrameSnapshotRoundTrip() throws Exception {
+        assertNthValueDecimalFrameRoundTrip(
+                "DECIMAL(60, 0)",
+                2,
+                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t20\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t20\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t12\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t12\n"
+        );
+    }
+
+    @Test
+    public void testNthValueDecimal256OverPartitionRowsUnboundedSnapshotRoundTrip() throws Exception {
+        assertNthValueDecimalFrameRoundTrip(
+                "DECIMAL(60, 0)",
+                2,
+                "ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30m), " +
+                        "('2026-08-01T03:00:00.000000Z', 'a', 40m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18m), " +
+                        "('2026-08-01T03:00:00.000000Z', 'b', 24m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t20\n" +
+                        "2026-08-01T03:00:00.000000Z\ta\t20\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t12\n" +
+                        "2026-08-01T03:00:00.000000Z\tb\t12\n"
+        );
+    }
+
+    @Test
+    public void testNthValueDecimal32OverPartitionRangeFrameSnapshotRoundTrip() throws Exception {
+        assertNthValueDecimalFrameRoundTrip(
+                "DECIMAL(9, 3)",
+                2,
+                "RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10.000m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20.000m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30.000m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6.000m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12.000m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18.000m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t20.000\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t20.000\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t12.000\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t12.000\n"
+        );
+    }
+
+    @Test
+    public void testNthValueDecimal32OverPartitionRowsFrameSnapshotRoundTrip() throws Exception {
+        assertNthValueDecimalFrameRoundTrip(
+                "DECIMAL(9, 3)",
+                2,
+                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10.000m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20.000m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30.000m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6.000m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12.000m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18.000m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t20.000\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t20.000\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t12.000\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t12.000\n"
+        );
+    }
+
+    @Test
+    public void testNthValueDecimal8OverPartitionRangeFrameSnapshotRoundTrip() throws Exception {
+        assertNthValueDecimalFrameRoundTrip(
+                "DECIMAL(2, 0)",
+                2,
+                "RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t20\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t20\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t12\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t12\n"
+        );
+    }
+
+    @Test
+    public void testNthValueDecimal8OverPartitionRowsFrameSnapshotRoundTrip() throws Exception {
+        assertNthValueDecimalFrameRoundTrip(
+                "DECIMAL(2, 0)",
+                2,
+                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t20\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t20\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t12\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t12\n"
+        );
+    }
+
+    @Test
+    public void testNthValueDecimal64AnchoredSnapshotRoundTrip() throws Exception {
+        // nth_value(DECIMAL(18,2), 2) over an anchored partition (UNBOUNDED
+        // PRECEDING AND CURRENT ROW) - the [value, count] accumulator shape with
+        // newCompactionScratch + count==0 re-anchor.
+        assertNthValueDecimalAnchoredRoundTrip(
+                "DECIMAL(18, 2)",
+                2,
+                "('2026-08-01T00:00:00.000000Z', 'a', 10.00m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20.00m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30.00m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6.00m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12.00m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18.00m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t20.00\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t20.00\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t12.00\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t12.00\n"
+        );
+    }
+
+    @Test
+    public void testNthValueDecimal64OverPartitionRangeFrameSnapshotRoundTrip() throws Exception {
+        // nth_value(DECIMAL(18,2), 2) over a bounded RANGE frame - 8-byte (LONG)
+        // ring element; [frameSize, startOffset, size, capacity, firstIdx] state.
+        assertNthValueDecimalFrameRoundTrip(
+                "DECIMAL(18, 2)",
+                2,
+                "RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10.00m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20.00m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30.00m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6.00m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12.00m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18.00m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t20.00\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t20.00\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t12.00\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t12.00\n"
+        );
+    }
+
+    @Test
+    public void testNthValueDecimal64OverPartitionRowsFrameSnapshotRoundTrip() throws Exception {
+        // nth_value(DECIMAL(18,2), 2) over a bounded ROWS frame - fixed-size LONG
+        // ring; [loIdx, startOffset, count] state.
+        assertNthValueDecimalFrameRoundTrip(
+                "DECIMAL(18, 2)",
+                2,
+                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10.00m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20.00m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30.00m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6.00m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12.00m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18.00m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t20.00\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t20.00\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t12.00\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t12.00\n"
+        );
+    }
+
+    @Test
+    public void testNthValueDecimal64OverPartitionRowsUnboundedSnapshotRoundTrip() throws Exception {
+        // nth_value(DECIMAL(18,2), 2) over ROWS UNBOUNDED PRECEDING AND 1 PRECEDING
+        // - the O(1) [count, lockedValue] shape; the 2nd value locks and is emitted
+        // once the frame contains at least n rows.
+        assertNthValueDecimalFrameRoundTrip(
+                "DECIMAL(18, 2)",
+                2,
+                "ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10.00m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20.00m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30.00m), " +
+                        "('2026-08-01T03:00:00.000000Z', 'a', 40.00m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6.00m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12.00m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18.00m), " +
+                        "('2026-08-01T03:00:00.000000Z', 'b', 24.00m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t20.00\n" +
+                        "2026-08-01T03:00:00.000000Z\ta\t20.00\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t12.00\n" +
+                        "2026-08-01T03:00:00.000000Z\tb\t12.00\n"
+        );
     }
 
     @Test
