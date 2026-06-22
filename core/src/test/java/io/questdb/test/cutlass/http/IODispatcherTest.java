@@ -267,7 +267,7 @@ public class IODispatcherTest extends AbstractTest {
                 new Thread(() -> {
                     try {
                         while (serverRunning.get()) {
-                            dispatcher.run(0);
+                            dispatcher.run();
                             dispatcher.processIOQueue((operation, context, dispatcher1) -> {
                                 if (operation == IOOperation.WRITE) {
                                     Assert.assertEquals(1024, Net.send(context.getFd(), context.buffer, 1024));
@@ -366,7 +366,7 @@ public class IODispatcherTest extends AbstractTest {
                 new Thread(() -> {
                     try {
                         while (dispatcherRunning.get()) {
-                            dispatcher.run(0);
+                            dispatcher.run();
                         }
                     } finally {
                         dispatcherHaltLatch.countDown();
@@ -456,7 +456,7 @@ public class IODispatcherTest extends AbstractTest {
                 new Thread(() -> {
                     try {
                         while (serverRunning.get()) {
-                            dispatcher.run(0);
+                            dispatcher.run();
                             dispatcher.processIOQueue((operation, context, dispatcher1) -> handleClientOperation(context, operation, selector, dispatcher1));
                         }
                     } finally {
@@ -5075,7 +5075,7 @@ public class IODispatcherTest extends AbstractTest {
                     new Thread(() -> {
                         try {
                             do {
-                                dispatcher.run(0);
+                                dispatcher.run();
                                 dispatcher.processIOQueue((operation, context, dispatcher1) -> handleClientOperation(context, operation, selector, dispatcher1));
                             } while (serverRunning.get());
                         } finally {
@@ -5311,7 +5311,7 @@ public class IODispatcherTest extends AbstractTest {
                 new Thread(() -> {
                     try {
                         do {
-                            dispatcher.run(0);
+                            dispatcher.run();
                             dispatcher.processIOQueue((operation, context, dispatcher1) -> handleClientOperation(context, operation, null, dispatcher1));
                         } while (serverRunning.get());
                     } finally {
@@ -5886,7 +5886,7 @@ public class IODispatcherTest extends AbstractTest {
                 new Thread(() -> {
                     try {
                         while (serverRunning.get()) {
-                            dispatcher.run(0);
+                            dispatcher.run();
                             dispatcher.processIOQueue((operation, context, dispatcher1) -> handleClientOperation(context, operation, selector, dispatcher1));
                         }
                     } finally {
@@ -6062,7 +6062,7 @@ public class IODispatcherTest extends AbstractTest {
                 new Thread(() -> {
                     try {
                         while (serverRunning.get()) {
-                            dispatcher.run(0);
+                            dispatcher.run();
                             dispatcher.processIOQueue((operation, context, dispatcher1) -> handleClientOperation(context, operation, selector, dispatcher1));
                         }
                     } finally {
@@ -6215,7 +6215,7 @@ public class IODispatcherTest extends AbstractTest {
                 new Thread(() -> {
                     try {
                         while (serverRunning.get()) {
-                            dispatcher.run(0);
+                            dispatcher.run();
                             dispatcher.processIOQueue((operation, context, dispatcher1) -> handleClientOperation(context, operation, selector, dispatcher1));
                         }
                     } finally {
@@ -6904,7 +6904,7 @@ public class IODispatcherTest extends AbstractTest {
 
                                 try {
                                     while (serverRunning.get()) {
-                                        dispatcher.run(0);
+                                        dispatcher.run();
                                         dispatcher.processIOQueue((operation, context, dispatcher1) -> handleClientOperation(context, operation, selector, dispatcher1));
                                     }
                                 } finally {
@@ -7029,7 +7029,7 @@ public class IODispatcherTest extends AbstractTest {
                     try (ApplyWal2TableJob walApplyJob = createWalApplyJob(engine)) {
                         while (queryError.get() == null) {
                             walApplyJob.drain(0);
-                            new CheckWalTransactionsJob(engine).run(0);
+                            new CheckWalTransactionsJob(engine).run();
                             // run once again as there might be notifications to handle now
                             walApplyJob.drain(0);
                         }
@@ -7151,7 +7151,7 @@ public class IODispatcherTest extends AbstractTest {
                         try (ApplyWal2TableJob walApplyJob = createWalApplyJob(engine)) {
                             while (queryError.get() == null) {
                                 walApplyJob.drain(0);
-                                new CheckWalTransactionsJob(engine).run(0);
+                                new CheckWalTransactionsJob(engine).run();
                                 // run once again as there might be notifications to handle now
                                 walApplyJob.drain(0);
                             }
@@ -7844,7 +7844,7 @@ public class IODispatcherTest extends AbstractTest {
 
                         try {
                             do {
-                                dispatcher.run(0);
+                                dispatcher.run();
                                 dispatcher.processIOQueue(requestProcessor);
                                 // We can't use Os.pause() here since we rely on thread interrupts.
                                 LockSupport.parkNanos(1);

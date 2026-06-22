@@ -324,7 +324,7 @@ public class WorkerPoolManagerTest {
     }
 
     private static Job fastCountDownJob(SOCountDownLatch endLatch) {
-        return (workerId, runStatus) -> {
+        return workerContext -> {
             endLatch.countDown();
             if (endLatch.getCount() < 1) {
                 throw new RuntimeException(END_MESSAGE);
@@ -334,7 +334,7 @@ public class WorkerPoolManagerTest {
     }
 
     private static Job scrapeIntoPrometheusJob(AtomicReference<DirectUtf8Sink> sink) {
-        return (workerId, runStatus) -> {
+        return workerContext -> {
             final DirectUtf8Sink s = sink.get();
             s.clear();
             Metrics.ENABLED.scrapeIntoPrometheus(s);
@@ -343,7 +343,7 @@ public class WorkerPoolManagerTest {
     }
 
     private static Job slowCountUpJob(AtomicInteger count) {
-        return (workerId, runStatus) -> {
+        return workerContext -> {
             count.incrementAndGet();
             return false; // not eager
         };

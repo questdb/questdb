@@ -34,6 +34,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -112,10 +113,14 @@ public class ArrayAggUnsortedRunReproTest extends AbstractCairoTest {
                         final int threadId = t;
                         new Thread(() -> {
                             int localInversions = 0;
-                            try {
+                            // SqlExecutionContext is not thread-safe (it carries a single
+                            // reader-pool supervisor slot, among other per-query state), so
+                            // every thread compiles and runs against its own context.
+                            try (SqlExecutionContext threadCtx =
+                                         TestUtils.createSqlExecutionCtx(engine, sqlExecutionContext.getSharedQueryWorkerCount())) {
                                 TestUtils.await(barrier);
                                 for (int iter = 0; iter < NUM_ITERATIONS; iter++) {
-                                    localInversions += countInversions(engine, sqlExecutionContext, query);
+                                    localInversions += countInversions(engine, threadCtx, query);
                                 }
                             } catch (Throwable th) {
                                 errors.put(threadId, th);
@@ -124,6 +129,7 @@ public class ArrayAggUnsortedRunReproTest extends AbstractCairoTest {
                                     threadsThatSawInversions.incrementAndGet();
                                     totalInversions.addAndGet(localInversions);
                                 }
+                                Path.clearThreadLocals();
                                 latch.countDown();
                             }
                         }, "repro-" + threadId).start();

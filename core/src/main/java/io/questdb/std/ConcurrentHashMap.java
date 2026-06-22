@@ -64,7 +64,6 @@ import org.jetbrains.annotations.NotNull;
 
 import java.io.ObjectStreamField;
 import java.io.Serializable;
-import java.lang.ThreadLocal;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.util.AbstractMap;
@@ -609,7 +608,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
             new ObjectStreamField("segmentShift", Integer.TYPE)
     };
     private static final long serialVersionUID = 7249069246763182397L;
-    private final java.lang.ThreadLocal<Traverser<V>> tlTraverser = ThreadLocal.withInitial(Traverser::new);
+    private final CarrierLocal<Traverser<V>> tlTraverser = CarrierLocal.withInitial(Traverser::new);
     /**
      * The array of bins. Lazily initialized upon first insertion.
      * Size is always a power of two. Accessed directly by iterators.
@@ -2489,7 +2488,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
             int m = (int) sz;
             T[] r = (a.length >= m) ? a :
                     (T[]) java.lang.reflect.Array
-                          .newInstance(a.getClass().getComponentType(), m);
+                            .newInstance(a.getClass().getComponentType(), m);
             int n = r.length;
             int i = 0;
             for (E e : this) {
@@ -2576,7 +2575,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
             implements Set<Map.Entry<CharSequence, V>>, java.io.Serializable {
         private static final long serialVersionUID = 2249069246763182397L;
 
-        private final ThreadLocal<EntryIterator<V>> tlEntryIterator = ThreadLocal.withInitial(EntryIterator::new);
+        private final CarrierLocal<EntryIterator<V>> tlEntryIterator = CarrierLocal.withInitial(EntryIterator::new);
 
         EntrySetView(ConcurrentHashMap<V> map) {
             super(map);
@@ -2712,7 +2711,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
     public static class KeySetView<V> extends CollectionView<V, CharSequence>
             implements Set<CharSequence>, java.io.Serializable {
         private static final long serialVersionUID = 7249069246763182397L;
-        private final ThreadLocal<KeyIterator<V>> tlKeyIterator = ThreadLocal.withInitial(KeyIterator::new);
+        private final CarrierLocal<KeyIterator<V>> tlKeyIterator = CarrierLocal.withInitial(KeyIterator::new);
         private final V value;
 
         KeySetView(ConcurrentHashMap<V> map, V value) {  // non-public
@@ -3714,7 +3713,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
     static final class ValuesView<V> extends CollectionView<V, V>
             implements Collection<V>, java.io.Serializable {
         private static final long serialVersionUID = 2249069246763182397L;
-        private final ThreadLocal<ValueIterator<V>> tlValueIterator = ThreadLocal.withInitial(ValueIterator::new);
+        private final CarrierLocal<ValueIterator<V>> tlValueIterator = CarrierLocal.withInitial(ValueIterator::new);
 
         ValuesView(ConcurrentHashMap<V> map) {
             super(map);

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<settings xmlns="http://maven.apache.org/SETTINGS/1.2.0"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.2.0 https://maven.apache.org/xsd/settings-1.2.0.xsd">
+
+  <mirrors>
+    <mirror>
+      <id>hetzner-reposilite</id>
+      <name>Hetzner Reposilite Maven Cache</name>
+      <url>http://maven.internal:8081/releases/</url>
+      <mirrorOf>central</mirrorOf>
+    </mirror>
+
+    <!--
+      Maven 3.8.1+ ships a built-in "maven-default-http-blocker" mirror that refuses
+      any plain-HTTP repository. Our internal cache speaks HTTP over the private Hetzner
+      network (maven.internal is private-only, not reachable publicly), so we neutralise
+      the blocker by pointing its mirrorOf at a repo id that never matches. Remove this
+      block once the cache is fronted by HTTPS.
+    -->
+    <mirror>
+      <id>maven-default-http-blocker</id>
+      <name>Disable HTTP blocker for trusted internal mirror</name>
+      <url>http://0.0.0.0/</url>
+      <mirrorOf>dummy-disabled</mirrorOf>
+    </mirror>
+  </mirrors>
+
+</settings>

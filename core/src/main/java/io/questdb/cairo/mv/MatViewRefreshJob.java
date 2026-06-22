@@ -53,6 +53,8 @@ import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.Job;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTracker;
+import io.questdb.std.MemoryTrackerWorkload;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
@@ -90,15 +92,21 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private final RefreshContext refreshContext = new RefreshContext();
     private final MatViewRefreshSqlExecutionContext refreshSqlExecutionContext;
     private final MatViewRefreshTask refreshTask = new MatViewRefreshTask();
+    private final int sharedQueryWorkerCount;
     private final MatViewStateStore stateStore;
     private final TimeZoneIntervalIterator timeZoneIterator = new TimeZoneIntervalIterator();
     private final WalTxnRangeLoader txnRangeLoader;
-    private final int workerId;
 
     public MatViewRefreshJob(int workerId, CairoEngine engine, int sharedQueryWorkerCount) {
+        // workerId is accepted for source-compatibility; the rotation framework
+        // makes the per-worker invariant a per-cont-snapshot invariant instead.
+        this(engine, sharedQueryWorkerCount);
+    }
+
+    public MatViewRefreshJob(CairoEngine engine, int sharedQueryWorkerCount) {
         try {
-            this.workerId = workerId;
             this.engine = engine;
+            this.sharedQueryWorkerCount = sharedQueryWorkerCount;
             this.refreshSqlExecutionContext = new MatViewRefreshSqlExecutionContext(engine, sharedQueryWorkerCount);
             this.graph = engine.getMatViewGraph();
             this.stateStore = engine.getMatViewStateStore();
@@ -131,16 +139,38 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     }
 
     @Override
+    public Job cloneInstance() {
+        return new MatViewRefreshJob(engine, sharedQueryWorkerCount);
+    }
+
+    @Override
     public void close() {
-        LOG.debug().$("materialized view refresh job closing [workerId=").$(workerId).I$();
+        LOG.debug().$("materialized view refresh job closing").$();
         Misc.free(refreshSqlExecutionContext);
         Misc.free(txnRangeLoader);
     }
 
     @Override
-    public boolean run(int workerId, @NotNull RunStatus runStatus) {
-        // there is job instance per thread, the worker id must never change for this job
-        assert this.workerId == workerId;
+    public void closeInstance() {
+        // cloneInstance() mints a fresh job per generation, so the pool frees
+        // each instance's native resources through this hook at halt. Misc.free
+        // nulls the fields, keeping the call idempotent.
+        close();
+    }
+
+    @Override
+    public void recycleInstance() {
+        // Per-iteration scratch is overwritten on entry to each refresh task.
+        // Clearing here is defensive against stale state surviving into the
+        // snapshot's next reuse.
+        childViewSink.clear();
+        childViewSink2.clear();
+        errorMsgSink.clear();
+        intervals.clear();
+    }
+
+    @Override
+    public boolean run(@NotNull WorkerContext workerContext) {
         return processNotifications();
     }
 
@@ -862,6 +892,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
             OUTER:
             for (int i = 0; i <= maxRetries; i++) {
+                // One tracker per refresh attempt; the finally releases it before each retry.
+                final MemoryTracker memoryTracker = engine.getMemoryTrackerProvider().acquire(
+                        refreshSqlExecutionContext.getSecurityContext(),
+                        viewTableToken.getTableId(),
+                        MemoryTrackerWorkload.MAT_VIEW_REFRESH
+                );
+                refreshSqlExecutionContext.setMemoryTracker(memoryTracker);
                 try {
                     if (factory == null) {
                         final String viewSql = viewDefinition.getMatViewSql();
@@ -1082,6 +1119,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         continue;
                     }
                     throw th;
+                } finally {
+                    refreshSqlExecutionContext.setMemoryTracker(null);
+                    memoryTracker.close();
                 }
             }
         } catch (Throwable th) {

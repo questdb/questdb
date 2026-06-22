@@ -827,13 +827,28 @@ public class TableSnapshotRestore implements QuietCloseable {
      * bound and resolved over it, and the caller owns the mapping and must
      * {@code munmap} it (capture {@code taskReader.getFileSize()} before
      * {@link ParquetMetaFileReader#clear()} resets it). The {@code data.parquet}
-     * truncation check must already have passed. Takes per-task
+     * truncation check must already have passed. An existing sidecar is trusted
+     * only when {@code onDiskSize == parquetFileSize}; a longer {@code data.parquet}
+     * (an in-place O3 rewrite captured mid-flight) forces regeneration even when
+     * the stale footer still resolves at the committed size. Takes per-task
      * {@code path}/{@code taskReader} as it runs on parallel executor threads.
      */
-    private long mapResolvableParquetMeta(Path path, int partitionDirLen, long parquetFileSize, ParquetMetaFileReader taskReader) {
+    private long mapResolvableParquetMeta(Path path, int partitionDirLen, long parquetFileSize, long onDiskSize, ParquetMetaFileReader taskReader) {
         path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
-        boolean regenerate = !ff.exists(path.$());
-        if (!regenerate) {
+        final boolean exists = ff.exists(path.$());
+        // Trust an existing _pm only when data.parquet is EXACTLY the committed
+        // size. When the file is longer (onDiskSize > parquetFileSize), the
+        // snapshot captured the partition mid in-place O3 rewrite: a later
+        // generation appended row groups and a new footer past the committed point
+        // and rewrote _pm to describe that later generation, while _txn still
+        // records the earlier committed size. resolveFooter() can still resolve a
+        // footer at the committed size, so the stale sidecar would be silently kept
+        // and then mis-read at the committed size -- a column chunk of the later
+        // generation lies past parquetFileSize, surfacing as "File out of
+        // specification" on the first merge/read and suspending a replica that
+        // replays over the restored partition. Regenerate from data.parquet at the
+        // committed size, which the size check above has already validated.
+        if (exists && onDiskSize == parquetFileSize) {
             long addr = 0;
             long size = 0;
             boolean resolved = false;
@@ -859,14 +874,19 @@ public class TableSnapshotRestore implements QuietCloseable {
             if (addr != 0) {
                 ff.munmap(addr, size, MemoryTag.MMAP_PARQUET_METADATA_READER);
             }
-            // Sidecar does not resolve at the committed size (stale, torn, or a
-            // partial file from a crashed restore). Trusting it would defer the
-            // failure to the first read, so remove and regenerate it.
+        }
+        if (exists) {
+            // The sidecar does not resolve at the committed size, or data.parquet
+            // is longer than committed (a stale _pm paired with an in-place
+            // regenerated data.parquet, a torn copy, or a partial file from a
+            // crashed restore). Trusting it would defer the failure to the first
+            // read, so remove and regenerate it.
             path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
             if (!ff.removeQuiet(path.$())) {
                 throw CairoException.critical(ff.errno()).put("cannot remove unresolvable _pm file [path=").put(path).put(']');
             }
-            LOG.info().$("removed unresolvable _pm of restored parquet partition for regeneration [path=").$(path).I$();
+            LOG.info().$("removed stale/unresolvable _pm of restored parquet partition for regeneration [path=").$(path)
+                    .$(", committed=").$(parquetFileSize).$(", onDisk=").$(onDiskSize).I$();
         }
 
         regenerateParquetMetaFile(path, partitionDirLen, parquetFileSize);
@@ -1110,7 +1130,7 @@ public class TableSnapshotRestore implements QuietCloseable {
         try {
             // Validate + (if needed) regenerate the sidecar, leaving it mapped and
             // its footer resolved. The only _pm map+CRC on this path.
-            parquetMetaAddr = mapResolvableParquetMeta(path, partitionDirLen, parquetFileSize, metaReader);
+            parquetMetaAddr = mapResolvableParquetMeta(path, partitionDirLen, parquetFileSize, onDiskSize, metaReader);
             parquetMetaFileSize = metaReader.getFileSize();
 
             if (!rebuildIndexes) {

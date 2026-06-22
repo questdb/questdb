@@ -735,14 +735,14 @@ public class QueryAssertion {
     private static void drainWalQueue(ApplyWal2TableJob walApplyJob, CairoEngine engine) {
         CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
         drainWalQueue0(walApplyJob);
-        if (checkWalTransactionsJob.run(0)) {
+        if (checkWalTransactionsJob.run()) {
             drainWalQueue0(walApplyJob);
         }
     }
 
     @SuppressWarnings("StatementWithEmptyBody")
     private static void drainWalQueue0(ApplyWal2TableJob walApplyJob) {
-        while (walApplyJob.run(0)) ;
+        while (walApplyJob.run()) ;
     }
 
     private static void releaseInactive(CairoEngine engine) {
@@ -750,6 +750,10 @@ public class QueryAssertion {
         engine.releaseInactiveTableSequencers();
         engine.resetNameRegistryMemory();
         engine.getTxnScoreboardPool().clear();
+        // Drain the per-workload memory-tracker pool: a tracker acquired by a
+        // registered query is returned to the pool (not freed) and would
+        // otherwise trip the leak checker as a retained native block.
+        engine.getMemoryTrackerProvider().clear();
         Assert.assertEquals("busy writer count", 0, engine.getBusyWriterCount());
         Assert.assertEquals("busy reader count", 0, engine.getBusyReaderCount());
     }

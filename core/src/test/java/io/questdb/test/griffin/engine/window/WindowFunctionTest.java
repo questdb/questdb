@@ -26,6 +26,8 @@ package io.questdb.test.griffin.engine.window;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.window.AvgDoubleWindowFunctionFactory;
@@ -370,6 +372,27 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCachedWindowEncodedSortUnboundedMemoryDoesNotOverflow() throws Exception {
+        // Pin the window sort caps to the server's unbounded default (Long.MAX_VALUE); summing the
+        // two operands must not overflow to a negative budget that collapses maxEntries to 0.
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_TREE_MAX_BYTES, Long.MAX_VALUE);
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_ROWID_MAX_BYTES, Long.MAX_VALUE);
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, v long) timestamp(ts)");
+            execute("insert into tab values (1, 30), (2, 10), (3, 20)");
+            assertQuery("SELECT ts, v, row_number() OVER (ORDER BY v) FROM tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("ts\tv\trow_number\n" +
+                            "1970-01-01T00:00:00.000001Z\t30\t3\n" +
+                            "1970-01-01T00:00:00.000002Z\t10\t1\n" +
+                            "1970-01-01T00:00:00.000003Z\t20\t2\n");
+        });
+    }
+
+    @Test
     public void testCachedWindowFactoryMaintainsOrderOfRecordsWithSameTimestamp1() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table nodts_tab (ts #TIMESTAMP, val int)", timestampType.getTypeName());
@@ -486,27 +509,6 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCachedWindowEncodedSortUnboundedMemoryDoesNotOverflow() throws Exception {
-        // Pin the window sort caps to the server's unbounded default (Long.MAX_VALUE); summing the
-        // two operands must not overflow to a negative budget that collapses maxEntries to 0.
-        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
-        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_TREE_MAX_BYTES, Long.MAX_VALUE);
-        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_ROWID_MAX_BYTES, Long.MAX_VALUE);
-        assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp, v long) timestamp(ts)");
-            execute("insert into tab values (1, 30), (2, 10), (3, 20)");
-            assertQuery("SELECT ts, v, row_number() OVER (ORDER BY v) FROM tab")
-                    .timestamp("ts")
-                    .expectSize()
-                    .noLeakCheck()
-                    .returns("ts\tv\trow_number\n" +
-                            "1970-01-01T00:00:00.000001Z\t30\t3\n" +
-                            "1970-01-01T00:00:00.000002Z\t10\t1\n" +
-                            "1970-01-01T00:00:00.000003Z\t20\t2\n");
-        });
-    }
-
-    @Test
     public void testCachedWindowLightCumeDistTwoPassUnderLightFactory() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
         assertMemoryLeak(() -> {
@@ -540,7 +542,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             assertQuery("SELECT row_number() OVER (ORDER BY d1, d2, d3) FROM tab")
                     .noLeakCheck()
                     .assertsPlan("""
-                            CachedWindow
+                            CachedWindowLight
                               orderedFunctions: [[d1, d2, d3] => [row_number()]]
                                 PageFrame
                                     Row forward scan
@@ -580,6 +582,28 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, v long) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab select x::timestamp, x from long_sequence(5_000)");
+            try {
+                assertExceptionNoLeakCheck("SELECT row_number() OVER (ORDER BY v) FROM tab");
+                Assert.fail("expected LimitOverflowException");
+            } catch (Exception e) {
+                TestUtils.assertContains(e.getMessage(), "memory exceeded in window encoded sort");
+            }
+        });
+    }
+
+    @Test
+    public void testCachedWindowLightEncodedSortVarcharKeyHeapOverflow() throws Exception {
+        // A VARCHAR window ORDER BY takes the variable encoded path: the key bytes spill into
+        // EncodedWindowSortBuffer's key heap (setKeyHeap + sortEncodedVarEntries). Pin the window
+        // sort caps tiny and feed long strings so the key heap, not the entry array, busts the
+        // combined budget, exercising the variable path's overflow guard. Subsequent runs of the
+        // cursor must not leak native memory.
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_TREE_MAX_BYTES, 4096);
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_ROWID_MAX_BYTES, 4096);
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, v VARCHAR) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab select x::timestamp, rnd_varchar(1000, 1000, 0) from long_sequence(100)");
             try {
                 assertExceptionNoLeakCheck("SELECT row_number() OVER (ORDER BY v) FROM tab");
                 Assert.fail("expected LimitOverflowException");
@@ -815,22 +839,45 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCachedWindowLightVarcharOrderByFallsBackToNonLight() throws Exception {
-        // VARCHAR sort keys cannot fit the encoded sort buffer, so the LIGHT dispatch gate
-        // refuses them and the query falls through to the non-light factory regardless of
-        // cairo.sql.window.cached.light.enabled. Plan label must be plain CachedWindow.
+    public void testCachedWindowLightVarcharOrderBy() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, v VARCHAR) timestamp(ts)", timestampType.getTypeName());
             assertQuery("SELECT row_number() OVER (ORDER BY v) FROM tab")
                     .noLeakCheck()
                     .assertsPlan("""
-                            CachedWindow
+                            CachedWindowLight
                               orderedFunctions: [[v] => [row_number()]]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tab
                             """);
+        });
+    }
+
+    @Test
+    public void testCachedWindowLightVarcharOrderByReturnsSortedRows() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, v VARCHAR) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 'banana'), (2, 'apple'), (3, NULL), (4, 'cherry'), (5, '')");
+            final String expected = """
+                    v\trn
+                    \t1
+                    \t2
+                    apple\t3
+                    banana\t4
+                    cherry\t5
+                    """;
+            final String query = "SELECT v, row_number() OVER (ORDER BY v) rn FROM tab ORDER BY v";
+            assertQuery(query)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery(query)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
@@ -1865,6 +1912,59 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCumeDistMixedPartitionKeyTypes() throws Exception {
+        // Defensive only: this test cannot regress-guard the copyKeyTypes() snapshot in
+        // CumeDist/PercentRank. cume_dist()/percent_rank() are two-pass, so they always take the
+        // cached path, where initRecordComparator() builds the partition map in-loop while the
+        // generator's reusable key-types buffer still describes this function's PARTITION BY -- the
+        // buffer is consumed before any later window column rebuilds it, so the snapshot is never
+        // load-bearing here and the test passes with or without it. The snapshot is still correct
+        // hardening (the streaming over-partition path can rebuild the buffer before use); the test
+        // that actually exercises and guards it is testRankOverPartitionMixedPartitionKeyTypes. This
+        // case stays as a paired-mixed-key smoke test on the cached path.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table tab (ts #TIMESTAMP, sym symbol, b byte) timestamp(ts) partition by day",
+                    timestampType.getTypeName()
+            );
+            execute("insert into tab values " +
+                    "(1,'a',1),(2,'a',2),(3,'b',1),(4,'b',2),(5,'a',1),(6,'b',2)");
+
+            assertQuery("SELECT b, sym, " +
+                    "round(cume_dist() OVER (PARTITION BY b ORDER BY ts),3) w0, " +
+                    "dense_rank() OVER (PARTITION BY sym ORDER BY ts) w1 FROM tab")
+                    .expectSize()
+                    .noLeakCheck()
+                    .withPlanContaining("CachedWindow")
+                    .returns("""
+                            b\tsym\tw0\tw1
+                            1\ta\t0.333\t1
+                            2\ta\t0.333\t2
+                            1\tb\t0.667\t1
+                            2\tb\t0.667\t2
+                            1\ta\t1.0\t3
+                            2\tb\t1.0\t3
+                            """);
+
+            assertQuery("SELECT b, sym, " +
+                    "round(percent_rank() OVER (PARTITION BY b ORDER BY ts),3) w0, " +
+                    "dense_rank() OVER (PARTITION BY sym ORDER BY ts) w1 FROM tab")
+                    .expectSize()
+                    .noLeakCheck()
+                    .withPlanContaining("CachedWindow")
+                    .returns("""
+                            b\tsym\tw0\tw1
+                            1\ta\t0.0\t1
+                            2\ta\t0.0\t2
+                            1\tb\t0.5\t1
+                            2\tb\t0.5\t2
+                            1\ta\t1.0\t3
+                            2\tb\t1.0\t3
+                            """);
+        });
+    }
+
+    @Test
     public void testCumeDistMultiColumnOrder() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, a long, b long) timestamp(ts)", timestampType.getTypeName());
@@ -2337,6 +2437,33 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000004Z\t2\t0.8
                             1970-01-01T00:00:00.000005Z\t3\t1.0
                             """));
+        });
+    }
+
+    @Test
+    public void testFirstValueDateOverPartitionByAndOrderBy() throws Exception {
+        // first_value() over a DATE argument; default frame's first row of each partition
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, grp symbol, d date) timestamp(ts)");
+            execute("insert into tab values " +
+                    "('2021-01-01T00:00:00.000000Z', 'A', '2020-01-03T00:00:00.030Z'::date), " +
+                    "('2021-01-02T00:00:00.000000Z', 'B', '2020-01-05T00:00:00.050Z'::date), " +
+                    "('2021-01-03T00:00:00.000000Z', 'A', '2020-01-01T00:00:00.010Z'::date), " +
+                    "('2021-01-04T00:00:00.000000Z', 'B', '2020-01-04T00:00:00.040Z'::date), " +
+                    "('2021-01-05T00:00:00.000000Z', 'A', '2020-01-02T00:00:00.020Z'::date)");
+            assertQuery("SELECT ts, grp, first_value(d) OVER (PARTITION BY grp ORDER BY ts) f FROM tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            ts\tgrp\tf
+                            2021-01-01T00:00:00.000000Z\tA\t2020-01-03T00:00:00.030Z
+                            2021-01-02T00:00:00.000000Z\tB\t2020-01-05T00:00:00.050Z
+                            2021-01-03T00:00:00.000000Z\tA\t2020-01-03T00:00:00.030Z
+                            2021-01-04T00:00:00.000000Z\tB\t2020-01-05T00:00:00.050Z
+                            2021-01-05T00:00:00.000000Z\tA\t2020-01-03T00:00:00.030Z
+                            """);
         });
     }
 
@@ -7178,6 +7305,34 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMaxDateWithPartitionByAndOrderBy() throws Exception {
+        // max() over a DATE argument resolves to the dedicated DATE window factory; the 3-digit
+        // millisecond rendering confirms the result column is DATE (a TIMESTAMP would render 6 digits)
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, grp symbol, d date) timestamp(ts)");
+            execute("insert into tab values " +
+                    "('2021-01-01T00:00:00.000000Z', 'A', '2020-01-03T00:00:00.030Z'::date), " +
+                    "('2021-01-02T00:00:00.000000Z', 'B', '2020-01-05T00:00:00.050Z'::date), " +
+                    "('2021-01-03T00:00:00.000000Z', 'A', '2020-01-01T00:00:00.010Z'::date), " +
+                    "('2021-01-04T00:00:00.000000Z', 'B', '2020-01-04T00:00:00.040Z'::date), " +
+                    "('2021-01-05T00:00:00.000000Z', 'A', '2020-01-02T00:00:00.020Z'::date)");
+            assertQuery("SELECT ts, grp, max(d) OVER (PARTITION BY grp ORDER BY ts) m FROM tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            ts\tgrp\tm
+                            2021-01-01T00:00:00.000000Z\tA\t2020-01-03T00:00:00.030Z
+                            2021-01-02T00:00:00.000000Z\tB\t2020-01-05T00:00:00.050Z
+                            2021-01-03T00:00:00.000000Z\tA\t2020-01-03T00:00:00.030Z
+                            2021-01-04T00:00:00.000000Z\tB\t2020-01-05T00:00:00.050Z
+                            2021-01-05T00:00:00.000000Z\tA\t2020-01-03T00:00:00.030Z
+                            """);
+        });
+    }
+
+    @Test
     public void testMaxDoubleOverPartitionedRangeWithLargeFrame() throws Exception {
         assertMemoryLeak(() -> {
             // Test similar to testMaxTimestampOverPartitionedRangeWithLargeFrame but for max(double)
@@ -8535,6 +8690,32 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             2021-01-03T00:00:00.000000Z\t3\tA\t2021-01-03T00:00:00.000000Z
                             2021-01-04T00:00:00.000000Z\t4\tA\t2021-01-04T00:00:00.000000Z
                             2021-01-05T00:00:00.000000Z\t5\tA\t2021-01-05T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testMinDateOverPartition() throws Exception {
+        // min() over a DATE argument on the two-pass cached path (PARTITION BY with no ORDER BY)
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, grp symbol, d date) timestamp(ts)");
+            execute("insert into tab values " +
+                    "('2021-01-01T00:00:00.000000Z', 'A', '2020-01-03T00:00:00.030Z'::date), " +
+                    "('2021-01-02T00:00:00.000000Z', 'B', '2020-01-05T00:00:00.050Z'::date), " +
+                    "('2021-01-03T00:00:00.000000Z', 'A', '2020-01-01T00:00:00.010Z'::date), " +
+                    "('2021-01-04T00:00:00.000000Z', 'B', '2020-01-04T00:00:00.040Z'::date), " +
+                    "('2021-01-05T00:00:00.000000Z', 'A', '2020-01-02T00:00:00.020Z'::date)");
+            assertQuery("SELECT ts, grp, min(d) OVER (PARTITION BY grp) m FROM tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            ts\tgrp\tm
+                            2021-01-01T00:00:00.000000Z\tA\t2020-01-01T00:00:00.010Z
+                            2021-01-02T00:00:00.000000Z\tB\t2020-01-04T00:00:00.040Z
+                            2021-01-03T00:00:00.000000Z\tA\t2020-01-01T00:00:00.010Z
+                            2021-01-04T00:00:00.000000Z\tB\t2020-01-04T00:00:00.040Z
+                            2021-01-05T00:00:00.000000Z\tA\t2020-01-01T00:00:00.010Z
                             """);
         });
     }
@@ -10870,6 +11051,32 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000001Z\t10.0\tnull
                             1970-01-01T00:00:00.000002Z\t20.0\tnull
                             """));
+        });
+    }
+
+    @Test
+    public void testNthValueDateOverPartition() throws Exception {
+        // nth_value() over a DATE argument on the cached path; 2nd row (ts order) of each partition
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, grp symbol, d date) timestamp(ts)");
+            execute("insert into tab values " +
+                    "('2021-01-01T00:00:00.000000Z', 'A', '2020-01-03T00:00:00.030Z'::date), " +
+                    "('2021-01-02T00:00:00.000000Z', 'B', '2020-01-05T00:00:00.050Z'::date), " +
+                    "('2021-01-03T00:00:00.000000Z', 'A', '2020-01-01T00:00:00.010Z'::date), " +
+                    "('2021-01-04T00:00:00.000000Z', 'B', '2020-01-04T00:00:00.040Z'::date), " +
+                    "('2021-01-05T00:00:00.000000Z', 'A', '2020-01-02T00:00:00.020Z'::date)");
+            assertQuery("SELECT ts, grp, nth_value(d, 2) OVER (PARTITION BY grp) n FROM tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            ts\tgrp\tn
+                            2021-01-01T00:00:00.000000Z\tA\t2020-01-01T00:00:00.010Z
+                            2021-01-02T00:00:00.000000Z\tB\t2020-01-04T00:00:00.040Z
+                            2021-01-03T00:00:00.000000Z\tA\t2020-01-01T00:00:00.010Z
+                            2021-01-04T00:00:00.000000Z\tB\t2020-01-04T00:00:00.040Z
+                            2021-01-05T00:00:00.000000Z\tA\t2020-01-01T00:00:00.010Z
+                            """);
         });
     }
 
@@ -16838,6 +17045,62 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNullLiteralArgumentRejectedWithCleanError() throws Exception {
+        // A window value/navigation function whose argument is the untyped null literal used to leak an
+        // internal "IllegalArgumentException: Unexpected column type: NULL" from the cached window path.
+        // Worse, overload resolution over an untyped NULL ties across every typed variant of the function
+        // (NULL to any type has zero overload distance), so the winner - and thus the behaviour - depended
+        // on classpath scan order: a clean rejection on one platform, a "not yet implemented for NULL"
+        // factory error on another, or even silent acceptance returning NULLs. FunctionParser now rejects
+        // an untyped NULL window argument before any factory runs, so every function gives the same clean
+        // SqlException at the same position on every platform, across frames (streaming and cached alike).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x DOUBLE, g SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (1.0, 'A', 1_000_000), (2.0, 'A', 2_000_000), (3.0, 'B', 3_000_000)");
+
+            final String contains = "does not support an untyped NULL argument";
+
+            // lead reads ahead, so it always takes the cached path - the original repro from the fuzzer.
+            assertExceptionNoLeakCheck("SELECT lead(null, 2) OVER (ORDER BY ts) FROM t", 7, contains);
+            assertExceptionNoLeakCheck("SELECT lead(null) OVER (ORDER BY ts) FROM t", 7, contains);
+
+            // min(null) resolves to a NULL output type; the DESC ROWS frame is the original repro
+            // (cached path), while the ascending and default frames take the streaming path. All three
+            // now reject consistently rather than crashing on one and silently returning nulls on another.
+            assertExceptionNoLeakCheck(
+                    "SELECT min(null) OVER (ORDER BY ts DESC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t",
+                    7,
+                    contains
+            );
+            assertExceptionNoLeakCheck(
+                    "SELECT min(null) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t",
+                    7,
+                    contains
+            );
+            assertExceptionNoLeakCheck("SELECT min(null) OVER (ORDER BY ts) FROM t", 7, contains);
+
+            // The rejection is independent of the timestamp type wrapping in this suite, and a
+            // PARTITION BY does not change it.
+            assertExceptionNoLeakCheck("SELECT lead(null, 1) OVER (PARTITION BY g ORDER BY ts) FROM t", 7, contains);
+
+            // nth_value over an untyped NULL is rejected with the same clean message as every other
+            // window function, never leaking the internal exception.
+            assertExceptionNoLeakCheck("SELECT nth_value(null, 2) OVER (ORDER BY ts) FROM t", 7, contains);
+
+            // The error message points at a concrete cast as the fix, so the cast must actually work and
+            // compute over NULL, returning a NULL column.
+            assertQuery("SELECT lead(null::double, 2) OVER (ORDER BY ts) FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("lead\nnull\nnull\nnull\n");
+            assertQuery("SELECT min(null::double) OVER (ORDER BY ts DESC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("min\nnull\nnull\nnull\n");
+        });
+    }
+
+    @Test
     public void testPartitionByAndOrderByColumnPushdown() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, d double, s symbol, c VARCHAR) timestamp(ts)", timestampType.getTypeName());
@@ -17062,6 +17325,55 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             A-1\t2024-01-01T00:00:01.000000Z
                             A-2\t2024-01-01T00:00:01.000000Z
                             B-1\t2024-01-01T00:00:02.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testRangeFrameTimestampIndexInCachedWindow() throws Exception {
+        // A RANGE-framed window function reads the designated timestamp from the record it is
+        // given. When two window functions order differently (here count by ts DESC, min by ts
+        // ASC) the query takes the CachedWindow path and the functions read a record chain whose
+        // columns are reordered: window outputs occupy the leading slots and the base columns
+        // (including the non-projected ts) follow. The min function used to read the timestamp at
+        // the base cursor's ts index, which in the chain landed on its own as-yet-unwritten output
+        // slot, so its RANGE frame was computed over garbage and the min came out wrong. The fix
+        // remaps the timestamp index to where ts actually sits in the chain.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table tab (g symbol, x long, v long, ts #TIMESTAMP) timestamp(ts) partition by day",
+                    timestampType.getTypeName()
+            );
+            // The small early 'a' value (1) sits more than 1 HOUR before the later 'a' rows, so the
+            // correct RANGE frame excludes it. Reading the wrong (zero-initialised) chain slot as the
+            // timestamp instead collapses the frame to the whole partition prefix, which would keep
+            // that 1 as the running minimum -- so the data deliberately separates the two outcomes.
+            execute("insert into tab values " +
+                    "('a', 0, 1, '2024-01-01T00:00:00')," +
+                    "('b', 0, 4, '2024-01-01T01:00:00')," +
+                    "('b', 0, 2, '2024-01-01T01:30:00')," +
+                    "('a', 0, 8, '2024-01-01T02:00:00')," +
+                    "('a', 0, 6, '2024-01-01T02:30:00')," +
+                    "('a', 0, 9, '2024-01-01T05:00:00')");
+
+            // ts is not projected, so in the chain it is appended after the window outputs and the
+            // streaming-vs-cached timestamp index differs. The CachedWindow min must still frame on
+            // the real timestamp.
+            assertQuery("SELECT g, " +
+                    "count(v) OVER (PARTITION BY g ORDER BY ts DESC) cnt, " +
+                    "min(v) OVER (PARTITION BY g ORDER BY ts RANGE BETWEEN 1 HOUR PRECEDING AND CURRENT ROW) mn " +
+                    "FROM tab")
+                    .expectSize()
+                    .noLeakCheck()
+                    .withPlanContaining("CachedWindow")
+                    .returns("""
+                            g\tcnt\tmn
+                            a\t4\t1
+                            b\t2\t4
+                            b\t1\t2
+                            a\t3\t8
+                            a\t2\t6
+                            a\t1\t9
                             """);
         });
     }
@@ -17314,6 +17626,96 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000002Z\tk1\t1\t1
                             1970-01-01T00:00:00.000002Z\tk1\t1\t1
                             """));
+        });
+    }
+
+    @Test
+    public void testRankOverPartitionMixedPartitionKeyTypes() throws Exception {
+        // rank()/dense_rank() over (partition by ... order by ts) take the streaming
+        // WindowRecordCursorFactory path, where the partition map is built lazily, after the whole
+        // projection has been walked. The code generator reuses one key-types buffer across window
+        // columns and rebuilds it for each PARTITION BY, so when two window functions partition by
+        // differently typed keys the streaming rank/dense_rank used to build its map from the last
+        // window column's key types instead of its own. That either crashed (the partition sink
+        // wrote a type the wrongly picked map could not hold) or silently mis-keyed the partitions.
+        // A single rank function, or several sharing one partition key, masked it.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table tab (ts #TIMESTAMP, sym symbol, b byte, c1 decimal(76,3), c2 decimal(76,3)) timestamp(ts) partition by day",
+                    timestampType.getTypeName()
+            );
+            execute("insert into tab values " +
+                    "(1,'a',1,10,100)," +
+                    "(2,'a',2,10,200)," +
+                    "(3,'b',1,20,100)," +
+                    "(4,'b',2,10,200)," +
+                    "(5,'a',1,20,100)," +
+                    "(6,'b',2,20,200)");
+
+            // BYTE partition key (rank, not last) followed by a SYMBOL partition key (dense_rank).
+            // Before the fix the rank map was built for the SYMBOL key and the BYTE partition sink's
+            // putByte threw UnsupportedOperationException on the picked Unordered4Map. rank is first
+            // here, so it is the one mis-built.
+            assertQuery("SELECT b, sym, " +
+                    "rank() OVER (PARTITION BY b ORDER BY ts) w0, " +
+                    "dense_rank() OVER (PARTITION BY sym ORDER BY ts) w1 FROM tab")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .withPlanContaining("Window")
+                    .withPlanNotContaining("CachedWindow")
+                    .returns("""
+                            b\tsym\tw0\tw1
+                            1\ta\t1\t1
+                            2\ta\t1\t2
+                            1\tb\t2\t1
+                            2\tb\t2\t2
+                            1\ta\t3\t3
+                            2\tb\t3\t3
+                            """);
+
+            // Swapping the order puts dense_rank (SYMBOL key) first and rank (BYTE key) last; the
+            // mis-built map is now dense_rank's, confirming the bug is about position, not function.
+            assertQuery("SELECT b, sym, " +
+                    "dense_rank() OVER (PARTITION BY sym ORDER BY ts) w0, " +
+                    "rank() OVER (PARTITION BY b ORDER BY ts) w1 FROM tab")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .withPlanContaining("Window")
+                    .withPlanNotContaining("CachedWindow")
+                    .returns("""
+                            b\tsym\tw0\tw1
+                            1\ta\t1\t1
+                            2\ta\t2\t1
+                            1\tb\t1\t2
+                            2\tb\t2\t2
+                            1\ta\t3\t3
+                            2\tb\t3\t3
+                            """);
+
+            // The documented fuzzer repro: a wide DECIMAL(76,3) (Decimal256) partition key. dense_rank
+            // partitions by the single-column c2 key while a later window function partitions by the
+            // two-column (sym, c1) key, so a stale key-types reference made dense_rank build a
+            // two-column map fed by its single-column sink and silently report rank 1 for every row.
+            // min(ts) is cast to long so the expected ticks are stable across timestamp precisions.
+            assertQuery("SELECT c2, " +
+                    "dense_rank() OVER (PARTITION BY c2 ORDER BY ts) dr, " +
+                    "min(ts) OVER (PARTITION BY sym, c1 ORDER BY ts)::long m FROM tab")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .withPlanContaining("Window")
+                    .withPlanNotContaining("CachedWindow")
+                    .returns("""
+                            c2\tdr\tm
+                            100.000\t1\t1
+                            200.000\t1\t1
+                            100.000\t2\t3
+                            200.000\t2\t4
+                            100.000\t3\t5
+                            200.000\t3\t3
+                            """);
         });
     }
 
@@ -17625,6 +18027,159 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         3\t3\t0.6693837147631712\tBB\t1970-01-10T06:13:20.000000Z
                         5\t5\t0.8756771741121929\tBB\t1970-01-11T10:00:00.000000Z
                         """));
+    }
+
+    @Test
+    public void testRankWithUnserializablePassThroughColumn() throws Exception {
+        // rank()/dense_rank() over (partition by ... order by ts) takes the streaming
+        // WindowRecordCursorFactory path when the order matches the designated timestamp. That path
+        // used to copy the whole projected row into a MapValue, which threw
+        // UnsupportedOperationException for any pass-through column the MapValue cannot hold (UUID,
+        // STRING, VARCHAR, BINARY, LONG256, arrays, ...). Only the ORDER BY columns are needed, so
+        // the pass-through columns must not break compilation.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table tab (ts #TIMESTAMP, g symbol, u uuid, str string, vc varchar, l256 long256, arr double[]) timestamp(ts) partition by day",
+                    timestampType.getTypeName()
+            );
+            execute("insert into tab values " +
+                    "(1,'a','00000000-0000-0000-0000-000000000001','s1','v1'::varchar,'0x01'::long256,ARRAY[1.0])," +
+                    "(1,'a','00000000-0000-0000-0000-000000000002','s2','v2'::varchar,'0x02'::long256,ARRAY[2.0])," +
+                    "(1,'b','00000000-0000-0000-0000-000000000003','s3','v3'::varchar,'0x03'::long256,ARRAY[3.0])," +
+                    "(2,'a','00000000-0000-0000-0000-000000000004','s4','v4'::varchar,'0x04'::long256,ARRAY[4.0])," +
+                    "(2,'b','00000000-0000-0000-0000-000000000005','s5','v5'::varchar,'0x05'::long256,ARRAY[5.0])," +
+                    "(2,'b','00000000-0000-0000-0000-000000000006','s6','v6'::varchar,'0x06'::long256,ARRAY[6.0])," +
+                    "(3,'a','00000000-0000-0000-0000-000000000007','s7','v7'::varchar,'0x07'::long256,ARRAY[7.0])," +
+                    "(3,'a','00000000-0000-0000-0000-000000000008','s8','v8'::varchar,'0x08'::long256,ARRAY[8.0])," +
+                    "(3,'a','00000000-0000-0000-0000-000000000009','s9','v9'::varchar,'0x09'::long256,ARRAY[9.0])");
+
+            // UUID pass-through (the documented repro). Confirm the streaming Window path is used.
+            assertQuery("SELECT u, dense_rank() OVER (PARTITION BY g ORDER BY ts) dr, rank() OVER (PARTITION BY g ORDER BY ts) r FROM tab")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .withPlanContaining("Window")
+                    .withPlanNotContaining("CachedWindow")
+                    .returns("""
+                            u\tdr\tr
+                            00000000-0000-0000-0000-000000000001\t1\t1
+                            00000000-0000-0000-0000-000000000002\t1\t1
+                            00000000-0000-0000-0000-000000000003\t1\t1
+                            00000000-0000-0000-0000-000000000004\t2\t3
+                            00000000-0000-0000-0000-000000000005\t2\t2
+                            00000000-0000-0000-0000-000000000006\t2\t2
+                            00000000-0000-0000-0000-000000000007\t3\t4
+                            00000000-0000-0000-0000-000000000008\t3\t4
+                            00000000-0000-0000-0000-000000000009\t3\t4
+                            """);
+
+            // STRING pass-through.
+            assertQuery("SELECT str, dense_rank() OVER (PARTITION BY g ORDER BY ts) dr, rank() OVER (PARTITION BY g ORDER BY ts) r FROM tab")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            str\tdr\tr
+                            s1\t1\t1
+                            s2\t1\t1
+                            s3\t1\t1
+                            s4\t2\t3
+                            s5\t2\t2
+                            s6\t2\t2
+                            s7\t3\t4
+                            s8\t3\t4
+                            s9\t3\t4
+                            """);
+
+            // VARCHAR pass-through.
+            assertQuery("SELECT vc, dense_rank() OVER (PARTITION BY g ORDER BY ts) dr, rank() OVER (PARTITION BY g ORDER BY ts) r FROM tab")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            vc\tdr\tr
+                            v1\t1\t1
+                            v2\t1\t1
+                            v3\t1\t1
+                            v4\t2\t3
+                            v5\t2\t2
+                            v6\t2\t2
+                            v7\t3\t4
+                            v8\t3\t4
+                            v9\t3\t4
+                            """);
+
+            // LONG256 pass-through.
+            assertQuery("SELECT l256, dense_rank() OVER (PARTITION BY g ORDER BY ts) dr, rank() OVER (PARTITION BY g ORDER BY ts) r FROM tab")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            l256\tdr\tr
+                            0x01\t1\t1
+                            0x02\t1\t1
+                            0x03\t1\t1
+                            0x04\t2\t3
+                            0x05\t2\t2
+                            0x06\t2\t2
+                            0x07\t3\t4
+                            0x08\t3\t4
+                            0x09\t3\t4
+                            """);
+
+            // DOUBLE[] pass-through.
+            assertQuery("SELECT arr, dense_rank() OVER (PARTITION BY g ORDER BY ts) dr, rank() OVER (PARTITION BY g ORDER BY ts) r FROM tab")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            arr\tdr\tr
+                            [1.0]\t1\t1
+                            [2.0]\t1\t1
+                            [3.0]\t1\t1
+                            [4.0]\t2\t3
+                            [5.0]\t2\t2
+                            [6.0]\t2\t2
+                            [7.0]\t3\t4
+                            [8.0]\t3\t4
+                            [9.0]\t3\t4
+                            """);
+
+            // Descending order also takes the streaming path (backward scan); exercise the negative
+            // direction with a UUID pass-through.
+            assertQuery("SELECT u, dense_rank() OVER (PARTITION BY g ORDER BY ts DESC) dr, rank() OVER (PARTITION BY g ORDER BY ts DESC) r FROM tab ORDER BY ts DESC")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .withPlanContaining("Window")
+                    .withPlanNotContaining("CachedWindow")
+                    .returns("""
+                            u\tdr\tr
+                            00000000-0000-0000-0000-000000000009\t1\t1
+                            00000000-0000-0000-0000-000000000008\t1\t1
+                            00000000-0000-0000-0000-000000000007\t1\t1
+                            00000000-0000-0000-0000-000000000006\t1\t1
+                            00000000-0000-0000-0000-000000000005\t1\t1
+                            00000000-0000-0000-0000-000000000004\t2\t4
+                            00000000-0000-0000-0000-000000000003\t2\t3
+                            00000000-0000-0000-0000-000000000002\t3\t5
+                            00000000-0000-0000-0000-000000000001\t3\t5
+                            """);
+
+            // BINARY pass-through has no literal to assert exactly, but it must still compile and run.
+            execute("alter table tab add column bin binary");
+            execute("update tab set bin = rnd_bin(2, 4, 0)");
+            try (
+                    RecordCursorFactory factory = select("SELECT bin, dense_rank() OVER (PARTITION BY g ORDER BY ts) dr, rank() OVER (PARTITION BY g ORDER BY ts) r FROM tab");
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                int rows = 0;
+                while (cursor.hasNext()) {
+                    rows++;
+                }
+                Assert.assertEquals(9, rows);
+            }
+        });
     }
 
     @Test

@@ -59,7 +59,7 @@ public class LineTcpReceiver implements Closeable {
             this.scheduler = new LineTcpMeasurementScheduler(configuration, engine, sharedPoolNetwork, dispatcher, sharedPoolWrite);
 
             for (int i = 0, n = sharedPoolNetwork.getWorkerCount(); i < n; i++) {
-                // http context factory has thread local pools
+                // line tcp context factory has thread local pools
                 // therefore we need each thread to clean their thread locals individually
                 sharedPoolNetwork.assignThreadLocalCleaner(i, contextFactory::freeThreadLocal);
             }

@@ -48,6 +48,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.QueryAssertion;
@@ -307,6 +308,63 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                     configuration,
                     LOG
             );
+        });
+    }
+
+    @Test
+    public void testParallelApproxPercentileFuzz() throws Exception {
+        Assume.assumeTrue(enableParallelGroupBy);
+        assertMemoryLeak(() -> {
+            final Rnd rnd = TestUtils.generateRandom(LOG);
+            final double percentile = rnd.nextDouble();
+            final int precision = rnd.nextInt(6);
+            final int rowCount = rnd.nextInt(ROW_COUNT) + 1;
+            final int groupCount = rnd.nextInt(10) + 1;
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        sqlExecutionContext.setJitMode(
+                                enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+
+                        execute(
+                                compiler,
+                                "CREATE TABLE tab AS ("
+                                        + "SELECT CASE WHEN rnd_int() % 10 = 0 THEN NULL ELSE abs(rnd_long()) % 10_000_000 END AS x, rnd_int() % " + groupCount + " AS g "
+                                        + "FROM long_sequence(" + rowCount + "))",
+                                sqlExecutionContext);
+
+                        final String query = "SELECT g, approx_percentile(x, " + percentile + ", " + precision + ") FROM tab GROUP BY g ORDER BY g";
+
+                        sqlExecutionContext.setParallelGroupByEnabled(false);
+                        try {
+                            TestUtils.printSql(
+                                    engine,
+                                    sqlExecutionContext,
+                                    query,
+                                    sink);
+                        } finally {
+                            sqlExecutionContext.setParallelGroupByEnabled(
+                                    engine.getConfiguration().isSqlParallelGroupByEnabled());
+                        }
+
+                        sqlExecutionContext.setParallelGroupByEnabled(true);
+                        final StringSink parallelSink = new StringSink();
+                        try {
+                            TestUtils.printSql(
+                                    engine,
+                                    sqlExecutionContext,
+                                    query,
+                                    parallelSink);
+                        } finally {
+                            sqlExecutionContext.setParallelGroupByEnabled(
+                                    engine.getConfiguration().isSqlParallelGroupByEnabled());
+                        }
+
+                        TestUtils.assertEquals(sink, parallelSink);
+                    },
+                    configuration,
+                    LOG);
         });
     }
 
@@ -1773,6 +1831,32 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelGroupByKurtosis() throws Exception {
+        testParallelGroupByAllTypes(
+                "SELECT round(kurtosis_samp(adouble), 12) FROM tab", """
+                        round
+                        -1.173939788697
+                        """,
+                "SELECT round(kurtosis(adouble), 12) FROM tab", """
+                        round
+                        -1.173939788697
+                        """,
+                "SELECT round(kurtosis_pop(adouble), 12) FROM tab", """
+                        round
+                        -1.173979070703
+                        """,
+                "SELECT key, round(kurtosis_pop(adouble), 12) kp, round(kurtosis_samp(adouble), 12) ks FROM tab ORDER BY key", """
+                        key\tkp\tks
+                        k0\t-1.177368704151\t-1.177195920397
+                        k1\t-1.213464478728\t-1.2135590444339999
+                        k2\t-1.156658901168\t-1.156322164928
+                        k3\t-1.1266060077039999\t-1.126049103395
+                        k4\t-1.172914311098\t-1.172699075325
+                        """
+        );
+    }
+
+    @Test
     public void testParallelGroupByRegrIntercept() throws Exception {
         Assume.assumeTrue(enableParallelGroupBy);
         testParallelGroupByAllTypes("SELECT round(regr_intercept(adouble, along), 14) FROM tab", """
@@ -1794,6 +1878,32 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                 round
                 2.2694313961E-4
                 """);
+    }
+
+    @Test
+    public void testParallelGroupBySkewness() throws Exception {
+        testParallelGroupByAllTypes(
+                "SELECT round(skewness_samp(adouble), 12) FROM tab", """
+                        round
+                        0.006214510929
+                        """,
+                "SELECT round(skewness(adouble), 12) FROM tab", """
+                        round
+                        0.006214510929
+                        """,
+                "SELECT round(skewness_pop(adouble), 12) FROM tab", """
+                        round
+                        0.006211714609
+                        """,
+                "SELECT key, round(skewness_pop(adouble), 12) sp, round(skewness_samp(adouble), 12) ss FROM tab ORDER BY key", """
+                        key\tsp\tss
+                        k0\t0.092682517801\t0.092887845278
+                        k1\t-0.03876828558\t-0.038854299301999996
+                        k2\t-0.046932723408999996\t-0.047040025485999996
+                        k3\t-0.039550117182\t-0.039639049387
+                        k4\t0.064287112494\t0.06443590616099999
+                        """
+        );
     }
 
     @Test
@@ -2595,18 +2705,22 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                     for (int i = 0; i < numOfThreads; i++) {
                         final int threadId = i;
                         new Thread(() -> {
-                            TestUtils.await(barrier);
-                            // SqlExecutionContext is not thread-safe: its compilation state (e.g.
-                            // timestampRequiredStack) is mutated during code generation, so each
-                            // worker thread must run with its own execution context.
-                            try (SqlExecutionContext threadContext = TestUtils.createSqlExecutionCtx(engine, pool.getWorkerCount())) {
+                            // SqlExecutionContext is not thread-safe (it carries a single
+                            // reader-pool supervisor slot, among other per-query state), so
+                            // every thread compiles and runs against its own context. Sharing
+                            // one context across threads cross-wires the supervisor slot and
+                            // leaks readers, which pollutes later tests in the shared engine.
+                            try (SqlExecutionContext threadCtx =
+                                         TestUtils.createSqlExecutionCtx(engine, sqlExecutionContext.getSharedQueryWorkerCount())) {
+                                TestUtils.await(barrier);
                                 for (int j = 0; j < numOfIterations; j++) {
-                                    assertQueries(engine, threadContext, query, expected);
+                                    assertQueries(engine, threadCtx, query, expected);
                                 }
                             } catch (Throwable th) {
                                 th.printStackTrace(System.out);
                                 errors.put(threadId, th);
                             } finally {
+                                Path.clearThreadLocals();
                                 haltLatch.countDown();
                             }
                         }).start();
@@ -2657,63 +2771,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     @Test
     public void testParallelNonKeyedGroupByFaultTolerance() throws Exception {
         testParallelGroupByFaultTolerance("select vwap(price, quantity) from tab where npe();");
-    }
-
-    @Test
-    public void testParallelApproxPercentileFuzz() throws Exception {
-        Assume.assumeTrue(enableParallelGroupBy);
-        assertMemoryLeak(() -> {
-            final Rnd rnd = TestUtils.generateRandom(LOG);
-            final double percentile = rnd.nextDouble();
-            final int precision = rnd.nextInt(6);
-            final int rowCount = rnd.nextInt(ROW_COUNT) + 1;
-            final int groupCount = rnd.nextInt(10) + 1;
-            final WorkerPool pool = new WorkerPool(() -> 4);
-            TestUtils.execute(
-                    pool,
-                    (engine, compiler, sqlExecutionContext) -> {
-                        sqlExecutionContext.setJitMode(
-                                enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
-
-                        execute(
-                                compiler,
-                                "CREATE TABLE tab AS ("
-                                        + "SELECT CASE WHEN rnd_int() % 10 = 0 THEN NULL ELSE abs(rnd_long()) % 10_000_000 END AS x, rnd_int() % " + groupCount + " AS g "
-                                        + "FROM long_sequence(" + rowCount + "))",
-                                sqlExecutionContext);
-
-                        final String query = "SELECT g, approx_percentile(x, " + percentile + ", " + precision + ") FROM tab GROUP BY g ORDER BY g";
-
-                        sqlExecutionContext.setParallelGroupByEnabled(false);
-                        try {
-                            TestUtils.printSql(
-                                    engine,
-                                    sqlExecutionContext,
-                                    query,
-                                    sink);
-                        } finally {
-                            sqlExecutionContext.setParallelGroupByEnabled(
-                                    engine.getConfiguration().isSqlParallelGroupByEnabled());
-                        }
-
-                        sqlExecutionContext.setParallelGroupByEnabled(true);
-                        final StringSink parallelSink = new StringSink();
-                        try {
-                            TestUtils.printSql(
-                                    engine,
-                                    sqlExecutionContext,
-                                    query,
-                                    parallelSink);
-                        } finally {
-                            sqlExecutionContext.setParallelGroupByEnabled(
-                                    engine.getConfiguration().isSqlParallelGroupByEnabled());
-                        }
-
-                        TestUtils.assertEquals(sink, parallelSink);
-                    },
-                    configuration,
-                    LOG);
-        });
     }
 
     @Test
@@ -3772,18 +3829,22 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                     for (int i = 0; i < numOfThreads; i++) {
                         final int threadId = i;
                         new Thread(() -> {
-                            TestUtils.await(barrier);
-                            // SqlExecutionContext is not thread-safe: its compilation state (e.g.
-                            // timestampRequiredStack) is mutated during code generation, so each
-                            // worker thread must run with its own execution context.
-                            try (SqlExecutionContext threadContext = TestUtils.createSqlExecutionCtx(engine, pool.getWorkerCount())) {
+                            // SqlExecutionContext is not thread-safe (it carries a single
+                            // reader-pool supervisor slot, among other per-query state), so
+                            // every thread compiles and runs against its own context. Sharing
+                            // one context across threads cross-wires the supervisor slot and
+                            // leaks readers, which pollutes later tests in the shared engine.
+                            try (SqlExecutionContext threadCtx =
+                                         TestUtils.createSqlExecutionCtx(engine, sqlExecutionContext.getSharedQueryWorkerCount())) {
+                                TestUtils.await(barrier);
                                 for (int j = 0; j < numOfIterations; j++) {
-                                    assertQueries(engine, threadContext, query, expected);
+                                    assertQueries(engine, threadCtx, query, expected);
                                 }
                             } catch (Throwable th) {
                                 th.printStackTrace(System.out);
                                 errors.put(threadId, th);
                             } finally {
+                                Path.clearThreadLocals();
                                 haltLatch.countDown();
                             }
                         }).start();
@@ -3838,12 +3899,15 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                     for (int i = 0; i < numOfThreads; i++) {
                         final int threadId = i;
                         new Thread(() -> {
-                            TestUtils.await(barrier);
-                            // We expect an NPE (work stealing) or a CairoException (NPE caught by a worker).
-                            // SqlExecutionContext is not thread-safe, so each worker uses its own context.
-                            try (SqlExecutionContext threadContext = TestUtils.createSqlExecutionCtx(engine, pool.getWorkerCount())) {
+                            // SqlExecutionContext is not thread-safe (it carries a single
+                            // reader-pool supervisor slot, among other per-query state), so
+                            // every thread runs against its own context.
+                            try (SqlExecutionContext threadCtx =
+                                         TestUtils.createSqlExecutionCtx(engine, sqlExecutionContext.getSharedQueryWorkerCount())) {
+                                TestUtils.await(barrier);
+                                // We expect an NPE (work stealing) or a CairoException (NPE caught by a worker)
                                 for (int j = 0; j < numOfIterations; j++) {
-                                    assertCairoException(engine, threadContext);
+                                    assertCairoException(engine, threadCtx);
                                 }
                             } catch (NullPointerException npe) {
                                 // NPE is expected
@@ -3851,6 +3915,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                 th.printStackTrace(System.out);
                                 errors.put(threadId, th);
                             } finally {
+                                Path.clearThreadLocals();
                                 haltLatch.countDown();
                             }
                         }).start();

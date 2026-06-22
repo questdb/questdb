@@ -43,7 +43,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
-import io.questdb.std.ThreadLocal;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Uuid;
 import io.questdb.std.str.CharSink;
@@ -74,13 +74,13 @@ public class ColumnTypeConverter {
     private static final Var2FixedConverter<CharSequence> converterStr2Long = ColumnTypeConverter::str2Long;
     private static final Var2FixedConverter<CharSequence> converterStr2Short = ColumnTypeConverter::str2Short;
     private static final Var2FixedConverter<CharSequence> converterStr2Uuid = ColumnTypeConverter::str2Uuid;
-    private static final ThreadLocal<MemoryCMARW> dstFixMemTL = new ThreadLocal<>(io.questdb.cairo.vm.MemoryCMARWImpl::new);
-    private static final ThreadLocal<MemoryCMARW> dstVarMemTL = new ThreadLocal<>(io.questdb.cairo.vm.MemoryCMARWImpl::new);
+    private static final CarrierLocal<MemoryCMARW> dstFixMemTL = new CarrierLocal<>(io.questdb.cairo.vm.MemoryCMARWImpl::new);
+    private static final CarrierLocal<MemoryCMARW> dstVarMemTL = new CarrierLocal<>(io.questdb.cairo.vm.MemoryCMARWImpl::new);
     private static final int memoryTag = MemoryTag.MMAP_TABLE_WRITER;
-    private static final ThreadLocal<StringSink> sinkUtf16TL = new ThreadLocal<>(StringSink::new);
-    private static final ThreadLocal<Utf8StringSink> sinkUtf8TL = new ThreadLocal<>(Utf8StringSink::new);
-    private static final ThreadLocal<MemoryCMORImpl> srcFixMemTL = new ThreadLocal<>(MemoryCMORImpl::new);
-    private static final ThreadLocal<MemoryCMORImpl> srcVarMemTL = new ThreadLocal<>(MemoryCMORImpl::new);
+    private static final CarrierLocal<StringSink> sinkUtf16TL = new CarrierLocal<>(StringSink::new);
+    private static final CarrierLocal<Utf8StringSink> sinkUtf8TL = new CarrierLocal<>(Utf8StringSink::new);
+    private static final CarrierLocal<MemoryCMORImpl> srcFixMemTL = new CarrierLocal<>(MemoryCMORImpl::new);
+    private static final CarrierLocal<MemoryCMORImpl> srcVarMemTL = new CarrierLocal<>(MemoryCMORImpl::new);
 
     public static boolean convertColumn(
             long skipRows,

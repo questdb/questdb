@@ -495,7 +495,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "'cairo.root', 'cairo.sql.copy.root', 'cairo.sql.copy.work.root', " +
                                     "'cairo.writer.misc.append.page.size', 'line.tcp.io.worker.count', 'cairo.sql.copy.export.root', " +
                                     "'wal.apply.worker.count', 'export.worker.count', 'mat.view.refresh.worker.count', 'view.compiler.worker.count', " +
-                                    "'http.export.connection.limit', 'cairo.mat.view.parallel.sql.enabled'" +
+                                    "'http.export.connection.limit', 'cairo.mat.view.parallel.sql.enabled', 'cairo.timer.shards'" +
                                     ") order by 1",
                             actualSink
                     );
@@ -567,6 +567,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.posting.seal.gen.threshold\tQDB_CAIRO_POSTING_SEAL_GEN_THRESHOLD\t16\tdefault\tfalse\tfalse\n" +
                                     "cairo.posting.seal.purge.outbox.max\tQDB_CAIRO_POSTING_SEAL_PURGE_OUTBOX_MAX\t8192\tdefault\tfalse\tfalse\n" +
                                     "cairo.query.cache.event.queue.capacity\tQDB_CAIRO_QUERY_CACHE_EVENT_QUEUE_CAPACITY\t4\tdefault\tfalse\tfalse\n" +
+                                    "cairo.query.memory.limit.bytes\tQDB_CAIRO_QUERY_MEMORY_LIMIT_BYTES\t0\tdefault\tfalse\ttrue\n" +
                                     "cairo.reader.pool.max.segments\tQDB_CAIRO_READER_POOL_MAX_SEGMENTS\t10\tdefault\tfalse\tfalse\n" +
                                     "cairo.recent.write.tracker.capacity\tQDB_CAIRO_RECENT_WRITE_TRACKER_CAPACITY\t1000\tdefault\tfalse\tfalse\n" +
                                     "cairo.repeat.migration.from.version\tQDB_CAIRO_REPEAT_MIGRATION_FROM_VERSION\t-1\tdefault\tfalse\tfalse\n" +
@@ -720,6 +721,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.wal.apply.look.ahead.txn.count\tQDB_CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT\t200\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.apply.table.time.quota\tQDB_CAIRO_WAL_APPLY_TABLE_TIME_QUOTA\t1000\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.apply.parallel.sql.enabled\tQDB_CAIRO_WAL_APPLY_PARALLEL_SQL_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "cairo.wal.apply.memory.limit.bytes\tQDB_CAIRO_WAL_APPLY_MEMORY_LIMIT_BYTES\t0\tdefault\tfalse\ttrue\n" +
                                     "cairo.wal.enabled.default\tQDB_CAIRO_WAL_ENABLED_DEFAULT\tfalse\tconf\tfalse\tfalse\n" +
                                     "cairo.wal.inactive.writer.ttl\tQDB_CAIRO_WAL_INACTIVE_WRITER_TTL\t120000\tdefault\tfalse\tfalse\n" +
                                     "cairo.view.wal.inactive.writer.ttl\tQDB_CAIRO_VIEW_WAL_INACTIVE_WRITER_TTL\t60000\tdefault\tfalse\tfalse\n" +
@@ -921,6 +923,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.mat.view.refresh.max.clusters\tQDB_CAIRO_MAT_VIEW_REFRESH_MAX_CLUSTERS\t32\tdefault\tfalse\tfalse\n" +
                                     "cairo.mat.view.max.refresh.step\tQDB_CAIRO_MAT_VIEW_MAX_REFRESH_STEP\t31536000000000\tdefault\tfalse\tfalse\n" +
                                     "cairo.mat.view.refresh.intervals.update.period\tQDB_CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_PERIOD\t15000\tdefault\tfalse\tfalse\n" +
+                                    "cairo.mat.view.refresh.memory.limit.bytes\tQDB_CAIRO_MAT_VIEW_REFRESH_MEMORY_LIMIT_BYTES\t0\tdefault\tfalse\ttrue\n" +
                                     "mat.view.refresh.worker.nap.threshold\tQDB_MAT_VIEW_REFRESH_WORKER_NAP_THRESHOLD\t7000\tdefault\tfalse\tfalse\n" +
                                     "mat.view.refresh.worker.affinity\tQDB_MAT_VIEW_REFRESH_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
                                     "mat.view.refresh.worker.sleep.timeout\tQDB_MAT_VIEW_REFRESH_WORKER_SLEEP_TIMEOUT\t10\tdefault\tfalse\tfalse\n" +
@@ -1103,7 +1106,8 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.checkpoint.recovery.threadpool.max\tQDB_CAIRO_CHECKPOINT_RECOVERY_THREADPOOL_MAX\t12\tdefault\tfalse\tfalse\n" +
                                     "cairo.partition.encoder.parquet.min.compression.ratio\tQDB_CAIRO_PARTITION_ENCODER_PARQUET_MIN_COMPRESSION_RATIO\t1.2\tdefault\tfalse\tfalse\n" +
                                     "cairo.partition.encoder.parquet.o3.rewrite.unused.max.bytes\tQDB_CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES\t1073741824\tdefault\tfalse\tfalse\n" +
-                                    "cairo.partition.encoder.parquet.o3.rewrite.unused.ratio\tQDB_CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO\t0.5\tdefault\tfalse\tfalse\n"
+                                    "cairo.partition.encoder.parquet.o3.rewrite.unused.ratio\tQDB_CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO\t0.5\tdefault\tfalse\tfalse\n" +
+                                    "griffin.query.continuation.wake.interval\tQDB_GRIFFIN_QUERY_CONTINUATION_WAKE_INTERVAL\t1000\tdefault\tfalse\tfalse"
                     )
                             .split("\n");
 

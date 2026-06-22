@@ -39,6 +39,7 @@ import io.questdb.jit.CompiledFilter;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
@@ -136,6 +137,18 @@ public class AsyncFilterContext implements Closeable {
         Misc.freeObjListAndKeepObjects(perWorkerMemoryPools);
         ownerSelectivityStats.clear();
         Misc.clearObjList(perWorkerSelectivityStats);
+        // Shrink the row-id and column-address lists back to initial capacity,
+        // mirroring the per-task reset in PageFrameReduceTask.clear(). Under a JIT
+        // filter the row-id lists grow to a full page frame (up to
+        // cairo.sql.page.frame.max.rows longs = 8 MB each) and only ever grow, so an
+        // idle or cached factory would otherwise pin peak-sized NATIVE_OFFLOAD buffers
+        // until eviction.
+        resetCapacity(ownerFilteredRows);
+        resetCapacity(ownerDataAddresses);
+        resetCapacity(ownerAuxAddresses);
+        resetCapacity(perWorkerFilteredRows);
+        resetCapacity(perWorkerDataAddresses);
+        resetCapacity(perWorkerAuxAddresses);
     }
 
     @Override
@@ -251,14 +264,17 @@ public class AsyncFilterContext implements Closeable {
         }
     }
 
-    public void initMemoryPools(PageFrameAddressCache pageFrameAddressCache) {
-        initMemoryPools(pageFrameAddressCache, ParquetDecodeHint.MONOTONIC);
+    public void initMemoryPools(PageFrameAddressCache pageFrameAddressCache, MemoryTracker memoryTracker) {
+        initMemoryPools(pageFrameAddressCache, memoryTracker, ParquetDecodeHint.MONOTONIC);
     }
 
-    public void initMemoryPools(PageFrameAddressCache pageFrameAddressCache, ParquetDecodeHint ownerHint) {
+    public void initMemoryPools(PageFrameAddressCache pageFrameAddressCache, MemoryTracker memoryTracker, ParquetDecodeHint ownerHint) {
+        ownerMemoryPool.setMemoryTracker(memoryTracker);
         ownerMemoryPool.of(pageFrameAddressCache, ownerHint);
         for (int i = 0, n = perWorkerMemoryPools.size(); i < n; i++) {
-            perWorkerMemoryPools.getQuick(i).of(pageFrameAddressCache, ParquetDecodeHint.MONOTONIC);
+            final PageFrameMemoryPool pool = perWorkerMemoryPools.getQuick(i);
+            pool.setMemoryTracker(memoryTracker);
+            pool.of(pageFrameAddressCache, ParquetDecodeHint.MONOTONIC);
         }
     }
 
@@ -274,5 +290,21 @@ public class AsyncFilterContext implements Closeable {
 
     public void toPlan(PlanSink sink) {
         sink.val(ownerFilter);
+    }
+
+    private static void resetCapacity(@Nullable DirectLongList list) {
+        // Skip closed lists: resetCapacity() on a capacity-0 list would re-malloc
+        // (resurrect) it. clear() can run after close() on the horizon-join error path.
+        if (list != null && list.getCapacity() > 0) {
+            list.resetCapacity();
+        }
+    }
+
+    private static void resetCapacity(@Nullable ObjList<DirectLongList> lists) {
+        if (lists != null) {
+            for (int i = 0, n = lists.size(); i < n; i++) {
+                resetCapacity(lists.getQuick(i));
+            }
+        }
     }
 }

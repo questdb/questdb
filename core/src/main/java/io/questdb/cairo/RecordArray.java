@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -144,6 +145,16 @@ public class RecordArray extends RecordChain {
 
     public void recordAtRowIndex(Record record, long rowIndex) {
         recordAt(record, rowToOffset(rowIndex));
+    }
+
+    @Override
+    public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        // Bind auxMem too (the per-row startOffset region), else it escapes the
+        // per-query limit. auxMem is absent for fixed-width-only chains.
+        super.setMemoryTracker(tracker);
+        if (auxMem != null) {
+            auxMem.setMemoryTracker(tracker);
+        }
     }
 
     @Override
