@@ -238,7 +238,8 @@ public class QueryRegistry {
             // registry.put() can OOM mid-rehash. register() runs outside the
             // caller's try/finally, so unregister() never fires here -- release the
             // just-acquired tracker (else its native blocks leak during the very OOM
-            // the feature bounds), drop the partial entry, and recycle the Entry.
+            // the feature bounds), drop the partial entry, and retire the Entry
+            // before recycling it.
             registry.remove(queryId);
             if (e.memoryTracker != null) {
                 // Restore the prior tracker only if the slot is still ours; a
@@ -249,7 +250,11 @@ public class QueryRegistry {
                 e.memoryTracker.close();
                 e.memoryTracker = null;
             }
-            tlQueryPool.get().push(e);
+            if (e.retire(queryId)) {
+                tlQueryPool.get().push(e);
+            } else {
+                LOG.error().$("query lifecycle mismatch on register rollback [id=").$(queryId).I$();
+            }
             throw th;
         }
 

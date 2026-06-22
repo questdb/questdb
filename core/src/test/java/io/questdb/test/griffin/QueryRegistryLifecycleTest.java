@@ -30,10 +30,13 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -121,6 +124,94 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
                 Assert.assertFalse(QueryRegistry.Entry.isActiveLifecycle(oldId, entry.getLifecycle()));
 
                 registry.unregister(newId, context);
+            }
+        });
+    }
+
+    @Test
+    public void testRegisterRollbackWaitsForInFlightCancellerBeforeRecyclingEntry() throws Exception {
+        assertMemoryLeak(() -> {
+            final QueryRegistry registry = engine.getQueryRegistry();
+            final CountDownLatch cancellerInGuard = new CountDownLatch(1);
+            final CountDownLatch releaseCanceller = new CountDownLatch(1);
+            final CountDownLatch cancellerDone = new CountDownLatch(1);
+            final CountDownLatch newRegistered = new CountDownLatch(1);
+            final AtomicReference<Throwable> fault = new AtomicReference<>();
+
+            final Thread ownerThread = new Thread(() -> {
+                try (SqlExecutionContextImpl ownerContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)) {
+                    registry.setListener((query, queryId, ctx) -> {
+                        final Thread cancellerThread = new Thread(() -> {
+                            try (SqlExecutionContextImpl cancelContext = new SqlExecutionContextImpl(
+                                    engine,
+                                    1
+                            ).with(new BlockingPrincipalSecurityContext(cancellerInGuard, releaseCanceller))) {
+                                // The old rollback query may or may not be cancelled
+                                // before retire() wins. The invariant is that the
+                                // Entry is not recycled into the next query first.
+                                registry.cancel(queryId, cancelContext);
+                            } catch (Throwable t) {
+                                fault.compareAndSet(null, t);
+                            } finally {
+                                cancellerDone.countDown();
+                            }
+                        });
+                        cancellerThread.start();
+                        try {
+                            Assert.assertTrue(
+                                    "canceller did not enter lifecycle guard",
+                                    cancellerInGuard.await(5, TimeUnit.SECONDS)
+                            );
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            throw new RuntimeException(e);
+                        }
+                        throw new OutOfMemoryError("simulated register rollback");
+                    });
+
+                    try {
+                        registry.register("SELECT rollback", ownerContext);
+                        Assert.fail("expected register to throw");
+                    } catch (OutOfMemoryError expected) {
+                        // expected
+                    } finally {
+                        registry.setListener(null);
+                    }
+
+                    final long newId = registry.register("SELECT new", ownerContext);
+                    try {
+                        newRegistered.countDown();
+                        TestUtils.await(cancellerDone);
+                        if (fault.get() != null) {
+                            throw new AssertionError("canceller failed", fault.get());
+                        }
+                        final QueryRegistry.Entry newEntry = registry.getEntry(newId);
+                        Assert.assertNotNull(newEntry);
+                        Assert.assertFalse(newEntry.getCancelled().get());
+                    } finally {
+                        registry.unregister(newId, ownerContext);
+                    }
+                } catch (Throwable t) {
+                    fault.compareAndSet(null, t);
+                } finally {
+                    registry.setListener(null);
+                }
+            });
+
+            ownerThread.start();
+            try {
+                Assert.assertTrue("canceller did not enter lifecycle guard", cancellerInGuard.await(5, TimeUnit.SECONDS));
+                Assert.assertFalse(
+                        "register rollback recycled the entry before the in-flight canceller completed",
+                        newRegistered.await(250, TimeUnit.MILLISECONDS)
+                );
+            } finally {
+                releaseCanceller.countDown();
+                ownerThread.join(5_000);
+            }
+            Assert.assertFalse("owner thread hung", ownerThread.isAlive());
+            if (fault.get() != null) {
+                throw new AssertionError("worker thread failed", fault.get());
             }
         });
     }
@@ -229,5 +320,22 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
             }
             Assert.assertTrue("cancellers never raced a live query", cancelAttempts.get() > 0);
         });
+    }
+
+    private static class BlockingPrincipalSecurityContext extends AllowAllSecurityContext {
+        private final CountDownLatch entered;
+        private final CountDownLatch release;
+
+        private BlockingPrincipalSecurityContext(CountDownLatch entered, CountDownLatch release) {
+            this.entered = entered;
+            this.release = release;
+        }
+
+        @Override
+        public CharSequence getPrincipal() {
+            entered.countDown();
+            TestUtils.await(release);
+            return AllowAllSecurityContext.INSTANCE.getPrincipal();
+        }
     }
 }
