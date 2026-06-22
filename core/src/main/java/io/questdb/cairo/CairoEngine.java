@@ -398,9 +398,18 @@ public class CairoEngine implements Closeable, WriterSource {
     /**
      * Per-function half of {@link #validateLiveViewFactory}: rejects a window function
      * the incremental refresh path cannot drive. Extracted so the reject contract can be
-     * unit-tested directly - both rejects are unreachable for GA functions today
-     * (multi-pass and lead/percent_rank are caught upstream, and every migrated function
-     * supports snapshots), so a stub function is the only way to pin the wording.
+     * unit-tested directly.
+     * <p>
+     * The {@code !supportsSnapshot()} reject fires for real functions: an un-partitioned
+     * aggregate window (e.g. {@code avg(x) OVER (ORDER BY ts ROWS ...)} with no
+     * {@code PARTITION BY}) is {@link WindowFunction#ZERO_PASS} but has no partition Map to
+     * snapshot, so it clears the pass-count check and is rejected here - and, lacking a
+     * partition Map, it is never live-view-eligible, so this reject is permanent.
+     * (Un-migrated DECIMAL window functions hit the same reject today, transiently, until
+     * the per-type migration train reaches them.) The pass-count reject, by contrast, is
+     * defensive - multi-pass / lead / percent_rank shapes compile to a cached factory and
+     * are caught upstream by {@link #validateLiveViewFactory}, so no GA function reaches
+     * it; a ZERO_PASS stub lacking snapshot support is the only way to exercise its wording.
      * <p>
      * A non-{@link WindowFunction#ZERO_PASS} function needs caching or a lookahead pass
      * that incremental refresh has no way to supply. A function without snapshot support

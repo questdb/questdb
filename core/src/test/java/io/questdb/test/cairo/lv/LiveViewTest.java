@@ -273,10 +273,11 @@ public class LiveViewTest extends AbstractCairoTest {
 
     @Test
     public void testRejectNonSnapshotCapableWindowFunction() {
-        // The supportsSnapshot() reject is unreachable through real SQL today: every GA
-        // window function supports snapshots, and the multi-pass / lead / percent_rank
-        // cases are caught upstream. Drive the validation directly with a ZERO_PASS stub
-        // that lacks snapshot support to pin the user-facing message and position.
+        // Drive the validation directly with a ZERO_PASS stub lacking snapshot support to
+        // pin the exact user-facing message and position deterministically. The same reject
+        // also fires through real SQL for un-partitioned aggregate windows - see
+        // testRejectUnpartitionedAggregateWindowFunction - but the stub gives a stable
+        // function name (test_no_snapshot) and an explicit position to assert on.
         try {
             CairoEngine.validateLiveViewWindowFunction(new NonSnapshotWindowFunction(), 42);
             Assert.fail("expected SqlException for non-snapshot-capable window function");
@@ -287,6 +288,49 @@ public class LiveViewTest extends AbstractCairoTest {
                     e.getMessage().contains("live view select cannot use window function test_no_snapshot(); incremental snapshot is not supported for this function yet")
             );
         }
+    }
+
+    @Test
+    public void testRejectUnpartitionedAggregateWindowFunction() throws Exception {
+        // An un-partitioned aggregate window (no PARTITION BY) is ZERO_PASS but has no
+        // partition Map to snapshot, so it is not live-view-eligible and stays rejected
+        // by nature - unlike the per-type migration train, this shape is never migratable.
+        // It clears the pass-count check and hits the supportsSnapshot() reject in
+        // validateLiveViewWindowFunction, exercising the real-SQL path the stub-driven
+        // testRejectNonSnapshotCapableWindowFunction cannot reach. Adding a PARTITION BY to
+        // the same query is accepted (the partitioned ZERO_PASS aggregate shapes are
+        // migrated), so the missing partition is the sole reason these reject.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            // avg() over a bounded ROWS frame with no PARTITION BY.
+            try {
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                        "SELECT ts, sym, avg(v) OVER w AS a FROM base " +
+                        "WINDOW w AS (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)");
+                Assert.fail("expected SqlException for un-partitioned avg() window function");
+            } catch (SqlException e) {
+                Assert.assertTrue(
+                        e.getMessage(),
+                        e.getMessage().contains("incremental snapshot is not supported for this function yet")
+                );
+                Assert.assertTrue(e.getMessage(), e.getMessage().contains("avg"));
+            }
+
+            // sum() over a bounded RANGE frame with no PARTITION BY - same reject.
+            try {
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                        "SELECT ts, sym, sum(v) OVER w AS a FROM base " +
+                        "WINDOW w AS (ORDER BY ts RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW)");
+                Assert.fail("expected SqlException for un-partitioned sum() window function");
+            } catch (SqlException e) {
+                Assert.assertTrue(
+                        e.getMessage(),
+                        e.getMessage().contains("incremental snapshot is not supported for this function yet")
+                );
+                Assert.assertTrue(e.getMessage(), e.getMessage().contains("sum"));
+            }
+        });
     }
 
     @Test
