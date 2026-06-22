@@ -108,6 +108,24 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testChangeDecimalNarrowingOverflow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, col DECIMAL(5, 0)) TIMESTAMP(ts) PARTITION BY DAY WAL", sqlExecutionContext);
+            // 12345 fits DECIMAL(5,0) but overflows DECIMAL(4,0) (max 9999).
+            execute("INSERT INTO x VALUES('2024-05-14T16:00:00.000000Z', 12345)", sqlExecutionContext);
+            drainWalQueue();
+
+            TableToken token = engine.verifyTableName("x");
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+
+            execute("ALTER TABLE x ALTER COLUMN col TYPE DECIMAL(4, 0)", sqlExecutionContext);
+            drainWalQueue();
+
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+        });
+    }
+
+    @Test
     public void testChangeDecimalToDecimal() throws Exception {
         // DECIMAL8 conversions
         assertChangeDecimal("12", "12.0", "decimal(2, 0)", "decimal(4, 1)");
@@ -121,7 +139,8 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
         assertChangeDecimal("1.2m", "1.20", "decimal(2, 1)", "decimal(8, 2)");
         assertChangeDecimal("1.2m", "1.200", "decimal(2, 1)", "decimal(18, 3)");
         assertChangeDecimal("1.2m", "1.2000", "decimal(2, 1)", "decimal(38, 4)");
-        assertChangeDecimalFails("1.2m", "1.2", "decimal(2, 1)", ColumnType.getDecimalType(64, 0));
+        // 1.2 cannot be represented at scale 0 without losing the fraction -> NULL.
+        assertChangeDecimalToNull("1.2m", "decimal(2, 1)", "decimal(64, 0)");
         assertChangeDecimal("1.2m", "1.200000000000", "decimal(2, 1)", "decimal(64, 12)");
 
         // DECIMAL16 conversions
@@ -167,9 +186,10 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                 "9999999999999999999999999999999999999999999999999999999999999999999999.999900",
                 "decimal(76, 4)", "decimal(76, 6)");
 
-        // Test precision reduction scenarios (should fail)
-        assertChangeDecimalFails("12345", "12345", "decimal(5, 0)", ColumnType.getDecimalType(4, 0));
-        assertChangeDecimalFails("123.45m", "123.45", "decimal(5, 2)", ColumnType.getDecimalType(4, 2));
+        // Precision reduction: a value that does not fit the narrower target becomes NULL (the
+        // conversion no longer fails or suspends the WAL table).
+        assertChangeDecimalToNull("12345", "decimal(5, 0)", "decimal(4, 0)");
+        assertChangeDecimalToNull("123.45m", "decimal(5, 2)", "decimal(4, 2)");
     }
 
     @Test
@@ -1756,25 +1776,24 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
         });
     }
 
-    private void assertChangeDecimalFails(CharSequence initial, CharSequence expected, CharSequence fromType, int toType) throws Exception {
+    private void assertChangeDecimalToNull(CharSequence initial, CharSequence fromType, CharSequence toType) throws Exception {
         assertMemoryLeak(() -> {
             execute(String.format("create table x (ts timestamp, col %s) timestamp(ts) partition by day wal", fromType), sqlExecutionContext);
             execute(String.format("insert into x values('2024-05-14T16:00:00.000000Z', %s)", initial), sqlExecutionContext);
             drainWalQueue();
 
-            try (TableWriter writer = getWriter("x")) {
-                writer.changeColumnType("col", toType, 0, false, IndexType.NONE, 0, false, null);
-                Assert.fail();
-            } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "column conversion failed, see logs for details");
-            }
+            // A value that does not fit the narrower target - magnitude exceeds the target precision, or
+            // the rescale would lose information - becomes NULL. The conversion succeeds and the WAL table
+            // is never suspended (mirrors an out-of-range DOUBLE->FLOAT becoming NaN).
+            execute(String.format("alter table x alter column col type %s", toType), sqlExecutionContext);
+            drainWalQueue();
 
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
             assertQuery("x")
                     .noLeakCheck()
                     .expectSize()
                     .timestamp("ts")
-                    .returns("ts\tcol\n" +
-                            "2024-05-14T16:00:00.000000Z\t" + expected + "\n");
+                    .returns("ts\tcol\n2024-05-14T16:00:00.000000Z\t\n");
 
             execute("drop table x");
         });

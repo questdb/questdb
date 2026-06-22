@@ -57,22 +57,30 @@ public class DecimalColumnTypeConverter {
 
         var decimal = Misc.getThreadLocalDecimal256();
         long hi = srcMem + rowCount * srcColumnTypeSize;
-        try {
-            for (long i = srcMem; i < hi; i += srcColumnTypeSize) {
-                loader.load(decimal, i);
-                if (srcScale != dstScale) {
-                    decimal.setScale(srcScale);
-                    decimal.rescale(dstScale);
+        for (long i = srcMem; i < hi; i += srcColumnTypeSize) {
+            loader.load(decimal, i);
+            // A value that does not fit the target decimal is stored as NULL rather than aborting
+            // the whole conversion. Aborting would surface as "column is corrupt" and suspend a WAL
+            // table; instead we mirror the fixed->fixed converters, where an unrepresentable value
+            // becomes the target NULL sentinel (e.g. an out-of-range DOUBLE->FLOAT becomes NaN).
+            // Two cases produce NULL: the magnitude exceeds the target precision (comparePrecision),
+            // or a rescale would lose information (rescale throws under RoundingMode.UNNECESSARY).
+            // Source NULLs flow through unchanged (the loader already set the decimal to NULL).
+            if (!decimal.isNull()) {
+                try {
+                    if (srcScale != dstScale) {
+                        decimal.setScale(srcScale);
+                        decimal.rescale(dstScale);
+                    }
+                    if (!decimal.comparePrecision(dstPrecision)) {
+                        decimal.ofNull();
+                    }
+                } catch (NumericException ignored) {
+                    decimal.ofNull();
                 }
-                if (!decimal.comparePrecision(dstPrecision)) {
-                    return false;
-                }
-                DecimalUtil.store(decimal, dstMem, dstType);
             }
-        } catch (NumericException ignored) {
-            return false;
+            DecimalUtil.store(decimal, dstMem, dstType);
         }
-
         return true;
     }
 

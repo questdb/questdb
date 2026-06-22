@@ -797,6 +797,222 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDecimalToDecimalNarrowingSameScaleAllWidths() throws Exception {
+        assertMemoryLeak(() -> {
+            // Narrowing physical width while KEEPING the scale. No rescale runs, so the
+            // decode-time byte truncation is lossless as long as the value fits the target
+            // precision. Every value here is representable in the narrower target, so the
+            // lazy parquet read must equal the native conversion. Covers each wider->narrower
+            // backing-width step.
+            String v = """
+                    (1.2m, '2024-01-01T00:00:01.000000Z'),
+                    (-3.4m, '2024-01-01T00:00:02.000000Z'),
+                    (0.0m, '2024-01-01T00:00:03.000000Z'),
+                    (NULL, '2024-01-01T00:00:04.000000Z')""";
+            // Decimal256 -> Decimal128 -> Decimal64 -> Decimal32 -> Decimal16 -> Decimal8, scale fixed at 1.
+            assertConversion("DECIMAL(76, 1)", "DECIMAL(38, 1)", v);
+            assertConversion("DECIMAL(38, 1)", "DECIMAL(18, 1)", v);
+            assertConversion("DECIMAL(18, 1)", "DECIMAL(9, 1)", v);
+            assertConversion("DECIMAL(9, 1)", "DECIMAL(4, 1)", v);
+            assertConversion("DECIMAL(4, 1)", "DECIMAL(2, 1)", v);
+            // Extreme gaps, scale fixed.
+            assertConversion("DECIMAL(76, 1)", "DECIMAL(2, 1)", v);
+            assertConversion("DECIMAL(38, 1)", "DECIMAL(2, 1)", v);
+            assertConversion("DECIMAL(76, 1)", "DECIMAL(9, 1)", v);
+        });
+    }
+
+    @Test
+    public void testDecimalToDecimalNarrowingWithScaleChange() throws Exception {
+        assertMemoryLeak(() -> {
+            // Reproduces a lazy-parquet correctness divergence for decimal->decimal conversions
+            // that narrow the physical width AND change the scale.
+            //
+            // The native converter (DecimalColumnTypeConverter.convertToDecimal) loads each
+            // value into a full Decimal256, rescales at full width, then narrows to the target
+            // (widen -> rescale -> narrow), so it preserves any value that fits the target
+            // precision. The lazy parquet decoder instead narrows to the target width DURING
+            // decode (truncating the raw little-endian bytes) and only THEN rescales
+            // (narrow -> rescale, see row_groups.rs rescale_decimal_in_place). When the raw
+            // source value (logical * 10^srcScale) exceeds the target's physical byte width --
+            // even though the logical value fits the target precision -- the parquet path
+            // truncates first and produces a silently wrong result, while native stays correct.
+            //
+            // Every value below is representable in the narrower target, so the parquet read (pt)
+            // must equal the native conversion (nt). ConvertOperatorImpl.isDecimalNarrowingWithScaleChange
+            // routes these to the eager parquet->native pre-pass (the lazy decoder cannot do them
+            // losslessly), so the conversion runs through the native DecimalColumnTypeConverter.
+            // Without that guard the lazy path truncates 1.2 to 0.0 here -- this is the regression.
+
+            // Decimal128(scale 4) -> Decimal8(scale 1): raw 1.2 -> 12000 overflows 1 byte.
+            assertConversion("DECIMAL(38, 4)", "DECIMAL(2, 1)", """
+                    (1.2m, '2024-01-01T00:00:01.000000Z'),
+                    (-3.4m, '2024-01-01T00:00:02.000000Z'),
+                    (0.0m, '2024-01-01T00:00:03.000000Z'),
+                    (NULL, '2024-01-01T00:00:04.000000Z')""");
+
+            // Decimal256(scale 5) -> Decimal16(scale 1): raw 1.2 -> 120000 overflows 2 bytes.
+            assertConversion("DECIMAL(76, 5)", "DECIMAL(4, 1)", """
+                    (1.2m, '2024-01-01T00:00:01.000000Z'),
+                    (-7.8m, '2024-01-01T00:00:02.000000Z'),
+                    (0.0m, '2024-01-01T00:00:03.000000Z'),
+                    (NULL, '2024-01-01T00:00:04.000000Z')""");
+
+            // Decimal128(scale 10) -> Decimal32(scale 2): raw 1.00 -> 10_000_000_000 wraps i32.
+            assertConversion("DECIMAL(38, 10)", "DECIMAL(9, 2)", """
+                    (1.00m, '2024-01-01T00:00:01.000000Z'),
+                    (-2.50m, '2024-01-01T00:00:02.000000Z'),
+                    (0.00m, '2024-01-01T00:00:03.000000Z'),
+                    (NULL, '2024-01-01T00:00:04.000000Z')""");
+
+            // Decimal256(scale 12) -> Decimal64(scale 2): raw 10_000_000 -> 1e19 wraps i64.
+            assertConversion("DECIMAL(76, 12)", "DECIMAL(18, 2)", """
+                    (10000000.00m, '2024-01-01T00:00:01.000000Z'),
+                    (-20000000.00m, '2024-01-01T00:00:02.000000Z'),
+                    (0.00m, '2024-01-01T00:00:03.000000Z'),
+                    (NULL, '2024-01-01T00:00:04.000000Z')""");
+
+            // Decimal256(scale 20) -> Decimal128(scale 2): raw 2e18 -> 2e38 wraps i128.
+            assertConversion("DECIMAL(76, 20)", "DECIMAL(38, 2)", """
+                    (2000000000000000000.00m, '2024-01-01T00:00:01.000000Z'),
+                    (-3000000000000000000.00m, '2024-01-01T00:00:02.000000Z'),
+                    (0.00m, '2024-01-01T00:00:03.000000Z'),
+                    (NULL, '2024-01-01T00:00:04.000000Z')""");
+        });
+    }
+
+    @Test
+    public void testDecimalToDecimalTwoStep() throws Exception {
+        assertMemoryLeak(() -> {
+            // Chained (two-step) decimal->decimal conversions over a parquet partition. The
+            // first ALTER reads lazily; the second ALTER sees a prior conversion, so the
+            // ConvertOperatorImpl pre-pass eagerly materialises the parquet partition to native
+            // (isParquetStorageCompatible is false for differing decimal types) and the second
+            // step runs through the native DecimalColumnTypeConverter. Both intermediate and
+            // final reads must equal native.
+            String widen = """
+                    (12.34m, '2024-01-01T00:00:01.000000Z'),
+                    (-56.78m, '2024-01-01T00:00:02.000000Z'),
+                    (0.00m, '2024-01-01T00:00:03.000000Z'),
+                    (NULL, '2024-01-01T00:00:04.000000Z')""";
+            // Widen then widen, with scale changes at each step.
+            assertTwoStepConversion("DECIMAL(4, 2)", "DECIMAL(18, 4)", "DECIMAL(38, 6)", widen);
+            // Widen then narrow back (the narrowing step is the eager native path).
+            assertTwoStepConversion("DECIMAL(9, 2)", "DECIMAL(38, 4)", "DECIMAL(4, 2)", widen);
+            // Cross every backing width up then back down.
+            assertTwoStepConversion("DECIMAL(2, 1)", "DECIMAL(76, 5)", "DECIMAL(9, 1)", """
+                    (1.2m, '2024-01-01T00:00:01.000000Z'),
+                    (-3.4m, '2024-01-01T00:00:02.000000Z'),
+                    (0.0m, '2024-01-01T00:00:03.000000Z'),
+                    (NULL, '2024-01-01T00:00:04.000000Z')""");
+            // Two same-width rescales in a row (Decimal128).
+            assertTwoStepConversion("DECIMAL(38, 4)", "DECIMAL(38, 8)", "DECIMAL(38, 2)", """
+                    (12345678901234567890.5600m, '2024-01-01T00:00:01.000000Z'),
+                    (0.0000m, '2024-01-01T00:00:02.000000Z'),
+                    (-99999999999999999999.9900m, '2024-01-01T00:00:03.000000Z'),
+                    (NULL, '2024-01-01T00:00:04.000000Z')""");
+        });
+    }
+
+    @Test
+    public void testDecimalToDecimalWideningAllWidths() throws Exception {
+        assertMemoryLeak(() -> {
+            // Widening physical width (with same / scale-up / scale-down). Widening preserves
+            // the full source value before any rescale, so every case must match native.
+            String tiny = """
+                    (1.2m, '2024-01-01T00:00:01.000000Z'),
+                    (-3.4m, '2024-01-01T00:00:02.000000Z'),
+                    (0.0m, '2024-01-01T00:00:03.000000Z'),
+                    (NULL, '2024-01-01T00:00:04.000000Z')""";
+            // Decimal8 -> every wider width, scale up.
+            assertConversion("DECIMAL(2, 1)", "DECIMAL(4, 2)", tiny);
+            assertConversion("DECIMAL(2, 1)", "DECIMAL(9, 3)", tiny);
+            assertConversion("DECIMAL(2, 1)", "DECIMAL(18, 5)", tiny);
+            assertConversion("DECIMAL(2, 1)", "DECIMAL(38, 6)", tiny);
+            assertConversion("DECIMAL(2, 1)", "DECIMAL(76, 10)", tiny);
+
+            String d16 = """
+                    (12.34m, '2024-01-01T00:00:01.000000Z'),
+                    (-56.78m, '2024-01-01T00:00:02.000000Z'),
+                    (0.00m, '2024-01-01T00:00:03.000000Z'),
+                    (NULL, '2024-01-01T00:00:04.000000Z')""";
+            assertConversion("DECIMAL(4, 2)", "DECIMAL(9, 4)", d16);
+            assertConversion("DECIMAL(4, 2)", "DECIMAL(38, 2)", d16); // same scale, widen
+            assertConversion("DECIMAL(4, 2)", "DECIMAL(76, 8)", d16);
+
+            String d32 = """
+                    (123456.789m, '2024-01-01T00:00:01.000000Z'),
+                    (-987654.321m, '2024-01-01T00:00:02.000000Z'),
+                    (0.000m, '2024-01-01T00:00:03.000000Z'),
+                    (NULL, '2024-01-01T00:00:04.000000Z')""";
+            assertConversion("DECIMAL(9, 3)", "DECIMAL(18, 6)", d32);
+            assertConversion("DECIMAL(9, 3)", "DECIMAL(76, 3)", d32);
+            // Scale down (3 -> 1) needs lossless trailing zeros in the dropped positions, as the
+            // native path rejects information-losing rescale (RoundingMode.UNNECESSARY).
+            assertConversion("DECIMAL(9, 3)", "DECIMAL(38, 1)", """
+                    (123456.700m, '2024-01-01T00:00:01.000000Z'),
+                    (-987654.300m, '2024-01-01T00:00:02.000000Z'),
+                    (0.000m, '2024-01-01T00:00:03.000000Z'),
+                    (NULL, '2024-01-01T00:00:04.000000Z')""");
+
+            String d64 = """
+                    (123456789012.3456m, '2024-01-01T00:00:01.000000Z'),
+                    (-987654321098.7654m, '2024-01-01T00:00:02.000000Z'),
+                    (0.0000m, '2024-01-01T00:00:03.000000Z'),
+                    (NULL, '2024-01-01T00:00:04.000000Z')""";
+            assertConversion("DECIMAL(18, 4)", "DECIMAL(38, 8)", d64);
+            assertConversion("DECIMAL(18, 4)", "DECIMAL(76, 4)", d64);
+
+            String d128 = """
+                    (12345678901234567890.5600m, '2024-01-01T00:00:01.000000Z'),
+                    (-99999999999999999999.9900m, '2024-01-01T00:00:02.000000Z'),
+                    (0.0000m, '2024-01-01T00:00:03.000000Z'),
+                    (NULL, '2024-01-01T00:00:04.000000Z')""";
+            assertConversion("DECIMAL(38, 4)", "DECIMAL(76, 8)", d128);
+            assertConversion("DECIMAL(38, 4)", "DECIMAL(76, 2)", d128); // scale down, widen
+        });
+    }
+
+    @Test
+    public void testDecimalToDecimalLazyUnrepresentableProducesNull() throws Exception {
+        assertMemoryLeak(() -> {
+            // Decimal->decimal conversions that stay lazy (same width, or widening) must read a value
+            // that does not fit the target as NULL on the lazy parquet path, matching the native
+            // converter (DecimalColumnTypeConverter). These all keep the same or a wider physical width,
+            // so the eager pre-pass does not materialise them - the Rust decoder must do the NULL clamp.
+            // Each case mixes an unrepresentable value (-> NULL) with one that fits (-> survives).
+
+            // Same width (Decimal128), precision reduced 38 -> 20, same scale. 18 integer digits exceed
+            // DECIMAL(20,4) (16 integer digits); 12.3400 fits.
+            assertConversion("DECIMAL(38, 4)", "DECIMAL(20, 4)", """
+                    (123456789012345678.9012m, '2024-01-01T00:00:01.000000Z'),
+                    (12.3400m, '2024-01-01T00:00:02.000000Z'),
+                    (NULL, '2024-01-01T00:00:03.000000Z')""");
+
+            // Widening width (Decimal32 -> Decimal128) with a lossy scale-down 3 -> 1: 1.234 drops the
+            // .034 (information loss) -> NULL; 5.600 is exact at scale 1 -> 5.6.
+            assertConversion("DECIMAL(9, 3)", "DECIMAL(38, 1)", """
+                    (1.234m, '2024-01-01T00:00:01.000000Z'),
+                    (5.600m, '2024-01-01T00:00:02.000000Z'),
+                    (NULL, '2024-01-01T00:00:03.000000Z')""");
+
+            // Same width (Decimal128), scale up 2 -> 30. 1234567890.12 * 10^28 overflows the target
+            // precision/width -> NULL; 0.00 stays representable.
+            assertConversion("DECIMAL(38, 2)", "DECIMAL(38, 30)", """
+                    (1234567890.12m, '2024-01-01T00:00:01.000000Z'),
+                    (0.00m, '2024-01-01T00:00:02.000000Z'),
+                    (NULL, '2024-01-01T00:00:03.000000Z')""");
+
+            // Same width (Decimal256), precision reduced 76 -> 40, same scale: a 50-digit value exceeds
+            // DECIMAL(40,0) but fits Decimal256 width -> must be NULL (exercises the i256 precision clamp).
+            assertConversion("DECIMAL(76, 0)", "DECIMAL(40, 0)", """
+                    (12345678901234567890123456789012345678901234567890m, '2024-01-01T00:00:01.000000Z'),
+                    (1234567890m, '2024-01-01T00:00:02.000000Z'),
+                    (NULL, '2024-01-01T00:00:03.000000Z')""");
+        });
+    }
+
+    @Test
     public void testDecimalToStringTypes() throws Exception {
         assertMemoryLeak(() -> {
             String values = """
@@ -2982,6 +3198,58 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
             // O3PartitionJob.convertVarColumnToFixed / convertFixedColumnToString /
             // convertFixedColumnToVarchar (and the in-place var->var copy), so the
             // re-read goes against native files written by the eager kernel.
+            execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+            drainWalQueue();
+            assertSqlCursors("SELECT * FROM nt ORDER BY ts", "SELECT * FROM pt ORDER BY ts");
+        } finally {
+            tryDrop("nt");
+            tryDrop("pt");
+        }
+    }
+
+    /**
+     * Runs a two-step (chained) {@code ALTER COLUMN TYPE} over a parquet partition, asserting
+     * the parquet read (pt) matches the native conversion (nt) after each step and after a final
+     * CONVERT PARTITION TO NATIVE. The first step reads the parquet lazily; the second step finds
+     * a prior conversion, so the ConvertOperatorImpl pre-pass eagerly materialises the partition
+     * to native before applying it. Mirrors {@link #assertConversionWithEncoding}.
+     */
+    private void assertTwoStepConversion(String sourceType, String midType, String targetType, String values) throws Exception {
+        try {
+            execute("CREATE TABLE nt (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE pt (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            execute("INSERT INTO nt(ts) VALUES ('2024-01-01T00:00:00.000000Z')");
+            execute("INSERT INTO pt(ts) VALUES ('2024-01-01T00:00:00.000000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE nt ADD COLUMN val " + sourceType);
+            execute("ALTER TABLE pt ADD COLUMN val " + sourceType);
+            drainWalQueue();
+
+            execute("INSERT INTO nt(val, ts) VALUES " + values);
+            execute("INSERT INTO pt(val, ts) VALUES " + values);
+            drainWalQueue();
+
+            execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+
+            // Step 1: lazy parquet read path.
+            execute("ALTER TABLE nt ALTER COLUMN val TYPE " + midType);
+            drainWalQueue();
+            execute("ALTER TABLE pt ALTER COLUMN val TYPE " + midType);
+            drainWalQueue();
+            assertSqlCursors("SELECT * FROM nt ORDER BY ts", "SELECT * FROM pt ORDER BY ts");
+
+            // Step 2: chained conversion. pt now has a prior conversion, so the pre-pass
+            // eagerly converts the parquet partition to native before applying this step.
+            execute("ALTER TABLE nt ALTER COLUMN val TYPE " + targetType);
+            drainWalQueue();
+            execute("ALTER TABLE pt ALTER COLUMN val TYPE " + targetType);
+            drainWalQueue();
+            assertSqlCursors("SELECT * FROM nt ORDER BY ts", "SELECT * FROM pt ORDER BY ts");
+
+            // Final: any partition still parquet is materialised to native.
             execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
             drainWalQueue();
             assertSqlCursors("SELECT * FROM nt ORDER BY ts", "SELECT * FROM pt ORDER BY ts");

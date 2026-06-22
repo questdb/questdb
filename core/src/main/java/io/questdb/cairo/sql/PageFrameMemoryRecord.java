@@ -865,6 +865,19 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         this.rowIndex = rowIndex;
     }
 
+    /**
+     * Converts a fixed-type value to a STRING CharSequence.
+     * Returns null for null values. Called only when the column needs a type cast.
+     * The first call per column per frame resolves and caches the
+     * {@link ColumnTypeConverter.Fixed2VarConverter}, the packed (precision, scale)
+     * args for decimal columns, and the row stride; subsequent rows pay only a flat
+     * array load instead of repeating the type dispatch.
+     */
+    private static boolean isNoNullSentinelFixedType(int columnType) {
+        final int tag = ColumnType.tagOf(columnType);
+        return tag == ColumnType.BOOLEAN || tag == ColumnType.BYTE
+                || tag == ColumnType.SHORT || tag == ColumnType.CHAR;
+    }
 
     private ColumnTypeConverter.Fixed2VarConverter cacheTypeCastConverter(int columnIndex, int srcType, int dstType) {
         // The destination only affects the unsupported diagnostic in getFixedToVarConverter,
@@ -888,20 +901,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         typeCastArgs.extendAndSet(columnIndex, args);
         typeCastWidth.extendAndSet(columnIndex, ColumnType.sizeOf(srcType));
         return converter;
-    }
-
-    /**
-     * Converts a fixed-type value to a STRING CharSequence.
-     * Returns null for null values. Called only when the column needs a type cast.
-     * The first call per column per frame resolves and caches the
-     * {@link ColumnTypeConverter.Fixed2VarConverter}, the packed (precision, scale)
-     * args for decimal columns, and the row stride; subsequent rows pay only a flat
-     * array load instead of repeating the type dispatch.
-     */
-    private static boolean isNoNullSentinelFixedType(int columnType) {
-        final int tag = ColumnType.tagOf(columnType);
-        return tag == ColumnType.BOOLEAN || tag == ColumnType.BYTE
-                || tag == ColumnType.SHORT || tag == ColumnType.CHAR;
     }
 
     private CharSequence convertFixedToStr(int srcType, int columnIndex, StringSink sink) {
