@@ -80,4 +80,20 @@ public abstract class AbstractCrashConsistencyTest extends AbstractCairoTest {
         return out;
     }
 
+    protected List<String> readVarcharColumn(String tableName, String column) {
+        List<String> out = new ArrayList<>();
+        try (RecordCursorFactory f = select("select " + column + " from " + tableName)) {
+            try (RecordCursor c = f.getCursor(sqlExecutionContext)) {
+                Record r = c.getRecord();
+                while (c.hasNext()) {
+                    io.questdb.std.str.Utf8Sequence v = r.getVarcharA(0);
+                    out.add(v == null ? null : v.toString());
+                }
+            }
+        } catch (io.questdb.griffin.SqlException e) {
+            throw new RuntimeException("readVarcharColumn failed for: select " + column + " from " + tableName, e);
+        }
+        return out;
+    }
+
 }
