@@ -61,6 +61,13 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     public static final int SEQUENCER_METADATA_OPEN_FAILED = FILE_TOO_SMALL - 1;
     private static final int TABLE_SUSPENDED = SEQUENCER_METADATA_OPEN_FAILED - 1;
     public static final int NON_CRITICAL = -1;
+    // Single source of truth for the write-refusal message a read-only node emits. Both a static
+    // read-only OSS instance and an enterprise node acting as a read-only replica reach this
+    // message, so the wording stays in one place to keep every emitter consistent and to make a
+    // future role-neutral reword a one-line change. The wording is retained as-is because the
+    // string is asserted across roughly twenty OSS/enterprise/e2e test files; centralizing the
+    // literal first lets any later reword land without scattering the change.
+    public static final String READ_ONLY_ACCESS_MESSAGE = "replica access is read-only";
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
     protected final StringSink message = new StringSink();
     protected final StringSink nativeBacktrace = new StringSink();

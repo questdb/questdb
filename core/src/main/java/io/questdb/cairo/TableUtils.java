@@ -146,6 +146,9 @@ public final class TableUtils {
     public static final String RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME = "_restore";
     public static final String SYMBOL_KEY_REMAP_FILE_SUFFIX = ".r";
     public static final char SYSTEM_TABLE_NAME_SUFFIX = '~';
+    // Writer lock reason used by internal system jobs (partition/posting-seal purge,
+    // CSV copy status) when they acquire a TableWriter on behalf of the engine itself.
+    public static final String SYSTEM_WRITER_LOCK_REASON = "QuestDB system";
     public static final int TABLE_DOES_NOT_EXIST = 1;
     public static final int TABLE_EXISTS = 0;
     public static final int TABLE_FORMAT_NATIVE = 0;

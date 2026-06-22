@@ -73,6 +73,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     private final StringSink deferredCloseReason = new StringSink();
     private final StringSink deferredErrorMessage = new StringSink();
     private final CharSequenceLongHashMap durableProgressSnapshot = new CharSequenceLongHashMap();
+    private final CairoEngine engine;
     private final StringSink error = new StringSink();
     private final CharSequenceLongHashMap lastDurableSeqTxns = new CharSequenceLongHashMap();
     private final long maxBufferSize;
@@ -125,6 +126,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
             LineHttpProcessorConfiguration configuration
     ) {
         assert initBufferSize > 0;
+        this.engine = engine;
         this.configuration = configuration;
         this.maxBufferSize = Math.min(configuration.getMaxRecvBufferSize(), Integer.MAX_VALUE);
         this.maxResponseErrorMessageLength = Math.max(0, (int) ((maxResponseContentLength - 100) / 1.5));
@@ -607,6 +609,18 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         }
 
         try {
+            // Re-check the LIVE write-refusal state on every batch. A QWP ingress connection
+            // caches its SecurityContext (and a per-table WAL writer) at handshake time, so a
+            // connection opened while this node was PRIMARY would otherwise keep writing after an
+            // in-place PRIMARY-to-REPLICA switch flips the node read-only -- the cached state
+            // bypasses per-write authorization entirely. Consulting engine.isReadOnlyMode() here
+            // closes that boundary race: the instant the node starts demoting (the dynamic
+            // read-only-replica flag flips FIRST in the switch cascade), the whole batch is
+            // rejected as an authorization error, which maps to Status.SECURITY_ERROR below.
+            if (engine.isReadOnlyMode()) {
+                throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+            }
+
             // Verify the message version matches what was negotiated during the upgrade
             if (bufferPosition >= QwpConstants.HEADER_SIZE) {
                 byte messageVersion = Unsafe.getByte(bufferAddress + QwpConstants.HEADER_OFFSET_VERSION);
