@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.window;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.map.Map;
@@ -124,9 +125,11 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
                 int initialBufferSize,
                 int timestampIdx,
                 TimestampComparator comparator,
-                String name
+                String name,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         ) {
-            super(map, partitionByRecord, partitionBySink, rangeLo, rangeHi, arg, memory, dequeMemory, initialBufferSize, timestampIdx, comparator, name);
+            super(map, partitionByRecord, partitionBySink, rangeLo, rangeHi, arg, memory, dequeMemory, initialBufferSize, timestampIdx, comparator, name, partitionByKeyTypes, liveView);
             this.timestampDriver = ColumnType.getTimestampDriver(ColumnType.getTimestampType(arg.getType()));
         }
 
@@ -159,9 +162,11 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
                 MemoryARW memory,
                 MemoryARW dequeMemory,
                 TimestampComparator comparator,
-                String name
+                String name,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         ) {
-            super(map, partitionByRecord, partitionBySink, rowsLo, rowsHi, arg, memory, dequeMemory, comparator, name);
+            super(map, partitionByRecord, partitionBySink, rowsLo, rowsHi, arg, memory, dequeMemory, comparator, name, partitionByKeyTypes, liveView);
             this.timestampDriver = ColumnType.getTimestampDriver(ColumnType.getTimestampType(arg.getType()));
         }
 
@@ -272,8 +277,11 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
                                         RecordSink partitionBySink,
                                         Function arg,
                                         TimestampComparator comparator,
-                                        String name) {
-            super(map, partitionByRecord, partitionBySink, arg, comparator, name);
+                                        String name,
+                                        ColumnTypes partitionByKeyTypes,
+                                        boolean liveView,
+                                        CairoConfiguration configuration) {
+            super(map, partitionByRecord, partitionBySink, arg, comparator, name, partitionByKeyTypes, liveView, configuration);
             this.timestampDriver = ColumnType.getTimestampDriver(ColumnType.getTimestampType(arg.getType()));
         }
 

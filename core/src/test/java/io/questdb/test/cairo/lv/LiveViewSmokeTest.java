@@ -359,6 +359,107 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
         });
     }
 
+    // Drives a partitioned bounded-frame max/min(TIMESTAMP|DATE) live view:
+    // asserts the windowed value is correct (also proving CREATE-accept), then
+    // performs a byte-exact snapshot/restore round-trip of the function's
+    // partition state (write -> toTop -> restore -> write again, comparing).
+    private void assertMaxMinTimestampDateFrameRoundTrip(
+            String fnName,
+            String valueType,
+            String frameClause,
+            String insertValues,
+            String expectedRows
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, v " + valueType + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, " + fnName + "(v) OVER w AS a FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts " + frameClause + ")");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, sym, v) VALUES " + insertValues);
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                assertQuery("SELECT ts, sym, a FROM lv ORDER BY sym, ts").noLeakCheck().expectSize().returns(expectedRows);
+
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                WindowFunction fn = unwrapWindowFunctions(lv).getQuick(0);
+                Assert.assertTrue(fn.supportsSnapshot());
+                Map fnMap = fn.getPartitionMap();
+                Assert.assertEquals(2L, fnMap.size());
+
+                try (MemoryCARW s1 = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                     MemoryCARW s2 = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+                    LiveViewFunctionSnapshot.write(s1, fn);
+                    final long len = s1.getAppendOffset();
+                    fn.toTop();
+                    Assert.assertEquals(0L, fnMap.size());
+                    LiveViewFunctionSnapshot.restore(s1, 0L, fn, 1);
+                    Assert.assertEquals(2L, fnMap.size());
+                    LiveViewFunctionSnapshot.write(s2, fn);
+                    Assert.assertEquals(len, s2.getAppendOffset());
+                    for (long i = 0; i < len; i++) {
+                        Assert.assertEquals("snapshot byte mismatch at " + i, s1.getByte(i), s2.getByte(i));
+                    }
+                }
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    // Same as assertMaxMinTimestampDateFrameRoundTrip but for the unbounded-preceding
+    // (anchored) shape; the function lives on the anchor window, not the main factory.
+    private void assertMaxMinTimestampDateUnboundedRoundTrip(
+            String fnName,
+            String valueType,
+            String insertValues,
+            String expectedRows
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, v " + valueType + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, " + fnName + "(v) OVER w AS a FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, sym, v) VALUES " + insertValues);
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                assertQuery("SELECT ts, sym, a FROM lv ORDER BY sym, ts").noLeakCheck().expectSize().returns(expectedRows);
+
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                WindowFunction fn = lv.getAnchorWindow().getFunctions().getQuick(0);
+                Assert.assertTrue(fn.supportsSnapshot());
+                Map fnMap = fn.getPartitionMap();
+                Assert.assertEquals(2L, fnMap.size());
+
+                try (MemoryCARW s1 = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                     MemoryCARW s2 = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+                    LiveViewFunctionSnapshot.write(s1, fn);
+                    final long len = s1.getAppendOffset();
+                    fn.toTop();
+                    Assert.assertEquals(0L, fnMap.size());
+                    LiveViewFunctionSnapshot.restore(s1, 0L, fn, 1);
+                    Assert.assertEquals(2L, fnMap.size());
+                    LiveViewFunctionSnapshot.write(s2, fn);
+                    Assert.assertEquals(len, s2.getAppendOffset());
+                    for (long i = 0; i < len; i++) {
+                        Assert.assertEquals("snapshot byte mismatch at " + i, s1.getByte(i), s2.getByte(i));
+                    }
+                }
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
     private void assertSumDecimalFrameRoundTrip(
             String decimalType,
             String frameClause,
@@ -5319,6 +5420,267 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                         "2026-08-01T00:00:00.000000Z\tb\t6.00\n" +
                         "2026-08-01T01:00:00.000000Z\tb\t6.00\n" +
                         "2026-08-01T02:00:00.000000Z\tb\t6.00\n"
+        );
+    }
+
+    @Test
+    public void testAnchorResetsMaxDateAcrossDayBoundary() throws Exception {
+        // max over a DATE column, re-anchored each day via the null sentinel.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, v DATE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, sym, max(v) OVER w AS m FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            execute("INSERT INTO base (ts, sym, v) VALUES " +
+                    "('2026-08-01T00:00:00.000000Z', 'a', '2026-01-20T00:00:00.000Z'::date), " +
+                    "('2026-08-01T01:00:00.000000Z', 'a', '2026-01-10T00:00:00.000Z'::date), " +
+                    "('2026-08-01T02:00:00.000000Z', 'a', '2026-01-30T00:00:00.000Z'::date), " +
+                    "('2026-08-02T00:00:00.000000Z', 'a', '2026-01-15T00:00:00.000Z'::date), " +
+                    "('2026-08-02T01:00:00.000000Z', 'a', '2026-01-05T00:00:00.000Z'::date), " +
+                    "('2026-08-02T02:00:00.000000Z', 'a', '2026-01-25T00:00:00.000Z'::date)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            assertQuery("SELECT ts, sym, m FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\tm\n" +
+                    "2026-08-01T00:00:00.000000Z\ta\t2026-01-20T00:00:00.000Z\n" +
+                    "2026-08-01T01:00:00.000000Z\ta\t2026-01-20T00:00:00.000Z\n" +
+                    "2026-08-01T02:00:00.000000Z\ta\t2026-01-30T00:00:00.000Z\n" +
+                    "2026-08-02T00:00:00.000000Z\ta\t2026-01-15T00:00:00.000Z\n" +
+                    "2026-08-02T01:00:00.000000Z\ta\t2026-01-15T00:00:00.000Z\n" +
+                    "2026-08-02T02:00:00.000000Z\ta\t2026-01-25T00:00:00.000Z\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testAnchorResetsMaxTimestampAcrossDayBoundary() throws Exception {
+        // max over a TIMESTAMP column, re-anchored each day via the null sentinel.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, v TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, sym, max(v) OVER w AS m FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            execute("INSERT INTO base (ts, sym, v) VALUES " +
+                    "('2026-08-01T00:00:00.000000Z', 'a', '2026-01-20T00:00:00.000000Z'), " +
+                    "('2026-08-01T01:00:00.000000Z', 'a', '2026-01-10T00:00:00.000000Z'), " +
+                    "('2026-08-01T02:00:00.000000Z', 'a', '2026-01-30T00:00:00.000000Z'), " +
+                    "('2026-08-02T00:00:00.000000Z', 'a', '2026-01-15T00:00:00.000000Z'), " +
+                    "('2026-08-02T01:00:00.000000Z', 'a', '2026-01-05T00:00:00.000000Z'), " +
+                    "('2026-08-02T02:00:00.000000Z', 'a', '2026-01-25T00:00:00.000000Z')");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            assertQuery("SELECT ts, sym, m FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\tm\n" +
+                    "2026-08-01T00:00:00.000000Z\ta\t2026-01-20T00:00:00.000000Z\n" +
+                    "2026-08-01T01:00:00.000000Z\ta\t2026-01-20T00:00:00.000000Z\n" +
+                    "2026-08-01T02:00:00.000000Z\ta\t2026-01-30T00:00:00.000000Z\n" +
+                    "2026-08-02T00:00:00.000000Z\ta\t2026-01-15T00:00:00.000000Z\n" +
+                    "2026-08-02T01:00:00.000000Z\ta\t2026-01-15T00:00:00.000000Z\n" +
+                    "2026-08-02T02:00:00.000000Z\ta\t2026-01-25T00:00:00.000000Z\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testAnchorResetsMinTimestampAcrossDayBoundary() throws Exception {
+        // min over a TIMESTAMP column (min reuses Max's classes), re-anchored each day.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, v TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, sym, min(v) OVER w AS m FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            execute("INSERT INTO base (ts, sym, v) VALUES " +
+                    "('2026-08-01T00:00:00.000000Z', 'a', '2026-01-20T00:00:00.000000Z'), " +
+                    "('2026-08-01T01:00:00.000000Z', 'a', '2026-01-10T00:00:00.000000Z'), " +
+                    "('2026-08-01T02:00:00.000000Z', 'a', '2026-01-30T00:00:00.000000Z'), " +
+                    "('2026-08-02T00:00:00.000000Z', 'a', '2026-01-15T00:00:00.000000Z'), " +
+                    "('2026-08-02T01:00:00.000000Z', 'a', '2026-01-05T00:00:00.000000Z'), " +
+                    "('2026-08-02T02:00:00.000000Z', 'a', '2026-01-25T00:00:00.000000Z')");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            assertQuery("SELECT ts, sym, m FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\tm\n" +
+                    "2026-08-01T00:00:00.000000Z\ta\t2026-01-20T00:00:00.000000Z\n" +
+                    "2026-08-01T01:00:00.000000Z\ta\t2026-01-10T00:00:00.000000Z\n" +
+                    "2026-08-01T02:00:00.000000Z\ta\t2026-01-10T00:00:00.000000Z\n" +
+                    "2026-08-02T00:00:00.000000Z\ta\t2026-01-15T00:00:00.000000Z\n" +
+                    "2026-08-02T01:00:00.000000Z\ta\t2026-01-05T00:00:00.000000Z\n" +
+                    "2026-08-02T02:00:00.000000Z\ta\t2026-01-05T00:00:00.000000Z\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testMaxDateOverPartitionRangeFrameSnapshotRoundTrip() throws Exception {
+        // max(DATE) over a bounded RANGE frame - LONG ring element + monotonic deque.
+        assertMaxMinTimestampDateFrameRoundTrip(
+                "max",
+                "DATE",
+                "RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW",
+                "('2026-08-01T00:00:00.000000Z', 'a', '2026-01-10T00:00:00.000Z'::date), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', '2026-01-20T00:00:00.000Z'::date), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', '2026-01-30T00:00:00.000Z'::date), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', '2026-03-06T00:00:00.000Z'::date), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', '2026-03-12T00:00:00.000Z'::date), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', '2026-03-18T00:00:00.000Z'::date)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t2026-01-10T00:00:00.000Z\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t2026-01-20T00:00:00.000Z\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t2026-01-30T00:00:00.000Z\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t2026-03-06T00:00:00.000Z\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t2026-03-12T00:00:00.000Z\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t2026-03-18T00:00:00.000Z\n"
+        );
+    }
+
+    @Test
+    public void testMaxTimestampOverPartitionRangeFrameSnapshotRoundTrip() throws Exception {
+        // max(TIMESTAMP) over a bounded RANGE frame - LONG ring element + monotonic deque.
+        assertMaxMinTimestampDateFrameRoundTrip(
+                "max",
+                "TIMESTAMP",
+                "RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW",
+                "('2026-08-01T00:00:00.000000Z', 'a', '2026-01-10T00:00:00.000000Z'), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', '2026-01-20T00:00:00.000000Z'), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', '2026-01-30T00:00:00.000000Z'), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', '2026-03-06T00:00:00.000000Z'), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', '2026-03-12T00:00:00.000000Z'), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', '2026-03-18T00:00:00.000000Z')",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t2026-01-10T00:00:00.000000Z\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t2026-01-20T00:00:00.000000Z\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t2026-01-30T00:00:00.000000Z\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t2026-03-06T00:00:00.000000Z\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t2026-03-12T00:00:00.000000Z\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t2026-03-18T00:00:00.000000Z\n"
+        );
+    }
+
+    @Test
+    public void testMaxTimestampOverPartitionRowsFrameSnapshotRoundTrip() throws Exception {
+        // max(TIMESTAMP) over a bounded ROWS frame - LONG ring element + monotonic deque.
+        assertMaxMinTimestampDateFrameRoundTrip(
+                "max",
+                "TIMESTAMP",
+                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW",
+                "('2026-08-01T00:00:00.000000Z', 'a', '2026-01-10T00:00:00.000000Z'), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', '2026-01-20T00:00:00.000000Z'), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', '2026-01-30T00:00:00.000000Z'), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', '2026-03-06T00:00:00.000000Z'), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', '2026-03-12T00:00:00.000000Z'), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', '2026-03-18T00:00:00.000000Z')",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t2026-01-10T00:00:00.000000Z\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t2026-01-20T00:00:00.000000Z\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t2026-01-30T00:00:00.000000Z\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t2026-03-06T00:00:00.000000Z\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t2026-03-12T00:00:00.000000Z\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t2026-03-18T00:00:00.000000Z\n"
+        );
+    }
+
+    @Test
+    public void testMaxTimestampOverUnboundedPartitionRowsSnapshotRoundTrip() throws Exception {
+        // max(TIMESTAMP) over the unbounded-preceding (anchored) shape - accumulator only.
+        assertMaxMinTimestampDateUnboundedRoundTrip(
+                "max",
+                "TIMESTAMP",
+                "('2026-08-01T00:00:00.000000Z', 'a', '2026-01-10T00:00:00.000000Z'), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', '2026-01-20T00:00:00.000000Z'), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', '2026-01-30T00:00:00.000000Z'), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', '2026-03-06T00:00:00.000000Z'), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', '2026-03-12T00:00:00.000000Z'), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', '2026-03-18T00:00:00.000000Z')",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t2026-01-10T00:00:00.000000Z\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t2026-01-20T00:00:00.000000Z\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t2026-01-30T00:00:00.000000Z\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t2026-03-06T00:00:00.000000Z\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t2026-03-12T00:00:00.000000Z\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t2026-03-18T00:00:00.000000Z\n"
+        );
+    }
+
+    @Test
+    public void testMinDateOverPartitionRowsFrameSnapshotRoundTrip() throws Exception {
+        // min(DATE) over a bounded ROWS frame - min reuses Max's classes.
+        assertMaxMinTimestampDateFrameRoundTrip(
+                "min",
+                "DATE",
+                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW",
+                "('2026-08-01T00:00:00.000000Z', 'a', '2026-01-10T00:00:00.000Z'::date), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', '2026-01-20T00:00:00.000Z'::date), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', '2026-01-30T00:00:00.000Z'::date), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', '2026-03-06T00:00:00.000Z'::date), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', '2026-03-12T00:00:00.000Z'::date), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', '2026-03-18T00:00:00.000Z'::date)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t2026-01-10T00:00:00.000Z\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t2026-01-10T00:00:00.000Z\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t2026-01-10T00:00:00.000Z\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t2026-03-06T00:00:00.000Z\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t2026-03-06T00:00:00.000Z\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t2026-03-06T00:00:00.000Z\n"
+        );
+    }
+
+    @Test
+    public void testMinDateOverUnboundedPartitionRowsSnapshotRoundTrip() throws Exception {
+        // min(DATE) over the unbounded-preceding (anchored) shape - accumulator only.
+        assertMaxMinTimestampDateUnboundedRoundTrip(
+                "min",
+                "DATE",
+                "('2026-08-01T00:00:00.000000Z', 'a', '2026-01-10T00:00:00.000Z'::date), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', '2026-01-20T00:00:00.000Z'::date), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', '2026-01-30T00:00:00.000Z'::date), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', '2026-03-06T00:00:00.000Z'::date), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', '2026-03-12T00:00:00.000Z'::date), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', '2026-03-18T00:00:00.000Z'::date)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t2026-01-10T00:00:00.000Z\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t2026-01-10T00:00:00.000Z\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t2026-01-10T00:00:00.000Z\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t2026-03-06T00:00:00.000Z\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t2026-03-06T00:00:00.000Z\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t2026-03-06T00:00:00.000Z\n"
+        );
+    }
+
+    @Test
+    public void testMinTimestampOverPartitionRowsFrameSnapshotRoundTrip() throws Exception {
+        // min(TIMESTAMP) over a bounded ROWS frame - min reuses Max's classes.
+        assertMaxMinTimestampDateFrameRoundTrip(
+                "min",
+                "TIMESTAMP",
+                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW",
+                "('2026-08-01T00:00:00.000000Z', 'a', '2026-01-10T00:00:00.000000Z'), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', '2026-01-20T00:00:00.000000Z'), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', '2026-01-30T00:00:00.000000Z'), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', '2026-03-06T00:00:00.000000Z'), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', '2026-03-12T00:00:00.000000Z'), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', '2026-03-18T00:00:00.000000Z')",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t2026-01-10T00:00:00.000000Z\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t2026-01-10T00:00:00.000000Z\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t2026-01-10T00:00:00.000000Z\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t2026-03-06T00:00:00.000000Z\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t2026-03-06T00:00:00.000000Z\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t2026-03-06T00:00:00.000000Z\n"
         );
     }
 

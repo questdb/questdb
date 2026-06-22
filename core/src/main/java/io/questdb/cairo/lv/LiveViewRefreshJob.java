@@ -1943,6 +1943,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
             final LiveViewWindow anchorWindow = instance.getAnchorWindow();
             final ObjList<WindowFunction> functions = windowFactory.getWindowFunctions();
+            // Open the (lazy) window cursor before writing restored state into it:
+            // allocates the per-partition maps and marks the cursor open so the
+            // first post-restore incremental refresh preserves the restored state
+            // rather than re-bootstrapping (which would clobber it).
+            windowFactory.openForLiveViewRestore(executionContext);
             final LiveViewCheckpointReader.BlockCursor cursor = checkpointReader.getCursor();
             // The MANIFEST is the first block; skip it - readManifestInto
             // already consumed it conceptually but resets the cursor.

@@ -140,7 +140,16 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
      */
     @Override
     public void onSnapshotRestoreBegin() {
-        Misc.clear(map);
+        if (map != null) {
+            // On a fresh restart the lazy per-partition map is still closed: the
+            // live-view restore path (restoreFromHead) runs before any cursor
+            // of()/ofIncremental reopens it. reopen() allocates the backing when
+            // closed and is a no-op when already open, so restorePartitionState's
+            // createValue() always has a live map. The subsequent first
+            // ofIncremental reopen() is then a no-op and preserves this state.
+            map.reopen();
+            map.clear();
+        }
         tombstoneCount = 0;
     }
 

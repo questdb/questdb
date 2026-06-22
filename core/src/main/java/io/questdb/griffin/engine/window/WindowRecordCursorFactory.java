@@ -128,6 +128,18 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
         return cursor;
     }
 
+    /**
+     * Prepares the cursor for a live-view checkpoint restore. The restore path
+     * fills each function's partition state directly (bypassing the base cursor),
+     * so it must first allocate the lazy per-partition maps under the per-query
+     * tracker and mark the cursor open. Marking it open makes the subsequent first
+     * {@code getIncrementalCursor()} take the state-preserving path rather than
+     * re-bootstrapping (which would reset/clobber the just-restored state).
+     */
+    public void openForLiveViewRestore(SqlExecutionContext executionContext) {
+        cursor.openForLiveViewRestore(executionContext);
+    }
+
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor baseCursor = base.getCursor(executionContext);
@@ -364,6 +376,26 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         /**
+         * Live-view checkpoint-restore entry point. Allocates the lazy per-partition
+         * maps under the per-query tracker and marks the cursor open WITHOUT binding a
+         * base cursor or calling {@link Function#init} - the restore code writes the
+         * partition state directly afterwards. Marking it open ensures the subsequent
+         * first {@link #ofIncremental} preserves the restored state instead of
+         * re-bootstrapping it.
+         */
+        private void openForLiveViewRestore(SqlExecutionContext executionContext) {
+            if (!isOpen) {
+                isOpen = true;
+                isIncremental = true;
+                final MemoryTracker memoryTracker = executionContext.getMemoryTracker();
+                for (int i = 0; i < windowFunctionsCount; i++) {
+                    windowFunctions.getQuick(i).setMemoryTracker(memoryTracker);
+                }
+                reopen(functions);
+            }
+        }
+
+        /**
          * Incremental entry point for live view refresh. Rebinds the base cursor
          * but skips {@link Function#init} for window functions so that their accumulated
          * state from prior refreshes is preserved. Non-window functions are re-initialized
@@ -377,13 +409,28 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
             isIncremental = true;
             super.of(baseCursor);
             circuitBreaker = executionContext.getCircuitBreaker();
-            assert isOpen : "incremental cursor requires a prior bootstrap";
-            for (int i = 0, n = functions.size(); i < n; i++) {
-                Function f = functions.getQuick(i);
-                if (f instanceof WindowFunction wf) {
-                    wf.initPartitionBy(baseCursor, executionContext);
-                } else {
-                    f.init(baseCursor, executionContext);
+            if (!isOpen) {
+                // First refresh of this cursor: there is no accumulated window state yet,
+                // so this call doubles as the bootstrap. Bind the per-query tracker and
+                // reopen the (lazy) per-partition maps under it, then fully initialize
+                // every function. The live-view refresh only ever calls
+                // getIncrementalCursor(), so when the maps are lazy (#7184 starts the
+                // cursor closed) this one-time setup has to happen here.
+                isOpen = true;
+                final MemoryTracker memoryTracker = executionContext.getMemoryTracker();
+                for (int i = 0; i < windowFunctionsCount; i++) {
+                    windowFunctions.getQuick(i).setMemoryTracker(memoryTracker);
+                }
+                reopen(functions);
+                Function.init(functions, baseCursor, executionContext, null);
+            } else {
+                for (int i = 0, n = functions.size(); i < n; i++) {
+                    Function f = functions.getQuick(i);
+                    if (f instanceof WindowFunction wf) {
+                        wf.initPartitionBy(baseCursor, executionContext);
+                    } else {
+                        f.init(baseCursor, executionContext);
+                    }
                 }
             }
         }
