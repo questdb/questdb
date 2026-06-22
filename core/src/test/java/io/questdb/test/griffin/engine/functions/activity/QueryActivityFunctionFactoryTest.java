@@ -46,9 +46,13 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.lang.reflect.Field;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
@@ -350,6 +354,109 @@ public class QueryActivityFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testQueryActivitySkipsCancellingEntry() throws Exception {
+        assertMemoryLeak(() -> {
+            final QueryRegistry registry = engine.getQueryRegistry();
+            final CountDownLatch cancellerHasEntry = new CountDownLatch(1);
+            final CountDownLatch releaseCanceller = new CountDownLatch(1);
+            final CountDownLatch cancellerDone = new CountDownLatch(1);
+            final AtomicReference<Throwable> fault = new AtomicReference<>();
+
+            try (
+                    SqlExecutionContextImpl ownerContext = new SqlExecutionContextImpl(engine, 1).with(new PrincipalSecurityContext("owner"));
+                    SqlExecutionContextImpl cancelContext = new SqlExecutionContextImpl(engine, 1).with(
+                            new BlockingPrincipalSecurityContext("admin", cancellerHasEntry, releaseCanceller)
+                    );
+                    SqlExecutionContextImpl readerContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)
+            ) {
+                final String query = "SELECT cancelling query";
+                final long queryId = registry.register(query, ownerContext);
+                final Thread cancellerThread = new Thread(() -> {
+                    try {
+                        registry.cancel(queryId, cancelContext);
+                    } catch (Throwable t) {
+                        fault.compareAndSet(null, t);
+                    } finally {
+                        cancellerDone.countDown();
+                    }
+                }, "query_activity_canceller");
+
+                cancellerThread.start();
+                try {
+                    Assert.assertTrue("canceller did not enter lifecycle guard", cancellerHasEntry.await(5, TimeUnit.SECONDS));
+                    assertQueryActivityDoesNotReturn(query, readerContext);
+                } finally {
+                    releaseCanceller.countDown();
+                    Assert.assertTrue("canceller did not finish", cancellerDone.await(5, TimeUnit.SECONDS));
+                    cancellerThread.join(5_000);
+                    if (registry.getEntry(queryId) != null) {
+                        registry.unregister(queryId, ownerContext);
+                    }
+                }
+                Assert.assertFalse("canceller thread hung", cancellerThread.isAlive());
+                if (fault.get() != null) {
+                    throw new AssertionError("canceller failed", fault.get());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testQueryActivityRejectsGrowingStringSnapshot() throws Exception {
+        assertInjectedPoolNameRejected("SELECT growing pool name", new GrowingCharSequence("pool"));
+    }
+
+    @Test
+    public void testQueryActivityRejectsRowWhenEntryRetiresDuringCopy() throws Exception {
+        assertMemoryLeak(() -> {
+            final QueryRegistry registry = engine.getQueryRegistry();
+            final CountDownLatch copyStarted = new CountDownLatch(1);
+            final CountDownLatch releaseCopy = new CountDownLatch(1);
+            final AtomicBoolean sawRow = new AtomicBoolean(true);
+            final AtomicReference<Throwable> fault = new AtomicReference<>();
+
+            try (
+                    SqlExecutionContextImpl ownerContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE);
+                    SqlExecutionContextImpl readerContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)
+            ) {
+                final String query = "SELECT retiring during copy";
+                final long queryId = registry.register(query, ownerContext);
+                setPoolName(registry.getEntry(queryId), new BlockingCharSequence("pool", copyStarted, releaseCopy));
+
+                final Thread readerThread = new Thread(() -> {
+                    try {
+                        sawRow.set(queryActivityHasRow(query, readerContext));
+                    } catch (Throwable t) {
+                        fault.compareAndSet(null, t);
+                    }
+                }, "query_activity_reader");
+
+                readerThread.start();
+                try {
+                    Assert.assertTrue("query_activity did not start copying the row", copyStarted.await(5, TimeUnit.SECONDS));
+                    registry.unregister(queryId, ownerContext);
+                } finally {
+                    releaseCopy.countDown();
+                    readerThread.join(5_000);
+                    if (registry.getEntry(queryId) != null) {
+                        registry.unregister(queryId, ownerContext);
+                    }
+                }
+                Assert.assertFalse("reader thread hung", readerThread.isAlive());
+                if (fault.get() != null) {
+                    throw new AssertionError("reader failed", fault.get());
+                }
+                Assert.assertFalse(sawRow.get());
+            }
+        });
+    }
+
+    @Test
+    public void testQueryActivityRejectsShrinkingStringSnapshot() throws Exception {
+        assertInjectedPoolNameRejected("SELECT shrinking pool name", new ShrinkingCharSequence());
+    }
+
+    @Test
     public void testQueryIdToCancelMustBeNonNegativeInteger() throws Exception {
         assertMemoryLeak(() -> {
             assertQuery("cancel ")
@@ -390,10 +497,171 @@ public class QueryActivityFunctionFactoryTest extends AbstractCairoTest {
                 .fails(13, "Query cancellation is disabled");
     }
 
+    private void assertInjectedPoolNameRejected(String query, CharSequence poolName) throws Exception {
+        assertMemoryLeak(() -> {
+            final QueryRegistry registry = engine.getQueryRegistry();
+            try (
+                    SqlExecutionContextImpl ownerContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE);
+                    SqlExecutionContextImpl readerContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)
+            ) {
+                final long queryId = registry.register(query, ownerContext);
+                try {
+                    setPoolName(registry.getEntry(queryId), poolName);
+                    assertQueryActivityDoesNotReturn(query, readerContext);
+                } finally {
+                    if (registry.getEntry(queryId) != null) {
+                        registry.unregister(queryId, ownerContext);
+                    }
+                }
+            }
+        });
+    }
+
+    private void assertQueryActivityDoesNotReturn(String query, SqlExecutionContextImpl context) throws SqlException {
+        Assert.assertFalse(queryActivityHasRow(query, context));
+    }
+
+    private boolean queryActivityHasRow(String query, SqlExecutionContextImpl context) throws SqlException {
+        try (
+                SqlCompiler compiler = engine.getSqlCompiler();
+                RecordCursorFactory factory = CairoEngine.select(compiler, "SELECT query_id FROM query_activity() WHERE query = '" + query + "'", context);
+                RecordCursor cursor = factory.getCursor(context)
+        ) {
+            return cursor.hasNext();
+        }
+    }
+
+    private static void await(CountDownLatch latch, String message) {
+        try {
+            Assert.assertTrue(message, latch.await(5, TimeUnit.SECONDS));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new AssertionError(message, e);
+        }
+    }
+
+    private static void setPoolName(QueryRegistry.Entry entry, CharSequence poolName) throws Exception {
+        Assert.assertNotNull(entry);
+        final Field field = QueryRegistry.Entry.class.getDeclaredField("poolName");
+        field.setAccessible(true);
+        field.set(entry, poolName);
+    }
+
     private static class AdminContext extends AllowAllSecurityContext {
         @Override
         public String getPrincipal() {
             return "admin";
+        }
+    }
+
+    private static class BlockingCharSequence implements CharSequence {
+        private final AtomicBoolean blocked = new AtomicBoolean();
+        private final CountDownLatch entered;
+        private final CountDownLatch release;
+        private final String value;
+
+        private BlockingCharSequence(String value, CountDownLatch entered, CountDownLatch release) {
+            this.value = value;
+            this.entered = entered;
+            this.release = release;
+        }
+
+        @Override
+        public char charAt(int index) {
+            return value.charAt(index);
+        }
+
+        @Override
+        public int length() {
+            if (blocked.compareAndSet(false, true)) {
+                entered.countDown();
+                await(release, "blocked char sequence was not released");
+            }
+            return value.length();
+        }
+
+        @Override
+        public CharSequence subSequence(int start, int end) {
+            return value.subSequence(start, end);
+        }
+    }
+
+    private static class BlockingPrincipalSecurityContext extends AllowAllSecurityContext {
+        private final AtomicBoolean blocked = new AtomicBoolean();
+        private final CountDownLatch entered;
+        private final String principal;
+        private final CountDownLatch release;
+
+        private BlockingPrincipalSecurityContext(String principal, CountDownLatch entered, CountDownLatch release) {
+            this.principal = principal;
+            this.entered = entered;
+            this.release = release;
+        }
+
+        @Override
+        public String getPrincipal() {
+            if (blocked.compareAndSet(false, true)) {
+                entered.countDown();
+                await(release, "blocked principal was not released");
+            }
+            return principal;
+        }
+    }
+
+    private static class GrowingCharSequence implements CharSequence {
+        private final AtomicInteger lengthCalls = new AtomicInteger();
+        private final String value;
+
+        private GrowingCharSequence(String value) {
+            this.value = value;
+        }
+
+        @Override
+        public char charAt(int index) {
+            return value.charAt(index);
+        }
+
+        @Override
+        public int length() {
+            return value.length() + Math.min(lengthCalls.getAndIncrement(), 1);
+        }
+
+        @Override
+        public CharSequence subSequence(int start, int end) {
+            return value.subSequence(start, end);
+        }
+    }
+
+    private static class PrincipalSecurityContext extends AllowAllSecurityContext {
+        private final String principal;
+
+        private PrincipalSecurityContext(String principal) {
+            this.principal = principal;
+        }
+
+        @Override
+        public String getPrincipal() {
+            return principal;
+        }
+    }
+
+    private static class ShrinkingCharSequence implements CharSequence {
+        @Override
+        public char charAt(int index) {
+            if (index > 0) {
+                throw new IndexOutOfBoundsException();
+            }
+            return 'x';
+        }
+
+        @Override
+        public int length() {
+            return 2;
+        }
+
+        @Override
+        public CharSequence subSequence(int start, int end) {
+            throw new UnsupportedOperationException();
         }
     }
 
