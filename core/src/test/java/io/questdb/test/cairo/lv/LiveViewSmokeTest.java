@@ -461,6 +461,62 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
         });
     }
 
+    // Drives a partitioned bounded-frame last_value(DECIMAL) live view (RESPECT or
+    // IGNORE NULLS): asserts the windowed value is correct (also proving
+    // CREATE-accept), then performs a byte-exact snapshot/restore round-trip of the
+    // function's partition state (write -> toTop -> restore -> write again, comparing
+    // the two payloads). RESPECT NULLS must use a frame ending strictly before the
+    // current row (a frame ending AT the current row routes to the un-migrated
+    // IncludeCurrent shape and is rejected at CREATE); IGNORE NULLS may end at the
+    // current row.
+    private void assertLastValueDecimalFrameRoundTrip(
+            boolean ignoreNulls,
+            String decimalType,
+            String frameClause,
+            String insertValues,
+            String expectedRows
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, d " + decimalType + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, last_value(d)" + (ignoreNulls ? " IGNORE NULLS" : "") + " OVER w AS a FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts " + frameClause + ")");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, sym, d) VALUES " + insertValues);
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                assertQuery("SELECT ts, sym, a FROM lv ORDER BY sym, ts").noLeakCheck().expectSize().returns(expectedRows);
+
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                WindowFunction fn = unwrapWindowFunctions(lv).getQuick(0);
+                Assert.assertTrue(fn.supportsSnapshot());
+                Map fnMap = fn.getPartitionMap();
+                Assert.assertEquals(2L, fnMap.size());
+
+                try (MemoryCARW s1 = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                     MemoryCARW s2 = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+                    LiveViewFunctionSnapshot.write(s1, fn);
+                    final long len = s1.getAppendOffset();
+                    fn.toTop();
+                    Assert.assertEquals(0L, fnMap.size());
+                    LiveViewFunctionSnapshot.restore(s1, 0L, fn, 1);
+                    Assert.assertEquals(2L, fnMap.size());
+                    LiveViewFunctionSnapshot.write(s2, fn);
+                    Assert.assertEquals(len, s2.getAppendOffset());
+                    for (long i = 0; i < len; i++) {
+                        Assert.assertEquals("snapshot byte mismatch at " + i, s1.getByte(i), s2.getByte(i));
+                    }
+                }
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
     // Drives a partitioned bounded-frame last_value(TIMESTAMP|DATE) live view:
     // asserts the windowed value is correct (also proving CREATE-accept), then
     // performs a byte-exact snapshot/restore round-trip of the function's
@@ -5934,6 +5990,366 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                         "2026-08-01T00:00:00.000000Z\tb\t\n" +
                         "2026-08-01T01:00:00.000000Z\tb\t2026-03-06T00:00:00.000Z\n" +
                         "2026-08-01T02:00:00.000000Z\tb\t2026-03-12T00:00:00.000Z\n"
+        );
+    }
+
+    @Test
+    public void testLastValueDecimal128OverPartitionRangeFrameSnapshotRoundTrip() throws Exception {
+        assertLastValueDecimalFrameRoundTrip(
+                false,
+                "DECIMAL(38, 6)",
+                "RANGE BETWEEN '3' HOUR PRECEDING AND '1' HOUR PRECEDING",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10.000000m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20.000000m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30.000000m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6.000000m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12.000000m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18.000000m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t10.000000\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t20.000000\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t6.000000\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t12.000000\n"
+        );
+    }
+
+    @Test
+    public void testLastValueDecimal128OverPartitionRowsFrameSnapshotRoundTrip() throws Exception {
+        assertLastValueDecimalFrameRoundTrip(
+                false,
+                "DECIMAL(38, 6)",
+                "ROWS BETWEEN 3 PRECEDING AND 1 PRECEDING",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10.000000m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20.000000m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30.000000m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6.000000m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12.000000m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18.000000m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t10.000000\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t20.000000\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t6.000000\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t12.000000\n"
+        );
+    }
+
+    @Test
+    public void testLastValueDecimal16OverPartitionRangeFrameSnapshotRoundTrip() throws Exception {
+        assertLastValueDecimalFrameRoundTrip(
+                false,
+                "DECIMAL(4, 1)",
+                "RANGE BETWEEN '3' HOUR PRECEDING AND '1' HOUR PRECEDING",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10.0m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20.0m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30.0m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6.0m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12.0m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18.0m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t10.0\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t20.0\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t6.0\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t12.0\n"
+        );
+    }
+
+    @Test
+    public void testLastValueDecimal16OverPartitionRowsFrameSnapshotRoundTrip() throws Exception {
+        assertLastValueDecimalFrameRoundTrip(
+                false,
+                "DECIMAL(4, 1)",
+                "ROWS BETWEEN 3 PRECEDING AND 1 PRECEDING",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10.0m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20.0m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30.0m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6.0m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12.0m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18.0m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t10.0\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t20.0\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t6.0\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t12.0\n"
+        );
+    }
+
+    @Test
+    public void testLastValueDecimal256OverPartitionRangeFrameSnapshotRoundTrip() throws Exception {
+        assertLastValueDecimalFrameRoundTrip(
+                false,
+                "DECIMAL(60, 0)",
+                "RANGE BETWEEN '3' HOUR PRECEDING AND '1' HOUR PRECEDING",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t10\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t20\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t6\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t12\n"
+        );
+    }
+
+    @Test
+    public void testLastValueDecimal256OverPartitionRowsFrameSnapshotRoundTrip() throws Exception {
+        assertLastValueDecimalFrameRoundTrip(
+                false,
+                "DECIMAL(60, 0)",
+                "ROWS BETWEEN 3 PRECEDING AND 1 PRECEDING",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t10\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t20\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t6\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t12\n"
+        );
+    }
+
+    @Test
+    public void testLastValueDecimal32OverPartitionRangeFrameSnapshotRoundTrip() throws Exception {
+        assertLastValueDecimalFrameRoundTrip(
+                false,
+                "DECIMAL(9, 3)",
+                "RANGE BETWEEN '3' HOUR PRECEDING AND '1' HOUR PRECEDING",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10.000m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20.000m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30.000m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6.000m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12.000m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18.000m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t10.000\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t20.000\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t6.000\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t12.000\n"
+        );
+    }
+
+    @Test
+    public void testLastValueDecimal32OverPartitionRowsFrameSnapshotRoundTrip() throws Exception {
+        assertLastValueDecimalFrameRoundTrip(
+                false,
+                "DECIMAL(9, 3)",
+                "ROWS BETWEEN 3 PRECEDING AND 1 PRECEDING",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10.000m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20.000m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30.000m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6.000m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12.000m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18.000m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t10.000\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t20.000\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t6.000\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t12.000\n"
+        );
+    }
+
+    @Test
+    public void testLastValueDecimal8OverPartitionRangeFrameSnapshotRoundTrip() throws Exception {
+        assertLastValueDecimalFrameRoundTrip(
+                false,
+                "DECIMAL(2, 0)",
+                "RANGE BETWEEN '3' HOUR PRECEDING AND '1' HOUR PRECEDING",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t10\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t20\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t6\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t12\n"
+        );
+    }
+
+    @Test
+    public void testLastValueDecimal8OverPartitionRowsFrameSnapshotRoundTrip() throws Exception {
+        assertLastValueDecimalFrameRoundTrip(
+                false,
+                "DECIMAL(2, 0)",
+                "ROWS BETWEEN 3 PRECEDING AND 1 PRECEDING",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t10\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t20\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t6\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t12\n"
+        );
+    }
+
+    @Test
+    public void testLastValueIgnoreNullsDecimal128OverPartitionRowsFrameSnapshotRoundTrip() throws Exception {
+        assertLastValueDecimalFrameRoundTrip(
+                true,
+                "DECIMAL(38, 6)",
+                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10.000000m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', null), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30.000000m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6.000000m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', null), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18.000000m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t10.000000\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t10.000000\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t30.000000\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t6.000000\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t6.000000\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t18.000000\n"
+        );
+    }
+
+    @Test
+    public void testLastValueIgnoreNullsDecimal256OverPartitionRowsFrameSnapshotRoundTrip() throws Exception {
+        assertLastValueDecimalFrameRoundTrip(
+                true,
+                "DECIMAL(60, 0)",
+                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', null), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', null), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t10\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t10\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t30\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t6\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t6\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t18\n"
+        );
+    }
+
+    @Test
+    public void testLastValueDecimal64OverPartitionRangeFrameSnapshotRoundTrip() throws Exception {
+        // last_value(DECIMAL(18,2)) over a bounded RANGE frame ending before the
+        // current row - RESPECT NULLS, 8-byte (LONG) ring element.
+        assertLastValueDecimalFrameRoundTrip(
+                false,
+                "DECIMAL(18, 2)",
+                "RANGE BETWEEN '3' HOUR PRECEDING AND '1' HOUR PRECEDING",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10.00m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20.00m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30.00m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6.00m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12.00m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18.00m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t10.00\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t20.00\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t6.00\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t12.00\n"
+        );
+    }
+
+    @Test
+    public void testLastValueDecimal64OverPartitionRowsFrameSnapshotRoundTrip() throws Exception {
+        // last_value(DECIMAL(18,2)) over a bounded ROWS frame ending before the
+        // current row - RESPECT NULLS, fixed-size ring.
+        assertLastValueDecimalFrameRoundTrip(
+                false,
+                "DECIMAL(18, 2)",
+                "ROWS BETWEEN 3 PRECEDING AND 1 PRECEDING",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10.00m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 20.00m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30.00m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6.00m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 12.00m), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18.00m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t10.00\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t20.00\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t6.00\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t12.00\n"
+        );
+    }
+
+    @Test
+    public void testLastValueIgnoreNullsDecimal64OverPartitionRangeFrameSnapshotRoundTrip() throws Exception {
+        // last_value(DECIMAL(18,2)) IGNORE NULLS over a bounded RANGE frame ending at
+        // the current row - the FirstNotNull-style IGNORE base, skipping a NULL.
+        assertLastValueDecimalFrameRoundTrip(
+                true,
+                "DECIMAL(18, 2)",
+                "RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10.00m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', null), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30.00m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6.00m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', null), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18.00m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t10.00\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t10.00\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t30.00\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t6.00\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t6.00\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t18.00\n"
+        );
+    }
+
+    @Test
+    public void testLastValueIgnoreNullsDecimal64OverPartitionRowsFrameSnapshotRoundTrip() throws Exception {
+        // last_value(DECIMAL(18,2)) IGNORE NULLS over a bounded ROWS frame ending at
+        // the current row - skips a NULL inside the frame.
+        assertLastValueDecimalFrameRoundTrip(
+                true,
+                "DECIMAL(18, 2)",
+                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW",
+                "('2026-08-01T00:00:00.000000Z', 'a', 10.00m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', null), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 30.00m), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 6.00m), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', null), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 18.00m)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t10.00\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t10.00\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t30.00\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t6.00\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t6.00\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t18.00\n"
         );
     }
 
