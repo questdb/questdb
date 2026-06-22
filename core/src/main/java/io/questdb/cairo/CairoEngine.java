@@ -2373,6 +2373,15 @@ public class CairoEngine implements Closeable, WriterSource {
                 throw CairoException.nonCritical().put("invalid rebase target directory [dir=").put(suppliedDir).put(']');
             }
             newDirName = suppliedDir;
+            // The supplied dir must be free. The swap below registers newDirName as the live table
+            // (registerName unconditionally repoints the reverse-map entry), and ff.rename only refuses a
+            // NON-empty destination - so an empty victim dir (a freshly-created, partition-less table) could
+            // be hijacked and its registry entry clobbered. Reject if the dir is already present on disk.
+            try (Path p = new Path()) {
+                if (ff.exists(p.of(root).concat(newDirName).$())) {
+                    throw CairoException.nonCritical().put("rebase target directory already exists [dir=").put(newDirName).put(']');
+                }
+            }
         } else {
             newTableId = (int) tableIdGenerator.getNextId();
             newDirName = TableUtils.getTableDir(configuration.mangleTableDirNames(), tableName, newTableId, true);
