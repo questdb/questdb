@@ -1410,20 +1410,44 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
-            MapValue mapValue = key.findValue();
-            if (mapValue != null) {
-                this.value = mapValue.getLong(0);
-            } else {
-                long d = arg.getLong(record);
-                if (d != Numbers.LONG_NULL) {
-                    mapValue = key.createValue();
-                    if (tombstoneValueIndex >= 0) {
-                        mapValue.putByte(tombstoneValueIndex, (byte) 0);
+            if (liveView) {
+                // Live-view ANCHOR contract: resetPartition keeps the map entry but
+                // clears the "initialized" flag (slot 1). Capture must key off that
+                // flag, not off entry existence: resetPartition pre-creates the entry
+                // for a new partition (so findValue would read garbage), and on an
+                // anchor reset the entry survives carrying the prior bucket's value (so
+                // findValue would keep returning it instead of recapturing).
+                MapValue mapValue = key.createValue();
+                if (mapValue.isNew() && tombstoneValueIndex >= 0) {
+                    mapValue.putByte(tombstoneValueIndex, (byte) 0);
+                }
+                if (mapValue.isNew() || mapValue.getByte(1) == 0) {
+                    long d = arg.getLong(record);
+                    if (d != Numbers.LONG_NULL) {
+                        mapValue.putLong(0, d);
+                        mapValue.putByte(1, (byte) 1);
+                        this.value = d;
+                    } else {
+                        mapValue.putLong(0, Numbers.LONG_NULL);
+                        mapValue.putByte(1, (byte) 0);
+                        this.value = Numbers.LONG_NULL;
                     }
-                    mapValue.putLong(0, d);
-                    this.value = d;
                 } else {
-                    this.value = Numbers.LONG_NULL;
+                    this.value = mapValue.getLong(0);
+                }
+            } else {
+                MapValue mapValue = key.findValue();
+                if (mapValue != null) {
+                    this.value = mapValue.getLong(0);
+                } else {
+                    long d = arg.getLong(record);
+                    if (d != Numbers.LONG_NULL) {
+                        mapValue = key.createValue();
+                        mapValue.putLong(0, d);
+                        this.value = d;
+                    } else {
+                        this.value = Numbers.LONG_NULL;
+                    }
                 }
             }
         }

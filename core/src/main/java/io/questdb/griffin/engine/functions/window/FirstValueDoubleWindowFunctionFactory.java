@@ -1136,20 +1136,44 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
-            MapValue mapValue = key.findValue();
-            if (mapValue != null) {
-                this.value = mapValue.getDouble(0);
-            } else {
-                double d = arg.getDouble(record);
-                if (Numbers.isFinite(d)) {
-                    mapValue = key.createValue();
-                    if (tombstoneValueIndex >= 0) {
-                        mapValue.putByte(tombstoneValueIndex, (byte) 0);
+            if (liveView) {
+                // Live-view ANCHOR contract: resetPartition keeps the map entry but
+                // clears the "initialized" flag (slot 1). Capture must key off that
+                // flag, not off entry existence: resetPartition pre-creates the entry
+                // for a new partition (so findValue would read garbage), and on an
+                // anchor reset the entry survives carrying the prior bucket's value (so
+                // findValue would keep returning it instead of recapturing).
+                MapValue mapValue = key.createValue();
+                if (mapValue.isNew() && tombstoneValueIndex >= 0) {
+                    mapValue.putByte(tombstoneValueIndex, (byte) 0);
+                }
+                if (mapValue.isNew() || mapValue.getByte(1) == 0) {
+                    double d = arg.getDouble(record);
+                    if (Numbers.isFinite(d)) {
+                        mapValue.putDouble(0, d);
+                        mapValue.putByte(1, (byte) 1);
+                        this.value = d;
+                    } else {
+                        mapValue.putDouble(0, Double.NaN);
+                        mapValue.putByte(1, (byte) 0);
+                        this.value = Double.NaN;
                     }
-                    mapValue.putDouble(0, d);
-                    this.value = d;
                 } else {
-                    this.value = Double.NaN;
+                    this.value = mapValue.getDouble(0);
+                }
+            } else {
+                MapValue mapValue = key.findValue();
+                if (mapValue != null) {
+                    this.value = mapValue.getDouble(0);
+                } else {
+                    double d = arg.getDouble(record);
+                    if (Numbers.isFinite(d)) {
+                        mapValue = key.createValue();
+                        mapValue.putDouble(0, d);
+                        this.value = d;
+                    } else {
+                        this.value = Double.NaN;
+                    }
                 }
             }
         }

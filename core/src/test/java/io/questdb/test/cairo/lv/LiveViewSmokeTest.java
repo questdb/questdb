@@ -7346,6 +7346,74 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAnchorResetsFirstValueIgnoreNullsDoubleAcrossDayBoundary() throws Exception {
+        // first_value IGNORE NULLS over a DOUBLE column: the FirstNotNull path skips
+        // leading NULLs and, on each anchor reset, recaptures the first non-null of
+        // the new day. Without the reset, day 2 would keep day 1's 20.0.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x DOUBLE, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, sym, first_value(x) IGNORE NULLS OVER w AS f FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            execute("INSERT INTO base (ts, x, sym) VALUES " +
+                    "('2026-08-01T00:00:00.000000Z', NULL, 'a'), " +
+                    "('2026-08-01T01:00:00.000000Z', 20.0, 'a'), " +
+                    "('2026-08-01T02:00:00.000000Z', 30.0, 'a'), " +
+                    "('2026-08-02T00:00:00.000000Z', NULL, 'a'), " +
+                    "('2026-08-02T01:00:00.000000Z', 100.0, 'a')");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            assertQuery("SELECT ts, sym, f FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\tf\n" +
+                            "2026-08-01T00:00:00.000000Z\ta\tnull\n" +
+                            "2026-08-01T01:00:00.000000Z\ta\t20.0\n" +
+                            "2026-08-01T02:00:00.000000Z\ta\t20.0\n" +
+                            "2026-08-02T00:00:00.000000Z\ta\tnull\n" +
+                            "2026-08-02T01:00:00.000000Z\ta\t100.0\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testAnchorResetsFirstValueIgnoreNullsLongAcrossDayBoundary() throws Exception {
+        // first_value IGNORE NULLS over a LONG column: the FirstNotNull path skips
+        // leading NULLs and, on each anchor reset, recaptures the first non-null of
+        // the new day. Without the reset, day 2 would keep day 1's 20.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x LONG, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, sym, first_value(x) IGNORE NULLS OVER w AS f FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            execute("INSERT INTO base (ts, x, sym) VALUES " +
+                    "('2026-08-01T00:00:00.000000Z', NULL, 'a'), " +
+                    "('2026-08-01T01:00:00.000000Z', 20, 'a'), " +
+                    "('2026-08-01T02:00:00.000000Z', 30, 'a'), " +
+                    "('2026-08-02T00:00:00.000000Z', NULL, 'a'), " +
+                    "('2026-08-02T01:00:00.000000Z', 100, 'a')");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            assertQuery("SELECT ts, sym, f FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\tf\n" +
+                            "2026-08-01T00:00:00.000000Z\ta\tnull\n" +
+                            "2026-08-01T01:00:00.000000Z\ta\t20\n" +
+                            "2026-08-01T02:00:00.000000Z\ta\t20\n" +
+                            "2026-08-02T00:00:00.000000Z\ta\tnull\n" +
+                            "2026-08-02T01:00:00.000000Z\ta\t100\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testAnchorFirstValueDecimal128RestoresAcrossRestart() throws Exception {
         // Restart-restore for the Decimal128 (16-byte value slot) snapshot payload.
         assertMemoryLeak(() -> {
