@@ -2207,7 +2207,7 @@ impl ParquetDecoder {
                 .append(varchar_slice_page_bufs);
         }
 
-        column_chunk_bufs.refresh_ptrs();
+        column_chunk_bufs.refresh_ptrs()?;
         if FILL_NULLS {
             Ok(row_group_hi.saturating_sub(row_group_lo))
         } else {
@@ -2373,7 +2373,7 @@ impl ParquetDecoder {
                 .append(varchar_slice_page_bufs);
         }
 
-        column_chunk_bufs.refresh_ptrs();
+        column_chunk_bufs.refresh_ptrs()?;
         Ok(row_count)
     }
 
@@ -3911,6 +3911,8 @@ mod multi_dict_tests {
                 page_buffers_size: 0,
                 page_buffers: Vec::new(),
                 column_top: 0,
+                page_buffers_charged: 0,
+                page_buffers_counted: 0,
             };
             let err = post_convert(src.into_type(), dst.into_type(), 0, &mut bufs).unwrap_err();
             let msg = err.to_string();
@@ -3956,6 +3958,8 @@ mod multi_dict_tests {
                 page_buffers_size: 0,
                 page_buffers: Vec::new(),
                 column_top: 0,
+                page_buffers_charged: 0,
+                page_buffers_counted: 0,
             };
             post_convert(src.into_type(), dst.into_type(), 0, &mut bufs)
                 .unwrap_or_else(|e| panic!("expected no-op for {src:?} -> {dst:?}, got {e}"));

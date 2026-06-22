@@ -25,9 +25,11 @@
 package io.questdb.griffin.engine.table.parquet;
 
 import io.questdb.cairo.Reopenable;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 /**
@@ -52,17 +54,23 @@ public class RowGroupBuffers implements QuietCloseable, Reopenable {
     private static final long CHUNK_PAGE_BUFFERS_SIZE_OFFSET;
     private static final long CHUNK_STRUCT_SIZE;
     private final int memoryTag;
+    // Per-query tracker, when set, charges the decoded column data against the
+    // owning workload's limit in addition to the global RSS counter. The native
+    // allocator is captured into the Rust RowGroupBuffers struct at create()
+    // time, so the tracker must be set before the (lazy) reopen() of a
+    // keepClosed instance.
+    private @Nullable MemoryTracker memoryTracker;
     private long ptr;
 
     public RowGroupBuffers(int memoryTag) {
         this.memoryTag = memoryTag;
-        this.ptr = create(Unsafe.getNativeAllocator(memoryTag));
+        this.ptr = create(Unsafe.getNativeAllocator(memoryTag, memoryTracker));
     }
 
     public RowGroupBuffers(int memoryTag, boolean keepClosed) {
         this.memoryTag = memoryTag;
         if (!keepClosed) {
-            this.ptr = create(Unsafe.getNativeAllocator(memoryTag));
+            this.ptr = create(Unsafe.getNativeAllocator(memoryTag, memoryTracker));
         }
     }
 
@@ -131,8 +139,18 @@ public class RowGroupBuffers implements QuietCloseable, Reopenable {
     @Override
     public void reopen() {
         if (ptr == 0) {
-            ptr = create(Unsafe.getNativeAllocator(memoryTag));
+            ptr = create(Unsafe.getNativeAllocator(memoryTag, memoryTracker));
         }
+    }
+
+    /**
+     * Binds the per-query memory tracker. Takes effect on the next (re)allocation
+     * of the native buffers: for a {@code keepClosed} instance the matching
+     * {@link #reopen()} captures it, so callers must set the tracker before
+     * reopening. A {@code null} tracker degrades to global-only accounting.
+     */
+    public void setMemoryTracker(@Nullable MemoryTracker memoryTracker) {
+        this.memoryTracker = memoryTracker;
     }
 
     public long sumChunkBytes(int startSlot, int slotCount) {

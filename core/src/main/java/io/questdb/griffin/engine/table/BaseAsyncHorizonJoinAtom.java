@@ -54,6 +54,7 @@ import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.IntHashSet;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -78,6 +79,10 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
     protected final AsyncFilterContext filterCtx;
     protected final int masterTimestampColumnIndex;
     protected final long masterTimestampScale;
+    // Per-query native memory tracker captured from the execution context in init() and
+    // bound on the allocators and ASOF lookup maps in reopen(). Null when no per-query
+    // limit applies, in which case the tracker-aware Unsafe overloads degrade to global-only.
+    protected MemoryTracker memoryTracker;
     protected final long offsetCount;
     protected final long[] offsets;
     protected final GroupByAllocator ownerAllocator;
@@ -212,14 +217,17 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
                 ));
             }
 
-            // Per-worker ASOF maps and SingleRecordSink targets for key comparison
+            // Per-worker ASOF maps and SingleRecordSink targets for key comparison.
+            // openOnInit=false: the backing is allocated lazily by reopen() (in
+            // initTimeFrameCursors()) under the per-query tracker bound in the atom's reopen(),
+            // keeping malloc (reopen) and free (clear) symmetric on the per-query counter.
             if (asOfJoinKeyTypes != null) {
                 this.perWorkerAsOfJoinMaps = new ObjList<>(workerCount);
                 final SingleColumnType asOfValueTypes = new SingleColumnType(ColumnType.LONG);
                 for (int i = 0; i < workerCount; i++) {
-                    perWorkerAsOfJoinMaps.add(MapFactory.createUnorderedMap(configuration, asOfJoinKeyTypes, asOfValueTypes));
+                    perWorkerAsOfJoinMaps.add(MapFactory.createUnorderedMap(configuration, asOfJoinKeyTypes, asOfValueTypes, false, false));
                 }
-                this.ownerAsOfJoinMap = MapFactory.createUnorderedMap(configuration, asOfJoinKeyTypes, asOfValueTypes);
+                this.ownerAsOfJoinMap = MapFactory.createUnorderedMap(configuration, asOfJoinKeyTypes, asOfValueTypes, false, false);
             } else {
                 this.perWorkerAsOfJoinMaps = null;
                 this.ownerAsOfJoinMap = null;
@@ -251,13 +259,15 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
                 }
             }
 
-            // Allocators
-            this.ownerAllocator = GroupByAllocatorFactory.createAllocator(configuration);
+            // Allocators. Lazy variant (openOnInit=false): the chunk index is allocated by
+            // the first reopen() under the bound per-query tracker, keeping malloc/free
+            // symmetric on the per-query counter from the first cursor.
+            this.ownerAllocator = GroupByAllocatorFactory.createAllocator(configuration, false);
             GroupByUtils.setAllocator(ownerGroupByFunctions, ownerAllocator);
             if (perWorkerGroupByFunctions != null) {
                 this.perWorkerAllocators = new ObjList<>(workerCount);
                 for (int i = 0; i < workerCount; i++) {
-                    GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration);
+                    GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration, false);
                     perWorkerAllocators.add(allocator);
                     GroupByUtils.setAllocator(perWorkerGroupByFunctions.getQuick(i), allocator);
                 }
@@ -316,10 +326,27 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
 
         // Let subclass clear its resources
         clearAggregationState();
+        memoryTracker = null;
     }
 
     @Override
     public void close() {
+        // The allocators' chunk index is retained across queries (restoreInitialCapacity()
+        // in clear()); its final free happens here, after the last query's tracker was
+        // released to the pool. Null the tracker so this free charges the global counter
+        // only and does not underflow the released per-query block. The ASOF maps are freed
+        // per query in clear() under the still-bound tracker, so they are left alone here.
+        if (ownerAllocator != null) {
+            ownerAllocator.setMemoryTracker(null);
+        }
+        if (perWorkerAllocators != null) {
+            for (int i = 0, n = perWorkerAllocators.size(); i < n; i++) {
+                final GroupByAllocator allocator = perWorkerAllocators.getQuick(i);
+                if (allocator != null) {
+                    allocator.setMemoryTracker(null);
+                }
+            }
+        }
         Misc.free(ownerAllocator);
         Misc.freeObjList(perWorkerAllocators);
         // ownerGroupByFunctions are freed by the owning factory via
@@ -442,6 +469,7 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
 
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        memoryTracker = executionContext.getMemoryTracker();
         filterCtx.initFilters(symbolTableSource, executionContext);
         // Note: group by functions are initialized in initTimeFrameCursors() where we have
         // access to both master and slave symbol table sources
@@ -527,11 +555,30 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
 
     @Override
     public void reopen() {
-        // The maps/values will be opened lazily by worker threads, but we need to reopen the allocators.
+        // init() runs before reopen() (frameSequence.of() -> atom.init(), then cursor.of()
+        // -> atom.reopen()), so memoryTracker is available here to bind on the allocators and
+        // ASOF lookup maps before any backing is allocated. The allocators' chunk index is
+        // lazy (openOnInit=false) and reopened here; the ASOF maps are reopened later in
+        // initTimeFrameCursors(). Both pick up the bound tracker so their growth counts
+        // against the per-query limit.
+        ownerAllocator.setMemoryTracker(memoryTracker);
         ownerAllocator.reopen();
         if (perWorkerAllocators != null) {
             for (int i = 0, n = perWorkerAllocators.size(); i < n; i++) {
-                perWorkerAllocators.getQuick(i).reopen();
+                final GroupByAllocator allocator = perWorkerAllocators.getQuick(i);
+                allocator.setMemoryTracker(memoryTracker);
+                allocator.reopen();
+            }
+        }
+        if (ownerAsOfJoinMap != null) {
+            ownerAsOfJoinMap.setMemoryTracker(memoryTracker);
+        }
+        if (perWorkerAsOfJoinMaps != null) {
+            for (int i = 0, n = perWorkerAsOfJoinMaps.size(); i < n; i++) {
+                final Map map = perWorkerAsOfJoinMaps.getQuick(i);
+                if (map != null) {
+                    map.setMemoryTracker(memoryTracker);
+                }
             }
         }
     }
