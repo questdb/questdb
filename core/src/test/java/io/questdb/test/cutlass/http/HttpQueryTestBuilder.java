@@ -57,11 +57,9 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.PlainSocketFactory;
 import io.questdb.std.Chars;
-import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
-import io.questdb.std.Os;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.NanosecondClock;
 import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
@@ -114,8 +112,6 @@ public class HttpQueryTestBuilder {
     }
 
     public void runNoLeakCheck(CairoConfiguration configuration, HttpClientCode code) throws Exception {
-        final long openFilesBefore = Files.getOpenFileCount();
-        final long openCachedFilesBefore = Files.getOpenCachedFileCount();
         final String baseDir = temp;
         serverConfigBuilder
                 .withBaseDir(baseDir)
@@ -340,7 +336,6 @@ public class HttpQueryTestBuilder {
                 }
             }
         }
-        awaitFileDescriptorQuiescence(openFilesBefore, openCachedFilesBefore);
     }
 
     public HttpQueryTestBuilder withAlterTableMaxWaitTimeout(long maxWriterWaitTimeout) {
@@ -446,18 +441,6 @@ public class HttpQueryTestBuilder {
     public HttpQueryTestBuilder withWorkerCount(int workerCount) {
         this.workerCount = workerCount;
         return this;
-    }
-
-    private static void awaitFileDescriptorQuiescence(long expectedOpenFiles, long expectedOpenCachedFiles) {
-        // Teardown frees some cached fds shortly after engine close; wait until this test has
-        // released what it opened so the churn does not leak into the next test's leak check.
-        // A genuine leak never settles, so the surrounding leak check still fails on timeout.
-        for (int i = 0; i < 5_000; i++) {
-            if (Files.getOpenFileCount() == expectedOpenFiles && Files.getOpenCachedFileCount() == expectedOpenCachedFiles) {
-                return;
-            }
-            Os.sleep(1);
-        }
     }
 
     @FunctionalInterface
