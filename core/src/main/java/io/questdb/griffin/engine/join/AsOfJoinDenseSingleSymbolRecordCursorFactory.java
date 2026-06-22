@@ -59,8 +59,8 @@ public final class AsOfJoinDenseSingleSymbolRecordCursorFactory extends AsOfJoin
         Map fwdScanKeyToRowId = null;
         Map bwdScanKeyToRowId = null;
         try {
-            fwdScanKeyToRowId = MapFactory.createUnorderedMap(configuration, TYPES_KEY, TYPES_VALUE);
-            bwdScanKeyToRowId = MapFactory.createUnorderedMap(configuration, TYPES_KEY, TYPES_VALUE);
+            fwdScanKeyToRowId = MapFactory.createUnorderedMap(configuration, TYPES_KEY, TYPES_VALUE, false, false);
+            bwdScanKeyToRowId = MapFactory.createUnorderedMap(configuration, TYPES_KEY, TYPES_VALUE, false, false);
             this.cursor = new AsOfJoinDenseSingleSymbolRecordCursor(
                     columnSplit,
                     fwdScanKeyToRowId,

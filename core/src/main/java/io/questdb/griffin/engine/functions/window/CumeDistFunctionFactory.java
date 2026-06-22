@@ -59,9 +59,11 @@ import io.questdb.std.DirectIntList;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * cume_dist() window function.
@@ -193,6 +195,11 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
+            // Bind the per-query tracker on the deferred-offsets buffer. The
+            // first pass2() write triggers the buffer's lazy malloc under
+            // this tracker; reset() at cursor close frees it against the
+            // same tracker, keeping the per-query counter balanced.
+            deferredOffsets.setMemoryTracker(executionContext.getMemoryTracker());
             SortKeyEncoder.buildRankMaps(symbolTableSource, rankMaps, recordComparator);
         }
 
@@ -408,7 +415,9 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
         ) {
             this.partitionByRecord = partitionByRecord;
             this.partitionBySink = partitionBySink;
-            this.keyColumnTypes = keyColumnTypes;
+            // Snapshot the key types so initRecordComparator() does not read the generator's reused
+            // buffer after it has been rebuilt for a later window column's PARTITION BY.
+            this.keyColumnTypes = copyKeyTypes(keyColumnTypes);
             this.configuration = configuration;
             this.deferredOffsets = deferredOffsets;
             this.initialBufferSize = initialBufferSize;
@@ -450,10 +459,14 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
                                          IntList orderByDirection) throws SqlException {
             IntList indices = orderIndices != null ? orderIndices : sqlGenerator.toOrderIndices(metadata, orderBy, orderByDirection);
             try {
+                // Lazy: start the map closed so reopen() allocates it under the per-query
+                // tracker the cursor binds, symmetric with the free at cursor close.
                 map = MapFactory.createUnorderedMap(
                         configuration,
                         keyColumnTypes,
-                        CUME_DIST_COLUMN_TYPES
+                        CUME_DIST_COLUMN_TYPES,
+                        false,
+                        false
                 );
                 this.recordComparator = sqlGenerator.getRecordComparatorCompiler().newInstance(metadata, indices);
                 this.rankMaps = SortKeyEncoder.createRankMaps(metadata, indices);
@@ -584,6 +597,14 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void setColumnIndex(int columnIndex) {
             this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            if (map != null) {
+                map.setMemoryTracker(tracker);
+            }
+            deferredOffsets.setMemoryTracker(tracker);
         }
 
         @Override

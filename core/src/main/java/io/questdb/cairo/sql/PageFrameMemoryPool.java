@@ -37,6 +37,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.IntLongHashMap;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
@@ -132,6 +133,11 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     private boolean hasFullProjectionMap;
     private ParquetBuffers lruHead;
     private ParquetBuffers lruTail;
+    // Per-query tracker propagated to each ParquetBuffers' RowGroupBuffers when
+    // it is reopened, so decoded parquet column data charges the owning
+    // workload's limit. Null leaves decode buffers on global-only accounting
+    // (e.g. context-less worker tasks and protocol-layer streaming pools).
+    private MemoryTracker memoryTracker;
     // Lazily created list of zero entries published as column addresses/sizes for
     // an empty decode window; a zero address reads as a column top (NULL).
     private DirectLongList nullColumnAddresses;
@@ -167,6 +173,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         recordAtRows = Misc.free(recordAtRows);
         recordAtSlices.clear();
         releaseParquetBuffers();
+        memoryTracker = null;
     }
 
     @Override
@@ -181,6 +188,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         releaseParquetBuffers();
         Misc.freeObjListAndClear(freeParquetBufferShells);
         addressCache = null;
+        memoryTracker = null;
     }
 
     public long getBindGeneration() {
@@ -527,6 +535,16 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         }
     }
 
+    /**
+     * Binds the per-query tracker propagated to each decode buffer on reopen.
+     * Owners set it at per-query init (before the first {@link #navigateTo});
+     * context-less owners leave it null for global-only accounting. A null
+     * tracker is valid and matches pre-tracker behavior.
+     */
+    public void setMemoryTracker(MemoryTracker memoryTracker) {
+        this.memoryTracker = memoryTracker;
+    }
+
     public void setParquetDecodeHint(ParquetDecodeHint hint) {
         this.decodeHint = hint;
         this.effectiveBudgetBytes = hint.applyTo(maxCacheBytes);
@@ -637,18 +655,22 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         if (shellCount > 0) {
             buffers = freeParquetBufferShells.getQuick(shellCount - 1);
             freeParquetBufferShells.remove(shellCount - 1);
-            // reopen() re-allocates the native buffers one by one. The shell is
-            // already popped off freeParquetBufferShells and not yet tracked in
-            // lruHead/byFrameIndex, so a partial reopen would orphan it. Free what
-            // reopen() managed to allocate and discard the shell.
-            try {
-                buffers.reopen();
-            } catch (Throwable th) {
-                buffers.close();
-                throw th;
-            }
         } else {
             buffers = new ParquetBuffers();
+        }
+        // reopen() binds the pool's per-query tracker, then (re)allocates the
+        // native buffers one by one. A fresh ParquetBuffers defers its
+        // RowGroupBuffers allocation to here (keepClosed ctor) so the decoded
+        // column data charges the per-query limit instead of the global counter;
+        // a reused shell re-allocates everything it freed when it was parked.
+        // Either way the buffers is not yet tracked in lruHead/byFrameIndex, so a
+        // partial reopen would orphan it: free what reopen() managed to allocate
+        // and discard it.
+        try {
+            buffers.reopen();
+        } catch (Throwable th) {
+            buffers.close();
+            throw th;
         }
         buffers.frameIndex = frameIndex;
         buffers.usageFlags = usageBit;
@@ -1203,7 +1225,12 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 auxPageSizes = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
                 pageAddresses = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
                 pageSizes = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
-                rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                // keepClosed: defer the native buffer allocation to the first
+                // reopen(), which binds the pool's per-query tracker (see
+                // acquireBuffer) before RowGroupBuffers.create() captures the
+                // native allocator. The other DirectLongLists above are tiny and
+                // tracker-agnostic, so they stay eager.
+                rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER, true);
             } catch (Throwable th) {
                 Misc.free(auxPageAddresses);
                 Misc.free(auxPageSizes);
@@ -1332,6 +1359,9 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             pageSizes.reopen();
             auxPageAddresses.reopen();
             auxPageSizes.reopen();
+            // Bind the pool's per-query tracker before the lazy create() inside
+            // reopen() captures the native allocator into the Rust struct.
+            rowGroupBuffers.setMemoryTracker(memoryTracker);
             rowGroupBuffers.reopen();
         }
 
