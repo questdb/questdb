@@ -404,9 +404,10 @@ public class CairoEngine implements Closeable, WriterSource {
      * aggregate window (e.g. {@code avg(x) OVER (ORDER BY ts ROWS ...)} with no
      * {@code PARTITION BY}) is {@link WindowFunction#ZERO_PASS} but has no partition Map to
      * snapshot, so it clears the pass-count check and is rejected here - and, lacking a
-     * partition Map, it is never live-view-eligible, so this reject is permanent.
-     * (Un-migrated DECIMAL window functions hit the same reject today, transiently, until
-     * the per-type migration train reaches them.) The pass-count reject, by contrast, is
+     * partition Map, it is never live-view-eligible, so this reject is permanent. The
+     * partitioned ZERO_PASS aggregate frame shapes - including the full DECIMAL aggregate
+     * window family - are migrated to the snapshot contract and accepted; only these
+     * un-partitioned shapes still reach this reject. The pass-count reject, by contrast, is
      * defensive - multi-pass / lead / percent_rank shapes compile to a cached factory and
      * are caught upstream by {@link #validateLiveViewFactory}, so no GA function reaches
      * it; a ZERO_PASS stub lacking snapshot support is the only way to exercise its wording.
