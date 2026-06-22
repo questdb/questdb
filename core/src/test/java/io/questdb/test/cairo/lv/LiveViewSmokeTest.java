@@ -359,6 +359,108 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
         });
     }
 
+    // Drives a partitioned bounded-frame first_value(TIMESTAMP|DATE) live view
+    // (RESPECT or IGNORE NULLS): asserts the windowed value is correct (also
+    // proving CREATE-accept), then performs a byte-exact snapshot/restore
+    // round-trip of the function's partition state.
+    private void assertFirstValueTimestampDateFrameRoundTrip(
+            String valueType,
+            String frameClause,
+            boolean ignoreNulls,
+            String insertValues,
+            String expectedRows
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, v " + valueType + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, first_value(v)" + (ignoreNulls ? " IGNORE NULLS" : "") + " OVER w AS a FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts " + frameClause + ")");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, sym, v) VALUES " + insertValues);
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                assertQuery("SELECT ts, sym, a FROM lv ORDER BY sym, ts").noLeakCheck().expectSize().returns(expectedRows);
+
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                WindowFunction fn = unwrapWindowFunctions(lv).getQuick(0);
+                Assert.assertTrue(fn.supportsSnapshot());
+                Map fnMap = fn.getPartitionMap();
+                Assert.assertEquals(2L, fnMap.size());
+
+                try (MemoryCARW s1 = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                     MemoryCARW s2 = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+                    LiveViewFunctionSnapshot.write(s1, fn);
+                    final long len = s1.getAppendOffset();
+                    fn.toTop();
+                    Assert.assertEquals(0L, fnMap.size());
+                    LiveViewFunctionSnapshot.restore(s1, 0L, fn, 1);
+                    Assert.assertEquals(2L, fnMap.size());
+                    LiveViewFunctionSnapshot.write(s2, fn);
+                    Assert.assertEquals(len, s2.getAppendOffset());
+                    for (long i = 0; i < len; i++) {
+                        Assert.assertEquals("snapshot byte mismatch at " + i, s1.getByte(i), s2.getByte(i));
+                    }
+                }
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    // Same as assertFirstValueTimestampDateFrameRoundTrip but for the
+    // unbounded-preceding (anchored) shape; the function lives on the anchor
+    // window, not the main factory.
+    private void assertFirstValueTimestampDateUnboundedRoundTrip(
+            String valueType,
+            boolean ignoreNulls,
+            String insertValues,
+            String expectedRows
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, v " + valueType + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, first_value(v)" + (ignoreNulls ? " IGNORE NULLS" : "") + " OVER w AS a FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, sym, v) VALUES " + insertValues);
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                assertQuery("SELECT ts, sym, a FROM lv ORDER BY sym, ts").noLeakCheck().expectSize().returns(expectedRows);
+
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                WindowFunction fn = lv.getAnchorWindow().getFunctions().getQuick(0);
+                Assert.assertTrue(fn.supportsSnapshot());
+                Map fnMap = fn.getPartitionMap();
+                Assert.assertEquals(2L, fnMap.size());
+
+                try (MemoryCARW s1 = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                     MemoryCARW s2 = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+                    LiveViewFunctionSnapshot.write(s1, fn);
+                    final long len = s1.getAppendOffset();
+                    fn.toTop();
+                    Assert.assertEquals(0L, fnMap.size());
+                    LiveViewFunctionSnapshot.restore(s1, 0L, fn, 1);
+                    Assert.assertEquals(2L, fnMap.size());
+                    LiveViewFunctionSnapshot.write(s2, fn);
+                    Assert.assertEquals(len, s2.getAppendOffset());
+                    for (long i = 0; i < len; i++) {
+                        Assert.assertEquals("snapshot byte mismatch at " + i, s1.getByte(i), s2.getByte(i));
+                    }
+                }
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
     // Drives a partitioned bounded-frame max/min(TIMESTAMP|DATE) live view:
     // asserts the windowed value is correct (also proving CREATE-accept), then
     // performs a byte-exact snapshot/restore round-trip of the function's
@@ -5458,6 +5560,75 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAnchorResetsFirstValueIgnoreNullsTimestampAcrossDayBoundary() throws Exception {
+        // first_value IGNORE NULLS over a TIMESTAMP column: the FirstNotNull path skips
+        // leading NULLs and, on each anchor reset, recaptures the first non-null of the
+        // new day. Without the reset, day 2 would keep day 1's 2026-01-20.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, v TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, sym, first_value(v) IGNORE NULLS OVER w AS f FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            execute("INSERT INTO base (ts, sym, v) VALUES " +
+                    "('2026-08-01T00:00:00.000000Z', 'a', NULL), " +
+                    "('2026-08-01T01:00:00.000000Z', 'a', '2026-01-20T00:00:00.000000Z'), " +
+                    "('2026-08-01T02:00:00.000000Z', 'a', '2026-01-30T00:00:00.000000Z'), " +
+                    "('2026-08-02T00:00:00.000000Z', 'a', NULL), " +
+                    "('2026-08-02T01:00:00.000000Z', 'a', '2026-01-05T00:00:00.000000Z')");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            assertQuery("SELECT ts, sym, f FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\tf\n" +
+                    "2026-08-01T00:00:00.000000Z\ta\t\n" +
+                    "2026-08-01T01:00:00.000000Z\ta\t2026-01-20T00:00:00.000000Z\n" +
+                    "2026-08-01T02:00:00.000000Z\ta\t2026-01-20T00:00:00.000000Z\n" +
+                    "2026-08-02T00:00:00.000000Z\ta\t\n" +
+                    "2026-08-02T01:00:00.000000Z\ta\t2026-01-05T00:00:00.000000Z\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testAnchorResetsFirstValueTimestampAcrossDayBoundary() throws Exception {
+        // first_value over a TIMESTAMP column, re-anchored each day via the initialized flag.
+        // Without the reset, day 2 would keep day 1's first value 2026-01-20.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, v TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, sym, first_value(v) OVER w AS f FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            execute("INSERT INTO base (ts, sym, v) VALUES " +
+                    "('2026-08-01T00:00:00.000000Z', 'a', '2026-01-20T00:00:00.000000Z'), " +
+                    "('2026-08-01T01:00:00.000000Z', 'a', '2026-01-10T00:00:00.000000Z'), " +
+                    "('2026-08-01T02:00:00.000000Z', 'a', '2026-01-30T00:00:00.000000Z'), " +
+                    "('2026-08-02T00:00:00.000000Z', 'a', '2026-01-15T00:00:00.000000Z'), " +
+                    "('2026-08-02T01:00:00.000000Z', 'a', '2026-01-05T00:00:00.000000Z'), " +
+                    "('2026-08-02T02:00:00.000000Z', 'a', '2026-01-25T00:00:00.000000Z')");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            assertQuery("SELECT ts, sym, f FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\tf\n" +
+                    "2026-08-01T00:00:00.000000Z\ta\t2026-01-20T00:00:00.000000Z\n" +
+                    "2026-08-01T01:00:00.000000Z\ta\t2026-01-20T00:00:00.000000Z\n" +
+                    "2026-08-01T02:00:00.000000Z\ta\t2026-01-20T00:00:00.000000Z\n" +
+                    "2026-08-02T00:00:00.000000Z\ta\t2026-01-15T00:00:00.000000Z\n" +
+                    "2026-08-02T01:00:00.000000Z\ta\t2026-01-15T00:00:00.000000Z\n" +
+                    "2026-08-02T02:00:00.000000Z\ta\t2026-01-15T00:00:00.000000Z\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testAnchorResetsMaxTimestampAcrossDayBoundary() throws Exception {
         // max over a TIMESTAMP column, re-anchored each day via the null sentinel.
         assertMemoryLeak(() -> {
@@ -5523,6 +5694,144 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
             execute("DROP LIVE VIEW lv");
         });
+    }
+
+    @Test
+    public void testFirstValueDateOverPartitionRowsFrameSnapshotRoundTrip() throws Exception {
+        // first_value(DATE) over a bounded ROWS frame - RESPECT NULLS, fixed-size ring.
+        assertFirstValueTimestampDateFrameRoundTrip(
+                "DATE",
+                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW",
+                false,
+                "('2026-08-01T00:00:00.000000Z', 'a', '2026-01-10T00:00:00.000Z'::date), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', '2026-01-20T00:00:00.000Z'::date), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', '2026-01-30T00:00:00.000Z'::date), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', '2026-03-06T00:00:00.000Z'::date), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', '2026-03-12T00:00:00.000Z'::date), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', '2026-03-18T00:00:00.000Z'::date)",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t2026-01-10T00:00:00.000Z\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t2026-01-10T00:00:00.000Z\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t2026-01-10T00:00:00.000Z\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t2026-03-06T00:00:00.000Z\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t2026-03-06T00:00:00.000Z\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t2026-03-06T00:00:00.000Z\n"
+        );
+    }
+
+    @Test
+    public void testFirstValueIgnoreNullsTimestampOverPartitionRangeFrameSnapshotRoundTrip() throws Exception {
+        // first_value(TIMESTAMP) IGNORE NULLS over a bounded RANGE frame - exercises the
+        // FirstNotNull subclass (full physical-ring serialization) and skipping a NULL inside the frame.
+        assertFirstValueTimestampDateFrameRoundTrip(
+                "TIMESTAMP",
+                "RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW",
+                true,
+                "('2026-08-01T00:00:00.000000Z', 'a', '2026-01-10T00:00:00.000000Z'), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', null), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', '2026-01-30T00:00:00.000000Z'), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', '2026-03-06T00:00:00.000000Z'), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', null), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', '2026-03-18T00:00:00.000000Z')",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t2026-01-10T00:00:00.000000Z\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t2026-01-10T00:00:00.000000Z\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t2026-01-10T00:00:00.000000Z\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t2026-03-06T00:00:00.000000Z\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t2026-03-06T00:00:00.000000Z\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t2026-03-06T00:00:00.000000Z\n"
+        );
+    }
+
+    @Test
+    public void testFirstValueIgnoreNullsTimestampOverPartitionRowsFrameSnapshotRoundTrip() throws Exception {
+        // first_value(TIMESTAMP) IGNORE NULLS over a bounded ROWS frame - skips a NULL inside the frame.
+        assertFirstValueTimestampDateFrameRoundTrip(
+                "TIMESTAMP",
+                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW",
+                true,
+                "('2026-08-01T00:00:00.000000Z', 'a', '2026-01-10T00:00:00.000000Z'), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', null), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', '2026-01-30T00:00:00.000000Z'), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', '2026-03-06T00:00:00.000000Z'), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', null), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', '2026-03-18T00:00:00.000000Z')",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t2026-01-10T00:00:00.000000Z\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t2026-01-10T00:00:00.000000Z\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t2026-01-10T00:00:00.000000Z\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t2026-03-06T00:00:00.000000Z\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t2026-03-06T00:00:00.000000Z\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t2026-03-06T00:00:00.000000Z\n"
+        );
+    }
+
+    @Test
+    public void testFirstValueIgnoreNullsTimestampOverUnboundedPartitionRowsSnapshotRoundTrip() throws Exception {
+        // first_value(TIMESTAMP) IGNORE NULLS over the unbounded-preceding (anchored) shape -
+        // accumulator only, the captured first non-null survives a NULL row.
+        assertFirstValueTimestampDateUnboundedRoundTrip(
+                "TIMESTAMP",
+                true,
+                "('2026-08-01T00:00:00.000000Z', 'a', '2026-01-10T00:00:00.000000Z'), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', null), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', '2026-01-30T00:00:00.000000Z'), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', '2026-03-06T00:00:00.000000Z'), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', null), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', '2026-03-18T00:00:00.000000Z')",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t2026-01-10T00:00:00.000000Z\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t2026-01-10T00:00:00.000000Z\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t2026-01-10T00:00:00.000000Z\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t2026-03-06T00:00:00.000000Z\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t2026-03-06T00:00:00.000000Z\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t2026-03-06T00:00:00.000000Z\n"
+        );
+    }
+
+    @Test
+    public void testFirstValueTimestampOverPartitionRangeFrameSnapshotRoundTrip() throws Exception {
+        // first_value(TIMESTAMP) over a bounded RANGE frame - RESPECT NULLS, variable-size ring.
+        assertFirstValueTimestampDateFrameRoundTrip(
+                "TIMESTAMP",
+                "RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW",
+                false,
+                "('2026-08-01T00:00:00.000000Z', 'a', '2026-01-10T00:00:00.000000Z'), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', '2026-01-20T00:00:00.000000Z'), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', '2026-01-30T00:00:00.000000Z'), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', '2026-03-06T00:00:00.000000Z'), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', '2026-03-12T00:00:00.000000Z'), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', '2026-03-18T00:00:00.000000Z')",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t2026-01-10T00:00:00.000000Z\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t2026-01-10T00:00:00.000000Z\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t2026-01-10T00:00:00.000000Z\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t2026-03-06T00:00:00.000000Z\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t2026-03-06T00:00:00.000000Z\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t2026-03-06T00:00:00.000000Z\n"
+        );
+    }
+
+    @Test
+    public void testFirstValueTimestampOverUnboundedPartitionRowsSnapshotRoundTrip() throws Exception {
+        // first_value(TIMESTAMP) over the unbounded-preceding (anchored) shape - accumulator only.
+        assertFirstValueTimestampDateUnboundedRoundTrip(
+                "TIMESTAMP",
+                false,
+                "('2026-08-01T00:00:00.000000Z', 'a', '2026-01-10T00:00:00.000000Z'), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', '2026-01-20T00:00:00.000000Z'), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', '2026-01-30T00:00:00.000000Z'), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', '2026-03-06T00:00:00.000000Z'), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', '2026-03-12T00:00:00.000000Z'), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', '2026-03-18T00:00:00.000000Z')",
+                "ts\tsym\ta\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t2026-01-10T00:00:00.000000Z\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t2026-01-10T00:00:00.000000Z\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t2026-01-10T00:00:00.000000Z\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t2026-03-06T00:00:00.000000Z\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t2026-03-06T00:00:00.000000Z\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t2026-03-06T00:00:00.000000Z\n"
+        );
     }
 
     @Test
