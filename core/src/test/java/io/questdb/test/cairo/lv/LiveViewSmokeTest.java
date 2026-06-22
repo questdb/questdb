@@ -88,6 +88,43 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 public class LiveViewSmokeTest extends AbstractCairoTest {
 
+    // Shared fixtures for the avg(DECIMAL, targetScale) rescale round-trip tests.
+    // Two partitions (a, b) of three hourly rows; with a 3-row / 2-hour frame the
+    // windowed average is 10, 15, 20 (a) and 6, 9, 12 (b), exact at target scale 2.
+    private static final String AVG_RESCALE_EXPECTED_SCALE2 = "ts\tsym\ta\n" +
+            "2026-08-01T00:00:00.000000Z\ta\t10.00\n" +
+            "2026-08-01T01:00:00.000000Z\ta\t15.00\n" +
+            "2026-08-01T02:00:00.000000Z\ta\t20.00\n" +
+            "2026-08-01T00:00:00.000000Z\tb\t6.00\n" +
+            "2026-08-01T01:00:00.000000Z\tb\t9.00\n" +
+            "2026-08-01T02:00:00.000000Z\tb\t12.00\n";
+    private static final String AVG_RESCALE_INSERT_18_6 = "('2026-08-01T00:00:00.000000Z', 'a', 10.000000m), " +
+            "('2026-08-01T01:00:00.000000Z', 'a', 20.000000m), " +
+            "('2026-08-01T02:00:00.000000Z', 'a', 30.000000m), " +
+            "('2026-08-01T00:00:00.000000Z', 'b', 6.000000m), " +
+            "('2026-08-01T01:00:00.000000Z', 'b', 12.000000m), " +
+            "('2026-08-01T02:00:00.000000Z', 'b', 18.000000m)";
+    private static final String AVG_RESCALE_INSERT_2_0 = "('2026-08-01T00:00:00.000000Z', 'a', 10m), " +
+            "('2026-08-01T01:00:00.000000Z', 'a', 20m), " +
+            "('2026-08-01T02:00:00.000000Z', 'a', 30m), " +
+            "('2026-08-01T00:00:00.000000Z', 'b', 6m), " +
+            "('2026-08-01T01:00:00.000000Z', 'b', 12m), " +
+            "('2026-08-01T02:00:00.000000Z', 'b', 18m)";
+    private static final String AVG_RESCALE_INSERT_38_6 = AVG_RESCALE_INSERT_18_6;
+    private static final String AVG_RESCALE_INSERT_4_1 = "('2026-08-01T00:00:00.000000Z', 'a', 10.0m), " +
+            "('2026-08-01T01:00:00.000000Z', 'a', 20.0m), " +
+            "('2026-08-01T02:00:00.000000Z', 'a', 30.0m), " +
+            "('2026-08-01T00:00:00.000000Z', 'b', 6.0m), " +
+            "('2026-08-01T01:00:00.000000Z', 'b', 12.0m), " +
+            "('2026-08-01T02:00:00.000000Z', 'b', 18.0m)";
+    private static final String AVG_RESCALE_INSERT_60_0 = AVG_RESCALE_INSERT_2_0;
+    private static final String AVG_RESCALE_INSERT_9_3 = "('2026-08-01T00:00:00.000000Z', 'a', 10.000m), " +
+            "('2026-08-01T01:00:00.000000Z', 'a', 20.000m), " +
+            "('2026-08-01T02:00:00.000000Z', 'a', 30.000m), " +
+            "('2026-08-01T00:00:00.000000Z', 'b', 6.000m), " +
+            "('2026-08-01T01:00:00.000000Z', 'b', 12.000m), " +
+            "('2026-08-01T02:00:00.000000Z', 'b', 18.000m)";
+
     private static boolean drainJob(Job job) {
         boolean any = false;
         for (int i = 0; i < 64 && job.run(); i++) {
@@ -168,6 +205,62 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, d " + decimalType + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
                     "SELECT ts, sym, avg(d) OVER w AS a FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts " + frameClause + ")");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, sym, d) VALUES " + insertValues);
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                assertQuery("SELECT ts, sym, a FROM lv ORDER BY sym, ts").noLeakCheck().expectSize().returns(expectedRows);
+
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                WindowFunction fn = unwrapWindowFunctions(lv).getQuick(0);
+                Assert.assertTrue(fn.supportsSnapshot());
+                Map fnMap = fn.getPartitionMap();
+                Assert.assertEquals(2L, fnMap.size());
+
+                try (MemoryCARW s1 = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                     MemoryCARW s2 = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+                    LiveViewFunctionSnapshot.write(s1, fn);
+                    final long len = s1.getAppendOffset();
+                    fn.toTop();
+                    Assert.assertEquals(0L, fnMap.size());
+                    LiveViewFunctionSnapshot.restore(s1, 0L, fn, 1);
+                    Assert.assertEquals(2L, fnMap.size());
+                    LiveViewFunctionSnapshot.write(s2, fn);
+                    Assert.assertEquals(len, s2.getAppendOffset());
+                    for (long i = 0; i < len; i++) {
+                        Assert.assertEquals("snapshot byte mismatch at " + i, s1.getByte(i), s2.getByte(i));
+                    }
+                }
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    // Drives a partitioned avg(DECIMAL, targetScale) live view - the rescale
+    // variant that accumulates into a DECIMAL256 and divides at the requested
+    // target scale (frameClause selects bounded ROWS/RANGE or an ANCHOR
+    // unbounded shape). Asserts the windowed average is correct (also proving
+    // CREATE-accept) then performs a byte-exact snapshot/restore round-trip of
+    // the function's partition state (write -> toTop -> restore -> write again,
+    // comparing the two payloads). The accumulator is DECIMAL256 for every input
+    // width; only the ring element width differs across the migrated shapes.
+    private void assertAvgDecimalRescaleFrameRoundTrip(
+            String decimalType,
+            int targetScale,
+            String frameClause,
+            String insertValues,
+            String expectedRows
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, d " + decimalType + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, avg(d, " + targetScale + ") OVER w AS a FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts " + frameClause + ")");
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -5402,6 +5495,141 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                         "2026-08-01T01:00:00.000000Z\tb\t9\n" +
                         "2026-08-01T02:00:00.000000Z\tb\t12\n"
         );
+    }
+
+    @Test
+    public void testAvgDecimalRescale128OverPartitionRangeFrameSnapshotRoundTrip() throws Exception {
+        // avg(DECIMAL(38,6), 2) over a bounded RANGE frame - DECIMAL256 acc,
+        // 16-byte (DECIMAL128) ring element, rescaled to scale 2.
+        assertAvgDecimalRescaleFrameRoundTrip("DECIMAL(38, 6)", 2,
+                "RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW",
+                AVG_RESCALE_INSERT_38_6, AVG_RESCALE_EXPECTED_SCALE2);
+    }
+
+    @Test
+    public void testAvgDecimalRescale128OverPartitionRowsFrameSnapshotRoundTrip() throws Exception {
+        // avg(DECIMAL(38,6), 2) over a bounded ROWS frame - DECIMAL256 acc,
+        // 16-byte (DECIMAL128) ring element, rescaled to scale 2.
+        assertAvgDecimalRescaleFrameRoundTrip("DECIMAL(38, 6)", 2,
+                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW",
+                AVG_RESCALE_INSERT_38_6, AVG_RESCALE_EXPECTED_SCALE2);
+    }
+
+    @Test
+    public void testAvgDecimalRescale16OverPartitionRangeFrameSnapshotRoundTrip() throws Exception {
+        // avg(DECIMAL(4,1), 2) over a bounded RANGE frame - DECIMAL256 acc,
+        // 2-byte (SHORT) ring element, rescaled to scale 2.
+        assertAvgDecimalRescaleFrameRoundTrip("DECIMAL(4, 1)", 2,
+                "RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW",
+                AVG_RESCALE_INSERT_4_1, AVG_RESCALE_EXPECTED_SCALE2);
+    }
+
+    @Test
+    public void testAvgDecimalRescale16OverPartitionRowsFrameSnapshotRoundTrip() throws Exception {
+        // avg(DECIMAL(4,1), 2) over a bounded ROWS frame - DECIMAL256 acc,
+        // 2-byte (SHORT) ring element, rescaled to scale 2.
+        assertAvgDecimalRescaleFrameRoundTrip("DECIMAL(4, 1)", 2,
+                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW",
+                AVG_RESCALE_INSERT_4_1, AVG_RESCALE_EXPECTED_SCALE2);
+    }
+
+    @Test
+    public void testAvgDecimalRescale256OverPartitionRangeFrameSnapshotRoundTrip() throws Exception {
+        // avg(DECIMAL(60,0), 2) over a bounded RANGE frame - DECIMAL256 acc,
+        // 32-byte (DECIMAL256) ring element, rescaled to scale 2.
+        assertAvgDecimalRescaleFrameRoundTrip("DECIMAL(60, 0)", 2,
+                "RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW",
+                AVG_RESCALE_INSERT_60_0, AVG_RESCALE_EXPECTED_SCALE2);
+    }
+
+    @Test
+    public void testAvgDecimalRescale256OverPartitionRowsFrameSnapshotRoundTrip() throws Exception {
+        // avg(DECIMAL(60,0), 2) over a bounded ROWS frame - DECIMAL256 acc,
+        // 32-byte (DECIMAL256) ring element, rescaled to scale 2.
+        assertAvgDecimalRescaleFrameRoundTrip("DECIMAL(60, 0)", 2,
+                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW",
+                AVG_RESCALE_INSERT_60_0, AVG_RESCALE_EXPECTED_SCALE2);
+    }
+
+    @Test
+    public void testAvgDecimalRescale256OverUnboundedPartitionRowsAnchorSnapshotRoundTrip() throws Exception {
+        // avg(DECIMAL(60,0), 2) over an ANCHOR unbounded frame - DECIMAL256
+        // accumulator-only [acc, count] snapshot, rescaled to scale 2.
+        assertAvgDecimalRescaleFrameRoundTrip("DECIMAL(60, 0)", 2,
+                "ANCHOR EXPRESSION timestamp_floor('1d', ts)",
+                AVG_RESCALE_INSERT_60_0, AVG_RESCALE_EXPECTED_SCALE2);
+    }
+
+    @Test
+    public void testAvgDecimalRescale32OverPartitionRangeFrameSnapshotRoundTrip() throws Exception {
+        // avg(DECIMAL(9,3), 2) over a bounded RANGE frame - DECIMAL256 acc,
+        // 4-byte (INT) ring element, rescaled to scale 2.
+        assertAvgDecimalRescaleFrameRoundTrip("DECIMAL(9, 3)", 2,
+                "RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW",
+                AVG_RESCALE_INSERT_9_3, AVG_RESCALE_EXPECTED_SCALE2);
+    }
+
+    @Test
+    public void testAvgDecimalRescale32OverPartitionRowsFrameSnapshotRoundTrip() throws Exception {
+        // avg(DECIMAL(9,3), 2) over a bounded ROWS frame - DECIMAL256 acc,
+        // 4-byte (INT) ring element, rescaled to scale 2.
+        assertAvgDecimalRescaleFrameRoundTrip("DECIMAL(9, 3)", 2,
+                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW",
+                AVG_RESCALE_INSERT_9_3, AVG_RESCALE_EXPECTED_SCALE2);
+    }
+
+    @Test
+    public void testAvgDecimalRescale64OverPartitionRangeFrameSnapshotRoundTrip() throws Exception {
+        // avg(DECIMAL(18,6), 2) over a bounded RANGE frame - DECIMAL256 acc,
+        // 8-byte (LONG) ring element, rescaled to scale 2.
+        assertAvgDecimalRescaleFrameRoundTrip("DECIMAL(18, 6)", 2,
+                "RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW",
+                AVG_RESCALE_INSERT_18_6, AVG_RESCALE_EXPECTED_SCALE2);
+    }
+
+    @Test
+    public void testAvgDecimalRescale64OverPartitionRowsFrameSnapshotRoundTrip() throws Exception {
+        // avg(DECIMAL(18,6), 2) over a bounded ROWS frame - DECIMAL256 acc,
+        // 8-byte (LONG) ring element, rescaled to scale 2.
+        assertAvgDecimalRescaleFrameRoundTrip("DECIMAL(18, 6)", 2,
+                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW",
+                AVG_RESCALE_INSERT_18_6, AVG_RESCALE_EXPECTED_SCALE2);
+    }
+
+    @Test
+    public void testAvgDecimalRescale64OverUnboundedPartitionRowsAnchorSnapshotRoundTrip() throws Exception {
+        // avg(DECIMAL(18,6), 2) over an ANCHOR unbounded frame - DECIMAL256
+        // accumulator-only [acc, count] snapshot, rescaled to scale 2.
+        assertAvgDecimalRescaleFrameRoundTrip("DECIMAL(18, 6)", 2,
+                "ANCHOR EXPRESSION timestamp_floor('1d', ts)",
+                AVG_RESCALE_INSERT_18_6, AVG_RESCALE_EXPECTED_SCALE2);
+    }
+
+    @Test
+    public void testAvgDecimalRescale8OverPartitionRangeFrameSnapshotRoundTrip() throws Exception {
+        // avg(DECIMAL(2,0), 2) over a bounded RANGE frame - DECIMAL256 acc,
+        // 1-byte (BYTE) ring element, rescaled to scale 2.
+        assertAvgDecimalRescaleFrameRoundTrip("DECIMAL(2, 0)", 2,
+                "RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW",
+                AVG_RESCALE_INSERT_2_0, AVG_RESCALE_EXPECTED_SCALE2);
+    }
+
+    @Test
+    public void testAvgDecimalRescale8OverPartitionRowsFrameSnapshotRoundTrip() throws Exception {
+        // avg(DECIMAL(2,0), 2) over a bounded ROWS frame - DECIMAL256 acc,
+        // 1-byte (BYTE) ring element, rescaled to scale 2.
+        assertAvgDecimalRescaleFrameRoundTrip("DECIMAL(2, 0)", 2,
+                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW",
+                AVG_RESCALE_INSERT_2_0, AVG_RESCALE_EXPECTED_SCALE2);
+    }
+
+    @Test
+    public void testAvgDecimalRescale8OverUnboundedPartitionRowsAnchorSnapshotRoundTrip() throws Exception {
+        // avg(DECIMAL(2,0), 2) over an ANCHOR unbounded frame - DECIMAL256
+        // accumulator-only [acc, count] snapshot, rescaled to scale 2.
+        assertAvgDecimalRescaleFrameRoundTrip("DECIMAL(2, 0)", 2,
+                "ANCHOR EXPRESSION timestamp_floor('1d', ts)",
+                AVG_RESCALE_INSERT_2_0, AVG_RESCALE_EXPECTED_SCALE2);
     }
 
     @Test
