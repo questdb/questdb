@@ -328,9 +328,9 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             super.close();
             if (isOpen) {
                 isOpen = false;
-                recordKeyMap.close();
-                dataMap.close();
-                allocator.close();
+                Misc.free(recordKeyMap);
+                Misc.free(dataMap);
+                Misc.free(allocator);
                 Misc.clearObjList(groupByFunctions);
                 super.close();
             }

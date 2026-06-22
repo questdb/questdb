@@ -306,6 +306,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             AtomicBooleanCircuitBreaker sharedCB,
             WorkStealingStrategy workStealingStrategy
     ) {
+        Throwable firstError = null;
         while (!doneLatch.done(queuedCount)) {
             if (circuitBreaker.checkIfTripped()) {
                 sharedCB.cancel();
@@ -315,13 +316,32 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 long cursor = subSeq.next();
                 if (cursor > -1) {
                     VectorAggregateTask task = queue.get(cursor);
-                    task.entry.run(workerId, subSeq, cursor);
+                    // Keep draining even if an entry throws (e.g. OOM in a parquet decode): a
+                    // survivor left in the shared queue references frame memory pools buildRosti
+                    // frees on exit, so a later query would steal it and hit the freed pool.
+                    // Surface the first error only once the queue is fully drained.
+                    try {
+                        task.entry.run(workerId, subSeq, cursor);
+                    } catch (Throwable th) {
+                        if (firstError == null) {
+                            firstError = th;
+                        }
+                    }
                     reclaimed++;
                 } else {
                     Os.pause();
                 }
             }
             mergedCount = doneLatch.getCount();
+        }
+        if (firstError != null) {
+            if (firstError instanceof RuntimeException re) {
+                throw re;
+            }
+            if (firstError instanceof Error err) {
+                throw err;
+            }
+            throw CairoException.nonCritical().put("vectorized aggregation failed [error=").put(firstError.getMessage()).put(']');
         }
         return reclaimed;
     }
@@ -693,12 +713,15 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 } else {
                     circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
                     for (int j = 0; j < vafCount; j++) {
+                        // some wrapUp() methods can increase rosti size (e.g. inserting the null key)
+                        long oldSize = Rosti.getAllocMemory(pRostiBig);
                         if (!vafList.getQuick(j).wrapUp(pRostiBig)) {
                             resetRostiMemorySize();
                             throw CairoException.nonCritical()
                                     .put("could not wrap up rosti hash table")
                                     .setOutOfMemory(true);
                         }
+                        raf.updateMemoryUsage(pRostiBig, oldSize);
                     }
                 }
             } catch (Throwable t) {

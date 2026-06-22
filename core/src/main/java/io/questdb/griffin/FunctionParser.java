@@ -428,6 +428,16 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         positionStack.push(node.position);
     }
 
+    private static int countWindowOverloads(ObjList<FunctionFactoryDescriptor> overload) {
+        int count = 0;
+        for (int i = 0, n = overload.size(); i < n; i++) {
+            if (overload.getQuick(i).getFactory().isWindow()) {
+                count++;
+            }
+        }
+        return count;
+    }
+
     private static void handleExpectedAndActual(@Transient IntList argPositions, SqlException ex, int i, int expectedType, int actualType) {
         ex.put(" expected: ").put(ColumnType.nameOf(expectedType));
         if (expectedType == actualType) {
@@ -1238,6 +1248,21 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             } else if (argTypeTag == ColumnType.BYTE && sigArgTypeTag == ColumnType.DECIMAL) {
                 args.setQuick(k, CastByteToDecimalFunctionFactory.newInstance(argPositions.getQuick(k), arg, sqlExecutionContext));
             }
+        }
+        // An untyped NULL literal as the value argument of a polymorphic window function (lead, min,
+        // sum, nth_value, ...) is ambiguous: it ties across every typed variant (NULL to any type has
+        // zero overload distance), so the winner - and the resulting behaviour - depends on classpath
+        // scan order. Different winners give different observable behaviour: a clean rejection on one
+        // platform, a "not yet implemented for NULL" factory error on another, or even silent acceptance
+        // returning NULLs. Reject it deterministically here, before any factory runs, so the user gets
+        // the same clear "cast it" error everywhere. Window functions with a single overload (e.g. ntile,
+        // whose argument is a bucket count rather than a value) resolve deterministically and keep their
+        // own argument validation.
+        if (isWindowContext && candidate.isWindow() && argCount > 0
+                && ColumnType.tagOf(args.getQuick(0).getType()) == ColumnType.NULL
+                && countWindowOverloads(overload) > 1) {
+            Misc.freeObjList(args);
+            throw SqlException.$(node.position, "window function ").put(node.token).put(" does not support an untyped NULL argument; cast it to a concrete type, e.g. null::double");
         }
         return checkAndCreateFunction(candidate, args, argPositions, node, configuration);
     }
