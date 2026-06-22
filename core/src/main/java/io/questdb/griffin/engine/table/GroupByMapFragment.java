@@ -176,11 +176,13 @@ public class GroupByMapFragment implements QuietCloseable {
         if (size == 0) {
             // Lazy variant: shards start closed so their backing allocates under the
             // bound tracker on the reopen() below, matching the free at fragment close().
+            // Register each shard before reopen() so a reopen that trips the per-query
+            // memory limit leaves the partial map tracked for cleanup at fragment close().
             for (int i = 0; i < NUM_SHARDS; i++) {
                 final Map shard = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes, true, false);
+                shards.add(shard);
                 shard.setMemoryTracker(memoryTracker);
                 shard.reopen();
-                shards.add(shard);
             }
         } else {
             for (int i = 0; i < NUM_SHARDS; i++) {
