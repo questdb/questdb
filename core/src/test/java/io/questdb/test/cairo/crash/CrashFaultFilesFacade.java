@@ -6,24 +6,28 @@ import io.questdb.test.std.TestFilesFacadeImpl;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
 
 /**
  * Fault-injection FilesFacade that models the OS durability contract:
  * msync flushes data pages but only fsync makes an extended file's size durable.
- * On {@link #crash}, every file is truncated to its last-fsynced size.
+ * On {@link #crash}, every file is truncated to its last-fsynced size; queued torn-tail ranges are then zeroed for deterministic fault injection.
  */
 public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     // fds are tracked so fsync can map a fd back to its file; only fsync advances durableSize.
     private final Map<Long, String> fdToPath = new HashMap<>();
     private final Map<String, Long> durableSize = new HashMap<>();
+    private final Map<String, List<long[]>> tornTails = new HashMap<>();
 
     // openCleanRW and openAppend are intentionally not overridden; they are not used on the commit path this harness exercises.
     @Override
@@ -70,9 +74,27 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     public void reset() {
         fdToPath.clear();
         durableSize.clear();
+        tornTails.clear();
     }
 
-    /** Roll every file under {@code dbRoot} back to its last-fsynced size. */
+    /** Record current sizes of all files under dbRoot as durable ("prior committed, log-journaled"). */
+    public void markDurableBaseline(CharSequence dbRoot) {
+        walk(dbRoot, p -> {
+            try {
+                durableSize.put(p.toAbsolutePath().toString(), java.nio.file.Files.size(p));
+            } catch (java.io.IOException e) {
+                throw new java.io.UncheckedIOException(e);
+            }
+        });
+    }
+
+    /** Zero [offset, offset+len) of the given file when crash() runs (deterministic torn-write injection). */
+    public void tornTail(LPSZ name, long offset, long len) {
+        tornTails.computeIfAbsent(toAbsPath(name), k -> new ArrayList<>())
+                .add(new long[]{offset, len});
+    }
+
+    /** Roll every file under {@code dbRoot} back to its last-fsynced size, then apply any torn-tail ranges. */
     public void crash(CharSequence dbRoot) {
         walk(dbRoot, p -> {
             String key = p.toAbsolutePath().toString();
@@ -81,6 +103,16 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
             try (FileChannel ch = FileChannel.open(p, StandardOpenOption.WRITE)) {
                 if (ch.size() > target) {
                     ch.truncate(target);
+                }
+                List<long[]> ranges = tornTails.get(key);
+                if (ranges != null) {
+                    for (long[] r : ranges) {
+                        if (r[1] < 0 || r[1] > Integer.MAX_VALUE) throw new IllegalArgumentException("tornTail len out of range: " + r[1]);
+                        int n = (int) r[1];
+                        ByteBuffer zeros = ByteBuffer.allocate(n);
+                        ch.write(zeros, r[0]);
+                    }
+                    ch.force(true);
                 }
             } catch (IOException e) {
                 throw new UncheckedIOException(e);
