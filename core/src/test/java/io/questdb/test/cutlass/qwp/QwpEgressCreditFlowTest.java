@@ -27,6 +27,7 @@ package io.questdb.test.cutlass.qwp;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatch;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatchHandler;
 import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
+import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
@@ -110,6 +111,103 @@ public class QwpEgressCreditFlowTest extends AbstractQwpBootstrapTest {
                     Assert.assertEquals(500_000, rows[0]);
                     // sum(1..500000) = 500000*500001/2
                     Assert.assertEquals(500_000L * 500_001L / 2L, idSum[0]);
+                }
+            }
+        });
+    }
+
+    /**
+     * Deterministic reproduction for a macOS-only stall in credit-flow egress.
+     * <p>
+     * Under credit flow every batch is sent while the client-advertised budget is
+     * near zero, so the server emits a batch and then parks waiting for the next
+     * CREDIT frame. A small forced send-fragmentation chunk makes each batch send
+     * park on write-backpressure ({@code PeerIsSlowToReadException}) repeatedly, so
+     * the connection rapidly ping-pongs between WRITE interest (draining the batch)
+     * and READ interest (awaiting CREDIT). On macOS this occasionally loses the
+     * READ (CREDIT) wakeup and the stream suspends forever -- the 20-minute hang
+     * observed on the {@code mac-other} CI job. Linux (epoll) and Windows are
+     * unaffected.
+     * <p>
+     * {@link #testCreditFlowCompletesLargeQuery} draws random fragmentation chunks,
+     * so it only stalls on the unlucky seeds that pick a small send chunk. This test
+     * pins a small send chunk and runs many short queries to make the stall reliable
+     * on macOS. The JUnit timeout turns a stall into a fast failure instead of the
+     * 20-minute global test timeout.
+     */
+    @Test(timeout = 240_000)
+    public void testCreditFlowNoStallUnderForcedFragmentation() throws Exception {
+        // Pin a small send chunk: forces every batch send to park on
+        // write-backpressure, which is what drives the WRITE <-> READ churn that
+        // exposes the dispatcher stall. recvChunk stays larger so CREDIT frames
+        // arrive promptly.
+        sendChunk = 16;
+        recvChunk = 64;
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startFragmented()) {
+                serverMain.execute(
+                        "CREATE TABLE big AS (SELECT x AS id, CAST(x * 1.5 AS DOUBLE) AS v, " +
+                                "x::TIMESTAMP AS ts " +
+                                "FROM long_sequence(200000)) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.awaitTable("big");
+
+                // Diagnostic watchdog: if a single query makes no progress for 90s
+                // (the stall), dump every thread stack to stdout so the CI log
+                // captures where the server network worker is parked, then let the
+                // JUnit timeout fail the test. Never fires on the healthy path
+                // (a query completes in a few seconds).
+                final long[] lastProgressMs = {System.currentTimeMillis()};
+                final boolean[] stop = {false};
+                Thread watchdog = new Thread(() -> {
+                    while (!stop[0]) {
+                        Os.sleep(2_000);
+                        if (!stop[0] && System.currentTimeMillis() - lastProgressMs[0] > 90_000) {
+                            StringBuilder sb = new StringBuilder("\nQWP CREDIT-FLOW STALL THREAD DUMP\n");
+                            for (java.util.Map.Entry<Thread, StackTraceElement[]> e : Thread.getAllStackTraces().entrySet()) {
+                                sb.append('"').append(e.getKey().getName()).append("\" ").append(e.getKey().getState()).append('\n');
+                                for (StackTraceElement st : e.getValue()) {
+                                    sb.append("    at ").append(st).append('\n');
+                                }
+                                sb.append('\n');
+                            }
+                            System.out.println(sb);
+                            return;
+                        }
+                    }
+                }, "qwp-credit-flow-watchdog");
+                watchdog.setDaemon(true);
+                watchdog.start();
+
+                try {
+                    for (int iter = 0; iter < 6; iter++) {
+                        lastProgressMs[0] = System.currentTimeMillis();
+                        try (QwpQueryClient client = QwpQueryClient.fromConfig(
+                                        "ws::addr=127.0.0.1:" + HTTP_PORT + ";")
+                                .withInitialCredit(4 * 1024)) {
+                            client.connect();
+                            final int[] rows = {0};
+                            final int queryIndex = iter;
+                            client.execute("SELECT * FROM big", new QwpColumnBatchHandler() {
+                                @Override
+                                public void onBatch(QwpColumnBatch batch) {
+                                    rows[0] += batch.getRowCount();
+                                }
+
+                                @Override
+                                public void onEnd(long totalRows) {
+                                }
+
+                                @Override
+                                public void onError(byte status, String message) {
+                                    Assert.fail("credit-flow query " + queryIndex + " error: " + message);
+                                }
+                            });
+                            Assert.assertEquals(200_000, rows[0]);
+                        }
+                    }
+                } finally {
+                    stop[0] = true;
+                    watchdog.interrupt();
                 }
             }
         });
