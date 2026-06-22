@@ -59,6 +59,7 @@ import io.questdb.std.DirectLongLongSortedList;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -225,7 +226,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 base.getMetadata(),
                 pageFrameCursor,
                 executionContext.getMessageBus(),
-                executionContext.getCircuitBreaker()
+                executionContext.getCircuitBreaker(),
+                executionContext.getMemoryTracker()
         );
     }
 
@@ -304,6 +306,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             AtomicBooleanCircuitBreaker sharedCB,
             WorkStealingStrategy workStealingStrategy
     ) {
+        Throwable firstError = null;
         while (!doneLatch.done(queuedCount)) {
             if (circuitBreaker.checkIfTripped()) {
                 sharedCB.cancel();
@@ -313,13 +316,32 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 long cursor = subSeq.next();
                 if (cursor > -1) {
                     VectorAggregateTask task = queue.get(cursor);
-                    task.entry.run(workerId, subSeq, cursor);
+                    // Keep draining even if an entry throws (e.g. OOM in a parquet decode): a
+                    // survivor left in the shared queue references frame memory pools buildRosti
+                    // frees on exit, so a later query would steal it and hit the freed pool.
+                    // Surface the first error only once the queue is fully drained.
+                    try {
+                        task.entry.run(workerId, subSeq, cursor);
+                    } catch (Throwable th) {
+                        if (firstError == null) {
+                            firstError = th;
+                        }
+                    }
                     reclaimed++;
                 } else {
                     Os.pause();
                 }
             }
             mergedCount = doneLatch.getCount();
+        }
+        if (firstError != null) {
+            if (firstError instanceof RuntimeException re) {
+                throw re;
+            }
+            if (firstError instanceof Error err) {
+                throw err;
+            }
+            throw CairoException.nonCritical().put("vectorized aggregation failed [error=").put(firstError.getMessage()).put(']');
         }
         return reclaimed;
     }
@@ -453,15 +475,25 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 RecordMetadata metadata,
                 PageFrameCursor frameCursor,
                 MessageBus bus,
-                SqlExecutionCircuitBreaker circuitBreaker
+                SqlExecutionCircuitBreaker circuitBreaker,
+                MemoryTracker memoryTracker
         ) {
             this.frameCursor = frameCursor;
             this.bus = bus;
             this.circuitBreaker = circuitBreaker;
             frameAddressCache.of(metadata, frameCursor.getColumnMapping(), frameCursor.isExternal());
             for (int i = 0; i < workerCount; i++) {
-                frameMemoryPools.getQuick(i).of(frameAddressCache);
+                final PageFrameMemoryPool pool = frameMemoryPools.getQuick(i);
+                pool.setMemoryTracker(memoryTracker);
+                pool.of(frameAddressCache);
             }
+            // Note: only the per-worker page-frame pools are bound to the per-query tracker. The
+            // Rosti hash tables (pRosti), which hold this operator's dominant, cardinality-scaled
+            // allocation, are deliberately left on the global RSS counter: Rosti grows inside
+            // native C with its own OOM path, so it cannot throw at the offending allocation site
+            // the way the wired allocators do. A runaway keyed vectorized GROUP BY is therefore
+            // backstopped by the global RSS limit, not the per-query limit. Wiring Rosti is a
+            // follow-up (see the PR tradeoffs), consistent with how COPY TO is deferred.
             frameCount = 0;
             isRostiBuilt = false;
             return this;
@@ -681,12 +713,15 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 } else {
                     circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
                     for (int j = 0; j < vafCount; j++) {
+                        // some wrapUp() methods can increase rosti size (e.g. inserting the null key)
+                        long oldSize = Rosti.getAllocMemory(pRostiBig);
                         if (!vafList.getQuick(j).wrapUp(pRostiBig)) {
                             resetRostiMemorySize();
                             throw CairoException.nonCritical()
                                     .put("could not wrap up rosti hash table")
                                     .setOutOfMemory(true);
                         }
+                        raf.updateMemoryUsage(pRostiBig, oldSize);
                     }
                 }
             } catch (Throwable t) {

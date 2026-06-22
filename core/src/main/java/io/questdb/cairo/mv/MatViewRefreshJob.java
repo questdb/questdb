@@ -53,6 +53,8 @@ import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.Job;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTracker;
+import io.questdb.std.MemoryTrackerWorkload;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
@@ -954,6 +956,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
             OUTER:
             for (int i = 0; i <= maxRetries; i++) {
+                // One tracker per refresh attempt; the finally releases it before each retry.
+                final MemoryTracker memoryTracker = engine.getMemoryTrackerProvider().acquire(
+                        refreshSqlExecutionContext.getSecurityContext(),
+                        viewTableToken.getTableId(),
+                        MemoryTrackerWorkload.MAT_VIEW_REFRESH
+                );
+                refreshSqlExecutionContext.setMemoryTracker(memoryTracker);
                 try {
                     if (factory == null) {
                         final String viewSql = viewDefinition.getMatViewSql();
@@ -1178,6 +1187,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         continue;
                     }
                     throw th;
+                } finally {
+                    refreshSqlExecutionContext.setMemoryTracker(null);
+                    memoryTracker.close();
                 }
             }
         } catch (Throwable th) {

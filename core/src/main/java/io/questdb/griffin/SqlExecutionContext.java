@@ -44,6 +44,7 @@ import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimal64;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Rnd;
 import io.questdb.std.Transient;
 import io.questdb.std.str.CharSink;
@@ -122,6 +123,17 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     int getIntervalFunctionType();
 
     int getJitMode();
+
+    /**
+     * Returns the tracker bound to the currently active workload, or
+     * {@code null} between workloads. The workload entry point sets it via
+     * {@link #setMemoryTracker(MemoryTracker)} on acquisition and clears it
+     * on workload end.
+     */
+    @Nullable
+    default MemoryTracker getMemoryTracker() {
+        return null;
+    }
 
     default @NotNull MessageBus getMessageBus() {
         return getCairoEngine().getMessageBus();
@@ -287,6 +299,15 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     void setIntervalFunctionType(int intervalType);
 
     void setJitMode(int jitMode);
+
+    /**
+     * Stashes the active per-workload memory tracker on this context. Set at
+     * workload start by the entry point that called
+     * {@code MemoryTrackerProvider.acquire(...)}; cleared (with {@code null})
+     * at workload end so the context is ready for the next workload.
+     */
+    default void setMemoryTracker(@Nullable MemoryTracker tracker) {
+    }
 
     void setNowAndFixClock(long now, int nowTimestampType);
 

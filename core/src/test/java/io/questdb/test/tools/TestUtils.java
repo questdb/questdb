@@ -2646,26 +2646,37 @@ public final class TestUtils {
             // Checks that the same tag used for allocation and freeing native memory
             long memAfter = Unsafe.getMemUsed();
             long memNativeSqlCompilerDiff = 0;
+            long memNativeMemoryTrackerDiff = 0;
             Assert.assertTrue(memAfter > -1);
             if (mem != memAfter) {
                 for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
                     long actualMemByTag = Unsafe.getMemUsedByTag(i);
                     if (memoryUsageByTag[i] != actualMemByTag) {
-                        if (i != MemoryTag.NATIVE_SQL_COMPILER) {
+                        if (i == MemoryTag.NATIVE_SQL_COMPILER) {
+                            // SqlCompiler memory is not released immediately as compilers are pooled
+                            Assert.assertTrue(actualMemByTag >= memoryUsageByTag[i]);
+                            memNativeSqlCompilerDiff = actualMemByTag - memoryUsageByTag[i];
+                        } else if (i == MemoryTag.NATIVE_MEMORY_TRACKER) {
+                            // A deficit is legitimate: a nested leak check can baseline a tracker the
+                            // enclosing scope pooled, then the teardown's engine.clear() drains it. A
+                            // surplus, by contrast, is a tracker acquired and never released - a leak.
+                            Assert.assertTrue(
+                                    "Memory usage by tag: " + MemoryTag.nameOf(i)
+                                            + ", difference: " + (actualMemByTag - memoryUsageByTag[i]),
+                                    actualMemByTag <= memoryUsageByTag[i]
+                            );
+                            memNativeMemoryTrackerDiff = actualMemByTag - memoryUsageByTag[i];
+                        } else {
                             Assert.assertEquals(
                                     "Memory usage by tag: " + MemoryTag.nameOf(i)
                                             + ", difference: " + (actualMemByTag - memoryUsageByTag[i]),
                                     memoryUsageByTag[i], actualMemByTag
                             );
                             Assert.assertTrue(actualMemByTag > -1);
-                        } else {
-                            // SqlCompiler memory is not released immediately as compilers are pooled
-                            Assert.assertTrue(actualMemByTag >= memoryUsageByTag[i]);
-                            memNativeSqlCompilerDiff = actualMemByTag - memoryUsageByTag[i];
                         }
                     }
                 }
-                Assert.assertEquals(mem + memNativeSqlCompilerDiff, memAfter);
+                Assert.assertEquals(mem + memNativeSqlCompilerDiff + memNativeMemoryTrackerDiff, memAfter);
             }
 
             int addrInfoCountAfter = Net.getAllocatedAddrInfoCount();

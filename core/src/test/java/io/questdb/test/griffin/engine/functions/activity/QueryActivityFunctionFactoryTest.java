@@ -150,6 +150,17 @@ public class QueryActivityFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMemoryColumnsWithoutLimit() throws Exception {
+        // With no per-query limit configured (the default), memory_limit is NULL
+        // (0 means unlimited) while memory_used is still populated for the running
+        // top-level query: its bound tracker reports a non-negative byte count.
+        assertQuery("select memory_used >= 0 used_ok, memory_limit is null limit_null from query_activity()")
+                .noRandomAccess()
+                .returns("used_ok\tlimit_null\n" +
+                        "true\ttrue\n");
+    }
+
+    @Test
     public void testNonAdminCanNotSeeOtherUsersCommands() throws Exception {
         assertMemoryLeak(() -> {
             final String query = "select 1 t from long_sequence(1) where sleep(120000)";

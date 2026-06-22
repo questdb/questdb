@@ -58,7 +58,7 @@ public final class SimpleClause {
     private SimpleClause() {
     }
 
-    public static GeneratedQuery generate(Rnd rnd, FuzzSource source, BindContext ctx) {
+    public static GeneratedQuery generate(Rnd rnd, FuzzSource source, BindContext ctx, boolean injectFaultFn) {
         FuzzTable table = source.getTable();
         boolean useTableAlias = rnd.nextBoolean();
         boolean useColAliases = rnd.nextBoolean();
@@ -78,10 +78,7 @@ public final class SimpleClause {
             sql.put(' ').put(alias);
         }
 
-        if (rnd.nextBoolean()) {
-            String pred = new PredicateGenerator(rnd, 2).generate(table.getColumns(), qualifier, ctx);
-            sql.put(" WHERE ").put(pred);
-        }
+        PredicateGenerator.appendWhere(sql, rnd, table.getColumns(), qualifier, 2, ctx, injectFaultFn);
 
         if (rnd.nextBoolean()) {
             appendOrderBy(sql, rnd, table, qualifier, numAliases, distinct);
