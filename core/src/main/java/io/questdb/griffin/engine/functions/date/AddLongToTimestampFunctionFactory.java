@@ -31,8 +31,10 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
+import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Interval;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
@@ -48,7 +50,7 @@ public class AddLongToTimestampFunctionFactory implements FunctionFactory {
         return new AddLongFunc(arg, args.getQuick(1), ColumnType.getTimestampType(arg.getType()));
     }
 
-    private static class AddLongFunc extends TimestampFunction implements BinaryFunction {
+    private static class AddLongFunc extends TimestampFunction implements BinaryFunction, MonotonicTimestampFunction {
         final Function left;
         final Function right;
 
@@ -81,6 +83,38 @@ public class AddLongToTimestampFunctionFactory implements FunctionFactory {
                 return Numbers.LONG_NULL;
             }
             return l + r;
+        }
+
+        @Override
+        public Function getTimestampArg() {
+            return left;
+        }
+
+        @Override
+        public int invertTimestampInterval(Interval io) {
+            if (!right.isConstant()) {
+                return NONE;
+            }
+            final long k = right.getLong(null);
+            if (k == Numbers.LONG_NULL) {
+                return NONE;
+            }
+            long lo = io.getLo();
+            long hi = io.getHi();
+            if (lo != Numbers.LONG_NULL) {
+                if ((k > 0 && lo < Long.MIN_VALUE + k) || (k < 0 && lo > Long.MAX_VALUE + k)) {
+                    return NONE;
+                }
+                lo -= k;
+            }
+            if (hi != Long.MAX_VALUE) {
+                if ((k > 0 && hi < Long.MIN_VALUE + k) || (k < 0 && hi > Long.MAX_VALUE + k)) {
+                    return NONE;
+                }
+                hi -= k;
+            }
+            io.of(lo, hi);
+            return EXACT;
         }
 
         @Override

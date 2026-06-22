@@ -30,7 +30,10 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Interval;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class CastTimestampToTimestampFunctionFactory implements FunctionFactory {
@@ -66,7 +69,8 @@ public class CastTimestampToTimestampFunctionFactory implements FunctionFactory 
         return new CastLongToTimestampFunctionFactory.Func(arg, rightTimestampType);
     }
 
-    public static class Func extends AbstractCastToTimestampFunction {
+    public static class Func extends AbstractCastToTimestampFunction implements MonotonicTimestampFunction {
+        private static final long NANOS_PER_MICRO = 1000;
         private final int leftTimestampType;
 
         public Func(Function arg, int leftTimestampType, int rightTimestampType) {
@@ -77,6 +81,47 @@ public class CastTimestampToTimestampFunctionFactory implements FunctionFactory 
         @Override
         public long getTimestamp(Record rec) {
             return timestampDriver.from(arg.getLong(rec), leftTimestampType);
+        }
+
+        @Override
+        public Function getTimestampArg() {
+            return getArg();
+        }
+
+        @Override
+        public int invertTimestampInterval(Interval io) {
+            long lo = io.getLo();
+            long hi = io.getHi();
+            final int outType = getType();
+            if (ColumnType.isTimestampNano(outType) && ColumnType.isTimestampMicro(leftTimestampType)) {
+                if (lo != Numbers.LONG_NULL) {
+                    lo = ceilDiv(lo, NANOS_PER_MICRO);
+                }
+                if (hi != Long.MAX_VALUE) {
+                    hi = Math.floorDiv(hi, NANOS_PER_MICRO);
+                }
+            } else if (ColumnType.isTimestampMicro(outType) && ColumnType.isTimestampNano(leftTimestampType)) {
+                if (lo != Numbers.LONG_NULL) {
+                    if (lo > Long.MAX_VALUE / NANOS_PER_MICRO || lo < Long.MIN_VALUE / NANOS_PER_MICRO) {
+                        return NONE;
+                    }
+                    lo = lo * NANOS_PER_MICRO;
+                }
+                if (hi != Long.MAX_VALUE) {
+                    if (hi > (Long.MAX_VALUE - (NANOS_PER_MICRO - 1)) / NANOS_PER_MICRO || hi < Long.MIN_VALUE / NANOS_PER_MICRO) {
+                        return NONE;
+                    }
+                    hi = hi * NANOS_PER_MICRO + (NANOS_PER_MICRO - 1);
+                }
+            } else {
+                return NONE;
+            }
+            io.of(lo, hi);
+            return EXACT;
+        }
+
+        private static long ceilDiv(long a, long b) {
+            return -Math.floorDiv(-a, b);
         }
     }
 }

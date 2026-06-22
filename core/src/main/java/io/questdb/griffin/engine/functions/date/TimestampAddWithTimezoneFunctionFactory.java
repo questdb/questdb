@@ -34,11 +34,13 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
 import io.questdb.griffin.engine.functions.QuaternaryFunction;
 import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Interval;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.DateLocaleFactory;
@@ -122,7 +124,7 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory 
         return localTimestamp - timeZoneRules.getLocalOffset(localTimestamp);
     }
 
-    private static class TimestampAddConstConstVarConst extends TimestampFunction implements UnaryFunction {
+    private static class TimestampAddConstConstVarConst extends TimestampFunction implements UnaryFunction, MonotonicTimestampFunction {
         private final char period;
         private final TimestampDriver.TimestampAddMethod periodAddFunction;
         private final int stride;
@@ -156,6 +158,40 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory 
         @Override
         public long getTimestamp(Record rec) {
             return compute(timestampFunc.getTimestamp(rec), timeZoneRules, stride, periodAddFunction);
+        }
+
+        @Override
+        public Function getTimestampArg() {
+            return timestampFunc;
+        }
+
+        @Override
+        public int invertTimestampInterval(Interval io) {
+            if (stride == Numbers.INT_NULL) {
+                return NONE;
+            }
+            // 48h bounds any zone offset difference (e.g. Samoa's 2011 date-line shift);
+            // calendar units add a further +/-1 unit of day-clamping slack.
+            final long margin = timestampDriver.fromDays(2);
+            final boolean calendar = period == 'M' || period == 'y';
+            long lo = io.getLo();
+            long hi = io.getHi();
+            if (lo != Numbers.LONG_NULL) {
+                lo = periodAddFunction.add(lo, -stride);
+                if (calendar) {
+                    lo = periodAddFunction.add(lo, -1);
+                }
+                lo = lo < Long.MIN_VALUE + margin ? Numbers.LONG_NULL : lo - margin;
+            }
+            if (hi != Long.MAX_VALUE) {
+                hi = periodAddFunction.add(hi, -stride);
+                if (calendar) {
+                    hi = periodAddFunction.add(hi, 1);
+                }
+                hi = hi > Long.MAX_VALUE - margin ? Long.MAX_VALUE : hi + margin;
+            }
+            io.of(lo, hi);
+            return SUPERSET;
         }
 
         @Override

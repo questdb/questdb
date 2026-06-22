@@ -35,11 +35,13 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
+import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
 import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
+import io.questdb.std.Interval;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -175,6 +177,27 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
         }
 
         throw SqlException.$(timezonePos, "const or runtime const expected");
+    }
+
+    // 48h bounds any zone offset difference (e.g. Samoa's 2011 date-line shift); the
+    // floor can drop the input by up to two buckets (DST-gap re-flooring).
+    static int invertFloorSuperset(Interval io, TimestampDriver timestampDriver, char unit, int stride) {
+        if (!isFixedStrideUnit(unit)) {
+            return MonotonicTimestampFunction.NONE;
+        }
+        final long margin = timestampDriver.fromDays(2);
+        final long bucket = timestampDriver.add(0, unit, stride);
+        long lo = io.getLo();
+        long hi = io.getHi();
+        if (lo != Numbers.LONG_NULL) {
+            lo = lo < Long.MIN_VALUE + margin ? Numbers.LONG_NULL : lo - margin;
+        }
+        if (hi != Long.MAX_VALUE) {
+            final long widen = 2 * bucket + margin;
+            hi = widen < 0 || hi > Long.MAX_VALUE - widen ? Long.MAX_VALUE : hi + widen;
+        }
+        io.of(lo, hi);
+        return MonotonicTimestampFunction.SUPERSET;
     }
 
     private static boolean canSkipDstGapCorrection(TimestampDriver timestampDriver, int stride, char unit, long from, long offset) {
@@ -332,6 +355,11 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
         return result;
     }
 
+    private static boolean isFixedStrideUnit(char unit) {
+        return unit == 's' || unit == 'm' || unit == 'h' || unit == 'd'
+                || unit == 'T' || unit == 'U' || unit == 'n';
+    }
+
     private static void validateUnit(char unit, int unitPos) throws SqlException {
         switch (unit) {
             case 'M':
@@ -354,7 +382,7 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
     abstract boolean isReturnUtc();
 
     // both offset and time zone are consts
-    private static class AllConstDstGapAwareFunc extends TimestampFunction implements UnaryFunction {
+    private static class AllConstDstGapAwareFunc extends TimestampFunction implements UnaryFunction, MonotonicTimestampFunction {
         private final long effectiveOffset; // from + offset
         private final TimestampDriver.TimestampFloorWithOffsetMethod floorFunc;
         private final long from;
@@ -409,6 +437,16 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
         }
 
         @Override
+        public Function getTimestampArg() {
+            return tsFunc;
+        }
+
+        @Override
+        public int invertTimestampInterval(Interval io) {
+            return invertFloorSuperset(io, timestampDriver, unit, stride);
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val(name).val("('");
             sink.val(stride);
@@ -429,7 +467,7 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
         }
     }
 
-    private static class AllConstFunc extends TimestampFunction implements UnaryFunction {
+    private static class AllConstFunc extends TimestampFunction implements UnaryFunction, MonotonicTimestampFunction {
         private final long effectiveOffset; // from + offset
         private final TimestampDriver.TimestampFloorWithOffsetMethod floorFunc;
         private final long from;
@@ -486,6 +524,16 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
         }
 
         @Override
+        public Function getTimestampArg() {
+            return tsFunc;
+        }
+
+        @Override
+        public int invertTimestampInterval(Interval io) {
+            return invertFloorSuperset(io, timestampDriver, unit, stride);
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val(name).val("('");
             sink.val(stride);
@@ -506,7 +554,7 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
         }
     }
 
-    private static class AllConstTzFunc extends TimestampFunction implements UnaryFunction {
+    private static class AllConstTzFunc extends TimestampFunction implements UnaryFunction, MonotonicTimestampFunction {
         private final long effectiveOffset; // from + offset
         private final TimestampDriver.TimestampFloorWithOffsetMethod floorFunc;
         private final long from;
@@ -558,6 +606,16 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
                 return floorWithTz(timestamp, tzRules, floorFunc, stride, effectiveOffset, returnUtc, unit);
             }
             return Numbers.LONG_NULL;
+        }
+
+        @Override
+        public Function getTimestampArg() {
+            return tsFunc;
+        }
+
+        @Override
+        public int invertTimestampInterval(Interval io) {
+            return invertFloorSuperset(io, timestampDriver, unit, stride);
         }
 
         @Override

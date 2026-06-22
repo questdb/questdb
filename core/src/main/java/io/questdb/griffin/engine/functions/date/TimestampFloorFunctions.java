@@ -28,8 +28,11 @@ import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.Chars;
+import io.questdb.std.Interval;
 import io.questdb.std.Numbers;
 
 /**
@@ -40,8 +43,9 @@ final class TimestampFloorFunctions {
     private TimestampFloorFunctions() {
     }
 
-    static class TimestampFloorFunction extends TimestampFunction implements UnaryFunction {
+    static class TimestampFloorFunction extends TimestampFunction implements UnaryFunction, MonotonicTimestampFunction {
         private final Function arg;
+        private final TimestampDriver.TimestampCeilMethod ceil;
         private final TimestampDriver.TimestampFloorMethod floor;
         private final CharSequence unit;
 
@@ -50,6 +54,8 @@ final class TimestampFloorFunctions {
             this.arg = arg;
             this.unit = unit;
             this.floor = timestampDriver.getTimestampFloorMethod(unit);
+            final char ceilUnit = ceilUnitChar(unit);
+            this.ceil = ceilUnit == 0 ? null : timestampDriver.getTimestampCeilMethod(ceilUnit);
         }
 
         @Override
@@ -64,12 +70,66 @@ final class TimestampFloorFunctions {
         }
 
         @Override
+        public Function getTimestampArg() {
+            return arg;
+        }
+
+        @Override
+        public int invertTimestampInterval(Interval io) {
+            if (ceil == null) {
+                return NONE;
+            }
+            long lo = io.getLo();
+            long hi = io.getHi();
+            if (lo != Numbers.LONG_NULL) {
+                lo = floor.floor(lo) == lo ? lo : ceil.ceil(lo);
+            }
+            if (hi != Long.MAX_VALUE) {
+                hi = ceil.ceil(hi) - 1;
+            }
+            io.of(lo, hi);
+            return EXACT;
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val(TimestampFloorFunctionFactory.NAME).val("('").val(unit).val("',").val(getArg()).val(')');
         }
+
+        private static char ceilUnitChar(CharSequence unit) {
+            if (Chars.equals(unit, "second")) {
+                return 's';
+            }
+            if (Chars.equals(unit, "minute")) {
+                return 'm';
+            }
+            if (Chars.equals(unit, "hour")) {
+                return 'h';
+            }
+            if (Chars.equals(unit, "day")) {
+                return 'd';
+            }
+            if (Chars.equals(unit, "month")) {
+                return 'M';
+            }
+            if (Chars.equals(unit, "year")) {
+                return 'y';
+            }
+            if (Chars.equals(unit, "millisecond")) {
+                return 'T';
+            }
+            if (Chars.equals(unit, "microsecond")) {
+                return 'U';
+            }
+            if (Chars.equals(unit, "nanosecond")) {
+                return 'n';
+            }
+            return 0;
+        }
     }
 
-    static class TimestampFloorWithStrideFunction extends TimestampFunction implements UnaryFunction {
+    static class TimestampFloorWithStrideFunction extends TimestampFunction implements UnaryFunction, MonotonicTimestampFunction {
+        private final char addUnit;
         private final Function arg;
         private final TimestampDriver.TimestampFloorWithStrideMethod floor;
         private final int stride;
@@ -81,6 +141,7 @@ final class TimestampFloorFunctions {
             this.unit = unit;
             this.stride = stride;
             this.floor = timestampDriver.getTimestampFloorWithStrideMethod(unit);
+            this.addUnit = fixedStrideUnitChar(unit);
         }
 
         @Override
@@ -95,8 +156,57 @@ final class TimestampFloorFunctions {
         }
 
         @Override
+        public Function getTimestampArg() {
+            return arg;
+        }
+
+        @Override
+        public int invertTimestampInterval(Interval io) {
+            // fixed-width units only: calendar strides lack a constant bucket size
+            if (addUnit == 0) {
+                return NONE;
+            }
+            long lo = io.getLo();
+            long hi = io.getHi();
+            if (lo != Numbers.LONG_NULL) {
+                final long b = floor.floor(lo, stride);
+                lo = b == lo ? lo : timestampDriver.add(b, addUnit, stride);
+            }
+            if (hi != Long.MAX_VALUE) {
+                hi = timestampDriver.add(floor.floor(hi, stride), addUnit, stride) - 1;
+            }
+            io.of(lo, hi);
+            return EXACT;
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val(TimestampFloorFunctionFactory.NAME).val("('").val(unit).val("',").val(getArg()).val(')');
+        }
+
+        private static char fixedStrideUnitChar(CharSequence unit) {
+            if (Chars.equals(unit, "second")) {
+                return 's';
+            }
+            if (Chars.equals(unit, "minute")) {
+                return 'm';
+            }
+            if (Chars.equals(unit, "hour")) {
+                return 'h';
+            }
+            if (Chars.equals(unit, "day")) {
+                return 'd';
+            }
+            if (Chars.equals(unit, "millisecond")) {
+                return 'T';
+            }
+            if (Chars.equals(unit, "microsecond")) {
+                return 'U';
+            }
+            if (Chars.equals(unit, "nanosecond")) {
+                return 'n';
+            }
+            return 0;
         }
     }
 }

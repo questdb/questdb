@@ -185,6 +185,17 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         intervalApplied = true;
     }
 
+    public void intersectMonotonicTimestamp(TimestampMonotonicInverter inverter) {
+        if (isEmptySet()) {
+            Misc.free(inverter);
+            return;
+        }
+
+        IntervalUtils.encodeInterval(0L, 0L, IntervalOperation.INTERSECT_INTERVALS, staticIntervals);
+        dynamicRangeList.add(inverter);
+        intervalApplied = true;
+    }
+
     public void intersectRuntimeIntervals(Function intervalFunction) {
         if (isEmptySet()) {
             return;

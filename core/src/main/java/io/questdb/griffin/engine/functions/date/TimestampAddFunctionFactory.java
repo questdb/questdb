@@ -35,10 +35,12 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
+import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
 import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Interval;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
@@ -100,7 +102,7 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
         return new TimestampAddFunc(periodFunc, strideFunc, argPositions.getQuick(1), timestampFunc, timestampType);
     }
 
-    private static class TimestampAddConstConstVar extends TimestampFunction implements UnaryFunction {
+    private static class TimestampAddConstConstVar extends TimestampFunction implements UnaryFunction, MonotonicTimestampFunction {
         private final char period;
         private final TimestampDriver.TimestampAddMethod periodAddFunction;
         private final int stride;
@@ -129,8 +131,50 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public Function getTimestampArg() {
+            return timestampFunc;
+        }
+
+        @Override
+        public int invertTimestampInterval(Interval io) {
+            if (stride == Integer.MIN_VALUE) {
+                return NONE;
+            }
+            long lo = io.getLo();
+            long hi = io.getHi();
+            if (period == 'M' || period == 'y') {
+                // Calendar add clamps day-of-month, so it is non-monotonic by up to
+                // one unit; widen the naive inverse and keep the residual filter.
+                if (lo != Numbers.LONG_NULL) {
+                    lo = periodAddFunction.add(periodAddFunction.add(lo, -stride), -1);
+                }
+                if (hi != Long.MAX_VALUE) {
+                    hi = periodAddFunction.add(periodAddFunction.add(hi, -stride), 1);
+                }
+                io.of(lo, hi);
+                return SUPERSET;
+            }
+            if (isFixedUnit(period)) {
+                if (lo != Numbers.LONG_NULL) {
+                    lo = periodAddFunction.add(lo, -stride);
+                }
+                if (hi != Long.MAX_VALUE) {
+                    hi = periodAddFunction.add(hi, -stride);
+                }
+                io.of(lo, hi);
+                return EXACT;
+            }
+            return NONE;
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val("dateadd('").val(period).val("',").val(stride).val(',').val(timestampFunc).val(')');
+        }
+
+        private static boolean isFixedUnit(char period) {
+            return period == 's' || period == 'm' || period == 'h' || period == 'd' || period == 'w'
+                    || period == 'T' || period == 'U' || period == 'n';
         }
     }
 

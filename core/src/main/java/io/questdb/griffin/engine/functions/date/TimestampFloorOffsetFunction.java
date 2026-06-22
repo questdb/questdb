@@ -28,12 +28,14 @@ import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.Interval;
 import io.questdb.std.Numbers;
 
 
-public final class TimestampFloorOffsetFunction extends TimestampFunction implements UnaryFunction {
+public final class TimestampFloorOffsetFunction extends TimestampFunction implements UnaryFunction, MonotonicTimestampFunction {
     private final Function arg;
     private final TimestampDriver.TimestampFloorWithOffsetMethod floor;
     private final String name;
@@ -63,6 +65,30 @@ public final class TimestampFloorOffsetFunction extends TimestampFunction implem
     }
 
     @Override
+    public Function getTimestampArg() {
+        return arg;
+    }
+
+    @Override
+    public int invertTimestampInterval(Interval io) {
+        // fixed-width units only: calendar strides lack a constant bucket size
+        if (!isFixedUnit(unit)) {
+            return NONE;
+        }
+        long lo = io.getLo();
+        long hi = io.getHi();
+        if (lo != Numbers.LONG_NULL) {
+            final long b = floor.floor(lo, stride, offset);
+            lo = b == lo ? lo : timestampDriver.add(b, unit, stride);
+        }
+        if (hi != Long.MAX_VALUE) {
+            hi = timestampDriver.add(floor.floor(hi, stride, offset), unit, stride) - 1;
+        }
+        io.of(lo, hi);
+        return EXACT;
+    }
+
+    @Override
     public void toPlan(PlanSink sink) {
         sink.val(name).val("('");
         sink.val(stride);
@@ -72,5 +98,10 @@ public final class TimestampFloorOffsetFunction extends TimestampFunction implem
             sink.val(",'").val(timestampDriver.toMSecString(offset)).val('\'');
         }
         sink.val(')');
+    }
+
+    private static boolean isFixedUnit(char unit) {
+        return unit == 's' || unit == 'm' || unit == 'h' || unit == 'd'
+                || unit == 'T' || unit == 'U' || unit == 'n';
     }
 }

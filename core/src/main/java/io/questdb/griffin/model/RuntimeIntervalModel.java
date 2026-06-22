@@ -195,6 +195,9 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                 if (operation == IntervalOperation.SUBTRACT_INTERVALS) {
                     IntervalUtils.invert(outIntervals, divider);
                 }
+            } else if (dynamicFunction instanceof TimestampMonotonicInverter inverter) {
+                inverter.init(null, sqlExecutionContext);
+                inverter.evaluate(outIntervals);
             } else {
                 long lo = IntervalUtils.decodeIntervalLo(intervals, i);
                 long hi = IntervalUtils.decodeIntervalHi(intervals, i);

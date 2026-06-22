@@ -33,9 +33,11 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Interval;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
@@ -69,9 +71,10 @@ public class TimestampCeilFunctionFactory implements FunctionFactory {
         }
     }
 
-    static class TimestampCeilFunction extends TimestampFunction implements UnaryFunction {
+    static class TimestampCeilFunction extends TimestampFunction implements UnaryFunction, MonotonicTimestampFunction {
         private final Function arg;
         private final TimestampDriver.TimestampCeilMethod ceil;
+        private final long fixedSize;
         private final char symbol;
 
         public TimestampCeilFunction(Function arg, char symbol, int timestampType) {
@@ -79,6 +82,9 @@ public class TimestampCeilFunctionFactory implements FunctionFactory {
             this.ceil = timestampDriver.getTimestampCeilMethod(symbol);
             this.arg = arg;
             this.symbol = symbol;
+            // Only fixed-size, epoch-aligned units have boundaries at integer
+            // multiples of the bucket size, which the arithmetic inverse needs.
+            this.fixedSize = isFixedAlignedUnit(symbol) ? ceil.ceil(0) : 0;
         }
 
         @Override
@@ -93,8 +99,55 @@ public class TimestampCeilFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public Function getTimestampArg() {
+            return arg;
+        }
+
+        @Override
+        public int invertTimestampInterval(Interval io) {
+            if (fixedSize <= 0) {
+                return NONE;
+            }
+            long lo = io.getLo();
+            long hi = io.getHi();
+            if (lo != Numbers.LONG_NULL) {
+                final long q = ceilDiv(lo, fixedSize) - 1;
+                if (mulOverflows(q, fixedSize)) {
+                    return NONE;
+                }
+                lo = q * fixedSize;
+            }
+            if (hi != Long.MAX_VALUE) {
+                final long q = Math.floorDiv(hi, fixedSize);
+                if (mulOverflows(q, fixedSize)) {
+                    return NONE;
+                }
+                hi = q * fixedSize - 1;
+            }
+            io.of(lo, hi);
+            return EXACT;
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val("timestamp_ceil('").val(symbol).val("',").val(arg).val(')');
+        }
+
+        private static long ceilDiv(long a, long b) {
+            return -Math.floorDiv(-a, b);
+        }
+
+        private static boolean isFixedAlignedUnit(char symbol) {
+            return symbol == 's' || symbol == 'm' || symbol == 'h' || symbol == 'd'
+                    || symbol == 'T' || symbol == 'U' || symbol == 'n';
+        }
+
+        private static boolean mulOverflows(long a, long b) {
+            if (a == 0) {
+                return false;
+            }
+            final long r = a * b;
+            return r / b != a;
         }
     }
 }

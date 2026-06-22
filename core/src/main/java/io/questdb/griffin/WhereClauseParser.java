@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.SymbolMapReader;
@@ -34,10 +35,13 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.functions.AbstractGeoHashFunction;
+import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
+import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.griffin.model.AliasTranslator;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.model.IntrinsicModel;
+import io.questdb.griffin.model.TimestampMonotonicInverter;
 import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.Chars;
@@ -65,6 +69,12 @@ import static io.questdb.griffin.SqlKeywords.*;
  * - indexed symbol column expressions to use for index scan
  **/
 public final class WhereClauseParser implements Mutable {
+    // Resolution outcomes for a single scalar bound of a monotonic-timestamp predicate.
+    private static final int BOUND_CONST = 0;     // usable compile-time constant (resolvedBoundConst)
+    private static final int BOUND_EMPTY = 2;     // a NULL-valued bound: the predicate matches no rows
+    private static final int BOUND_FAIL = 4;      // not a usable scalar bound: fall back to a row filter
+    private static final int BOUND_FALSE = 3;     // a NULL keyword bound: the predicate is always false
+    private static final int BOUND_FUNC = 1;      // deferred runtime function (resolvedBoundFunc)
     // Internal optimization marker for timestamp predicates pushed through dateadd transforms.
     // and_offset(predicate, unit, offset) wraps predicates that need offset adjustment.
     // This is NOT a user-facing function - it's injected by SqlOptimiser during predicate pushdown.
@@ -79,17 +89,16 @@ public final class WhereClauseParser implements Mutable {
     private static final int INTRINSIC_OP_NOT = 8;
     private static final int INTRINSIC_OP_NOT_EQ = 7;
     private static final CharSequenceIntHashMap intrinsicOps = new CharSequenceIntHashMap();
-    // TODO: configure size
     private final ObjectPool<FlyweightCharSequence> csPool = new ObjectPool<>(FlyweightCharSequence.FACTORY, 64);
+    private final Interval intervalScratch = new Interval();
     private final ObjList<ExpressionNode> keyExclNodes = new ObjList<>();
     private final ObjList<ExpressionNode> keyNodes = new ObjList<>();
+    private final ObjectPool<IntrinsicModel> models = new ObjectPool<>(IntrinsicModel.FACTORY, 4);
     // Tracks every node we mark with intrinsicValue=TRUE during a single
     // OR-tree extraction pass. If extraction fails partway through, the
     // marks must be reverted so collapseIntrinsicNodes does not later
     // shred a still-needed branch and leave a half-collapsed OR node.
     private final ObjList<ExpressionNode> orIntrinsicNodes = new ObjList<>();
-    // TODO: configure size
-    private final ObjectPool<IntrinsicModel> models = new ObjectPool<>(IntrinsicModel.FACTORY, 8);
     private final ArrayDeque<ExpressionNode> stack = new ArrayDeque<>();
     private final CharSequenceHashSet tempK = new CharSequenceHashSet();
     private final IntList tempKeyExcludedValuePos = new IntList();
@@ -102,6 +111,7 @@ public final class WhereClauseParser implements Mutable {
     private final IntList tempKeyValueType = new IntList();
     private final CharSequenceHashSet tempKeyValues = new CharSequenceHashSet();
     private final CharSequenceHashSet tempKeys = new CharSequenceHashSet();
+    private final ObjList<MonotonicTimestampFunction> tempMonotonicChain = new ObjList<>();
     private final ObjList<ExpressionNode> tempNodes = new ObjList<>();
     private final IntList tempP = new IntList();
     private final IntList tempPos = new IntList();
@@ -113,6 +123,8 @@ public final class WhereClauseParser implements Mutable {
     private boolean isConstFunction;
     private boolean noIndex;
     private CharSequence preferredKeyColumn;
+    private long resolvedBoundConst;
+    private Function resolvedBoundFunc;
     private CharSequence timestamp;
 
     @Override
@@ -123,6 +135,7 @@ public final class WhereClauseParser implements Mutable {
         keyExclNodes.clear();
         orIntrinsicNodes.clear();
         tempNodes.clear();
+        tempMonotonicChain.clear();
         tempKeys.clear();
         tempPos.clear();
         tempType.clear();
@@ -160,8 +173,7 @@ public final class WhereClauseParser implements Mutable {
         this.noIndex = noIndex;
         this.preferredKeyColumn = preferredKeyColumn;
 
-        // Extracts designated timestamp argument from dateadd predicates, if any.
-        rewriteDateaddTimestamp(expressionNodePool, node);
+        stripNoopTimestampCasts(expressionNodePool, node, functionParser, metadata, executionContext);
 
         IntrinsicModel model = models.next();
         int timestampType = reader.getMetadata().getTimestampType();
@@ -489,6 +501,9 @@ public final class WhereClauseParser implements Mutable {
     ) throws SqlException {
         ExpressionNode col = node.args.getLast();
         if (col.type != ExpressionNode.LITERAL) {
+            if (referencesTimestamp(col)) {
+                return analyzeMonotonicTimestamp(timestampDriver, model, node, col, node.args.getQuick(1), node.args.getQuick(0), true, functionParser, metadata, executionContext);
+            }
             return false;
         }
         CharSequence column = translator.translateAlias(col.token);
@@ -590,6 +605,12 @@ public final class WhereClauseParser implements Mutable {
         if (nodesEqual(a, b)) {
             node.intrinsicValue = IntrinsicModel.TRUE;
             return true;
+        }
+
+        if (a.type != ExpressionNode.LITERAL && referencesTimestamp(a) && (b.type == ExpressionNode.CONSTANT || isFunc(b))) {
+            if (analyzeMonotonicTimestamp(timestampDriver, model, node, a, b, b, true, functionParser, m, executionContext)) {
+                return true;
+            }
         }
 
         if (a.type == ExpressionNode.LITERAL && (b.type == ExpressionNode.CONSTANT || isFunc(b))) {
@@ -762,7 +783,8 @@ public final class WhereClauseParser implements Mutable {
             return analyzeTimestampLess(timestampDriver, model, node, equalsTo, functionParser, metadata, executionContext, node.lhs);
         }
 
-        return false;
+        return analyzeMonotonicTimestamp(timestampDriver, model, node, node.lhs, node.rhs, null, equalsTo, functionParser, metadata, executionContext)
+                || analyzeMonotonicTimestamp(timestampDriver, model, node, node.rhs, null, node.lhs, equalsTo, functionParser, metadata, executionContext);
     }
 
     private boolean analyzeIn(
@@ -782,6 +804,12 @@ public final class WhereClauseParser implements Mutable {
 
         final ExpressionNode col = node.paramCount < 3 ? node.lhs : node.args.getLast();
         if (col.type != ExpressionNode.LITERAL) {
+            if (node.paramCount == 2 && referencesTimestamp(col)) {
+                final ExpressionNode inArg = node.rhs;
+                if (inArg.type == ExpressionNode.CONSTANT || isFunc(inArg)) {
+                    return analyzeMonotonicTimestamp(timestampDriver, model, node, col, inArg, inArg, true, functionParser, metadata, executionContext);
+                }
+            }
             return false;
         }
 
@@ -1022,7 +1050,8 @@ public final class WhereClauseParser implements Mutable {
             return analyzeTimestampGreater(timestampDriver, model, node, equalsTo, functionParser, metadata, executionContext, node.lhs);
         }
 
-        return false;
+        return analyzeMonotonicTimestamp(timestampDriver, model, node, node.lhs, null, node.rhs, equalsTo, functionParser, metadata, executionContext)
+                || analyzeMonotonicTimestamp(timestampDriver, model, node, node.rhs, node.lhs, null, equalsTo, functionParser, metadata, executionContext);
     }
 
     // checks and merges given in list with temp keys
@@ -1170,6 +1199,159 @@ public final class WhereClauseParser implements Mutable {
             }
         }
         return false;
+    }
+
+    /**
+     * Recognizes {@code g(ts)} constrained to {@code [loBoundNode, hiBoundNode]}, where {@code g}
+     * is a chain of {@link MonotonicTimestampFunction}s over the designated timestamp, and pushes
+     * the inverted value range onto the timestamp axis as an interval. Either bound node may be
+     * null (open-ended comparison); the same node may bound both ends ('=' / single-value 'in').
+     * <p>
+     * Compiles the operand and inverts the chain once for both ends. A constant end folds at
+     * compile time; a runtime end is deferred to {@link TimestampMonotonicInverter}. Returns true
+     * only when the inversion is exact and the predicate is therefore fully captured by the
+     * interval; an inexact (SUPERSET) inversion still widens the interval but keeps the residual
+     * row filter. Recognition is additive: any compile or parse failure falls back to a row filter.
+     */
+    private boolean analyzeMonotonicTimestamp(
+            TimestampDriver timestampDriver,
+            IntrinsicModel model,
+            ExpressionNode node,
+            ExpressionNode operandNode,
+            ExpressionNode loBoundNode,
+            ExpressionNode hiBoundNode,
+            boolean equalsTo,
+            FunctionParser functionParser,
+            RecordMetadata metadata,
+            SqlExecutionContext executionContext
+    ) {
+        if (operandNode == null || operandNode.type == ExpressionNode.LITERAL || !referencesTimestamp(operandNode)) {
+            return false;
+        }
+        Function head;
+        try {
+            head = functionParser.parseFunction(operandNode, metadata, executionContext);
+        } catch (SqlException | CairoException e) {
+            return false;
+        }
+        Function loBound = null;
+        Function hiBound = null;
+        try {
+            // Bounds are compared in the outermost function's output domain: a timestamp
+            // (any precision) or an integer (year() -> int, ts::long -> long).
+            final int outType = head.getType();
+            if (!ColumnType.isTimestamp(outType) && !ColumnType.isInt(outType) && outType != ColumnType.LONG) {
+                return false;
+            }
+            tempMonotonicChain.clear();
+            Function f = head;
+            while (f instanceof MonotonicTimestampFunction m) {
+                tempMonotonicChain.add(m);
+                f = m.getTimestampArg();
+            }
+            final ColumnFunction col = ColumnFunction.unwrap(f);
+            if (tempMonotonicChain.size() == 0
+                    || col == null
+                    || !Chars.equalsIgnoreCase(metadata.getColumnName(col.getColumnIndex()), timestamp)) {
+                return false;
+            }
+            final TimestampDriver outDriver = ColumnType.isTimestamp(outType) ? ColumnType.getTimestampDriver(outType) : timestampDriver;
+
+            // An unset end defaults to the open sentinel, which foldInvert treats as unbounded.
+            long loConst = Long.MIN_VALUE;
+            long hiConst = Long.MAX_VALUE;
+            boolean constSet = false;
+            if (loBoundNode != null) {
+                switch (resolveScalarBound(outType, outDriver, loBoundNode, equalsTo, true, functionParser, metadata, executionContext)) {
+                    case BOUND_CONST:
+                        loConst = resolvedBoundConst;
+                        constSet = true;
+                        break;
+                    case BOUND_FUNC:
+                        loBound = resolvedBoundFunc;
+                        break;
+                    case BOUND_EMPTY:
+                        model.intersectEmpty();
+                        node.intrinsicValue = IntrinsicModel.TRUE;
+                        return true;
+                    case BOUND_FALSE:
+                        node.intrinsicValue = IntrinsicModel.FALSE;
+                        return false;
+                    default:
+                        return false;
+                }
+            }
+            if (hiBoundNode != null) {
+                switch (resolveScalarBound(outType, outDriver, hiBoundNode, equalsTo, false, functionParser, metadata, executionContext)) {
+                    case BOUND_CONST:
+                        hiConst = resolvedBoundConst;
+                        constSet = true;
+                        break;
+                    case BOUND_FUNC:
+                        hiBound = resolvedBoundFunc;
+                        break;
+                    case BOUND_EMPTY:
+                        model.intersectEmpty();
+                        node.intrinsicValue = IntrinsicModel.TRUE;
+                        return true;
+                    case BOUND_FALSE:
+                        node.intrinsicValue = IntrinsicModel.FALSE;
+                        return false;
+                    default:
+                        return false;
+                }
+            }
+
+            final boolean hasRuntime = loBound != null || hiBound != null;
+            final int soundness;
+            // Fold the constant ends now; this also grades soundness (bound-independent).
+            // A pure-runtime predicate has no constant ends, so probe with an open interval.
+            if (constSet || !hasRuntime) {
+                intervalScratch.of(loConst, hiConst);
+                soundness = foldInvert(tempMonotonicChain, intervalScratch);
+                if (soundness == MonotonicTimestampFunction.NONE) {
+                    return false;
+                }
+                if (intervalScratch.getLo() > intervalScratch.getHi()) {
+                    model.intersectEmpty();
+                    node.intrinsicValue = IntrinsicModel.TRUE;
+                    return true;
+                }
+                model.intersectIntervals(intervalScratch.getLo(), intervalScratch.getHi());
+            } else {
+                soundness = foldInvertProbe(tempMonotonicChain);
+                if (soundness == MonotonicTimestampFunction.NONE) {
+                    return false;
+                }
+            }
+
+            if (hasRuntime) {
+                model.intersectMonotonicTimestamp(new TimestampMonotonicInverter(
+                        head,
+                        new ObjList<>(tempMonotonicChain),
+                        loBound,
+                        loBound != null ? adjustComparison(equalsTo, true) : 0,
+                        hiBound,
+                        hiBound != null ? adjustComparison(equalsTo, false) : 0,
+                        outDriver
+                ));
+                head = loBound = hiBound = null; // ownership transferred to the inverter
+            }
+
+            if (soundness == MonotonicTimestampFunction.EXACT) {
+                node.intrinsicValue = IntrinsicModel.TRUE;
+                return true;
+            }
+            return false;
+        } catch (SqlException | CairoException e) {
+            return false;
+        } finally {
+            Misc.free(loBound);
+            if (hiBound != loBound) {
+                Misc.free(hiBound);
+            }
+            Misc.free(head);
+        }
     }
 
     private boolean analyzeNotBetween(
@@ -1777,6 +1959,50 @@ public final class WhereClauseParser implements Mutable {
         keyExclNodes.clear();
     }
 
+    /**
+     * Accumulates a timestamp function (like now()) into the OR interval model.
+     * For constant functions, evaluates immediately. For runtime constants, defers to runtime.
+     * Returns true if the function cannot be accumulated (the caller must bail).
+     */
+    private boolean cannotAccumulateTimestampFunction(
+            IntrinsicModel model,
+            ExpressionNode funcNode,
+            boolean isFirst,
+            FunctionParser functionParser,
+            RecordMetadata metadata,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        Function func = functionParser.parseFunction(funcNode, metadata, executionContext);
+        try {
+            if (!ColumnType.isTimestamp(func.getType())) {
+                Misc.free(func);
+                return true;
+            }
+            if (func.isConstant()) {
+                long ts = func.getTimestamp(null);
+                Misc.free(func);
+                if (isFirst) {
+                    model.intersectIntervals(ts, ts);
+                } else {
+                    model.unionIntervals(ts, ts);
+                }
+            } else if (func.isRuntimeConstant()) {
+                if (isFirst) {
+                    model.intersectRuntimeTimestamp(func);
+                } else {
+                    model.unionRuntimeTimestamp(func);
+                }
+            } else {
+                Misc.free(func);
+                return true;
+            }
+            return false;
+        } catch (Throwable th) {
+            Misc.free(func);
+            throw th;
+        }
+    }
+
     private boolean checkCursorFunctionReturnsSingleTimestamp(Function function) {
         final RecordCursorFactory factory = function.getRecordCursorFactory();
         if (factory != null) {
@@ -1917,54 +2143,6 @@ public final class WhereClauseParser implements Mutable {
                 );
     }
 
-    /**
-     * Creates a new dateadd node with negated stride: dateadd(period, -stride, value)
-     *
-     * @param originalDateadd the original dateadd node to get period and stride from
-     * @param value           the value to wrap in the inverse dateadd
-     * @return the new dateadd node, or null if creation fails
-     */
-    private ExpressionNode createInverseDateadd(
-            ObjectPool<ExpressionNode> expressionNodePool,
-            ExpressionNode originalDateadd,
-            ExpressionNode value
-    ) {
-        final ExpressionNode periodArg = originalDateadd.args.getQuick(2);
-        final ExpressionNode strideArg = originalDateadd.args.getQuick(1);
-
-        // Extract and negate the stride (handles both constants and unary minus)
-        final int stride;
-        try {
-            stride = extractConstantInt(strideArg);
-        } catch (NumericException ne) {
-            return null;
-        }
-        final int negatedStride = -stride;
-
-        // Create negated stride node
-        final ExpressionNode negatedStrideNode = expressionNodePool.next().of(
-                ExpressionNode.CONSTANT,
-                Integer.toString(negatedStride),
-                0,
-                strideArg.position
-        );
-
-        // Create the new dateadd function node
-        final ExpressionNode newDateadd = expressionNodePool.next().of(
-                ExpressionNode.FUNCTION,
-                "dateadd",
-                0,
-                originalDateadd.position
-        );
-        newDateadd.paramCount = 3;
-        // Args in reverse order: value (timestamp position), negated stride, period
-        newDateadd.args.add(value);
-        newDateadd.args.add(negatedStrideNode);
-        newDateadd.args.add(periodArg);
-
-        return newDateadd;
-    }
-
     private Function createKeyValueBindVariable(
             FunctionParser functionParser,
             SqlExecutionContext executionContext,
@@ -2055,23 +2233,6 @@ public final class WhereClauseParser implements Mutable {
     }
 
     /**
-     * Extracts the integer value from a constant or unary minus of constant node.
-     * Returns 0 if extraction fails.
-     */
-    private int extractConstantInt(ExpressionNode node) throws NumericException {
-        if (node.type == ExpressionNode.CONSTANT) {
-            return Numbers.parseInt(node.token);
-        }
-        // Handle unary minus
-        if (node.type == ExpressionNode.OPERATION && Chars.equals(node.token, '-') && node.lhs == null) {
-            if (node.rhs != null && node.rhs.type == ExpressionNode.CONSTANT) {
-                return -Numbers.parseInt(node.rhs.token);
-            }
-        }
-        throw NumericException.instance().put("integer constant expected");
-    }
-
-    /**
      * Extracts timestamp intervals from an OR tree and unions them into the model.
      * Assumes isOrOfTimestampIn() has already returned true for this node.
      * <p>
@@ -2113,7 +2274,7 @@ public final class WhereClauseParser implements Mutable {
                     }
                 } else if (isFunc(inArg)) {
                     // Function like now() - parse and handle as runtime timestamp
-                    if (!tryAccumulateTimestampFunction(model, inArg, leftFirst, functionParser, metadata, executionContext)) {
+                    if (cannotAccumulateTimestampFunction(model, inArg, leftFirst, functionParser, metadata, executionContext)) {
                         return false;
                     }
                 } else {
@@ -2131,7 +2292,7 @@ public final class WhereClauseParser implements Mutable {
                     ExpressionNode inListItem = node.args.getQuick(i);
                     boolean isFirst = leftFirst && i == 0;
                     if (isFunc(inListItem)) {
-                        if (!tryAccumulateTimestampFunction(model, inListItem, isFirst, functionParser, metadata, executionContext)) {
+                        if (cannotAccumulateTimestampFunction(model, inListItem, isFirst, functionParser, metadata, executionContext)) {
                             return false;
                         }
                     } else {
@@ -2157,7 +2318,7 @@ public final class WhereClauseParser implements Mutable {
                 valueNode = node.lhs;
             }
             if (isFunc(valueNode)) {
-                if (!tryAccumulateTimestampFunction(model, valueNode, leftFirst, functionParser, metadata, executionContext)) {
+                if (cannotAccumulateTimestampFunction(model, valueNode, leftFirst, functionParser, metadata, executionContext)) {
                     return false;
                 }
             } else {
@@ -2173,6 +2334,25 @@ public final class WhereClauseParser implements Mutable {
         }
 
         return false;
+    }
+
+    private int foldInvert(ObjList<MonotonicTimestampFunction> chain, Interval io) {
+        int soundness = MonotonicTimestampFunction.EXACT;
+        for (int i = 0, n = chain.size(); i < n; i++) {
+            final int grade = chain.getQuick(i).invertTimestampInterval(io);
+            if (grade == MonotonicTimestampFunction.NONE) {
+                return MonotonicTimestampFunction.NONE;
+            }
+            if (grade == MonotonicTimestampFunction.SUPERSET) {
+                soundness = MonotonicTimestampFunction.SUPERSET;
+            }
+        }
+        return soundness;
+    }
+
+    private int foldInvertProbe(ObjList<MonotonicTimestampFunction> chain) {
+        intervalScratch.of(Long.MIN_VALUE, Long.MAX_VALUE);
+        return foldInvert(chain, intervalScratch);
     }
 
     private CharSequence getStrFromFunction(
@@ -2204,66 +2384,8 @@ public final class WhereClauseParser implements Mutable {
         }
     }
 
-    /**
-     * Checks if a node represents a constant integer value.
-     * Handles both direct constant (e.g., "15") and unary minus of a constant (e.g. "-15").
-     */
-    private boolean isConstantInt(ExpressionNode node) {
-        if (node.type == ExpressionNode.CONSTANT) {
-            try {
-                Numbers.parseInt(node.token);
-                return true;
-            } catch (NumericException e) {
-                return false;
-            }
-        }
-        // Handle unary minus: node is OPERATION with token "-" and rhs is a constant
-        if (node.type == ExpressionNode.OPERATION && Chars.equals(node.token, '-') && node.lhs == null) {
-            if (node.rhs != null && node.rhs.type == ExpressionNode.CONSTANT) {
-                try {
-                    Numbers.parseInt(node.rhs.token);
-                    return true;
-                } catch (NumericException e) {
-                    return false;
-                }
-            }
-        }
-        return false;
-    }
-
     private boolean isCorrectType(int type) {
         return type != ExpressionNode.OPERATION;
-    }
-
-    /**
-     * Checks if node is dateadd(const_period, const_stride, designated_timestamp).
-     *
-     * @param node the expression node to check
-     * @return true the dateadd node if it matches the pattern, false otherwise
-     */
-    private boolean isDateaddOnTimestamp(ExpressionNode node) {
-        if (node == null || timestamp == null) {
-            return false;
-        }
-        if (node.type != ExpressionNode.FUNCTION
-                || !Chars.equalsLowerCaseAscii(node.token, "dateadd")
-                || node.args.size() != 3) {
-            return false;
-        }
-        // Args are in reverse order: args[0]=timestamp, args[1]=stride, args[2]=period
-        final ExpressionNode timestampArg = node.args.getQuick(0);
-        final ExpressionNode strideArg = node.args.getQuick(1);
-        final ExpressionNode periodArg = node.args.getQuick(2);
-        // Check timestamp arg is the designated timestamp column
-        if (timestampArg.type != ExpressionNode.LITERAL || !isTimestamp(timestampArg)) {
-            return false;
-        }
-        // Check period is a constant char (e.g., 'm', 'd', 'h')
-        if (periodArg.type != ExpressionNode.CONSTANT) {
-            return false;
-        }
-        // Check stride is a constant integer (either a direct constant or unary minus of constant)
-        return isConstantInt(strideArg);
     }
 
     private boolean isGeoHashConstFunction(Function fn) {
@@ -2340,6 +2462,36 @@ public final class WhereClauseParser implements Mutable {
         return Chars.equalsIgnoreCaseNc(n.token, timestamp);
     }
 
+    private boolean isTimestampIdentityOperand(
+            ExpressionNode operand,
+            FunctionParser functionParser,
+            RecordMetadata metadata,
+            SqlExecutionContext executionContext
+    ) {
+        if (operand == null
+                || operand.token == null
+                || (!Chars.equalsLowerCaseAscii(operand.token, "cast") && !Chars.equals(operand.token, "::"))
+                || !referencesTimestamp(operand)) {
+            return false;
+        }
+        // A same-precision cast on the designated timestamp folds to the bare
+        // column when compiled, so the wrapped operand is just the timestamp.
+        // Recognition is speculative: an operand that does not compile in
+        // isolation is simply not a timestamp identity.
+        final Function f;
+        try {
+            f = functionParser.parseFunction(operand, metadata, executionContext);
+        } catch (SqlException | CairoException e) {
+            return false;
+        }
+        try {
+            final ColumnFunction col = ColumnFunction.unwrap(f);
+            return col != null && Chars.equalsIgnoreCase(metadata.getColumnName(col.getColumnIndex()), timestamp);
+        } finally {
+            Misc.free(f);
+        }
+    }
+
     private void markOrIntrinsic(ExpressionNode node) {
         node.intrinsicValue = IntrinsicModel.TRUE;
         orIntrinsicNodes.add(node);
@@ -2403,50 +2555,6 @@ public final class WhereClauseParser implements Mutable {
         }
 
         return true;
-    }
-
-    /**
-     * Accumulates a timestamp function (like now()) into the OR interval model.
-     * For constant functions, evaluates immediately. For runtime constants, defers to runtime.
-     * Returns true on success, false if the function cannot be accumulated.
-     */
-    private boolean tryAccumulateTimestampFunction(
-            IntrinsicModel model,
-            ExpressionNode funcNode,
-            boolean isFirst,
-            FunctionParser functionParser,
-            RecordMetadata metadata,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        Function func = functionParser.parseFunction(funcNode, metadata, executionContext);
-        try {
-            if (!ColumnType.isTimestamp(func.getType())) {
-                Misc.free(func);
-                return false;
-            }
-            if (func.isConstant()) {
-                long ts = func.getTimestamp(null);
-                Misc.free(func);
-                if (isFirst) {
-                    model.intersectIntervals(ts, ts);
-                } else {
-                    model.unionIntervals(ts, ts);
-                }
-            } else if (func.isRuntimeConstant()) {
-                if (isFirst) {
-                    model.intersectRuntimeTimestamp(func);
-                } else {
-                    model.unionRuntimeTimestamp(func);
-                }
-            } else {
-                Misc.free(func);
-                return false;
-            }
-            return true;
-        } catch (Throwable th) {
-            Misc.free(func);
-            throw th;
-        }
     }
 
     private long parseFullOrPartialDate(
@@ -2537,6 +2645,24 @@ public final class WhereClauseParser implements Mutable {
         } catch (NumericException e) {
             throw SqlException.$(position, "GeoHash prefix precision mismatch");
         }
+    }
+
+    private boolean referencesTimestamp(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.LITERAL) {
+            return isTimestamp(node);
+        }
+        if (referencesTimestamp(node.lhs) || referencesTimestamp(node.rhs)) {
+            return true;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (referencesTimestamp(node.args.getQuick(i))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean removeAndIntrinsics(
@@ -2685,46 +2811,115 @@ public final class WhereClauseParser implements Mutable {
     }
 
     /**
-     * Attempts to rewrite a single node if it contains a dateadd pattern on the designated timestamp.
+     * Resolves one scalar bound of a monotonic-timestamp predicate into either a compile-time
+     * constant (written to {@link #resolvedBoundConst}) or a deferred runtime function (written to
+     * {@link #resolvedBoundFunc}, ownership passing to the caller). The returned status selects the
+     * outcome; see the {@code BOUND_*} constants.
      */
-    private void rewriteDateaddNode(ObjectPool<ExpressionNode> expressionNodePool, ExpressionNode node) {
-        // Check for comparison operators: =, !=, <, <=, >, >=
-        if (node.type == ExpressionNode.OPERATION && node.paramCount == 2) {
-            final CharSequence op = node.token;
-            if (Chars.equals(op, '=') || Chars.equals(op, '<') || Chars.equals(op, "<=")
-                    || Chars.equals(op, '>') || Chars.equals(op, ">=") || Chars.equals(op, "!=")) {
-                tryRewriteDateaddComparison(expressionNodePool, node);
+    private int resolveScalarBound(
+            int outType,
+            TimestampDriver outDriver,
+            ExpressionNode boundNode,
+            boolean equalsTo,
+            boolean isLo,
+            FunctionParser functionParser,
+            RecordMetadata metadata,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        final boolean isTimestamp = ColumnType.isTimestamp(outType);
+        resolvedBoundFunc = null;
+        if (boundNode.type == ExpressionNode.CONSTANT) {
+            if (isNullKeyword(boundNode.token)) {
+                return BOUND_FALSE;
+            }
+            if (isTimestamp) {
+                try {
+                    resolvedBoundConst = parseFullOrPartialDate(outDriver, equalsTo, boundNode, isLo);
+                } catch (NumericException e) {
+                    throw SqlException.invalidDate(boundNode.token, boundNode.position);
+                }
+            } else {
+                try {
+                    resolvedBoundConst = Numbers.parseLong(boundNode.token) + adjustComparison(equalsTo, isLo);
+                } catch (NumericException e) {
+                    return BOUND_FAIL;
+                }
+            }
+            return BOUND_CONST;
+        }
+        if (isFunc(boundNode)) {
+            final Function bound = functionParser.parseFunction(boundNode, metadata, executionContext);
+            boolean keep = false;
+            try {
+                if (isTimestamp) {
+                    checkFunctionCanBeTimestamp(metadata, executionContext, bound, boundNode.position);
+                }
+                if (bound.isConstant()) {
+                    // int and long bounds both read as long: IntFunction.getLong() widens
+                    // and maps INT_NULL to LONG_NULL.
+                    final long b = isTimestamp
+                            ? getTimestampFromConstFunction(outDriver, bound, boundNode.position, false)
+                            : bound.getLong(null);
+                    if (b == Numbers.LONG_NULL) {
+                        return BOUND_EMPTY;
+                    }
+                    resolvedBoundConst = b + adjustComparison(equalsTo, isLo);
+                    return BOUND_CONST;
+                }
+                if (bound.isRuntimeConstant()) {
+                    resolvedBoundFunc = bound;
+                    keep = true;
+                    return BOUND_FUNC;
+                }
+                return BOUND_FAIL;
+            } finally {
+                if (!keep) {
+                    Misc.free(bound);
+                }
             }
         }
-        // Check for BETWEEN: dateadd() BETWEEN lo AND hi
-        if (isBetweenKeyword(node.token) && node.paramCount == 3 && node.args.size() >= 3) {
-            tryRewriteDateaddBetween(expressionNodePool, node);
-        }
+        return BOUND_FAIL;
     }
 
-    /**
-     * Rewrites the WHERE clause AST to transform dateadd patterns on the designated timestamp
-     * into a form that the existing intrinsic analysis can recognize.
-     * <p>
-     * Example: dateadd('m', 15, ts) = value  ->  ts = dateadd('m', -15, value)
-     * <p>
-     * Uses pre-order iterative tree traversal to handle all AND-connected predicates.
-     */
-    private void rewriteDateaddTimestamp(ObjectPool<ExpressionNode> expressionNodePool, ExpressionNode node) {
-        if (node == null || expressionNodePool == null) {
+    private ExpressionNode stripIfNoopTimestampCast(
+            ObjectPool<ExpressionNode> expressionNodePool,
+            ExpressionNode operand,
+            FunctionParser functionParser,
+            RecordMetadata metadata,
+            SqlExecutionContext executionContext
+    ) {
+        if (isTimestampIdentityOperand(operand, functionParser, metadata, executionContext)) {
+            return expressionNodePool.next().of(ExpressionNode.LITERAL, timestamp, 0, operand.position);
+        }
+        return operand;
+    }
+
+    private void stripNoopTimestampCasts(
+            ObjectPool<ExpressionNode> expressionNodePool,
+            ExpressionNode node,
+            FunctionParser functionParser,
+            RecordMetadata metadata,
+            SqlExecutionContext executionContext
+    ) {
+        if (timestamp == null) {
             return;
         }
-
-        // Pre-order iterative tree traversal
-        // see: http://en.wikipedia.org/wiki/Tree_traversal
         stack.clear();
         while (!stack.isEmpty() || node != null) {
             if (node != null) {
-                if (isAndKeyword(node.token)) {
+                if (isAndKeyword(node.token) || isOrKeyword(node.token)) {
                     stack.push(node.rhs);
                     node = node.lhs;
                 } else {
-                    rewriteDateaddNode(expressionNodePool, node);
+                    node.lhs = stripIfNoopTimestampCast(expressionNodePool, node.lhs, functionParser, metadata, executionContext);
+                    node.rhs = stripIfNoopTimestampCast(expressionNodePool, node.rhs, functionParser, metadata, executionContext);
+                    for (int i = 0, n = node.args.size(); i < n; i++) {
+                        ExpressionNode arg = node.args.getQuick(i);
+                        ExpressionNode stripped = stripIfNoopTimestampCast(expressionNodePool, arg, functionParser, metadata, executionContext);
+                        if (stripped != arg) {
+                            node.args.setQuick(i, stripped);
+                        }
+                    }
                     node = stack.poll();
                 }
             } else {
@@ -2815,54 +3010,6 @@ public final class WhereClauseParser implements Mutable {
         model.clearIntervalFilters();
         model.intrinsicValue = savedIntrinsicValue;
         return false;
-    }
-
-    /**
-     * Tries to rewrite a BETWEEN node if the column is wrapped in dateadd.
-     * <p>
-     * Transforms: dateadd(p, s, ts) BETWEEN lo AND hi  ->  ts BETWEEN dateadd(p, -s, lo) AND dateadd(p, -s, hi)
-     */
-    private void tryRewriteDateaddBetween(ObjectPool<ExpressionNode> expressionNodePool, ExpressionNode node) {
-        // Args are in reverse order: args[0]=hi, args[1]=lo, args[2]=col (or last element)
-        final ExpressionNode col = node.args.getLast();
-        if (isDateaddOnTimestamp(col)) {
-            final ExpressionNode lo = node.args.getQuick(1);
-            final ExpressionNode hi = node.args.getQuick(0);
-            final ExpressionNode inverseLo = createInverseDateadd(expressionNodePool, col, lo);
-            final ExpressionNode inverseHi = createInverseDateadd(expressionNodePool, col, hi);
-            if (inverseLo != null && inverseHi != null) {
-                // Replace the column with the unwrapped timestamp
-                node.args.setQuick(node.args.size() - 1, col.args.getQuick(0));
-                node.args.setQuick(1, inverseLo);
-                node.args.setQuick(0, inverseHi);
-            }
-        }
-    }
-
-    /**
-     * Tries to rewrite a comparison node if it contains dateadd(period, stride, designated_ts).
-     * <p>
-     * If LHS is dateadd(period, stride, ts), transforms to: ts OP dateadd(period, -stride, RHS)
-     * If RHS is dateadd(period, stride, ts), transforms to: dateadd(period, -stride, LHS) OP ts
-     */
-    private void tryRewriteDateaddComparison(ObjectPool<ExpressionNode> expressionNodePool, ExpressionNode node) {
-        if (isDateaddOnTimestamp(node.lhs)) {
-            final ExpressionNode dateadd = node.lhs;
-            final ExpressionNode inverseDateadd = createInverseDateadd(expressionNodePool, dateadd, node.rhs);
-            if (inverseDateadd != null) {
-                // Replace: dateadd(p, s, ts) OP value  ->  ts OP dateadd(p, -s, value)
-                node.lhs = dateadd.args.getQuick(0); // the timestamp column
-                node.rhs = inverseDateadd;
-            }
-        } else if (isDateaddOnTimestamp(node.rhs)) {
-            final ExpressionNode dateadd = node.rhs;
-            final ExpressionNode inverseDateadd = createInverseDateadd(expressionNodePool, dateadd, node.lhs);
-            if (inverseDateadd != null) {
-                // Replace: value OP dateadd(p, s, ts)  ->  dateadd(p, -s, value) OP ts
-                node.lhs = inverseDateadd;
-                node.rhs = dateadd.args.getQuick(0); // the timestamp column
-            }
-        }
     }
 
     /**
