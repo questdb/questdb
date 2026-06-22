@@ -13531,11 +13531,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void syncColumns0(boolean async) {
+        // Durability ordering matters here. For variable-size columns the aux vector
+        // (secondary) stores offsets that point into the data vector (primary). If the
+        // aux became durable before the data it references, a crash could leave an aux
+        // entry pointing past the end of the durable data - a dangling pointer into
+        // not-yet-written bytes. So always sync the data (primary, i*2) before the aux
+        // (secondary, i*2+1): the pointer's target is made durable first. syncColumns()
+        // runs before txWriter.commit(), so both column vectors are durable before the
+        // _txn file that exposes the new row count. (In CommitMode.SYNC msync blocks;
+        // in ASYNC it only schedules writeback, so this is best-effort program order.)
         for (int i = 0; i < columnCount; i++) {
-            columns.getQuick(i * 2).sync(async);
+            columns.getQuick(i * 2).sync(async);          // data (primary) first
             final MemoryMA m2 = columns.getQuick(i * 2 + 1);
             if (m2 != null) {
-                m2.sync(async);
+                m2.sync(async);                           // aux (secondary) after
             }
         }
     }

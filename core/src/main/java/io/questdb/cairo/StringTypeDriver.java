@@ -330,6 +330,24 @@ public class StringTypeDriver implements ColumnTypeDriver {
             // Jump to the number of records written to read length of var column correctly
             auxMem.jumpTo(pos << LEGACY_VAR_SIZE_AUX_SHL);
             long m1pos = Unsafe.getLong(auxMem.getAppendAddress());
+
+            // Crash-consistency guard (mirror of VarcharTypeDriver). aux[pos] is the
+            // N+1 offset = the last row's data end, written after that row's data. The
+            // previous offset aux[pos-1] is the last row's data start. Data offsets are
+            // monotonic, so a last data end that fell below the last data start means
+            // the aux tail was torn/partially flushed; fail loudly rather than jump the
+            // data cursor backwards and let the next append overwrite committed rows.
+            if (pos > 1) {
+                long prevPos = Unsafe.getLong(auxMem.getAppendAddress() - Long.BYTES);
+                if (m1pos < prevPos) {
+                    throw CairoException.critical(0)
+                            .put("string aux vector is damaged, possible torn write on the last entry [pos=").put(pos)
+                            .put(", dataEnd=").put(m1pos)
+                            .put(", prevDataEnd=").put(prevPos)
+                            .put(']');
+                }
+            }
+
             // Jump to the end of file to correctly trim the file
             auxMem.jumpTo((pos + 1) << LEGACY_VAR_SIZE_AUX_SHL);
             long dataSizeBytes = m1pos + ((pos + 1) << LEGACY_VAR_SIZE_AUX_SHL);

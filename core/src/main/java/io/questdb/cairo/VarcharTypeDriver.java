@@ -145,13 +145,20 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
                 if (value.isAscii()) {
                     flags |= HEADER_FLAG_ASCII;
                 }
-                auxMem.putInt((size << HEADER_FLAGS_WIDTH) | flags);
-                auxMem.putVarchar(value, 0, VARCHAR_INLINED_PREFIX_BYTES);
+                // Write the data vector before the aux entry that references it.
+                // The 48-bit data offset (written last, at the bottom of this method)
+                // is what crash recovery trusts to find the end of the data vector,
+                // so the pointed-to bytes must be the first thing written: target
+                // before pointer. This mirrors StringTypeDriver.appendValue, where the
+                // data write (putStr) is evaluated before the aux putLong. The stored
+                // offset is unchanged - putVarchar returns the pre-write append offset.
                 offset = dataMem.putVarchar(value, 0, size);
                 if (offset >= VARCHAR_MAX_COLUMN_SIZE) {
                     throw CairoException.critical(0).put("varchar data column is too large [offset=")
                             .put(offset).put(", max=").put(VARCHAR_MAX_COLUMN_SIZE).put(']');
                 }
+                auxMem.putInt((size << HEADER_FLAGS_WIDTH) | flags);
+                auxMem.putVarchar(value, 0, VARCHAR_INLINED_PREFIX_BYTES);
             }
         } else {
             auxMem.putInt(VARCHAR_HEADER_FLAG_NULL);
@@ -703,6 +710,28 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
             long auxEntryPtr = auxMem.getAppendAddress();
 
             long dataVectorSize = getDataVectorSize(auxEntryPtr);
+
+            // Crash-consistency guard. The data offset lives in bytes 8-15 of the aux
+            // entry and is written after the row's data bytes; on reopen we trust it to
+            // place the append cursor at the end of the data vector. A torn or partially
+            // flushed last entry can leave that offset zeroed while the 4-byte header
+            // still looks valid (header != 0), which would silently move the cursor
+            // inside committed data and let the next append overwrite live rows. Data
+            // offsets are contiguous and monotonic, so the last row's data must start
+            // at (or after) the previous row's data end; a start that falls before it
+            // is proof of a damaged aux vector. Fail loudly instead of corrupting.
+            if (pos > 1) {
+                long lastDataOffset = getDataOffset(auxEntryPtr);
+                long prevDataVectorSize = getDataVectorSize(auxEntryPtr - VARCHAR_AUX_WIDTH_BYTES);
+                if (lastDataOffset < prevDataVectorSize) {
+                    throw CairoException.critical(0)
+                            .put("varchar aux vector is damaged, possible torn write on the last entry [pos=").put(pos)
+                            .put(", lastDataOffset=").put(lastDataOffset)
+                            .put(", prevDataVectorSize=").put(prevDataVectorSize)
+                            .put(']');
+                }
+            }
+
             long auxVectorSize = getAuxVectorSize(pos);
             long totalDataSizeBytes = dataVectorSize + auxVectorSize;
 
