@@ -141,8 +141,15 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final int order = base.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
         frameSequence.of(base, executionContext, order);
-        cursor.of(frameSequence);
-        return cursor;
+        try {
+            cursor.of(frameSequence);
+            return cursor;
+        } catch (Throwable th) {
+            // On a mid-reopen breach, close() drains the partially reopened atom and resets isOpen
+            // so the cached factory stays reusable.
+            cursor.close();
+            throw th;
+        }
     }
 
     @Override

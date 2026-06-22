@@ -43,6 +43,7 @@ import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
@@ -74,6 +75,11 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
     private final ColumnTypes keyTypes;
     private final GroupByMapStats lastOwnerStats;
     private final ObjList<GroupByMapStats> lastShardStats;
+    // Per-query native memory tracker propagated to every fragment and destination
+    // shard. Null when no per-query limit applies (the shared horizon-join path never
+    // binds one), leaving allocations on the global counter only.
+    @Nullable
+    private MemoryTracker memoryTracker;
     private final GroupByMapFragment ownerFragment;
     private final GroupByFunctionsUpdater ownerFunctionUpdater;
     private final ObjList<GroupByMapFragment> perWorkerFragments;
@@ -132,6 +138,11 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
 
     @Override
     public void close() {
+        // Free the fragments and destination shards under the still-bound per-query tracker
+        // (setMemoryTracker() is never nulled here): each map free debits the same tracker
+        // that charged its (re)open, so the per-query counter balances. AsyncGroupByAtom.close()
+        // frees this context before it nulls and frees its pooled allocators, preserving that
+        // ordering.
         Misc.free(ownerFragment);
         Misc.freeObjList(perWorkerFragments);
         Misc.freeObjList(destShards);
@@ -253,12 +264,17 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
     private Map reopenDestShard(int shardIndex) {
         Map destMap = destShards.getQuick(shardIndex);
         if (destMap == null) {
-            destMap = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes);
+            // Lazy variant: the destination shard starts closed so its backing allocates
+            // under the bound tracker on the reopen() below, matching the free at clear().
+            destMap = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes, false, false);
             destShards.set(shardIndex, destMap);
+            destMap.setMemoryTracker(memoryTracker);
+            destMap.reopen();
         } else if (!destMap.isOpen()) {
             GroupByMapStats stats = lastShardStats.getQuick(shardIndex);
             int keyCapacity = GroupByMapFragment.targetKeyCapacity(configuration, perWorkerFragments.size(), stats, true);
             long heapSize = GroupByMapFragment.targetHeapSize(configuration, perWorkerFragments.size(), stats, true);
+            destMap.setMemoryTracker(memoryTracker);
             destMap.reopen(keyCapacity, heapSize);
         }
         return destMap;
@@ -446,6 +462,14 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
         if (shardedHint) {
             // Looks like we had to shard during previous execution, so let's do it ahead of time.
             sharded = true;
+        }
+    }
+
+    void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        memoryTracker = tracker;
+        ownerFragment.setMemoryTracker(tracker);
+        for (int i = 0, n = perWorkerFragments.size(); i < n; i++) {
+            perWorkerFragments.getQuick(i).setMemoryTracker(tracker);
         }
     }
 
