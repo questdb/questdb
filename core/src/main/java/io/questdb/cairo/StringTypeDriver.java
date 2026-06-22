@@ -337,6 +337,9 @@ public class StringTypeDriver implements ColumnTypeDriver {
             // monotonic, so a last data end that fell below the last data start means
             // the aux tail was torn/partially flushed; fail loudly rather than jump the
             // data cursor backwards and let the next append overwrite committed rows.
+            // As in VarcharTypeDriver this O(1) check cannot catch a whole unflushed aux
+            // page (consecutive zeroed entries) - a residual window inherent to the
+            // default commit.mode=nosync; use commit.mode=sync for durability.
             if (pos > 1) {
                 long prevPos = Unsafe.getLong(auxMem.getAppendAddress() - Long.BYTES);
                 if (m1pos < prevPos) {

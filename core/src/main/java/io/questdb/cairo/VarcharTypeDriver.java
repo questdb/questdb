@@ -145,12 +145,14 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
                 if (value.isAscii()) {
                     flags |= HEADER_FLAG_ASCII;
                 }
-                // Write the data vector before the aux entry that references it.
-                // The 48-bit data offset (written last, at the bottom of this method)
-                // is what crash recovery trusts to find the end of the data vector,
-                // so the pointed-to bytes must be the first thing written: target
-                // before pointer. This mirrors StringTypeDriver.appendValue, where the
-                // data write (putStr) is evaluated before the aux putLong. The stored
+                // Write the data vector before the aux entry that references it: the
+                // 48-bit data offset (written last, below) is the pointer and the data
+                // is its target, so the target is written first. Mirrors
+                // StringTypeDriver.appendValue (data putStr before the aux putLong) and
+                // the data-before-aux msync in TableWriter.syncColumns0. NB: program
+                // order only becomes durability order when an msync enforces it
+                // (commit.mode=sync/async). Under the default nosync nothing is synced,
+                // so this is correctness of intent, not a crash guarantee. The stored
                 // offset is unchanged - putVarchar returns the pre-write append offset.
                 offset = dataMem.putVarchar(value, 0, size);
                 if (offset >= VARCHAR_MAX_COLUMN_SIZE) {
@@ -720,6 +722,13 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
             // offsets are contiguous and monotonic, so the last row's data must start
             // at (or after) the previous row's data end; a start that falls before it
             // is proof of a damaged aux vector. Fail loudly instead of corrupting.
+            //
+            // Scope: this O(1) check catches a single torn last entry. It cannot catch
+            // a whole unflushed aux page (many consecutive zeroed entries), where the
+            // previous entry is also zero so the comparison is 0 < 0. That residual
+            // window is inherent to commit.mode=nosync (the default), which performs no
+            // msync/fsync at all - recent commits may be lost or torn on power loss by
+            // design. Use commit.mode=sync (or snapshots/WAL) when durability matters.
             if (pos > 1) {
                 long lastDataOffset = getDataOffset(auxEntryPtr);
                 long prevDataVectorSize = getDataVectorSize(auxEntryPtr - VARCHAR_AUX_WIDTH_BYTES);

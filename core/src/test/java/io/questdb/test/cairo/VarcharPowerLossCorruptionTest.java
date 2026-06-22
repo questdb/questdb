@@ -72,6 +72,21 @@ import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES;
  *   <li>{@code TableWriter.syncColumns0} documents and preserves the data-before-aux fsync
  *       ordering, so a durable aux entry never points past not-yet-durable data.</li>
  * </ol>
+ *
+ * <h2>Durability scope (commit.mode=nosync, the default)</h2>
+ *
+ * The shipped default is {@code cairo.commit.mode=nosync}: no {@code msync}/{@code fsync} is
+ * performed for column, aux, {@code _txn}, column-version or index files. Recent commits may be
+ * lost or torn on power loss <em>by design</em> - changes (1) and (3) above only affect durability
+ * ordering when an {@code msync} enforces it (commit.mode=sync/async), so they are inert under
+ * nosync. The recovery guard (2) is mode-independent (it validates on-disk bytes at reopen) and is
+ * therefore the only crash protection under nosync. It is an O(1) check that catches a single torn
+ * last entry; it cannot catch a whole unflushed aux page (many consecutive zeroed entries), where
+ * the comparison degenerates to {@code 0 < 0}. Closing that residual window would require an O(N)
+ * recovery scan or fsync; the chosen trade-off is to keep the cheap guard and rely on
+ * {@code commit.mode=sync} (or snapshots / WAL replay) when durability is required. The guard's
+ * value under nosync is blast-radius containment: tail loss is acceptable, but a torn tail must
+ * never silently overwrite older, already-durable rows.
  */
 public class VarcharPowerLossCorruptionTest extends AbstractCairoTest {
 

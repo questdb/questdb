@@ -13540,6 +13540,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // runs before txWriter.commit(), so both column vectors are durable before the
         // _txn file that exposes the new row count. (In CommitMode.SYNC msync blocks;
         // in ASYNC it only schedules writeback, so this is best-effort program order.)
+        // Note: under the default CommitMode.NOSYNC, syncColumns() never calls this
+        // method - no msync/fsync happens at all and recent commits may be lost or torn
+        // on power loss by design. Recovery's torn-tail guard (VarcharTypeDriver /
+        // StringTypeDriver setAppendPosition) is the only crash protection in that mode.
         for (int i = 0; i < columnCount; i++) {
             columns.getQuick(i * 2).sync(async);          // data (primary) first
             final MemoryMA m2 = columns.getQuick(i * 2 + 1);
