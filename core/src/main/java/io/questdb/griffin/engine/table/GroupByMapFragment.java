@@ -38,6 +38,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * Manages a group-by map that can optionally be split into shards
@@ -91,6 +92,22 @@ public class GroupByMapFragment implements QuietCloseable {
         // are charged symmetrically on the per-query counter. reopenMap() runs
         // setBatchEmptyValue() once the map is open.
         this.map = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes, true, false);
+    }
+
+    /**
+     * Test-only constructor for exercising {@link #shard()} and {@link #close()} in
+     * isolation: passes no pre-sizing stats and no function updater, which those paths
+     * do not read. Do not call {@link #reopenMap()} on the result.
+     */
+    @TestOnly
+    public GroupByMapFragment(
+            CairoConfiguration configuration,
+            ColumnTypes keyTypes,
+            ColumnTypes valueTypes,
+            int workerCount,
+            int slotId
+    ) {
+        this(configuration, keyTypes, valueTypes, null, null, null, workerCount, slotId);
     }
 
     @Override
