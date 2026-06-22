@@ -99,7 +99,7 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
                 final long queryId = entryIds.get(entryIndex);
                 final QueryRegistry.Entry entry = queryRegistry.getEntry(queryId);
                 if (entry != null) {
-                    if (record.of(queryId, entry) && (isAdmin || Objects.equals(record.getPrincipal(), principal))) {
+                    if (record.of(queryId, entry, principal, isAdmin)) {
                         return true;
                     }
                 }
@@ -159,7 +159,8 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
                 if (source != null) {
                     final int len = source.length();
                     try {
-                        // The source may shrink while we copy; reject the row instead of exposing a torn string.
+                        // A concurrent shrink can throw while copying; a later
+                        // length mismatch rejects shrink/grow without an exception.
                         target.put(source, 0, len);
                     } catch (IndexOutOfBoundsException e) {
                         target.clear();
@@ -253,15 +254,26 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
             // Entry is a moving target: unregister() can retire and recycle it while
             // query_activity() reads. Copy a row optimistically, then accept it only
             // if the lifecycle still points to the same active query.
-            private boolean of(long queryId, QueryRegistry.Entry entry) {
+            private boolean of(long queryId, QueryRegistry.Entry entry, CharSequence filterPrincipal, boolean isAdmin) {
                 final long lifecycle = entry.getLifecycle();
                 if (!QueryRegistry.Entry.isActiveLifecycle(queryId, lifecycle)) {
                     return false;
                 }
 
+                // Copy the principal first so non-admin callers can reject rows
+                // before materializing the expensive query text.
+                final CharSequence entryPrincipal = entry.getPrincipal();
+                if (!copy(entryPrincipal, principal)) {
+                    return false;
+                }
+                principalIsNull = entryPrincipal == null;
+                if (!isAdmin && !Objects.equals(getPrincipal(), filterPrincipal)) {
+                    return false;
+                }
+
                 this.queryId = queryId;
                 // state is the field the closing recheck validates (getState() == state),
-                // so read it first to anchor the snapshot: cancel() bumps state
+                // so read it before copying the mutable display fields: cancel() bumps state
                 // ACTIVE -> CANCELLED while holding the CANCELLING guard, so a cancel that
                 // lands after this read but before the recheck flips getState() and the row
                 // is rejected. state and changedAtNs are plain fields with no release/acquire
@@ -285,12 +297,6 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
                     return false;
                 }
                 poolNameIsNull = entryPoolName == null;
-
-                final CharSequence entryPrincipal = entry.getPrincipal();
-                if (!copy(entryPrincipal, principal)) {
-                    return false;
-                }
-                principalIsNull = entryPrincipal == null;
 
                 if (!copy(entry.getQuery(), query)) {
                     return false;
