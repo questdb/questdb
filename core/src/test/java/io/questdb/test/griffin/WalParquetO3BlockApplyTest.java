@@ -1,0 +1,257 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.test.griffin;
+
+import io.questdb.PropertyKey;
+import io.questdb.cairo.TableToken;
+import io.questdb.test.AbstractCairoTest;
+import org.junit.Assert;
+import org.junit.Test;
+
+/**
+ * Regression for an O3-into-parquet apply that suspends the table.
+ *
+ * <p>When a WAL apply takes the optimised "all data in order, single segment"
+ * block path ({@code TableWriter.processWalCommitBlock}), it maps the WAL
+ * segment columns directly instead of copying them into a fresh 0-based buffer,
+ * and sets {@code o3Lo = segmentCopyInfo.getRowLo(0)} -- the segment row offset
+ * of the block. That offset is non-zero whenever the segment already carries
+ * rows applied by an earlier block. For var-size columns the resulting O3 data
+ * buffer is therefore a window {@code [dataOffset(rowLo), dataOffset(rowHi))}.
+ *
+ * <p>The parquet O3 path ({@code O3PartitionJob.copyO3ToRowGroup} ->
+ * {@code populateO3DescriptorColumns}, the {@code COPY_O3} action) hands the
+ * native parquet writer {@code primary_data = dataMem.addressOf(0)} together
+ * with an <i>absolute</i> {@code dataExtent = getDataVectorSizeAt(aux, o3Hi)}.
+ * The native encoder indexes {@code primary_data} with absolute aux offsets, so
+ * it requires the data buffer to start at offset 0 -- which the windowed mapping
+ * does not. When the inserted rows are null in a var column the window is empty,
+ * {@code addressOf(0) == 0}, and the native {@code Column::from_raw_data} guard
+ * "null primary_data_ptr with non-zero size" throws, which suspends the table.
+ *
+ * <p>This reproduces it with pure OSS SQL: convert a partition to parquet, bump
+ * the WAL segment past row 0 with a native insert, then apply an in-order block
+ * of O3 rows that land in a gap before the parquet partition's first row group
+ * (a {@code COPY_O3} action) with the var column left null.
+ *
+ * <p>The sibling MERGE path is unaffected because it feeds the windowed buffers
+ * to {@code Vect.*} merge functions that index pointer+offset directly and never
+ * materialise the unmapped {@code [0, dataOffset(rowLo))} prefix.
+ */
+public class WalParquetO3BlockApplyTest extends AbstractCairoTest {
+
+    @Test
+    public void testInOrderO3IntoParquetPartitionViaBlockApply() throws Exception {
+        configureForCopyO3();
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, s VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            // Day 2024-01-01 holds the partition we convert. Its data starts at 06:00
+            // so a later insert at 00:00 lands in a gap BEFORE the first row group
+            // (a COPY_O3 action), not a merge into an existing row group. The VARCHAR
+            // values are long (> 9 bytes) so they live in the data vector rather than
+            // inlined in the aux -- the data vector must be non-empty for the bug to bite.
+            execute("INSERT INTO x SELECT timestamp_sequence('2024-01-01T06:00:00.000000Z', 60000000L), 'value_long_string_' || x FROM long_sequence(200)");
+            // A second partition so 2024-01-01 is not the active partition when converted.
+            execute("INSERT INTO x SELECT timestamp_sequence('2024-01-02T00:00:00.000000Z', 60000000L), 'value_long_string_d2_' || x FROM long_sequence(5)");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+
+            // A native insert AFTER the convert advances the WAL segment past row 0, so
+            // the next apply block starts at a non-zero segment offset regardless of
+            // whether the convert rolled the segment.
+            execute("INSERT INTO x SELECT timestamp_sequence('2024-01-03T00:00:00.000000Z', 60000000L), 'value_long_string_d3_' || x FROM long_sequence(50)");
+            drainWalQueue();
+
+            // The trigger: three ascending O3 inserts applied as ONE in-order,
+            // single-segment block (no drain between them) into the 2024-01-01 parquet
+            // partition, before its 06:00 minimum (COPY_O3), with the VARCHAR column
+            // left null.
+            execute("INSERT INTO x(ts) VALUES ('2024-01-01T00:00:00.000000Z')");
+            execute("INSERT INTO x(ts) VALUES ('2024-01-01T00:00:01.000000Z')");
+            execute("INSERT INTO x(ts) VALUES ('2024-01-01T00:00:02.000000Z')");
+            drainWalQueue();
+
+            final TableToken tt = engine.verifyTableName("x");
+            Assert.assertFalse(
+                    "WAL apply suspended the table: an in-order single-segment block apply of O3 rows into a "
+                            + "parquet partition handed the parquet writer a windowed var-column buffer with an "
+                            + "absolute data offset (O3PartitionJob.populateO3DescriptorColumns / COPY_O3)",
+                    engine.getTableSequencerAPI().isSuspended(tt));
+
+            // All rows must be present (200 + 5 + 50 + 3) and the parquet partition still readable.
+            // count() over a table with a parquet partition has no random access and a known size.
+            assertQuery("SELECT count() FROM x").noRandomAccess().expectSize().returns("count\n258\n");
+        });
+    }
+
+    @Test
+    public void testInOrderO3IntoParquetWithArrayColumn() throws Exception {
+        // ARRAY uses ArrayTypeDriver -- a distinct var-size driver (not a
+        // StringTypeDriver subclass) with its own shiftCopyAuxVector. Non-null
+        // arrays in the trigger rows exercise the real-data rebase for it.
+        configureForCopyO3();
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x SELECT timestamp_sequence('2024-01-01T06:00:00.000000Z', 60000000L), ARRAY[x::double, (x * 2)::double] FROM long_sequence(200)");
+            execute("INSERT INTO x SELECT timestamp_sequence('2024-01-02T00:00:00.000000Z', 60000000L), ARRAY[x::double, (x * 2)::double] FROM long_sequence(5)");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+
+            execute("INSERT INTO x SELECT timestamp_sequence('2024-01-03T00:00:00.000000Z', 60000000L), ARRAY[x::double, (x * 2)::double] FROM long_sequence(50)");
+            drainWalQueue();
+
+            // Trigger: three ascending O3 inserts applied as one in-order block
+            // into the parquet partition, before 06:00 (COPY_O3), with non-null
+            // arrays.
+            execute("INSERT INTO x VALUES ('2024-01-01T00:00:00.000000Z', ARRAY[1.5, 2.5, 3.5])");
+            execute("INSERT INTO x VALUES ('2024-01-01T00:00:01.000000Z', ARRAY[10.5, 20.5, 30.5])");
+            execute("INSERT INTO x VALUES ('2024-01-01T00:00:02.000000Z', ARRAY[100.5, 200.5, 300.5])");
+            drainWalQueue();
+
+            final TableToken tt = engine.verifyTableName("x");
+            Assert.assertFalse("WAL apply suspended the table", engine.getTableSequencerAPI().isSuspended(tt));
+
+            assertQuery("SELECT count() FROM x").noRandomAccess().expectSize().returns("count\n258\n");
+            // The trigger arrays round-trip element-for-element from the parquet
+            // partition.
+            assertQuery("SELECT ts, arr[1] e1, arr[2] e2, arr[3] e3 FROM x WHERE ts < '2024-01-01T06:00:00.000000Z' ORDER BY ts")
+                    .timestamp("ts")
+                    .sizeMayVary()
+                    .returns(
+                            "ts\te1\te2\te3\n" +
+                                    "2024-01-01T00:00:00.000000Z\t1.5\t2.5\t3.5\n" +
+                                    "2024-01-01T00:00:01.000000Z\t10.5\t20.5\t30.5\n" +
+                                    "2024-01-01T00:00:02.000000Z\t100.5\t200.5\t300.5\n"
+                    );
+        });
+    }
+
+    @Test
+    public void testInOrderO3IntoParquetWithBinaryColumn() throws Exception {
+        // BINARY shares StringTypeDriver, so it rebases via the same shift_copy
+        // primitive as STRING. Non-null trigger binaries exercise the real-data
+        // (non-empty-window) rebase: addressOf(dataLo) + window-relative aux.
+        configureForCopyO3();
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, b BINARY) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // Existing partition data starts at 06:00 with non-null binaries, so
+            // the binary data vector is non-empty before the trigger rows.
+            execute("INSERT INTO x SELECT timestamp_sequence('2024-01-01T06:00:00.000000Z', 60000000L), rnd_bin(20, 40, 0) FROM long_sequence(200)");
+            execute("INSERT INTO x SELECT timestamp_sequence('2024-01-02T00:00:00.000000Z', 60000000L), rnd_bin(20, 40, 0) FROM long_sequence(5)");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+
+            // Advance the WAL segment past row 0 so the trigger block starts at a
+            // non-zero segment offset.
+            execute("INSERT INTO x SELECT timestamp_sequence('2024-01-03T00:00:00.000000Z', 60000000L), rnd_bin(20, 40, 0) FROM long_sequence(50)");
+            drainWalQueue();
+
+            // Three ascending O3 inserts applied as one in-order block into the
+            // parquet partition, before 06:00 (COPY_O3), with non-null binaries.
+            execute("INSERT INTO x SELECT ('2024-01-01T00:00:00.000000Z')::timestamp, rnd_bin(20, 40, 0) FROM long_sequence(1)");
+            execute("INSERT INTO x SELECT ('2024-01-01T00:00:01.000000Z')::timestamp, rnd_bin(20, 40, 0) FROM long_sequence(1)");
+            execute("INSERT INTO x SELECT ('2024-01-01T00:00:02.000000Z')::timestamp, rnd_bin(20, 40, 0) FROM long_sequence(1)");
+            drainWalQueue();
+
+            final TableToken tt = engine.verifyTableName("x");
+            Assert.assertFalse("WAL apply suspended the table", engine.getTableSequencerAPI().isSuspended(tt));
+
+            assertQuery("SELECT count() FROM x").noRandomAccess().expectSize().returns("count\n258\n");
+            // The three trigger binaries survived as non-null; a corrupt rebase
+            // would null them or fail the apply.
+            assertQuery("SELECT count() FROM x WHERE ts < '2024-01-01T06:00:00.000000Z' AND b IS NOT NULL")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n3\n");
+        });
+    }
+
+    @Test
+    public void testInOrderO3IntoParquetWithNonNullVarSizeColumns() throws Exception {
+        // Two var columns (VARCHAR + STRING) with non-null long (> 9 byte) values
+        // in the trigger rows. This exercises the real-data (non-empty-window)
+        // rebase -- addressOf(dataLo) + window-relative aux -- for both the
+        // shift_copy_varchar_aux (VARCHAR) and shift_copy (STRING) primitives,
+        // with both rebased columns coexisting in the scratch arena.
+        configureForCopyO3();
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, v VARCHAR, s STRING) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x SELECT timestamp_sequence('2024-01-01T06:00:00.000000Z', 60000000L), 'varchar_existing_' || x, 'string_existing_' || x FROM long_sequence(200)");
+            execute("INSERT INTO x SELECT timestamp_sequence('2024-01-02T00:00:00.000000Z', 60000000L), 'varchar_d2_' || x, 'string_d2_' || x FROM long_sequence(5)");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+
+            execute("INSERT INTO x SELECT timestamp_sequence('2024-01-03T00:00:00.000000Z', 60000000L), 'varchar_d3_' || x, 'string_d3_' || x FROM long_sequence(50)");
+            drainWalQueue();
+
+            // Trigger: three ascending O3 inserts applied as one in-order block,
+            // landing before 06:00 (COPY_O3), with non-null long values in both
+            // var columns.
+            execute("INSERT INTO x VALUES ('2024-01-01T00:00:00.000000Z', 'varchar_trigger_alpha', 'string_trigger_alpha')");
+            execute("INSERT INTO x VALUES ('2024-01-01T00:00:01.000000Z', 'varchar_trigger_bravo', 'string_trigger_bravo')");
+            execute("INSERT INTO x VALUES ('2024-01-01T00:00:02.000000Z', 'varchar_trigger_charlie', 'string_trigger_charlie')");
+            drainWalQueue();
+
+            final TableToken tt = engine.verifyTableName("x");
+            Assert.assertFalse("WAL apply suspended the table", engine.getTableSequencerAPI().isSuspended(tt));
+
+            assertQuery("SELECT count() FROM x").noRandomAccess().expectSize().returns("count\n258\n");
+            // The trigger rows' values round-trip exactly from the parquet
+            // partition; a wrong rebase base/offset would corrupt or misalign them.
+            assertQuery("SELECT ts, v, s FROM x WHERE ts < '2024-01-01T06:00:00.000000Z' ORDER BY ts")
+                    .timestamp("ts")
+                    .sizeMayVary()
+                    .returns(
+                            "ts\tv\ts\n" +
+                                    "2024-01-01T00:00:00.000000Z\tvarchar_trigger_alpha\tstring_trigger_alpha\n" +
+                                    "2024-01-01T00:00:01.000000Z\tvarchar_trigger_bravo\tstring_trigger_bravo\n" +
+                                    "2024-01-01T00:00:02.000000Z\tvarchar_trigger_charlie\tstring_trigger_charlie\n"
+                    );
+        });
+    }
+
+    // Configures the engine so the trigger inserts land as a COPY_O3 action into
+    // an existing parquet partition.
+    private void configureForCopyO3() {
+        // Keep everything in as few WAL segments as possible so the trigger block
+        // starts at a non-zero segment row offset (getRowLo(0) > 0).
+        setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 10_000_000);
+        // Small parquet row groups so the gap-before-first-row-group inserts stay a
+        // COPY_O3 action: the merge strategy folds gap rows into an adjacent row
+        // group only when that group is "small" (< rowGroupSize / 4), which a large
+        // default would make the 200-row group, turning the trigger into a (safe)
+        // MERGE instead.
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 8);
+    }
+}
