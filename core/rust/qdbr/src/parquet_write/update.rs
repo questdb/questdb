@@ -259,8 +259,10 @@ impl ParquetUpdater {
         // QuestDB writes a ColumnIndex iff statistics were on, so the source's
         // actual ColumnIndex presence recovers that setting; adopt it so the
         // encoder emits matching page/row-group stats and the footer stays
-        // uniform. A rewrite (fresh output) or an empty source has nothing to
-        // match and keeps the runtime config.
+        // uniform. A rewrite (fresh output) keeps the runtime config here: it can
+        // still copy source row groups, but write_page_index gates the ColumnIndex
+        // all-or-nothing across copied and fresh groups, so the output stays
+        // uniform regardless. An empty source has nothing to match.
         let write_statistics = if is_rewrite || metadata.row_groups.is_empty() {
             write_statistics
         } else {
@@ -2713,6 +2715,87 @@ mod tests {
                 assert!(
                     col.column_index_offset().is_none(),
                     "no column index when statistics are disabled"
+                );
+            }
+        }
+        assert_eq!(
+            read_val_column(&bytes),
+            vec![
+                Some(10),
+                Some(20),
+                Some(30),
+                Some(40),
+                Some(50),
+                Some(60),
+                Some(70)
+            ],
+        );
+        Ok(())
+    }
+
+    /// Rewriting a source written without a ColumnIndex (OffsetIndex only) while
+    /// runtime statistics are ON: the copied group cannot supply a ColumnIndex, so
+    /// write_page_index drops it from the freshly encoded group too, keeping the
+    /// output uniformly offset-only. Without that gate the copied group would lack a
+    /// ColumnIndex while the fresh group carried one -- a mixed page index.
+    #[test]
+    fn rewrite_with_statistics_on_matches_offset_only_source() -> Result<(), Box<dyn Error>> {
+        use crate::allocator::TestAllocatorState;
+        use parquet::arrow::arrow_reader::ArrowReaderOptions;
+        use parquet2::metadata::SortingColumn;
+        use std::io::Read as _;
+
+        let sorting = || Some(vec![SortingColumn::new(0, false, false)]);
+        let src = NamedTempFile::new()?;
+        ParquetWriter::new(src.reopen()?)
+            .with_sorting_columns(sorting())
+            .with_statistics(false) // source: OffsetIndex but no ColumnIndex
+            .finish(ts_val_partition(&[1, 2, 3, 4], &[10, 20, 30, 40]))?;
+        let src_len = src.as_file().metadata()?.len();
+
+        let out = NamedTempFile::new()?;
+        let alloc = TestAllocatorState::new();
+        let mut updater = super::ParquetUpdater::new(
+            alloc.allocator(),
+            src.reopen()?,
+            src_len,
+            out.reopen()?,
+            0, // rewrite
+            sorting(),
+            true, // runtime statistics on: the fresh group must still match the source
+            false,
+            CompressionOptions::Uncompressed,
+            None,
+            None,
+            DEFAULT_BLOOM_FILTER_FPP,
+            0.0,
+            None,
+            0,
+            -1,
+        )?;
+        updater.copy_row_group(0)?; // copied group has an OffsetIndex but no ColumnIndex
+        updater.insert_row_group(&ts_val_partition(&[5, 6, 7], &[50, 60, 70]), 1)?;
+        updater.end(None)?;
+
+        let mut bytes = Vec::new();
+        out.reopen()?.read_to_end(&mut bytes)?;
+
+        let builder = ParquetRecordBatchReaderBuilder::try_new_with_options(
+            Bytes::from(bytes.clone()),
+            ArrowReaderOptions::new().with_page_index(true),
+        )?;
+        let md = builder.metadata();
+        assert_eq!(md.num_row_groups(), 2);
+        for rg in md.row_groups() {
+            for col in rg.columns() {
+                assert!(
+                    col.offset_index_offset().is_some(),
+                    "offset index present on every row group"
+                );
+                assert!(
+                    col.column_index_offset().is_none(),
+                    "no column index on any row group: the offset-only copied group \
+                     forces the fresh group to drop its ColumnIndex"
                 );
             }
         }

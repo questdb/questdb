@@ -277,12 +277,15 @@ pub struct CopiedColumnIndex {
 
 /// Writes the page index for `row_groups`, recording each column's index
 /// offset/length in place and advancing `offset`. Fresh groups derive it from
-/// `page_specs` (ColumnIndex gated on `write_statistics`, `boundary_order` from
-/// `sorting_columns`); copied groups (an entry in `copied_page_index`) replay
-/// their rebased bytes. All ColumnIndexes first, then all OffsetIndexes.
+/// `page_specs` (`boundary_order` from `sorting_columns`); copied groups (an
+/// entry in `copied_page_index`) replay their rebased bytes. All ColumnIndexes
+/// first, then all OffsetIndexes.
 ///
-/// Call only when every row group is indexable, so the file stays uniformly
-/// indexed. The caller must have written all page data first.
+/// Call only when every row group is indexable, so the OffsetIndex stays
+/// uniform. The ColumnIndex is emitted all-or-nothing on top of that: only when
+/// `write_statistics` is set AND every copied group carried a source ColumnIndex,
+/// so the file never advertises a ColumnIndex on some row groups but not others.
+/// The caller must have written all page data first.
 fn write_page_index<W: Write>(
     writer: &mut W,
     offset: &mut u64,
@@ -294,7 +297,19 @@ fn write_page_index<W: Write>(
 ) -> Result<()> {
     let copied_for = |rg_idx: usize| copied_page_index.get(rg_idx).and_then(Option::as_ref);
 
-    if write_statistics {
+    // A fresh group can always supply a ColumnIndex from its page stats when
+    // write_statistics is set; a copied group can only supply one if its source
+    // carried it. If any copied group is missing it, emit none, since a copied
+    // group whose source predates statistics (or was written with them off)
+    // would otherwise leave the rewrite output with a ColumnIndex on the fresh
+    // groups but not the copied ones.
+    let emit_column_index = write_statistics
+        && (0..row_groups.len()).all(|rg_idx| match copied_for(rg_idx) {
+            Some(columns) => columns.iter().all(|c| c.column_index.is_some()),
+            None => true,
+        });
+
+    if emit_column_index {
         for (rg_idx, (group, pages)) in row_groups.iter_mut().zip(page_specs.iter()).enumerate() {
             if let Some(columns) = copied_for(rg_idx) {
                 for (column, copied) in group.columns.iter_mut().zip(columns.iter()) {
