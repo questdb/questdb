@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.griffin.QueryRegistry;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -92,6 +93,90 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testDeniedCrossUserCancelReactivatesEntry() throws Exception {
+        assertMemoryLeak(() -> {
+            final QueryRegistry registry = engine.getQueryRegistry();
+            try (
+                    SqlExecutionContextImpl ownerContext = new SqlExecutionContextImpl(engine, 1).with(new PrincipalSecurityContext("owner"));
+                    SqlExecutionContextImpl deniedContext = new SqlExecutionContextImpl(engine, 1).with(new DenyingSqlEngineAdminSecurityContext("intruder"));
+                    SqlExecutionContextImpl adminContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)
+            ) {
+                final long queryId = registry.register("SELECT owner", ownerContext);
+                final QueryRegistry.Entry entry = registry.getEntry(queryId);
+                Assert.assertNotNull(entry);
+                try {
+                    try {
+                        registry.cancel(queryId, deniedContext);
+                        Assert.fail("expected admin authorization failure");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "Access denied for intruder [SQL ENGINE ADMIN]");
+                    }
+                    assertActive(queryId, entry);
+
+                    Assert.assertTrue(registry.cancel(queryId, adminContext));
+                    Assert.assertTrue(entry.getCancelled().get());
+                } finally {
+                    if (registry.getEntry(queryId) != null) {
+                        registry.unregister(queryId, ownerContext);
+                    }
+                }
+                Assert.assertNull(registry.getEntry(queryId));
+            }
+        });
+    }
+
+    @Test
+    public void testPhaseTwoCancelReturnsFalseWhenQueryFinishesDuringChecks() throws Exception {
+        assertMemoryLeak(() -> {
+            final QueryRegistry registry = engine.getQueryRegistry();
+            final CountDownLatch cancellerInAuthorize = new CountDownLatch(1);
+            final CountDownLatch releaseCanceller = new CountDownLatch(1);
+            final CountDownLatch cancellerDone = new CountDownLatch(1);
+            final AtomicBoolean cancelResult = new AtomicBoolean(true);
+            final AtomicReference<Throwable> fault = new AtomicReference<>();
+
+            try (
+                    SqlExecutionContextImpl ownerContext = new SqlExecutionContextImpl(engine, 1).with(new PrincipalSecurityContext("owner"));
+                    SqlExecutionContextImpl cancelContext = new SqlExecutionContextImpl(engine, 1).with(
+                            new BlockingSqlEngineAdminSecurityContext("admin", cancellerInAuthorize, releaseCanceller)
+                    )
+            ) {
+                final long queryId = registry.register("SELECT owner", ownerContext);
+                final QueryRegistry.Entry entry = registry.getEntry(queryId);
+                Assert.assertNotNull(entry);
+
+                final Thread cancellerThread = new Thread(() -> {
+                    try {
+                        cancelResult.set(registry.cancel(queryId, cancelContext));
+                    } catch (Throwable t) {
+                        fault.compareAndSet(null, t);
+                    } finally {
+                        cancellerDone.countDown();
+                    }
+                }, "query_registry_phase_two_canceller");
+
+                cancellerThread.start();
+                try {
+                    Assert.assertTrue("canceller did not reach admin authorization", cancellerInAuthorize.await(5, TimeUnit.SECONDS));
+                    assertActive(queryId, entry);
+
+                    registry.unregister(queryId, ownerContext);
+                    Assert.assertNull(registry.getEntry(queryId));
+                } finally {
+                    releaseCanceller.countDown();
+                    Assert.assertTrue("canceller did not finish", cancellerDone.await(5, TimeUnit.SECONDS));
+                    cancellerThread.join(5_000);
+                }
+                Assert.assertFalse("canceller thread hung", cancellerThread.isAlive());
+                if (fault.get() != null) {
+                    throw new AssertionError("canceller failed", fault.get());
+                }
+                Assert.assertFalse(cancelResult.get());
+            }
+        });
+    }
+
     /**
      * After an entry is unregistered and the pooled object is reused for a new
      * query, its lifecycle word no longer matches the old query id. This is the
@@ -124,6 +209,36 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
                 Assert.assertFalse(QueryRegistry.Entry.isActiveLifecycle(oldId, entry.getLifecycle()));
 
                 registry.unregister(newId, context);
+            }
+        });
+    }
+
+    @Test
+    public void testWalCancelReactivatesEntryBeforeThrowing() throws Exception {
+        assertMemoryLeak(() -> {
+            final QueryRegistry registry = engine.getQueryRegistry();
+            try (
+                    SqlExecutionContextImpl walContext = newWalContext("wal-owner");
+                    SqlExecutionContextImpl adminContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)
+            ) {
+                final long queryId = registry.register("SELECT wal", walContext);
+                final QueryRegistry.Entry entry = registry.getEntry(queryId);
+                Assert.assertNotNull(entry);
+                try {
+                    try {
+                        registry.cancel(queryId, adminContext);
+                        Assert.fail("expected WAL cancel failure");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "query applied in WAL job can't be cancelled [id=" + queryId + "]");
+                    }
+                    assertActive(queryId, entry);
+
+                } finally {
+                    if (registry.getEntry(queryId) != null) {
+                        registry.unregister(queryId, walContext);
+                    }
+                }
+                Assert.assertNull(registry.getEntry(queryId));
             }
         });
     }
@@ -322,6 +437,21 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
         });
     }
 
+    private static void assertActive(long queryId, QueryRegistry.Entry entry) {
+        Assert.assertTrue(QueryRegistry.Entry.isActiveLifecycle(queryId, entry.getLifecycle()));
+        Assert.assertEquals(QueryRegistry.Entry.State.ACTIVE, entry.getState());
+        Assert.assertFalse(entry.getCancelled().get());
+    }
+
+    private SqlExecutionContextImpl newWalContext(String principal) {
+        return new SqlExecutionContextImpl(engine, 1) {
+            @Override
+            public boolean isWalApplication() {
+                return true;
+            }
+        }.with(new PrincipalSecurityContext(principal));
+    }
+
     private static class BlockingPrincipalSecurityContext extends AllowAllSecurityContext {
         private final CountDownLatch entered;
         private final CountDownLatch release;
@@ -336,6 +466,47 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
             entered.countDown();
             TestUtils.await(release);
             return AllowAllSecurityContext.INSTANCE.getPrincipal();
+        }
+    }
+
+    private static class BlockingSqlEngineAdminSecurityContext extends PrincipalSecurityContext {
+        private final CountDownLatch entered;
+        private final CountDownLatch release;
+
+        private BlockingSqlEngineAdminSecurityContext(String principal, CountDownLatch entered, CountDownLatch release) {
+            super(principal);
+            this.entered = entered;
+            this.release = release;
+        }
+
+        @Override
+        public void authorizeSqlEngineAdmin() {
+            entered.countDown();
+            TestUtils.await(release);
+        }
+    }
+
+    private static class DenyingSqlEngineAdminSecurityContext extends PrincipalSecurityContext {
+        private DenyingSqlEngineAdminSecurityContext(String principal) {
+            super(principal);
+        }
+
+        @Override
+        public void authorizeSqlEngineAdmin() {
+            throw CairoException.authorization().put("Access denied for ").put(getPrincipal()).put(" [SQL ENGINE ADMIN]");
+        }
+    }
+
+    private static class PrincipalSecurityContext extends AllowAllSecurityContext {
+        private final String principal;
+
+        private PrincipalSecurityContext(String principal) {
+            this.principal = principal;
+        }
+
+        @Override
+        public String getPrincipal() {
+            return principal;
         }
     }
 }
