@@ -61,6 +61,15 @@ public class O3MaxLagFuzzTest extends AbstractO3Test {
     }
 
     @Test
+    public void testRollbackLagPartitionSwitchRegression() throws Exception {
+        // Regression test for https://github.com/questdb/questdb/issues/7278
+        // 57_091 rows, partition by DAY. The in-order prefix crosses the 1970-01-01 -> 1970-01-02
+        // boundary, so a lag-commit + rollback leaves maxTimestamp below the committed data.
+        executeWithPool(2, (engine, compiler, sqlExecutionContext, timestampTypeName) ->
+                testRollbackFuzz0(engine, compiler, sqlExecutionContext, 57_091, 151, 1_545_848));
+    }
+
+    @Test
     public void testRollbackRegression1() throws Exception {
         executeWithPool(0, this::testRollbackRegression1);
     }
