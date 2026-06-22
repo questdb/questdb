@@ -73,21 +73,34 @@ import org.junit.Test;
  */
 public class LiveViewFuzzTest extends AbstractCairoTest {
 
-    // Variants 0..variantCount()-2 are ORDER BY ts bounded-frame aggregates: their
+    // Variants 0..4 are ORDER BY ts bounded-frame aggregates over LONG/DOUBLE
+    // columns; the decimal variant (DECIMAL_VARIANT) is the same bounded-frame
+    // shape over a DECIMAL column (a random width + aggregate per run). Their
     // output is a total deterministic function of the (unique-ts) row set, so the
     // recompute oracle holds under any ingestion order, including O3 and restart.
-    // The last variant is ranking row_number() OVER () with no ORDER BY. Its
-    // numbering follows scan order; the incremental engine always (re)scans the
-    // base in ts-ascending order - forward-append in ts order, head-miss replay
-    // from the lower bound, head-hit replay continuing from the checkpoint's
-    // ts-ordered count - so the numbering matches a batch recompute (which also
-    // scans the designated timestamp ascending). Fuzzed under O3, restart, and
-    // BACKFILL in any combination.
+    // Variant 5 is ranking row_number() OVER () with no ORDER BY. Its numbering
+    // follows scan order; the incremental engine always (re)scans the base in
+    // ts-ascending order - forward-append in ts order, head-miss replay from the
+    // lower bound, head-hit replay continuing from the checkpoint's ts-ordered
+    // count - so the numbering matches a batch recompute (which also scans the
+    // designated timestamp ascending). All variants are fuzzed under O3, restart,
+    // and BACKFILL in any combination.
     // FLUSH EVERY rate-limits LV commits by wall clock: a refresh within
     // flushEveryMicros of the previous commit is deferred. Tests drive a
     // controllable clock (currentMicros) and advance it past this interval
     // before each refresh so flushes are deterministic, not wall-clock racy.
     private static final long CLOCK_ADVANCE_MICROS = 250_000; // > FLUSH EVERY 100ms
+    // The decimal variant (the last variant) exercises the migrated DECIMAL
+    // aggregate window family over a bounded ROWS frame. Each run picks a random
+    // storage width (one of the six DECIMAL precisions below, which select the
+    // six Decimal8/16/32/64/128/256 widths) and a random aggregate. The recompute
+    // oracle holds exactly as it does for the LONG/DOUBLE aggregates: a bounded
+    // frame over a unique-ts total order is a deterministic function of the row
+    // set, so the incremental view must equal the from-scratch recompute.
+    private static final int DECIMAL_FUNC_COUNT = 6; // sum, max, min, first_value, avg, avg(d, scale)
+    private static final int[] DECIMAL_PRECISION = {2, 4, 9, 18, 38, 60};
+    private static final int[] DECIMAL_SCALE = {0, 0, 3, 2, 6, 0};
+    private static final int DECIMAL_VARIANT = 6;
     private static final int MAX_FRAME = 8;
     private static final String[] SYMBOLS = {"AA", "BB", "CC", "DD"};
 
@@ -170,6 +183,59 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
         return b;
     }
 
+    // Renders one INSERT literal for a DECIMAL(precision, scale) value: an
+    // occasional NULL, else a signed value with exactly `scale` fractional digits
+    // and the mandatory 'm' suffix. The unscaled magnitude is capped at 10^15 - 1
+    // (well within a long) and, for narrow precisions, at the column's own range,
+    // so the value always fits the column. sum() widens its result type, so a
+    // bounded frame of up to MAX_FRAME+1 such values never overflows.
+    private static String decimalLiteral(Rnd rnd, int precision, int scale) {
+        if (rnd.nextInt(20) == 0) {
+            return "null";
+        }
+        long max = 1L;
+        for (int i = 0, lim = Math.min(precision, 15); i < lim; i++) {
+            max *= 10L;
+        }
+        max -= 1;
+        final long mag = (long) (rnd.nextDouble() * (max + 1)); // [0, max]
+        final StringBuilder sb = new StringBuilder();
+        if (mag != 0 && rnd.nextBoolean()) {
+            sb.append('-');
+        }
+        if (scale == 0) {
+            sb.append(mag);
+        } else {
+            String digits = Long.toString(mag);
+            while (digits.length() <= scale) {
+                digits = '0' + digits;
+            }
+            final int split = digits.length() - scale;
+            sb.append(digits, 0, split).append('.').append(digits, split, digits.length());
+        }
+        return sb.append('m').toString();
+    }
+
+    // Builds the projection for the decimal variant: a passthrough of the DECIMAL
+    // column d plus one migrated aggregate over the same bounded ROWS frame the
+    // LONG/DOUBLE variants use. last_value and nth_value are omitted: a bounded
+    // frame ending at CURRENT ROW routes last_value to the un-migrated
+    // IncludeCurrent shape (rejected at CREATE), and nth_value needs a distinct
+    // frame; both are covered byte-exact by the smoke test instead.
+    private static String decimalProjection(int func, int n, int targetScale) {
+        final String frame = "PARTITION BY sym ORDER BY ts ROWS BETWEEN " + n + " PRECEDING AND CURRENT ROW";
+        final String agg = switch (func) {
+            case 0 -> "sum(d)";
+            case 1 -> "max(d)";
+            case 2 -> "min(d)";
+            case 3 -> "first_value(d)";
+            case 4 -> "avg(d)";
+            case 5 -> "avg(d, " + targetScale + ")";
+            default -> throw new IllegalArgumentException("decimalFunc=" + func);
+        };
+        return "ts, sym, d, " + agg + " OVER (" + frame + ") AS v";
+    }
+
     private static boolean drainJob(Job job) {
         boolean any = false;
         for (int i = 0; i < 64 && job.run(); i++) {
@@ -178,8 +244,9 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
         return any;
     }
 
-    // Returns the projection (SELECT list) for the given window-query variant.
-    // Every shape is grammar-legal in a live view and deterministic under a
+    // Returns the projection (SELECT list) for the given non-decimal window-query
+    // variant (the decimal variant routes to decimalProjection instead). Every
+    // shape is grammar-legal in a live view and deterministic under a
     // unique-timestamp total order. The fuzzed set is exactly the window shapes
     // that carry the incremental-snapshot contract: PARTITION BY rows-frame
     // sum/max/first_value/count/avg, plus ranking OVER (). Un-partitioned
@@ -218,7 +285,7 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
     }
 
     private static int variantCount() {
-        return 6;
+        return DECIMAL_VARIANT + 1;
     }
 
     // Drives the named view's backfill sweep to completion on the caller's job,
@@ -260,13 +327,18 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
             int[] symIdx,
             long[] iv,
             double[] xv,
-            boolean[] xNull
+            boolean[] xNull,
+            String[] dLit
     ) throws Exception {
         if (from >= to) {
             return;
         }
         sink.clear();
-        sink.put("INSERT INTO base (ts, sym, i, x) VALUES ");
+        sink.put("INSERT INTO base (ts, sym, i, x");
+        if (dLit != null) {
+            sink.put(", d");
+        }
+        sink.put(") VALUES ");
         for (int r = from; r < to; r++) {
             int k = order[r];
             if (r > from) {
@@ -287,6 +359,9 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
                 sink.put("null");
             } else {
                 sink.put(xv[k]);
+            }
+            if (dLit != null) {
+                sink.put(',').put(dLit[k]);
             }
             sink.put(')');
         }
@@ -321,24 +396,37 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
             setCurrentMicros(MicrosTimestampDriver.floor("2025-12-31T00:00:00.000000Z"));
         }
 
-        execute("DROP LIVE VIEW IF EXISTS lv");
-        execute("DROP TABLE IF EXISTS base");
-        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) " +
-                "TIMESTAMP(ts) PARTITION BY DAY WAL");
-
         final int n = 1 + rnd.nextInt(MAX_FRAME);
         final boolean withWhere = rnd.nextInt(3) == 0;
-        final String projection = projection(variant, n);
+        final boolean isDecimal = variant == DECIMAL_VARIANT;
+        final int decimalWidth = isDecimal ? rnd.nextInt(DECIMAL_PRECISION.length) : -1;
+        final int decimalPrecision = isDecimal ? DECIMAL_PRECISION[decimalWidth] : 0;
+        final int decimalScale = isDecimal ? DECIMAL_SCALE[decimalWidth] : 0;
+        final String decimalType = isDecimal ? "DECIMAL(" + decimalPrecision + ", " + decimalScale + ")" : null;
+        final int decimalFunc = isDecimal ? rnd.nextInt(DECIMAL_FUNC_COUNT) : -1;
+        // Target scale for the rescale form avg(d, ts); >= input scale keeps the
+        // rescaled precision (= precision - scale + targetScale) within bounds.
+        final int rescaleTargetScale = isDecimal ? decimalScale + rnd.nextInt(4) : 0;
+        final String projection = isDecimal
+                ? decimalProjection(decimalFunc, n, rescaleTargetScale)
+                : projection(variant, n);
         final String viewSql = "SELECT " + projection + " FROM base" + (withWhere ? " WHERE i > 0" : "");
         final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
                 + (inMemory ? "IN MEMORY 60s " : "")
                 + (backfill ? "BACKFILL " : "")
                 + "AS " + viewSql;
 
+        execute("DROP LIVE VIEW IF EXISTS lv");
+        execute("DROP TABLE IF EXISTS base");
+        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE"
+                + (isDecimal ? ", d " + decimalType : "")
+                + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
         LOG.info().$("LV fuzz: variant=").$(variant).$(", rows=").$(rowCount)
                 .$(", n=").$(n).$(", o3=").$(o3).$(", restart=").$(restart)
                 .$(", backfill=").$(backfill).$(", inMem=").$(inMemory)
-                .$(", where=").$(withWhere).$(", sql=").$(viewSql).$();
+                .$(", where=").$(withWhere).$(", decimalType=").$(decimalType)
+                .$(", sql=").$(viewSql).$();
 
         // Generate the logical dataset: strictly-unique, strictly-increasing
         // timestamps; random symbols and values with occasional NULLs.
@@ -347,6 +435,7 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
         final long[] iv = new long[rowCount];
         final double[] xv = new double[rowCount];
         final boolean[] xNull = new boolean[rowCount];
+        final String[] dLit = isDecimal ? new String[rowCount] : null;
         long ts = MicrosTimestampDriver.floor("2026-01-01T00:00:00.000000Z");
         for (int k = 0; k < rowCount; k++) {
             ts += 1 + rnd.nextInt(5_000_000); // 1us .. 5s, keeps ts strictly increasing
@@ -358,6 +447,9 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
             iv[k] = rnd.nextInt(20) == 0 ? Numbers.LONG_NULL : (rnd.nextInt(2001) - 1000);
             xNull[k] = rnd.nextInt(20) == 0;
             xv[k] = rnd.nextDouble() * 1000.0;
+            if (isDecimal) {
+                dLit[k] = decimalLiteral(rnd, decimalPrecision, decimalScale);
+            }
         }
 
         // Backfill captures pre-CREATE history. Put the EARLIEST rows (by ts)
@@ -375,7 +467,7 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
                 final int[] preOrder = segmentOrder(rnd, 0, preCount, o3);
                 final int[] cb = commitBounds(rnd, preOrder.length);
                 for (int c = 0; c + 1 < cb.length; c++) {
-                    insertCommit(sink, preOrder, cb[c], cb[c + 1], tsv, symIdx, iv, xv, xNull);
+                    insertCommit(sink, preOrder, cb[c], cb[c + 1], tsv, symIdx, iv, xv, xNull, dLit);
                     drainWalQueue();
                 }
             }
@@ -393,7 +485,7 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
                 final int[] postOrder = segmentOrder(rnd, preCount, rowCount, o3);
                 final int[] cb = commitBounds(rnd, postOrder.length);
                 for (int c = 0; c + 1 < cb.length; c++) {
-                    insertCommit(sink, postOrder, cb[c], cb[c + 1], tsv, symIdx, iv, xv, xNull);
+                    insertCommit(sink, postOrder, cb[c], cb[c + 1], tsv, symIdx, iv, xv, xNull, dLit);
                     drainWalQueue();
                     refreshCycle(job);
 
