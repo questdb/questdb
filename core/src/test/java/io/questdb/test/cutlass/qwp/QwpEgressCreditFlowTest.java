@@ -144,8 +144,15 @@ public class QwpEgressCreditFlowTest extends AbstractQwpBootstrapTest {
         // drives the WRITE <-> READ interest churn that exposes the dispatcher
         // stall. Linux (epoll) and Windows are unaffected and finish in seconds.
         final int rowCount = 500_000;
-        final int[] sendChunks = {8, 24, 64, 160};
+        // Moderate chunks (no byte-level) so Linux/Windows finish under the timeout
+        // while still forcing every batch to park on write-backpressure on macOS.
+        final int[] sendChunks = {40, 64, 96, 160};
         final int queriesPerChunk = 10;
+
+        // Diagnostic kqueue trace (macOS only): prints "KQTRACE arm/fire READ" per
+        // fd so the stalled connection shows an "arm READ" with no following
+        // "fire READ". No-op on Linux/Windows (IODispatcherOsx is not used there).
+        io.questdb.network.IODispatcherOsx.traceQwp = true;
 
         // Diagnostic watchdog: if a single query makes no progress for 60s (the
         // stall), dump every thread stack to stdout so the CI log captures where
@@ -194,6 +201,7 @@ public class QwpEgressCreditFlowTest extends AbstractQwpBootstrapTest {
                             lastProgressMs[0] = System.currentTimeMillis();
                             final int sc = sendChunks[c];
                             final int queryIndex = iter;
+                            System.out.println("QWP STREAM START sendChunk=" + sc + " iter=" + queryIndex);
                             try (QwpQueryClient client = QwpQueryClient.fromConfig(
                                             "ws::addr=127.0.0.1:" + HTTP_PORT + ";")
                                     .withInitialCredit(4 * 1024)) {
@@ -222,6 +230,7 @@ public class QwpEgressCreditFlowTest extends AbstractQwpBootstrapTest {
                 }
             });
         } finally {
+            io.questdb.network.IODispatcherOsx.traceQwp = false;
             stop[0] = true;
             watchdog.interrupt();
         }

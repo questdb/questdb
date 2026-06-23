@@ -30,6 +30,10 @@ import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
 
 public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatcher<C> {
+    // Diagnostic-only: when a test sets this, traces kqueue arm/fire/unexpected
+    // events to stdout (tagged KQTRACE) so a stalled fd's event history shows up
+    // in CI logs. Off in production; the hot-path read is a single volatile load.
+    public static volatile boolean traceQwp = false;
     private final IntHashSet alreadyHandledFds = new IntHashSet();
     private final int capacity;
     private final KeventWriter keventWriter = new KeventWriter();
@@ -84,6 +88,11 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
         // 2. remove row from pending, remaining rows will be timed out
         final int row = pending.binarySearch(id, OPM_ID);
         if (row < 0) {
+            if (traceQwp) {
+                System.out.println("KQTRACE fire UNEXPECTED-ID osFd=" + kqueue.getOsFd()
+                        + " filter=" + (kqueue.getFilter() == KqueueAccessor.EVFILT_READ ? "READ" : kqueue.getFilter() == KqueueAccessor.EVFILT_WRITE ? "WRITE" : kqueue.getFilter())
+                        + " id=" + id);
+            }
             LOG.critical().$("internal error: kqueue returned unexpected id [id=").$(id).I$();
             return false;
         }
@@ -92,6 +101,13 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
         final int requestedOp = (int) pending.get(row, OPM_OPERATION);
         final boolean readyForWrite = kqueue.getFilter() == KqueueAccessor.EVFILT_WRITE;
         final boolean readyForRead = kqueue.getFilter() == KqueueAccessor.EVFILT_READ;
+        // READ-only trace: WRITE fires explode under send fragmentation; the lost
+        // wakeup is on the READ path, so only READ fires matter.
+        if (traceQwp && readyForRead) {
+            System.out.println("KQTRACE fire READ osFd=" + kqueue.getOsFd()
+                    + " requestedOp=" + (requestedOp == IOOperation.READ ? "READ" : requestedOp == IOOperation.WRITE ? "WRITE" : requestedOp)
+                    + " match=" + (requestedOp == IOOperation.READ));
+        }
 
         if ((requestedOp == IOOperation.WRITE && readyForWrite) || (requestedOp == IOOperation.READ && readyForRead)) {
             // disarm extra filter in case it was previously set and haven't fired yet
@@ -245,6 +261,13 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
             }
             if (operation == IOOperation.READ || context.getSocket().wantsTlsRead()) {
                 keventWriter.readFD(fd, opId);
+            }
+            // READ-only trace: an arm READ with no following "fire READ" for the
+            // same osFd is the lost wakeup.
+            if (traceQwp && (operation == IOOperation.READ || context.getSocket().wantsTlsRead())) {
+                System.out.println("KQTRACE arm READ osFd=" + Files.toOsFd(fd)
+                        + " op=" + (operation == IOOperation.READ ? "READ" : "WRITE")
+                        + " id=" + opId);
             }
         }
 
