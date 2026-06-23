@@ -107,6 +107,13 @@ public class MatViewState implements QuietCloseable {
     // refresh iteration's base-table scan, in nanoseconds. See
     // avgScanRangeTsUnits.
     private volatile long avgScanSampleNanos;
+    // Set once the owner store tears this state down (e.g. a role demote frees
+    // the discarded store). A refresh worker that holds the latch across the
+    // teardown consults this in the *refreshSuccess* park methods: rather than
+    // parking the live native cursorFactory back into a discarded state (which
+    // would leak it, the state is unreachable), it closes the factory it holds.
+    // close() reads it under the latch to free the parked factory exactly once.
+    private volatile boolean closed;
     // Protected by this.latch.
     private RecordCursorFactory cursorFactory;
     private volatile boolean dropped;
@@ -316,7 +323,21 @@ public class MatViewState implements QuietCloseable {
 
     @Override
     public void close() {
-        cursorFactory = Misc.free(cursorFactory);
+        // Flag the state as torn down BEFORE attempting the free so a refresh
+        // worker that currently holds the latch (and may still acquire/return
+        // the factory) sees closed==true and closes the factory it holds at its
+        // park/unlock path instead of parking the live native factory into this
+        // discarded state. Then free the factory under the latch so the free
+        // never races a latched reader. If a worker holds the latch right now,
+        // tryLock fails and the worker frees on its way out (tryCloseIfClosed).
+        closed = true;
+        if (tryLock()) {
+            try {
+                cursorFactory = Misc.free(cursorFactory);
+            } finally {
+                unlock();
+            }
+        }
     }
 
     public long getAvgCommitNanos() {
@@ -454,6 +475,10 @@ public class MatViewState implements QuietCloseable {
         refreshIntervals.addAll(reader.getRefreshIntervals());
     }
 
+    public boolean isClosed() {
+        return closed;
+    }
+
     public boolean isDropped() {
         return dropped;
     }
@@ -500,6 +525,13 @@ public class MatViewState implements QuietCloseable {
             long periodHi
     ) {
         assert latch.get();
+        if (closed) {
+            // The owner store was torn down (e.g. a demote) while this worker held the latch. Parking
+            // the live native factory into a discarded state would leak it (the state is unreachable),
+            // so close it here instead. The remaining bookkeeping is harmless on a discarded state.
+            Misc.free(factory);
+            return;
+        }
         this.cursorFactory = factory;
         this.recordToRowCopier = copier;
         this.recordRowCopierMetadataVersion = recordRowCopierMetadataVersion;
@@ -584,6 +616,13 @@ public class MatViewState implements QuietCloseable {
             long periodHi
     ) {
         assert latch.get();
+        if (closed) {
+            // The owner store was torn down (e.g. a demote) while this worker held the latch. Parking
+            // the live native factory into a discarded state would leak it (the state is unreachable),
+            // so close it here instead. The remaining bookkeeping is harmless on a discarded state.
+            Misc.free(factory);
+            return;
+        }
         this.cursorFactory = factory;
         this.recordToRowCopier = copier;
         this.recordRowCopierMetadataVersion = recordRowCopierMetadataVersion;
@@ -668,10 +707,25 @@ public class MatViewState implements QuietCloseable {
         this.viewDefinition = viewDefinition;
     }
 
+    public void tryCloseIfClosed() {
+        // Companion of close() for the latch-race: if the owner store called close() while a refresh
+        // worker held the latch, close()'s own tryLock failed and the factory the worker may have
+        // parked (or left in place) is still live. The worker calls this right after it unlocks so the
+        // discarded state's native factory is freed exactly once, off the teardown thread.
+        if (closed && tryLock()) {
+            try {
+                cursorFactory = Misc.free(cursorFactory);
+            } finally {
+                unlock();
+            }
+        }
+    }
+
     public void tryCloseIfDropped() {
         if (dropped && tryLock()) {
             try {
-                close();
+                closed = true;
+                cursorFactory = Misc.free(cursorFactory);
             } finally {
                 unlock();
             }

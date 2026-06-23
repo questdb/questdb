@@ -180,6 +180,8 @@ import java.io.Closeable;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 import static io.questdb.griffin.CompiledQuery.*;
 
@@ -210,21 +212,54 @@ public class CairoEngine implements Closeable, WriterSource {
     private final DependentViewGraph dependentViewGraph;
     private final Queue<MatViewTimerTask> matViewTimerQueue;
     private final MessageBusImpl messageBus;
-    private final MetadataCache metadataCache;
+    // volatile: assigned by completeInit() on the orchestrator thread, read by worker threads
+    // and hydration threads; volatile ensures safe cross-thread publication after completeInit.
+    private volatile MetadataCache metadataCache;
     private final Metrics metrics;
     private final PartitionOverwriteControl partitionOverwriteControl = new PartitionOverwriteControl();
     private final QueryRegistry queryRegistry;
     private final ReaderPool readerPool;
     private final RecentWriteTracker recentWriteTracker;
+    // Fences client commits against the PRIMARY-to-REPLICA role flip. Commit/DDL paths
+    // (TableUpdateDetails.commit/closeNoLock/releaseWriter, the /exec and pg-wire executor
+    // commits, the ILP-UDP flush) hold the READ side while re-checking read-only mode and
+    // calling writerAPI.commit(); the role-flip path in EntCairoEngine holds the WRITE side
+    // around the REPLICA flag publish only. Read/read concurrency restores N-way commit
+    // throughput across tables and protocols; the read/write exclusion is the invariant that
+    // keeps a commit from slipping through the gate-read and landing on a demoting node. The
+    // write side is never held across drainWriterPool. A plain OSS deployment that never flips
+    // role only ever pays an uncontended read acquire (a single CAS in the common case), so no
+    // separate "no flip path" gate is needed.
+    // Test seam: when non-null, fireRoleSwitchMintObserver() runs this hook at an externalization that
+    // mints replicated state, so a witness can pause the externalization there and interleave a
+    // concurrent PRIMARY-to-REPLICA demote deterministically (without host load). It fires from two
+    // kinds of sites, on BOTH the fenced and the unfenced tree, so a witness that arms this one seam
+    // trips whether or not the role-switch fence wraps the externalization:
+    //   1. Inside the role-switch read-lock hold of the parse-time DDL fences (TRUNCATE truncateSoft,
+    //      RENAME TABLE, ALTER VIEW ... AS, ALTER TABLE ... SET STORAGE POLICY / SET TYPE) and the
+    //      ENT replicated-write / mat-view fences. These mints externalize inside compile() and never
+    //      reach OperationDispatcher.
+    //   2. At the OperationDispatcher externalization site BEFORE its read-lock acquire (the WAL
+    //      UPDATE / ALTER inline-apply and async-enqueue paths), so a reverted/absent dispatcher fence
+    //      still fires the observer rather than degrading the witness to a timing-only sleep window.
+    // A paused witness either blocks the demote behind the read hold or expires its tryLock budget,
+    // exercising the demote race deterministically. Null in production (the default): every fire-site is
+    // a single static volatile read with no side effect when no test installed a hook.
+    @TestOnly
+    private static volatile Runnable roleSwitchMintObserver;
+    private final ReentrantReadWriteLock roleSwitchLock = new ReentrantReadWriteLock();
     private final SqlExecutionContext rootExecutionContext;
     private final TxnScoreboardPool scoreboardPool;
     private final SequencerMetadataPool sequencerMetadataPool;
-    private final SettingsStore settingsStore;
-    private final SqlCompilerPool sqlCompilerPool;
+    // volatile: see metadataCache comment above.
+    private volatile SettingsStore settingsStore;
+    // volatile: see metadataCache comment above.
+    private volatile SqlCompilerPool sqlCompilerPool;
     private final TableFlagResolver tableFlagResolver;
     private final IDGenerator tableIdGenerator;
     private final TableMetadataPool tableMetadataPool;
-    private final TableNameRegistry tableNameRegistry;
+    // volatile: see metadataCache comment above.
+    private volatile TableNameRegistry tableNameRegistry;
     private final TableSequencerAPI tableSequencerAPI;
     private final ObjList<Telemetry<? extends AbstractTelemetryTask>> telemetries;
     private final Telemetry<TelemetryTask> telemetry;
@@ -239,7 +274,11 @@ public class CairoEngine implements Closeable, WriterSource {
     private final WalWriterPool walWriterPool;
     private final WriterPool writerPool;
     private volatile boolean closing;
-    private @NotNull ConfigReloader configReloader = new ConfigReloader() {
+    private volatile boolean isCompleteInitDone;
+    // volatile: configReloader is reassigned by EntCairoEngine.switchRole on the lifecycle
+    // thread and read by SqlCompilerImpl, GenericDropOperation, WriterPool, WalWriterPool,
+    // CopyImportTask on worker threads; no implicit fence between writer and readers.
+    private volatile @NotNull ConfigReloader configReloader = new ConfigReloader() {
         @Override
         public boolean reload() {
             return false;
@@ -255,7 +294,10 @@ public class CairoEngine implements Closeable, WriterSource {
             return WatchRegistry.UNREGISTERED;
         }
     }; // no-op
-    private @NotNull DdlListener ddlListener = DefaultDdlListener.INSTANCE;
+    // volatile: ddlListener is reassigned by EntCairoEngine.switchRole on the lifecycle thread
+    // (DefaultDdlListener.INSTANCE on REPLICA, EntDdlListener instance on PRIMARY) and read by
+    // SqlCompilerImpl on worker threads. Matches the sibling volatile durableAckRegistry.
+    private volatile @NotNull DdlListener ddlListener = DefaultDdlListener.INSTANCE;
     private volatile @NotNull DurableAckRegistry durableAckRegistry = DefaultDurableAckRegistry.INSTANCE;
     private FrameFactory frameFactory;
     private @NotNull MatViewStateStore matViewStateStore = NoOpMatViewStateStore.INSTANCE;
@@ -266,14 +308,37 @@ public class CairoEngine implements Closeable, WriterSource {
     private volatile Runnable recentWriteTrackerHydrationCallback;
     private @NotNull ViewStateStore viewStateStore = NoOpViewStateStore.INSTANCE;
     private @NotNull WalDirectoryPolicy walDirectoryPolicy = DefaultWalDirectoryPolicy.INSTANCE;
-    private @NotNull WalListener walListener = DefaultWalListener.INSTANCE;
+    // volatile: walListener is reassigned by PrimaryRoleState.openLoops on the lifecycle thread
+    // and read by TableSequencerImpl and TableSequencerAPI on sequencer/apply threads; no
+    // implicit fence between writer and readers.
+    private volatile @NotNull WalListener walListener = DefaultWalListener.INSTANCE;
     private @NotNull WalLocker walLocker;
 
     public CairoEngine(CairoConfiguration configuration) {
         this(configuration, new QdbrWalLocker());
     }
 
+    public CairoEngine(CairoConfiguration configuration, boolean completeInit) {
+        this(configuration, new QdbrWalLocker(), completeInit);
+    }
+
     public CairoEngine(CairoConfiguration configuration, @NotNull WalLocker walLocker) {
+        this(configuration, walLocker, true);
+    }
+
+    /**
+     * Three-argument constructor that holds the substantive initialization body.
+     * <p>
+     * When {@code completeInit} is {@code false}, construction stops after
+     * {@link DataID#open(CairoConfiguration)} -- the fields
+     * {@code tableNameRegistry}, {@code metadataCache}, {@code sqlCompilerPool},
+     * and {@code settingsStore} are {@code null}. The caller MUST invoke
+     * {@link #completeInit()} before using those fields.
+     * <p>
+     * The back-compat one-arg and two-arg constructors delegate here with
+     * {@code completeInit=true} so all existing call sites are unaffected.
+     */
+    public CairoEngine(CairoConfiguration configuration, @NotNull WalLocker walLocker, boolean completeInit) {
         try {
             this.walLocker = walLocker;
             this.ffCache = new FunctionFactoryCache(configuration, getFunctionFactories());
@@ -323,32 +388,9 @@ public class CairoEngine implements Closeable, WriterSource {
             this.frameFactory = new FrameFactory(configuration);
             this.dataID = DataID.open(configuration);
 
-            // IMPORTANT: Do not reorder statements!
-            // The backup recovery process needs the `dataID` (since it will set it),
-            // but it's important that's not initialized yet.
-            // The `recoverBackup()` logic also needs to run before any table registry loading.
-            restoreBackup();
-
-            initDataID();
-
-            settingsStore = new SettingsStore(configuration);
-
-            tableIdGenerator.open();
-            checkpointRecover();
-
-            // Initialize settings store after checkpoint recovery so it reads the restored file
-            settingsStore.init();
-
-            // Migrate database files.
-            EngineMigration.migrateEngineTo(this, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
-            tableNameRegistry = createTableNameRegistry(configuration, tableFlagResolver);
-            tableNameRegistry.reload();
-
-            this.sqlCompilerPool = new SqlCompilerPool(this);
-            if (configuration.isPartitionO3OverwriteControlEnabled()) {
-                enablePartitionOverwriteControl();
+            if (completeInit) {
+                completeInit();
             }
-            this.metadataCache = new MetadataCache(this);
         } catch (Throwable th) {
             close();
             throw th;
@@ -597,6 +639,12 @@ public class CairoEngine implements Closeable, WriterSource {
                             );
                             if (viewGraph.addView(viewDefinition)) {
                                 viewStateStore.createViewState(viewDefinition);
+                                // createViewState hydrates the metadata cache from the on-disk
+                                // view definition only, which carries no designated timestamp.
+                                // Enqueue a compile so the view compiler job recomputes the full
+                                // view metadata (including the designated timestamp) once it starts,
+                                // matching how the WAL apply path registers a freshly replicated view.
+                                enqueueCompileView(tableToken);
                             }
                         }
                     } catch (Throwable th) {
@@ -611,85 +659,20 @@ public class CairoEngine implements Closeable, WriterSource {
                     }
                 }
                 if (tableToken.isMatView() && TableUtils.isMatViewDefinitionFileExists(configuration, path, tableToken.getDirName())) {
-                    try {
-                        MatViewDefinition viewDefinition = dependentViewGraph.getViewDefinition(tableToken);
-                        if (viewDefinition == null) {
-                            viewDefinition = new MatViewDefinition();
-                            MatViewDefinition.readFrom(
-                                    this,
-                                    viewDefinition,
-                                    reader,
-                                    path,
-                                    pathLen,
-                                    tableToken
-                            );
-                            if (dependentViewGraph.addView(viewDefinition)) {
-                                matViewStateStore.createViewState(viewDefinition);
-                            }
-                        }
-
-                        final MatViewState state = matViewStateStore.getViewState(tableToken);
-                        // Can be null if the state store implementation is no-op.
-                        // The no-op state store does nothing on view creation and other operations
-                        // and is used when mat views are disabled.
-                        if (state != null) {
-                            final TableToken baseTableToken = tableNameRegistry.getTableToken(viewDefinition.getBaseTableName());
-                            final boolean baseTableExists = baseTableToken != null && !tableNameRegistry.isTableDropped(baseTableToken);
-                            if (!baseTableExists) {
-                                // Print a warning, but let the mat view load in invalid state.
-                                LOG.info().$("base table for materialized view does not exist [table=").$safe(viewDefinition.getBaseTableName())
-                                        .$(", view=").$(tableToken)
-                                        .I$();
-                                matViewStateStore.enqueueInvalidate(tableToken, "base table does not exist");
-                                continue;
-                            }
-
-                            if (!baseTableToken.isWal()) {
-                                // Print a warning, but let the mat view load in invalid state.
-                                LOG.info().$("base table for materialized view is not WAL table [table=").$safe(viewDefinition.getBaseTableName())
-                                        .$(", view=").$(tableToken)
-                                        .I$();
-                                matViewStateStore.enqueueInvalidate(tableToken, "base table is not WAL table");
-                                continue;
-                            }
-
-                            path.trimTo(pathLen).concat(tableToken);
-                            if (!WalUtils.readMatViewState(path, tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader)) {
-                                LOG.info().$("could not find materialized view state, default values will be used [table=")
-                                        .$safe(viewDefinition.getBaseTableName())
-                                        .$(", view=").$(tableToken)
-                                        .I$();
-                                continue;
-                            }
-
-                            state.initFromReader(matViewStateReader);
-                            if (state.isInvalid()) {
-                                continue;
-                            }
-                            long baseTableLastTxn = getTableSequencerAPI().lastTxn(baseTableToken);
-                            if (state.getLastRefreshBaseTxn() > baseTableLastTxn) {
-                                LOG.info().$("materialized view is ahead of base table and cannot be synchronized [table=")
-                                        .$safe(viewDefinition.getBaseTableName())
-                                        .$(", view=").$(tableToken)
-                                        .$(", matViewBaseTxn=").$(state.getLastRefreshBaseTxn())
-                                        .$(", baseTableTxn=").$(baseTableLastTxn)
-                                        .I$();
-                                matViewStateStore.enqueueInvalidate(tableToken, "materialized view is ahead of base table and cannot be synchronized");
-                            } else if (viewDefinition.getRefreshType() == MatViewDefinition.REFRESH_TYPE_IMMEDIATE) {
-                                // Kickstart immediate refresh.
-                                matViewStateStore.enqueueIncrementalRefresh(tableToken);
-                            }
-                        }
-                    } catch (Throwable th) {
-                        final LogRecord rec = LOG.error().$("could not load materialized view [view=").$(tableToken);
-                        if (th instanceof CairoException ce) {
-                            rec.$(", msg=").$safe(ce.getFlyweightMessage())
-                                    .$(", errno=").$(ce.getErrno());
-                        } else {
-                            rec.$(", msg=").$safe(th.getMessage());
-                        }
-                        rec.I$();
-                    }
+                    // Boot path: read the on-disk definition when the graph has not seen this view yet,
+                    // adding it to the graph and creating its state. createState=false here so a view
+                    // already present in the graph keeps its existing state -- buildViewGraphs runs once
+                    // at boot before the store has any state.
+                    loadMatViewIntoStore(
+                            tableToken,
+                            path,
+                            pathLen,
+                            reader,
+                            walEventReader,
+                            txnMem,
+                            matViewStateReader,
+                            false
+                    );
                 }
                 if (tableToken.isLiveView()) {
                     if (TableUtils.isLiveViewDropSentinelFileExists(configuration, path, tableToken.getDirName())) {
@@ -844,6 +827,48 @@ public class CairoEngine implements Closeable, WriterSource {
                                 .$(", msg=").$safe(th.getMessage())
                                 .I$();
                     }
+                }
+            }
+        }
+    }
+
+    /**
+     * Repopulates the live mat-view state store from the view graph and the on-disk {@code _mv}
+     * state, for every mat-view already present in {@code dependentViewGraph}. Unlike
+     * {@link #buildViewGraphs()} (which only creates state for views not yet in the graph), this
+     * forces {@code createViewState} for each graph view that has no state yet, so a freshly built
+     * store on a role promote ends up populated rather than empty. Idempotent: a view that already
+     * has state is re-initialized from disk, not duplicated.
+     * <p>
+     * Used by the enterprise role switch: a promote builds a real {@link MatViewStateStore} and then
+     * calls this to hydrate it before writes open, so refresh resumes from the persisted baselines
+     * instead of triggering a full-refresh storm.
+     */
+    public void hydrateMatViewStateStore() {
+        final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
+        getTableTokens(tableTokenBucket, false);
+        try (
+                Path path = new Path();
+                BlockFileReader reader = new BlockFileReader(configuration);
+                WalEventReader walEventReader = new WalEventReader(configuration);
+                MemoryCMR txnMem = Vm.getCMRInstance(configuration.getBypassWalFdCache())
+        ) {
+            path.of(configuration.getDbRoot());
+            final int pathLen = path.size();
+            final MatViewStateReader matViewStateReader = new MatViewStateReader();
+            for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
+                final TableToken tableToken = tableTokenBucket.get(i);
+                if (tableToken.isMatView() && TableUtils.isMatViewDefinitionFileExists(configuration, path, tableToken.getDirName())) {
+                    loadMatViewIntoStore(
+                            tableToken,
+                            path,
+                            pathLen,
+                            reader,
+                            walEventReader,
+                            txnMem,
+                            matViewStateReader,
+                            true
+                    );
                 }
             }
         }
@@ -1238,6 +1263,41 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    /**
+     * Runs the post-restore engine initialization that historically lived inside the constructor.
+     * MUST be called after
+     * BackupRestoreEnvelope.start() reaches READY when the orchestrator boots the engine envelope.
+     * Ordering is now enforced by the lifecycle DAG (engine.hardDeps includes "backup-restore"),
+     * not by sequential statement ordering as it used to be inside the constructor.
+     * <p>
+     * Calling twice on the same instance has undefined behavior -- fields like tableNameRegistry
+     * and metadataCache would be re-assigned, leaking the previous instances. Production code
+     * (the orchestrator EngineEnvelope.start() and the back-compat constructors) invoke it
+     * exactly once.
+     */
+    public void completeInit() {
+        initDataID();
+        settingsStore = new SettingsStore(configuration);
+        tableIdGenerator.open();
+        checkpointRecover();
+        // Initialize settings store after checkpoint recovery so it reads the restored file
+        settingsStore.init();
+        // Migrate database files.
+        EngineMigration.migrateEngineTo(this, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
+        tableNameRegistry = createTableNameRegistry(configuration, tableFlagResolver);
+        tableNameRegistry.reload();
+        this.sqlCompilerPool = new SqlCompilerPool(this);
+        if (configuration.isPartitionO3OverwriteControlEnabled()) {
+            enablePartitionOverwriteControl();
+        }
+        this.metadataCache = new MetadataCache(this);
+        this.isCompleteInitDone = true;
+    }
+
+    public boolean isCompleteInitDone() {
+        return isCompleteInitDone;
+    }
+
     public @NotNull MatViewDefinition createMatView(
             SecurityContext securityContext,
             MemoryMARW mem,
@@ -1378,6 +1438,14 @@ public class CairoEngine implements Closeable, WriterSource {
         if (tableToken.isWal()) {
             if (notifyDropped(tableToken)) {
                 durableAckRegistry.onTableDropped(tableToken);
+                // Both-trees pre-externalization fire-point: fire the role-switch mint observer here,
+                // immediately before tableSequencerAPI.dropTable mints the replicated drop. A WAL DROP
+                // does not route through OperationDispatcher (it runs as a GenericDropOperation executed
+                // directly), so this is the single externalization site for DROP TABLE/VIEW/MATERIALIZED
+                // VIEW/ALL TABLES across pg-wire, HTTP /exec and the QWP egress channel. Firing here lets
+                // a demote-race witness arm one seam that trips on both the fenced and the unfenced tree.
+                // A strict no-op in production (the observer field is null).
+                fireRoleSwitchMintObserver();
                 tableSequencerAPI.dropTable(tableToken, false);
                 notifyViewStoresAboutDrop(tableToken);
                 matViewStateStore.removeViewState(tableToken);
@@ -1457,6 +1525,21 @@ public class CairoEngine implements Closeable, WriterSource {
                             .$(']').$();
                 }
             }
+        }
+    }
+
+    /**
+     * Fires the role-switch mint hook when a test installed one. A strict no-op (single static volatile
+     * read) in production where the field is null. Called both inside the parse-time DDL / replicated-write
+     * fences (within their role-switch read-lock hold) and at the OperationDispatcher externalization site
+     * before its read-lock acquire, so the one hook fires on both the fenced and the unfenced tree and a
+     * witness can pause the externalization and interleave a demote deterministically regardless of whether
+     * the fence wraps it.
+     */
+    public void fireRoleSwitchMintObserver() {
+        final Runnable observer = roleSwitchMintObserver;
+        if (observer != null) {
+            observer.run();
         }
     }
 
@@ -1683,6 +1766,18 @@ public class CairoEngine implements Closeable, WriterSource {
         return recentWriteTracker;
     }
 
+    public Lock getRoleSwitchReadLock() {
+        return roleSwitchLock.readLock();
+    }
+
+    public int getRoleSwitchReadLockCount() {
+        return roleSwitchLock.getReadLockCount();
+    }
+
+    public Lock getRoleSwitchWriteLock() {
+        return roleSwitchLock.writeLock();
+    }
+
     public TableRecordMetadata getSequencerMetadata(TableToken tableToken) {
         return getSequencerMetadata(tableToken, TableUtils.ANY_TABLE_VERSION);
     }
@@ -1721,6 +1816,10 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public SqlCompilerFactory getSqlCompilerFactory() {
         return SqlCompilerFactoryImpl.INSTANCE;
+    }
+
+    public SqlCompilerPool getSqlCompilerPool() {
+        return sqlCompilerPool;
     }
 
     public TableFlagResolver getTableFlagResolver() {
@@ -1775,6 +1874,10 @@ public class CairoEngine implements Closeable, WriterSource {
         TableMetadata metadata = tableMetadataPool.get(tableToken);
         validateDesiredMetadataVersion(tableToken, metadata, desiredVersion);
         return metadata;
+    }
+
+    public TableNameRegistry getTableNameRegistry() {
+        return tableNameRegistry;
     }
 
     public TableSequencerAPI getTableSequencerAPI() {
@@ -2162,6 +2265,18 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public boolean isClosing() {
         return closing;
+    }
+
+    /**
+     * Reports whether this engine currently refuses writes. Reads the LIVE state on every
+     * call so callers can re-check it per write batch rather than trusting a value captured
+     * earlier (for example, a SecurityContext cached at connection time). The base engine
+     * answers from the static isReadOnlyInstance() flag; enterprise subclasses override this
+     * to also report true while the node is acting as a read-only replica, a state an
+     * in-place role switch can toggle dynamically.
+     */
+    public boolean isReadOnlyMode() {
+        return configuration.isReadOnlyInstance();
     }
 
     public boolean isTableDropped(TableToken tableToken) {
@@ -2570,6 +2685,11 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    @TestOnly
+    public void setClosing(boolean closing) {
+        this.closing = closing;
+    }
+
     public void setConfigReloader(@NotNull ConfigReloader configReloader) {
         this.configReloader = configReloader;
     }
@@ -2606,6 +2726,19 @@ public class CairoEngine implements Closeable, WriterSource {
     @TestOnly
     public void setRecentWriteTrackerHydrationCallback(Runnable callback) {
         this.recentWriteTrackerHydrationCallback = callback;
+    }
+
+    /**
+     * Test seam: installs a hook fired at the replicated-state externalization sites on both the fenced
+     * and the unfenced tree -- inside the parse-time DDL / replicated-write fences (within their
+     * role-switch read-lock hold) and at the OperationDispatcher externalization site before its
+     * read-lock acquire. Pass null to uninstall. The hook is shared across engines, so an installer must
+     * scope its own pause to the statement under test. Never set outside tests -- the field defaults to
+     * null and the fire-site is a no-op then.
+     */
+    @TestOnly
+    public static void setRoleSwitchMintObserver(Runnable observer) {
+        roleSwitchMintObserver = observer;
     }
 
     @TestOnly
@@ -3225,6 +3358,110 @@ public class CairoEngine implements Closeable, WriterSource {
         return state.getViewMetadata();
     }
 
+    /**
+     * Loads one mat-view's definition and persisted state into the live mat-view state store.
+     * Shared by {@link #buildViewGraphs()} (boot, {@code forceCreateState=false}) and
+     * {@link #hydrateMatViewStateStore()} (role promote, {@code forceCreateState=true}). When
+     * {@code forceCreateState} is true, a view already present in the graph still has its state
+     * created so a freshly built store on promote is populated; when false, only a brand-new graph
+     * entry gets its state created (the boot semantics).
+     */
+    private void loadMatViewIntoStore(
+            TableToken tableToken,
+            Path path,
+            int pathLen,
+            BlockFileReader reader,
+            WalEventReader walEventReader,
+            MemoryCMR txnMem,
+            MatViewStateReader matViewStateReader,
+            boolean forceCreateState
+    ) {
+        try {
+            MatViewDefinition viewDefinition = dependentViewGraph.getViewDefinition(tableToken);
+            if (viewDefinition == null) {
+                viewDefinition = new MatViewDefinition();
+                MatViewDefinition.readFrom(
+                        this,
+                        viewDefinition,
+                        reader,
+                        path,
+                        pathLen,
+                        tableToken
+                );
+                if (dependentViewGraph.addView(viewDefinition)) {
+                    matViewStateStore.createViewState(viewDefinition);
+                }
+            } else if (forceCreateState && matViewStateStore.getViewState(tableToken) == null) {
+                // The graph already knows this view but the (freshly built) store has no state for
+                // it yet -- the role-promote rehydration case. Create the state from the graph
+                // definition so the store is populated rather than empty.
+                matViewStateStore.createViewState(viewDefinition);
+            }
+
+            final MatViewState state = matViewStateStore.getViewState(tableToken);
+            // Can be null if the state store implementation is no-op.
+            // The no-op state store does nothing on view creation and other operations
+            // and is used when mat views are disabled.
+            if (state != null) {
+                final TableToken baseTableToken = tableNameRegistry.getTableToken(viewDefinition.getBaseTableName());
+                final boolean baseTableExists = baseTableToken != null && !tableNameRegistry.isTableDropped(baseTableToken);
+                if (!baseTableExists) {
+                    // Print a warning, but let the mat view load in invalid state.
+                    LOG.info().$("base table for materialized view does not exist [table=").$safe(viewDefinition.getBaseTableName())
+                            .$(", view=").$(tableToken)
+                            .I$();
+                    matViewStateStore.enqueueInvalidate(tableToken, "base table does not exist");
+                    return;
+                }
+
+                if (!baseTableToken.isWal()) {
+                    // Print a warning, but let the mat view load in invalid state.
+                    LOG.info().$("base table for materialized view is not WAL table [table=").$safe(viewDefinition.getBaseTableName())
+                            .$(", view=").$(tableToken)
+                            .I$();
+                    matViewStateStore.enqueueInvalidate(tableToken, "base table is not WAL table");
+                    return;
+                }
+
+                path.trimTo(pathLen).concat(tableToken);
+                if (!WalUtils.readMatViewState(path, tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader)) {
+                    LOG.info().$("could not find materialized view state, default values will be used [table=")
+                            .$safe(viewDefinition.getBaseTableName())
+                            .$(", view=").$(tableToken)
+                            .I$();
+                    return;
+                }
+
+                state.initFromReader(matViewStateReader);
+                if (state.isInvalid()) {
+                    return;
+                }
+                long baseTableLastTxn = getTableSequencerAPI().lastTxn(baseTableToken);
+                if (state.getLastRefreshBaseTxn() > baseTableLastTxn) {
+                    LOG.info().$("materialized view is ahead of base table and cannot be synchronized [table=")
+                            .$safe(viewDefinition.getBaseTableName())
+                            .$(", view=").$(tableToken)
+                            .$(", matViewBaseTxn=").$(state.getLastRefreshBaseTxn())
+                            .$(", baseTableTxn=").$(baseTableLastTxn)
+                            .I$();
+                    matViewStateStore.enqueueInvalidate(tableToken, "materialized view is ahead of base table and cannot be synchronized");
+                } else if (viewDefinition.getRefreshType() == MatViewDefinition.REFRESH_TYPE_IMMEDIATE) {
+                    // Kickstart immediate refresh.
+                    matViewStateStore.enqueueIncrementalRefresh(tableToken);
+                }
+            }
+        } catch (Throwable th) {
+            final LogRecord rec = LOG.error().$("could not load materialized view [view=").$(tableToken);
+            if (th instanceof CairoException ce) {
+                rec.$(", msg=").$safe(ce.getFlyweightMessage())
+                        .$(", errno=").$(ce.getErrno());
+            } else {
+                rec.$(", msg=").$safe(th.getMessage());
+            }
+            rec.I$();
+        }
+    }
+
     private void notifyViewStoresAboutDrop(TableToken droppedToken) {
         viewGraph.removeView(droppedToken);
         viewStateStore.removeViewState(droppedToken);
@@ -3484,7 +3721,5 @@ public class CairoEngine implements Closeable, WriterSource {
         return new TableFlagResolverImpl(configuration.getSystemTableNamePrefix().toString());
     }
 
-    protected void restoreBackup() {
-        // Hook for backup functionality. See enterprise subclass.
-    }
 }
+

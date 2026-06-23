@@ -32,6 +32,7 @@ open module io.questdb {
 
     uses io.questdb.griffin.FunctionFactory;
     exports io.questdb;
+    exports io.questdb.lifecycle;
     exports io.questdb.cairo;
     exports io.questdb.cairo.vm;
     exports io.questdb.cairo.map;
