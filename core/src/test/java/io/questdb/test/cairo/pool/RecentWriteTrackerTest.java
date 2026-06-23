@@ -32,6 +32,7 @@ import org.junit.Test;
 
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 public class RecentWriteTrackerTest {
 
@@ -107,7 +108,7 @@ public class RecentWriteTrackerTest {
                         String tableName = "writer" + threadId + "_table" + tableIndex;
                         int tableId = 1000 + threadId * 100 + tableIndex;
                         TableToken table = createTableToken(tableName, tableId);
-                        tracker.recordWrite(table, System.nanoTime(), i * 10L, i);
+                        tracker.recordWrite(table, 1_000_000L + threadId * operationsPerThread + i, i * 10L, i);
                     }
                 } catch (Exception e) {
                     errors.incrementAndGet();
@@ -166,7 +167,7 @@ public class RecentWriteTrackerTest {
                         String tableName = "thread" + threadId + "_table" + tableIndex;
                         int tableId = threadId * 1000 + tableIndex;
                         TableToken table = createTableToken(tableName, tableId);
-                        tracker.recordWrite(table, System.nanoTime(), i * 10L, i);
+                        tracker.recordWrite(table, 2_000_000L + threadId * writesPerThread + i, i * 10L, i);
                     }
                 } catch (Exception e) {
                     errors.incrementAndGet();
@@ -354,6 +355,24 @@ public class RecentWriteTrackerTest {
     }
 
     @Test
+    public void testTrackerActivityUsesInjectedClock() {
+        AtomicLong clockTicks = new AtomicLong(0);
+        RecentWriteTracker tracker = new RecentWriteTracker(1, () -> clockTicks.addAndGet(-100));
+
+        TableToken walActivityFromInjectedClock = createTableToken("wal_activity_from_injected_clock", 1);
+        TableToken writerActivity = createTableToken("writer_activity", 2);
+        TableToken trigger = createTableToken("trigger", 3);
+
+        tracker.recordWalWrite(walActivityFromInjectedClock, 1, 1_000, 1);
+        tracker.recordWrite(writerActivity, 1, 1, 1);
+        tracker.recordWrite(trigger, 2, 1, 1);
+
+        Assert.assertNull(tracker.getWriteStats(walActivityFromInjectedClock));
+        Assert.assertNull(tracker.getWriteStats(writerActivity));
+        Assert.assertNotNull(tracker.getWriteStats(trigger));
+    }
+
+    @Test
     public void testRecordWalProcessedCreatesEntryThatSurvivesEviction() {
         RecentWriteTracker tracker = new RecentWriteTracker(2);
 
@@ -507,6 +526,24 @@ public class RecentWriteTrackerTest {
         Assert.assertEquals(500L, tracker.getWriteStats(table1).getTableMinTimestamp());
         Assert.assertEquals(1500L, tracker.getWriteStats(table1).getTableMaxTimestamp());
         Assert.assertEquals(1, tracker.size());
+    }
+
+    @Test
+    public void testRecordWriteIfAbsentActivityUsesInjectedClock() {
+        AtomicLong clockTicks = new AtomicLong(0);
+        RecentWriteTracker tracker = new RecentWriteTracker(1, () -> clockTicks.addAndGet(-100));
+
+        TableToken hydrated = createTableToken("hydrated_from_injected_clock", 1);
+        TableToken writerActivity = createTableToken("writer_activity", 2);
+        TableToken trigger = createTableToken("trigger", 3);
+
+        Assert.assertTrue(tracker.recordWriteIfAbsent(hydrated, 1000L, 100L, 10L, 5L, 1000L, 500L, 1500L));
+        tracker.recordWrite(writerActivity, 1, 1, 1);
+        tracker.recordWrite(trigger, 2, 1, 1);
+
+        Assert.assertNull(tracker.getWriteStats(hydrated));
+        Assert.assertNull(tracker.getWriteStats(writerActivity));
+        Assert.assertNotNull(tracker.getWriteStats(trigger));
     }
 
     @Test

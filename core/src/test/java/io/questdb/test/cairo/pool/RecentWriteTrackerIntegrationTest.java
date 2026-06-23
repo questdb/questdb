@@ -34,7 +34,6 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.std.Numbers;
-import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -326,9 +325,6 @@ public class RecentWriteTrackerIntegrationTest extends AbstractCairoTest {
             drainWalQueue();
             long firstTimestamp = tracker.getWriteTimestamp(eventsToken);
 
-            // Small delay to ensure different timestamp
-            Thread.sleep(1);
-
             // Second write
             execute("INSERT INTO events VALUES (now(), 'event2')");
             drainWalQueue();
@@ -544,7 +540,7 @@ public class RecentWriteTrackerIntegrationTest extends AbstractCairoTest {
             Assert.assertTrue(hydratedStats.getLastWalTimestamp() > 1_000_000_000_000_000_000L);
 
             int capacity = tracker.getMaxCapacity();
-            long newerActivityTimestamp = MicrosecondClockImpl.INSTANCE.getTicks() + 1_000_000_000L;
+            long newerActivityTimestamp = configuration.getMicrosecondClock().getTicks() + 1_000_000_000L;
             TableToken liveToken = new TableToken("live_activity", "live_activity", null, 100_000, false, false, false);
             tracker.recordWrite(liveToken, newerActivityTimestamp, 1L, 1L);
             for (int i = 0; i < capacity - 1; i++) {

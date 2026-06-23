@@ -334,7 +334,10 @@ public class CairoEngine implements Closeable, WriterSource {
             this.messageBus = new MessageBusImpl(configuration);
             this.metrics = configuration.getMetrics();
             // Message bus and metrics must be initialized before the pools.
-            this.recentWriteTracker = new RecentWriteTracker(configuration.getRecentWriteTrackerCapacity());
+            this.recentWriteTracker = new RecentWriteTracker(
+                    configuration.getRecentWriteTrackerCapacity(),
+                    configuration.getMicrosecondClock()
+            );
             this.writerPool = new WriterPool(configuration, this, recentWriteTracker);
             this.scoreboardPool = new TxnScoreboardPoolV2(configuration);
             this.readerPool = new ReaderPool(configuration, scoreboardPool, messageBus, partitionOverwriteControl);
@@ -2687,4 +2690,3 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
 }
-
