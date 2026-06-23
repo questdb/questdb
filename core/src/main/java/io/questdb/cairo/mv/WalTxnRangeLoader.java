@@ -46,6 +46,7 @@ import static io.questdb.cairo.wal.WalUtils.*;
 
 public class WalTxnRangeLoader implements QuietCloseable {
     private final WalEventReader walEventReader;
+    private boolean hasTruncate;
     private long maxTimestamp;
     private long minTimestamp;
     private DirectLongList txnDetails = new DirectLongList(10 * 4L, MemoryTag.NATIVE_TABLE_READER);
@@ -65,6 +66,14 @@ public class WalTxnRangeLoader implements QuietCloseable {
 
     public long getMinTimestamp() {
         return minTimestamp;
+    }
+
+    // True when the last load() scan saw a base-table TRUNCATE in the scanned (txnLo, txnHi] range.
+    // A truncate carries no data interval (it is skipped for interval computation), but it is an
+    // invalidating barrier for an incremental mat-view refresh: the caller must not advance the
+    // refresh base txn past it.
+    public boolean hasTruncate() {
+        return hasTruncate;
     }
 
     public void load(
@@ -96,6 +105,7 @@ public class WalTxnRangeLoader implements QuietCloseable {
 
         minTimestamp = Long.MAX_VALUE;
         maxTimestamp = Long.MIN_VALUE;
+        hasTruncate = false;
 
         try (WalEventReader eventReader = walEventReader) {
             final int maxLoadTxnCount = (int) (txnHi - txnLo);
@@ -137,7 +147,12 @@ public class WalTxnRangeLoader implements QuietCloseable {
                         }
 
                         if (!WalTxnType.isDataType(walEventCursor.getType())) {
-                            // Skip non-inserts
+                            // Skip non-inserts for interval computation, but flag a TRUNCATE: it carries
+                            // no data interval yet is an invalidating barrier for an incremental mat-view
+                            // refresh. The caller must not advance the refresh base txn past a truncate.
+                            if (walEventCursor.getType() == WalTxnType.TRUNCATE) {
+                                hasTruncate = true;
+                            }
                             continue;
                         }
 

@@ -1917,6 +1917,19 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             try {
                 intervals.clear();
                 txnRangeLoader.load(engine, Path.PATH.get(), baseTableToken, intervals, lastRefreshTxn, lastBaseTxn);
+                if (txnRangeLoader.hasTruncate()) {
+                    // The scanned base WAL range contains a TRUNCATE. The loader skips it as a non-data
+                    // txn, so the data intervals alone look like an ordinary advance -- but a truncate
+                    // invalidates the view (the same way ApplyWal2TableJob invalidates dependents on a
+                    // truncate). Do NOT advance refreshIntervalsBaseTxn past the barrier; stop this refresh
+                    // and enqueue a durable INVALIDATE. The view is already locked by this run, so the
+                    // invalidation cannot run inline here; the enqueued task finalizes it once this run
+                    // releases the lock, going through invalidateView so it inherits the read-only
+                    // short-circuit (a replica defers rather than acquiring a writer).
+                    stateStore.enqueueInvalidate(viewToken, "truncate operation");
+                    intervals.clear();
+                    return intervals;
+                }
                 if (intervals.size() > 0) {
                     final int dividerIndex = intervals.size();
                     intervals.addAll(viewState.getRefreshIntervals());
