@@ -104,15 +104,22 @@ public final class ParquetRowGroupFilter {
      * @param pushdownFilterConditions the filter conditions to apply
      * @param filterList               reusable buffer for filter descriptors: [encoded(col_idx, count, op), ptr, columnType] per filter
      * @param filterValues             reusable memory buffer for filter values
+     * @param resolveByColumnId        when true, resolve the Parquet column by the condition's
+     *                                 stable writer index (column id); when false, by name.
+     *                                 Native-table partitions pass true so renamed columns map
+     *                                 to the correct Parquet column (its frozen name is stale);
+     *                                 the read_parquet() table function passes false because it
+     *                                 projects external files by name.
      * @return true if filters were prepared successfully and row group pruning should be attempted
      */
     public static boolean prepareFilterList(
             ParquetFileDecoder.Metadata metadata,
             ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions,
             DirectLongList filterList,
-            MemoryCARWImpl filterValues
+            MemoryCARWImpl filterValues,
+            boolean resolveByColumnId
     ) {
-        return prepareFilterListImpl(metadata, null, pushdownFilterConditions, filterList, filterValues);
+        return prepareFilterListImpl(metadata, null, pushdownFilterConditions, filterList, filterValues, resolveByColumnId);
     }
 
     /**
@@ -122,9 +129,10 @@ public final class ParquetRowGroupFilter {
             ParquetMetaFileReader parquetMetaReader,
             ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions,
             DirectLongList filterList,
-            MemoryCARWImpl filterValues
+            MemoryCARWImpl filterValues,
+            boolean resolveByColumnId
     ) {
-        return prepareFilterListImpl(null, parquetMetaReader, pushdownFilterConditions, filterList, filterValues);
+        return prepareFilterListImpl(null, parquetMetaReader, pushdownFilterConditions, filterList, filterValues, resolveByColumnId);
     }
 
     private static boolean prepareFilterListImpl(
@@ -132,7 +140,8 @@ public final class ParquetRowGroupFilter {
             ParquetMetaFileReader parquetMetaReader,
             ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions,
             DirectLongList filterList,
-            MemoryCARWImpl filterValues
+            MemoryCARWImpl filterValues,
+            boolean resolveByColumnId
     ) {
         try {
             if (pushdownFilterConditions == null || pushdownFilterConditions.size() == 0) {
@@ -148,9 +157,19 @@ public final class ParquetRowGroupFilter {
                 final ObjList<Function> valueFunctions = condition.getValueFunctions();
                 final int valueCount = valueFunctions.size();
 
-                int columnIndex = legacyMetadata != null
-                        ? legacyMetadata.getColumnIndex(condition.getColumnName())
-                        : parquetMetaReader.getColumnIndex(condition.getColumnName());
+                final int columnIndex;
+                if (resolveByColumnId) {
+                    // The Parquet column name is frozen at write time and goes stale on rename,
+                    // so map the filtered column to the Parquet column by its stable id instead.
+                    final int writerIndex = condition.getColumnWriterIndex();
+                    columnIndex = legacyMetadata != null
+                            ? legacyMetadata.getColumnIndexById(writerIndex)
+                            : parquetMetaReader.getColumnIndexById(writerIndex);
+                } else {
+                    columnIndex = legacyMetadata != null
+                            ? legacyMetadata.getColumnIndex(condition.getColumnName())
+                            : parquetMetaReader.getColumnIndex(condition.getColumnName());
+                }
                 if (columnIndex < 0) {
                     continue;
                 }

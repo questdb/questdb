@@ -815,6 +815,48 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBloomFilterSymbolRenamedColumn() throws Exception {
+        // Regression: the row-group bloom-filter pushdown resolved the filtered column
+        // by its parquet name. Parquet column names are frozen at conversion time, so a
+        // rename leaves them stale. When another column already bears the query's current
+        // name, the pushdown checked the WRONG column's bloom filter and wrongly skipped
+        // row groups, silently dropping valid rows. The fix resolves by stable column id.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (a SYMBOL, b SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // 'gamma' lives only in column a; column b never holds it.
+            execute("""
+                    INSERT INTO x VALUES
+                    ('gamma', 'p', '2024-01-01T00:00:00.000000Z'),
+                    ('delta', 'q', '2024-01-01T01:00:00.000000Z'),
+                    ('gamma', 'r', '2024-01-02T01:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'a,b')");
+
+            // Swap names: free 'b', then rename a -> b. Now the live column 'b' is the
+            // original column 'a' (holds 'gamma'), while the parquet still carries a
+            // frozen column literally named 'b' (the original b, which never held 'gamma').
+            execute("ALTER TABLE x RENAME COLUMN b TO c");
+            execute("ALTER TABLE x RENAME COLUMN a TO b");
+
+            // Equality on the renamed column must find its rows, not be pruned away.
+            assertQuery("SELECT b FROM x WHERE b = 'gamma' ORDER BY ts")
+                    .noLeakCheck()
+                    .returns("""
+                            b
+                            gamma
+                            gamma
+                            """);
+
+            // A value genuinely absent from the renamed column must still prune.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT b FROM x WHERE b = 'nope'")
+                    .noLeakCheck()
+                    .returns("b\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
     public void testBloomFilterTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (val TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");

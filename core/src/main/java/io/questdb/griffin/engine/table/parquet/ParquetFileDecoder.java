@@ -477,6 +477,24 @@ public class ParquetFileDecoder implements ParquetDecoder, ParquetRowGroupSkippe
             return -1;
         }
 
+        /**
+         * Finds a column by its stable id (the table writer index). Mirrors
+         * {@code PageFrameMemoryPool.buildColumnIdMap}: external Parquet files
+         * without QuestDB field ids (all -1) fall back to positional indexing.
+         * Returns -1 if no column matches. Unlike {@link #getColumnIndex(CharSequence)},
+         * this stays correct across column renames because the id never changes.
+         */
+        public int getColumnIndexById(int columnId) {
+            assert ptr != 0;
+            for (int i = 0, n = getColumnCount(); i < n; i++) {
+                final int id = getColumnId(i);
+                if ((id < 0 ? i : id) == columnId) {
+                    return i;
+                }
+            }
+            return -1;
+        }
+
         public CharSequence getColumnName(int columnIndex) {
             return columnNames.getQuick(columnIndex);
         }
