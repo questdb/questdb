@@ -1762,6 +1762,19 @@ mod tests {
     /// keys off, so sorting-column tests must use this rather than a plain
     /// TIMESTAMP column.
     fn make_designated_ts_with_id(id: i32, name: &'static str, values: &[i64]) -> Column {
+        make_designated_ts_with_order(id, name, values, true)
+    }
+
+    /// Builds a designated TIMESTAMP column with an explicit sort direction.
+    /// `ascending = false` records the descending order in `qdb_meta`, so the
+    /// derived `sorting_columns` (and thus the ColumnIndex boundary order) are
+    /// DESCENDING.
+    fn make_designated_ts_with_order(
+        id: i32,
+        name: &'static str,
+        values: &[i64],
+        ascending: bool,
+    ) -> Column {
         Column::from_raw_data(
             id,
             name,
@@ -1775,7 +1788,7 @@ mod tests {
             null(),
             0,
             true,
-            true,
+            ascending,
             0,
         )
         .unwrap()
@@ -2285,6 +2298,19 @@ mod tests {
         }
     }
 
+    /// Like `ts_val_partition` but the designated timestamp is descending, so the
+    /// derived sorting column (and the timestamp ColumnIndex boundary order) are
+    /// DESCENDING.
+    fn ts_val_partition_desc(ts: &[i64], val: &[i32]) -> Partition {
+        Partition {
+            table: "t".to_string(),
+            columns: vec![
+                make_designated_ts_with_order(0, "ts", ts, false),
+                make_column("val", ColumnTypeTag::Int.into_type(), val),
+            ],
+        }
+    }
+
     /// Asserts every column carries both indexes, each OffsetIndex points at the
     /// column's data page, and the timestamp ColumnIndex matches `ts_bounds` with
     /// ASCENDING order. Loads with the page index Required (a mixed file rejects).
@@ -2468,6 +2494,70 @@ mod tests {
                 Some(70)
             ],
         );
+        Ok(())
+    }
+
+    /// A copied row group replays its source ColumnIndex bytes verbatim, so a
+    /// DESCENDING source boundary order must survive a rewrite. Guards against the
+    /// fresh-encode path (boundary order from sorting_columns) and the copy path
+    /// disagreeing on direction.
+    #[test]
+    fn rewrite_preserves_descending_boundary_order_in_copied_group() -> Result<(), Box<dyn Error>> {
+        use crate::allocator::TestAllocatorState;
+        use parquet::arrow::arrow_reader::ArrowReaderOptions;
+        use parquet::file::page_index::index::Index;
+        use parquet::format::BoundaryOrder;
+        use parquet2::metadata::SortingColumn;
+        use std::io::Read as _;
+
+        // Source: a descending designated timestamp -> ColumnIndex declares DESCENDING.
+        let sorting = || Some(vec![SortingColumn::new(0, true, false)]); // descending
+        let src = NamedTempFile::new()?;
+        ParquetWriter::new(src.reopen()?)
+            .with_sorting_columns(sorting())
+            .finish(ts_val_partition_desc(&[40, 30, 20, 10], &[4, 3, 2, 1]))?;
+        let src_len = src.as_file().metadata()?.len();
+
+        let out = NamedTempFile::new()?;
+        let alloc = TestAllocatorState::new();
+        let mut updater = super::ParquetUpdater::new(
+            alloc.allocator(),
+            src.reopen()?,
+            src_len,
+            out.reopen()?,
+            0, // write_file_size == 0 -> rewrite
+            sorting(),
+            true,
+            false,
+            CompressionOptions::Uncompressed,
+            None,
+            None,
+            DEFAULT_BLOOM_FILTER_FPP,
+            0.0,
+            None,
+            0,
+            -1,
+        )?;
+        updater.copy_row_group(0)?; // raw-copied: source DESCENDING index rebased verbatim
+        updater.end(None)?;
+
+        let mut bytes = Vec::new();
+        out.reopen()?.read_to_end(&mut bytes)?;
+
+        let builder = ParquetRecordBatchReaderBuilder::try_new_with_options(
+            Bytes::from(bytes.clone()),
+            ArrowReaderOptions::new().with_page_index(true),
+        )?;
+        let md = builder.metadata();
+        let column_index = md.column_index().expect("parsed column index");
+        match &column_index[0][0] {
+            Index::INT64(native) => assert_eq!(
+                native.boundary_order,
+                BoundaryOrder::DESCENDING,
+                "copied group must preserve the source DESCENDING boundary order"
+            ),
+            other => panic!("expected INT64 timestamp index, got {other:?}"),
+        }
         Ok(())
     }
 

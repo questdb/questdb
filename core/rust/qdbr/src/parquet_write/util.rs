@@ -180,16 +180,23 @@ impl BinaryMaxMinStats {
                 // row-group pruning and for external readers, while the footer (and the
                 // _pm sidecar that copies these stats by value) no longer grows without
                 // limit when a single value is multi-megabyte.
+                // The min always shortens to a strict prefix once it exceeds the
+                // bound, so it is inexact exactly when it was over the bound. The
+                // max can fall back to the untruncated (exact) value when no
+                // shorter ceiling exists, so truncate_max_utf8 reports whether it
+                // actually widened the bound rather than inferring it from length.
                 let min_truncated = min_value
                     .as_ref()
                     .is_some_and(|min| min.len() > UTF8_STATS_TRUNCATE_LEN);
-                let max_truncated = max_value
-                    .as_ref()
-                    .is_some_and(|max| max.len() > UTF8_STATS_TRUNCATE_LEN);
                 let min_value =
                     min_value.map(|min| truncate_min_utf8(min, UTF8_STATS_TRUNCATE_LEN));
-                let max_value =
-                    max_value.map(|max| truncate_max_utf8(max, UTF8_STATS_TRUNCATE_LEN));
+                let (max_value, max_truncated) = match max_value {
+                    Some(max) => {
+                        let (bound, truncated) = truncate_max_utf8(max, UTF8_STATS_TRUNCATE_LEN);
+                        (Some(bound), truncated)
+                    }
+                    None => (None, false),
+                };
                 (
                     min_value,
                     max_value,
@@ -271,14 +278,18 @@ fn truncate_min_utf8(mut value: Vec<u8>, max_len: usize) -> Vec<u8> {
 /// U+0080), and only the last retained codepoint is advanced (a carry drops
 /// trailing codepoints), so the result exceeds `max_len` by at most 1 byte --
 /// still bounded, versus an untruncated value of arbitrary length.
-fn truncate_max_utf8(value: Vec<u8>, max_len: usize) -> Vec<u8> {
+///
+/// Returns `(bound, is_inexact)`. `is_inexact` is `true` only when the bound was
+/// actually widened; the fallback returns the original value unchanged, which is
+/// an exact upper bound (`is_inexact == false`).
+fn truncate_max_utf8(value: Vec<u8>, max_len: usize) -> (Vec<u8>, bool) {
     if value.len() <= max_len {
-        return value;
+        return (value, false);
     }
     let end = utf8_floor_len(&value, max_len);
     match next_utf8_string(&value[..end]) {
-        Some(bounded) => bounded,
-        None => value,
+        Some(bounded) => (bounded, true),
+        None => (value, false),
     }
 }
 
@@ -812,24 +823,27 @@ mod tests {
     fn test_truncate_max_utf8_is_valid_ceiling() {
         // ASCII: incremented prefix, byte-wise >= the original, length still bounded.
         let original = vec![b'm'; 200];
-        let max = super::truncate_max_utf8(original.clone(), 64);
+        let (max, inexact) = super::truncate_max_utf8(original.clone(), 64);
         assert!(max.len() <= 64 + 1, "ceiling stays bounded");
         assert!(max.as_slice() >= original.as_slice());
         assert!(std::str::from_utf8(&max).is_ok());
+        assert!(inexact, "a widened ceiling is inexact");
 
         // Multi-byte: never splits a codepoint, still a valid byte-wise ceiling.
         let original = "\u{00e9}".repeat(50).into_bytes(); // 100 bytes
-        let max = super::truncate_max_utf8(original.clone(), 64);
+        let (max, inexact) = super::truncate_max_utf8(original.clone(), 64);
         assert!(max.as_slice() >= original.as_slice());
         assert!(std::str::from_utf8(&max).is_ok());
+        assert!(inexact);
 
         // Carry: when the truncated prefix ends in U+10FFFF the carry advances an
         // earlier codepoint, and the result still dominates the original byte-wise.
         let mut original = vec![b'a'; 60];
         original.extend_from_slice("\u{10FFFF}".repeat(5).as_bytes()); // 60 + 20 bytes
-        let max = super::truncate_max_utf8(original.clone(), 64);
+        let (max, inexact) = super::truncate_max_utf8(original.clone(), 64);
         assert!(max.as_slice() >= original.as_slice());
         assert!(std::str::from_utf8(&max).is_ok());
+        assert!(inexact);
     }
 
     #[test]
@@ -838,8 +852,10 @@ mod tests {
         // ceiling exists, so the untruncated value is kept (a valid, if loose, bound).
         let original = "\u{10FFFF}".repeat(17).into_bytes();
         assert_eq!(original.len(), 68);
-        let max = super::truncate_max_utf8(original.clone(), 64);
+        let (max, inexact) = super::truncate_max_utf8(original.clone(), 64);
         assert_eq!(max, original);
+        // The bound was kept whole, so it is exact, not inexact.
+        assert!(!inexact);
     }
 
     #[test]
@@ -899,6 +915,31 @@ mod tests {
             Some(false),
             "truncated max must be marked inexact"
         );
+    }
+
+    #[test]
+    fn test_binary_stats_text_all_max_codepoint_max_stays_exact() {
+        // A long max value made entirely of U+10FFFF has no shorter ceiling, so the
+        // max falls back to the untruncated (exact) value. The min still truncates
+        // to a prefix and stays inexact; the max must NOT be flagged inexact.
+        let primitive_type = utf8_primitive_type();
+        let mut stats = BinaryMaxMinStats::new(&primitive_type);
+        let value = "\u{10FFFF}".repeat(17).into_bytes(); // 68 bytes, all the max codepoint
+        stats.update(&value);
+
+        let parquet_stats = stats.into_parquet_stats(0);
+        assert_eq!(
+            parquet_stats.max_value.as_deref(),
+            Some(value.as_slice()),
+            "max kept whole as a valid exact ceiling"
+        );
+        assert_eq!(
+            parquet_stats.is_max_value_exact, None,
+            "kept-whole max is exact, not inexact"
+        );
+        // The min was truncated to a prefix, so it stays inexact.
+        assert_eq!(parquet_stats.min_value.unwrap().len(), 64);
+        assert_eq!(parquet_stats.is_min_value_exact, Some(false));
     }
 
     #[test]

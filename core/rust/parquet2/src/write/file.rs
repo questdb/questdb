@@ -27,27 +27,27 @@ pub fn start_file<W: Write>(writer: &mut W) -> Result<u64> {
 
 /// Picks the `ColumnIndex` `boundary_order` for the leaf column at `column_idx`.
 ///
-/// A column listed in `sorting_columns` has its rows physically ordered by that
-/// column, so within each row group its data pages carry monotonic min/max
-/// bounds. Declaring `ASCENDING`/`DESCENDING` (per the column's `descending`
-/// flag) lets readers binary-search the page bounds. Every other column keeps
-/// `UNORDERED`, which is always safe.
+/// Only the primary (first) `sorting_columns` entry has its rows globally ordered
+/// across the row group, so only its data pages carry monotonic min/max bounds;
+/// declaring `ASCENDING`/`DESCENDING` (per the column's `descending` flag) lets
+/// readers binary-search those bounds. A secondary sort column is ordered only
+/// within runs of equal primary key, so its per-page bounds are not monotonic
+/// across the row group -- it must stay `UNORDERED` like every other column,
+/// otherwise a reader binary-searching its bounds would prune pages that hold
+/// matches. `UNORDERED` is always safe.
 fn boundary_order_for_column(
     sorting_columns: &Option<Vec<SortingColumn>>,
     column_idx: usize,
 ) -> BoundaryOrder {
-    match sorting_columns {
-        Some(columns) => columns
-            .iter()
-            .find(|sc| sc.column_idx == column_idx as i32)
-            .map_or(BoundaryOrder::UNORDERED, |sc| {
-                if sc.descending {
-                    BoundaryOrder::DESCENDING
-                } else {
-                    BoundaryOrder::ASCENDING
-                }
-            }),
-        None => BoundaryOrder::UNORDERED,
+    match sorting_columns.as_deref() {
+        Some([primary, ..]) if primary.column_idx == column_idx as i32 => {
+            if primary.descending {
+                BoundaryOrder::DESCENDING
+            } else {
+                BoundaryOrder::ASCENDING
+            }
+        }
+        _ => BoundaryOrder::UNORDERED,
     }
 }
 
@@ -1198,6 +1198,23 @@ mod tests {
         assert_eq!(
             boundary_order_for_column(&descending, 0),
             BoundaryOrder::DESCENDING
+        );
+
+        // Multi-column sort: only the primary (first) column has globally
+        // monotonic page bounds. The secondary column stays UNORDERED even
+        // though it is listed in sorting_columns, since its per-page bounds are
+        // not monotonic across the row group.
+        let multi = Some(vec![
+            SortingColumn::new(1, false, false),
+            SortingColumn::new(3, true, false),
+        ]);
+        assert_eq!(
+            boundary_order_for_column(&multi, 1),
+            BoundaryOrder::ASCENDING
+        );
+        assert_eq!(
+            boundary_order_for_column(&multi, 3),
+            BoundaryOrder::UNORDERED
         );
     }
 }
