@@ -568,22 +568,44 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
 
     @Override
     public long getDataVectorSizeAtFromFd(FilesFacade ff, long auxFd, long row) {
-        long auxFileOffset = VARCHAR_AUX_WIDTH_BYTES * row;
         if (row < 0) {
             return 0;
         }
+        final long dataEnd = dataVectorEndAtFromFd(ff, auxFd, row);
+        // Torn-write guard: a split entry's data offset must be >= the previous row's data end
+        // (data offsets are monotonic). A torn/un-flushed aux entry leaves offset 0 while the
+        // previous row's data end is non-zero. Computed from a single direct read of the previous
+        // entry (no recursion).
+        final long auxFileOffset = VARCHAR_AUX_WIDTH_BYTES * row;
         final int raw = readInt(ff, auxFd, auxFileOffset);
+        if (row > 0 && !hasNullOrInlinedFlag(raw)) {
+            final long prevDataVectorSize = dataVectorEndAtFromFd(ff, auxFd, row - 1);
+            final long offsetLo = readInt(ff, auxFd, auxFileOffset + 8L);
+            final long offsetHi = readInt(ff, auxFd, auxFileOffset + 12L);
+            final long dataOffset = Numbers.encodeLowHighInts((int) offsetLo, (int) offsetHi) >>> 16;
+            if (dataOffset < prevDataVectorSize) {
+                throw CairoException.critical(0)
+                        .put("Invalid data offset read from varchar aux file, possible torn write [auxFd=").put(auxFd)
+                        .put(", row=").put(row).put(", dataOffset=").put(dataOffset)
+                        .put(", prevDataVectorSize=").put(prevDataVectorSize)
+                        .put(", fileSize=").put(ff.length(auxFd)).put(']');
+            }
+        }
+        return dataEnd;
+    }
 
+    // Reads the data-vector END (offset+size, or offset for null/inlined) of one aux entry from the fd.
+    // Non-recursive; one entry only.
+    private static long dataVectorEndAtFromFd(FilesFacade ff, long auxFd, long row) {
+        final long auxFileOffset = VARCHAR_AUX_WIDTH_BYTES * row;
+        final int raw = readInt(ff, auxFd, auxFileOffset);
         final int offsetLo = readInt(ff, auxFd, auxFileOffset + 8L);
         final int offsetHi = readInt(ff, auxFd, auxFileOffset + 12L);
         final long dataOffset = Numbers.encodeLowHighInts(offsetLo, offsetHi) >>> 16;
-
         if (hasNullOrInlinedFlag(raw)) {
             return dataOffset;
         }
-        // size of the string at this offset
-        final int size = (raw >> HEADER_FLAGS_WIDTH) & DATA_LENGTH_MASK;
-        return dataOffset + size;
+        return dataOffset + ((raw >> HEADER_FLAGS_WIDTH) & DATA_LENGTH_MASK);
     }
 
     @Override
