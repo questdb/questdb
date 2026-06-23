@@ -2561,11 +2561,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
      * {@code TableWriter} for the duration of the encode call:
      * <ul>
      *     <li>Var-size columns: the data buffer as primary and the aux as
-     *     secondary. For a 0-based source (copy+sort path) the full data
-     *     buffer with absolute aux offsets; for an offset-mapped WAL segment
-     *     (in-order block apply) the data window with a window-relative aux
-     *     rebased into the context scratch arena, since the window does not
-     *     start at offset 0.</li>
+     *     secondary. A 0-based source (copy+sort path) passes the full data
+     *     buffer with its absolute aux offsets. An offset-mapped WAL segment
+     *     ({@link MemoryOM}, in-order block apply) has a data window that does
+     *     not start at offset 0, so its aux holds offsets that overshoot the
+     *     window; that aux is rebased to window-relative offsets in the context
+     *     scratch arena so {@code primary_data} is a valid 0-based base.</li>
      *     <li>Designated timestamp: the merge-index slice as primary with
      *     {@code PARQUET_TIMESTAMP_STRIDED_16} set on the column type, so
      *     the Rust encoder reads timestamps in place from the 16-byte
@@ -2591,13 +2592,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final long rowCount = o3Hi - o3Lo + 1;
         final int columnCount = metadata.getColumnCount();
 
-        // A var column sourced from an offset-mapped WAL segment (the in-order
-        // block-apply path) carries absolute aux offsets over a windowed data
-        // buffer, so addressOf(0) is an extrapolated base rather than a valid
-        // 0-based slice start. Such columns get their aux rebased to
-        // window-relative offsets in a scratch arena. Size the arena once up
-        // front: the rebased slots must keep stable addresses across the loop,
-        // and a later resize would move them.
+        // Size the rebase arena (see javadoc) once up front: the slots handed
+        // out below must keep stable addresses across the loop, and a later
+        // resize would move them.
         long rebaseArenaSize = 0;
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
             final int columnType = metadata.getColumnType(columnIndex);
@@ -2637,10 +2634,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 final long dataSize;
                 final long auxAddr;
                 if (oooDataMem instanceof MemoryOM) {
-                    // Windowed source: the data buffer starts at absolute dataLo
-                    // (not 0) and aux entries hold absolute offsets. Hand the
-                    // encoder the real window and rebase the aux (shift = dataLo,
-                    // dest = src - shift) so primary_data is a valid 0-based base.
+                    // Windowed source: hand the encoder the data window and
+                    // rebase the aux by shift = dataLo (dest = src - shift).
                     final long dataLo = ctd.getDataVectorOffset(srcOooAuxAddr, o3Lo);
                     final long windowSize = dataExtent - dataLo;
                     final long rebasedAuxSize = ctd.getAuxVectorSize(rowCount);
@@ -3744,14 +3739,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         // encodings (Plain, DeltaBinaryPacked, RleDictionary), so no
         // encoding-aware fallback is needed.
         //
-        // For var-size columns populateO3DescriptorColumns hands the encoder the
-        // data buffer and an aux slice. For an offset-mapped WAL segment source
-        // it rebases the aux to window-relative offsets in the context scratch
-        // arena so primary_data is a valid 0-based slice base; for a 0-based
-        // source it passes the full buffer with absolute aux offsets.
+        // populateO3DescriptorColumns handles var-column data/aux pointers
+        // (including rebasing offset-mapped WAL aux into the context arena).
         //
         // The descriptor itself is non-owning and does not free anything on
-        // clear — every pointer it carries references O3 source memory (or the
+        // clear -- every pointer it carries references O3 source memory (or the
         // context rebase arena) owned by the TableWriter for this call.
         final O3ParquetMergeContext ctx = PARQUET_MERGE_CONTEXT.get();
         final PartitionDescriptor descriptor = ctx.getFreshPartitionDescriptor();

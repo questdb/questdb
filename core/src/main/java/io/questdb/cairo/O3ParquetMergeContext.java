@@ -41,9 +41,7 @@ import io.questdb.std.ObjList;
 import java.io.Closeable;
 
 public class O3ParquetMergeContext implements Closeable {
-    // Initial size of the reusable scratch arena that holds window-relative
-    // rebased aux vectors for var columns sourced from an offset-mapped WAL
-    // segment (see O3PartitionJob.populateO3DescriptorColumns). Grown on demand.
+    // Initial size of the rebase aux arena (see getRebaseAuxMem). Grown on demand.
     private static final long REBASE_AUX_ARENA_PAGE_SIZE = 16 * 1024;
     private ObjList<O3ParquetMergeStrategy.MergeAction> actionsBuf;
     private IntList activeColIndices;
