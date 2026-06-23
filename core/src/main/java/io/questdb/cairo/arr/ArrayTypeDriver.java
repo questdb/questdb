@@ -547,6 +547,12 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         final long auxFileOffset = ARRAY_AUX_WIDTH_BYTES * row;
         final long offset = readLong(ff, auxFd, auxFileOffset) & OFFSET_MAX;
         final int size = readInt(ff, auxFd, auxFileOffset + Long.BYTES);
+        if (row > 0 && size > 0 && offset == 0) {
+            throw CairoException.critical(0)
+                    .put("Invalid data offset read from array aux file, possible torn write [auxFd=").put(auxFd)
+                    .put(", row=").put(row).put(", offset=").put(offset).put(", size=").put(size)
+                    .put(", fileSize=").put(ff.length(auxFd)).put(']');
+        }
         return offset + size;
     }
 
@@ -687,6 +693,22 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
             long auxEntryPtr = auxMem.getAppendAddress();
 
             long dataVectorSize = calcDataOffsetEnd(auxEntryPtr);
+
+            // Crash-consistency guard (mirrors VarcharTypeDriver). Data offsets are monotonic; the last
+            // row's data start must be >= the previous row's data end. A lower value means the aux tail
+            // was torn/partially flushed - fail loudly instead of placing the cursor inside committed data.
+            if (pos > 1) {
+                long lastDataOffset = readDataOffset(auxEntryPtr);
+                long prevDataVectorSize = calcDataOffsetEnd(auxEntryPtr - ARRAY_AUX_WIDTH_BYTES);
+                if (lastDataOffset < prevDataVectorSize) {
+                    throw CairoException.critical(0)
+                            .put("array aux vector is damaged, possible torn write on the last entry [pos=").put(pos)
+                            .put(", lastDataOffset=").put(lastDataOffset)
+                            .put(", prevDataVectorSize=").put(prevDataVectorSize)
+                            .put(']');
+                }
+            }
+
             long auxVectorSize = getAuxVectorSize(pos);
             long totalDataSizeBytes = dataVectorSize + auxVectorSize;
 
