@@ -8697,11 +8697,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (prevIndex >= 0) {
                     final long prevSize = txWriter.getPartitionSize(prevIndex);
                     if (prevSize > 0) {
+                        final boolean prevIsParquet = txWriter.isPartitionParquet(prevIndex);
                         final long prevTimestamp = txWriter.getPartitionTimestampByIndex(prevIndex);
-                        final long parquetFileSize = txWriter.getPartitionParquetFileSize(prevIndex);
+                        final long parquetFileSize = prevIsParquet ? txWriter.getPartitionParquetFileSize(prevIndex) : -1L;
                         try {
                             setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, prevTimestamp, txWriter.getPartitionNameTxn(prevIndex));
-                            readPartitionMinMaxTimestamps(prevTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), txWriter.isPartitionParquet(prevIndex), parquetFileSize, prevSize);
+                            readPartitionMinMaxTimestamps(prevTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), prevIsParquet, parquetFileSize, prevSize);
                             o3MoveUncommittedMaxTimestamp = attachMaxTimestamp;
                         } finally {
                             path.trimTo(pathSize);

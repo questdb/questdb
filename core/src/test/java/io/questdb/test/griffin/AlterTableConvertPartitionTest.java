@@ -1399,7 +1399,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                 final long addr = ParquetMetaFileReader.openAndMapRO(ff, pmPath.$(), reader);
                 Assert.assertTrue("openAndMapRO should succeed", addr > 0);
                 try {
-                    Assert.assertTrue(reader.resolveFooter(Long.MAX_VALUE));
+                    Assert.assertTrue(reader.resolveLastFooter());
                     Assert.assertEquals(
                             "seqTxn in _pm must match TableWriter.getSeqTxn()",
                             expectedSeqTxn, reader.getResolvedSeqTxn()
