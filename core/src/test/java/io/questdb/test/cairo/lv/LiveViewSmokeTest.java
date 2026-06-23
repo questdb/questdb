@@ -1015,6 +1015,109 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
         });
     }
 
+    // Drives an end-to-end live view whose OUTPUT schema carries a var-length /
+    // array column (VARCHAR / STRING / BINARY / DOUBLE[] / DOUBLE[][]) projected
+    // straight from the base table. The fixed-width in-memory tier cannot store
+    // such a schema (LiveViewInMemoryBuffer.areColumnTypesSupported returns
+    // false), so the LV falls back to disk-only reads. The prior coverage only
+    // asserted, negatively, that the tier is skipped; this proves the disk-only
+    // path actually MATERIALIZES and READS BACK the var-length values correctly.
+    // It cross-checks the LV against the same window recomputed straight over the
+    // base (a differential oracle that also compares the passthrough v column
+    // cell by cell) after three phases: in-order ingestion, an O3 head-miss
+    // replay that re-materializes the affected rows via REPLACE_RANGE, and a
+    // simulated restart that rehydrates the window state from the head .cp. The
+    // window function (sum over an anchored unbounded frame) only makes the query
+    // a valid LV; the v column is the subject under test.
+    private void assertDiskOnlyVarLengthOutputRoundTrip(String colTypeDdl, String vExpr) throws Exception {
+        assertMemoryLeak(() -> {
+            // Pin the clock below the data before CREATE so viewLowerBoundTimestamp
+            // (the non-backfill floor) sits under every row; otherwise the O3
+            // replay would drop sub-floor rows the recompute keeps (Finding 3).
+            setCurrentMicros(0L);
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE, v " + colTypeDdl + ") " +
+                    "TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // PARTITION BY uses the fixed-width SYMBOL key (var-length partition
+            // keys are unsupported by the snapshot key codec); the var-length v
+            // column rides through as a projected passthrough.
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, v, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Phase 1: in-order ingestion, single day, several symbols.
+                execute("INSERT INTO base SELECT" +
+                        " timestamp_sequence('2026-09-01T00:00:00.000000Z', 1_000_000L)," +
+                        " rnd_symbol('a', 'b', 'c')," +
+                        " rnd_double()," +
+                        " " + vExpr +
+                        " FROM long_sequence(40)");
+                drainWalQueue();
+                setCurrentMicros(250_000L);
+                drainJob(job);
+                drainWalQueue();
+
+                // The var-length / array output schema must skip the in-mem tier.
+                LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                Assert.assertNull(
+                        "var-length / array output schema must skip the in-mem tier",
+                        instance.getInMemoryTier()
+                );
+                assertDiskOnlyVarLengthLvMatchesRecompute();
+
+                // Phase 2: O3. Every ts sits a half-second below a phase-1 ts and
+                // strictly under the 39s watermark, so the whole batch is
+                // back-dated and forces a head-miss replay (REPLACE_RANGE) that
+                // re-materializes the var-length column. The 0.5s offset keeps
+                // every timestamp globally unique, so the windowed sum has no
+                // peer-group ties and ORDER BY sym, ts is a total order.
+                execute("INSERT INTO base SELECT" +
+                        " timestamp_sequence('2026-09-01T00:00:00.500000Z', 1_000_000L)," +
+                        " rnd_symbol('a', 'b', 'c')," +
+                        " rnd_double()," +
+                        " " + vExpr +
+                        " FROM long_sequence(15)");
+                drainWalQueue();
+                setCurrentMicros(500_000L);
+                drainJob(job);
+                drainWalQueue();
+                assertDiskOnlyVarLengthLvMatchesRecompute();
+            }
+
+            // Phase 3: simulated restart. Rebuild the registry from on-disk state,
+            // then drive one refresh so the head .cp rehydrates the window state.
+            // The materialized var-length rows live in the LV table on disk, so
+            // the re-read must still match the recompute.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(750_000L);
+                drainJob(job);
+            }
+            assertDiskOnlyVarLengthLvMatchesRecompute();
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    // The differential oracle for assertDiskOnlyVarLengthOutputRoundTrip: the LV
+    // must equal the same window recomputed directly over the base table.
+    // ORDER BY sym, ts gives both sides a total order (timestamps are unique);
+    // genericStringMatch tolerates the SYMBOL-vs-STRING passthrough rendering.
+    // The recompute's plain PARTITION BY sym ORDER BY ts unbounded-preceding sum
+    // equals the LV's anchored sum because all data falls within a single day.
+    private void assertDiskOnlyVarLengthLvMatchesRecompute() throws SqlException {
+        TestUtils.assertSqlCursors(
+                engine,
+                sqlExecutionContext,
+                "(SELECT ts, sym, v, sum(x) OVER (PARTITION BY sym ORDER BY ts) AS s FROM base) ORDER BY 2, 1",
+                "(SELECT ts, sym, v, s FROM lv) ORDER BY 2, 1",
+                LOG,
+                true
+        );
+    }
+
     @Test
     public void testCreateAndDropLiveView() throws Exception {
         assertMemoryLeak(() -> {
@@ -2864,6 +2967,31 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
             execute("DROP LIVE VIEW lv");
         });
+    }
+
+    @Test
+    public void testDiskOnlyBinaryOutputRoundTrip() throws Exception {
+        assertDiskOnlyVarLengthOutputRoundTrip("BINARY", "rnd_bin(4, 20, 3)");
+    }
+
+    @Test
+    public void testDiskOnlyDouble2dArrayOutputRoundTrip() throws Exception {
+        assertDiskOnlyVarLengthOutputRoundTrip("DOUBLE[][]", "rnd_double_array(2, 0)");
+    }
+
+    @Test
+    public void testDiskOnlyDoubleArrayOutputRoundTrip() throws Exception {
+        assertDiskOnlyVarLengthOutputRoundTrip("DOUBLE[]", "rnd_double_array(1, 0)");
+    }
+
+    @Test
+    public void testDiskOnlyStringOutputRoundTrip() throws Exception {
+        assertDiskOnlyVarLengthOutputRoundTrip("STRING", "rnd_str(1, 12, 3)");
+    }
+
+    @Test
+    public void testDiskOnlyVarcharOutputRoundTrip() throws Exception {
+        assertDiskOnlyVarLengthOutputRoundTrip("VARCHAR", "rnd_varchar(1, 12, 3)");
     }
 
     @Test
