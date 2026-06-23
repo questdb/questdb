@@ -578,6 +578,14 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // _txn commit follows in TableWriter; without this fsync a power
                 // loss could leave _txn pointing at a footer the page cache loses.
                 if (cairoConfiguration.getCommitMode() != CommitMode.NOSYNC) {
+                    // fsync data.parquet before _pm (data before metadata ordering)
+                    final long parquetNameTxn = isRewrite ? txn : srcNameTxn;
+                    path.of(pathToTable);
+                    setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
+                    final long parquetDataFd = TableUtils.openRONoCache(ff, path.$(), LOG);
+                    if (parquetDataFd != -1) {
+                        ff.fsyncAndClose(parquetDataFd);
+                    }
                     partitionUpdater.syncParquetMeta();
                 }
                 final long resultUnusedBytes = partitionUpdater.getResultUnusedBytes();

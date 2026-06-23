@@ -2010,6 +2010,12 @@ public final class TableUtils {
                 // brand-new partition directory.
                 final int commitMode = configuration.getCommitMode();
                 if (commitMode != CommitMode.NOSYNC) {
+                    // fsync data.parquet before _pm (data before metadata, mirrors syncColumns0 ordering)
+                    setPathForParquetPartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
+                    final long parquetDataFd = TableUtils.openRONoCache(ff, other.$(), LOG);
+                    if (parquetDataFd != -1) {
+                        ff.fsyncAndClose(parquetDataFd);
+                    }
                     ff.fsync(parquetMetaFd);
                     if (!Os.isWindows()) {
                         setPathForParquetPartitionMetadata(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
