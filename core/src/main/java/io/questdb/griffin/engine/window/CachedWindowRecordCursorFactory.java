@@ -395,8 +395,8 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
         }
 
         private void buildRecordChain() {
-            // Consult the breaker before building, so even an empty base scan (whose per-row loops below
-            // never run) still observes cancellation. Runs once per cursor open, guarded by isRecordChainBuilt.
+            // Consult the breaker before building, so even an empty base scan still observes cancellation.
+            // Runs once per cursor open, guarded by isRecordChainBuilt.
             circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
             final Record record = baseCursor.getRecord();
             final Record chainRecord = recordChain.getRecord();

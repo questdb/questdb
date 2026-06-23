@@ -354,8 +354,7 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
          * for the detailed strategy description). Aggregates results into a single value.
          */
         private void buildValue() {
-            // Consult the breaker before iterating, so an empty master (whose loop below never runs)
-            // still observes cancellation.
+            // Consult the breaker before iterating, so an empty master still observes cancellation.
             circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
             for (int s = 0; s < slaveCount; s++) {
                 timeFrameHelpers.getQuick(s).toTop();

@@ -194,8 +194,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
     }
 
     private void buildMap() {
-        // Consult the breaker before dispatching frames, so an empty base scan (which dispatches no
-        // frames and runs no per-frame checks) still observes cancellation.
+        // Consult the breaker before dispatching frames, so an empty base scan still observes cancellation.
         circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
         frameSequence.prepareForDispatch();
         frameSequence.getAtom().getFilterContext().initMemoryPools(frameSequence.getPageFrameAddressCache(), frameSequence.getMemoryTracker());
