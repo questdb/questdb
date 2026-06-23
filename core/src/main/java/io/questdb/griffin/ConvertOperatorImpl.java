@@ -31,6 +31,7 @@ import io.questdb.cairo.ColumnTaskJob;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypeConverter;
 import io.questdb.cairo.ColumnVersionWriter;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SymbolMapReaderImpl;
 import io.questdb.cairo.TableUtils;
@@ -352,6 +353,14 @@ public class ConvertOperatorImpl implements Closeable {
                             .$(", partition ").$ts(ColumnType.getTimestampDriver(tableWriter.getTimestampType()), partitionTimestamp)
                             .I$();
                     asyncProcessingErrorCount.incrementAndGet();
+                } else if (configuration.getCommitMode() != CommitMode.NOSYNC) {
+                    // fsync converted column files before closeFds (data before aux)
+                    if (dstVarFd != -1) {
+                        ff.fsync(dstVarFd);
+                    }
+                    if (dstFixFd != -1) {
+                        ff.fsync(dstFixFd);
+                    }
                 }
             }
         } catch (Throwable th) {
