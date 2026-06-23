@@ -2407,6 +2407,17 @@ public class CairoEngine implements Closeable, WriterSource {
             final LongList intervals = new LongList();
             loader.load(this, path, baseTableToken, intervals, lastRefreshBaseTxn, baseTableLastTxn);
             return loader.hasTruncate();
+        } catch (CairoException e) {
+            // Missing or purged WAL files in the gap. Treat as "no truncate found" so the caller
+            // still schedules the normal incremental refresh; the refresh path's own interval
+            // planning falls back to a full refresh on the same read failure. Letting the exception
+            // escape would cause loadMatViewIntoStore's logging-only catch to swallow it, skipping
+            // enqueueIncrementalRefresh and leaving the view silently unscheduled after a promote-hydrate.
+            LOG.error().$("could not scan base WAL gap for truncate, scheduling refresh [baseTable=").$(baseTableToken)
+                    .$(", errno=").$(e.getErrno())
+                    .$(", msg=").$safe(e.getFlyweightMessage())
+                    .I$();
+            return false;
         }
     }
 

@@ -3018,6 +3018,73 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHydrateTruncateScanThrowStillSchedulesRefresh() throws Exception {
+        // Verify that a missing/purged WAL file encountered during the hydrate-path truncate scan
+        // does not prevent the mat-view from being scheduled for incremental refresh. The scan
+        // helper lets a CairoException escape, which the outer loadMatViewIntoStore catch swallows,
+        // skipping enqueueIncrementalRefresh and leaving the view silently unscheduled.
+        setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 10);
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, val double, ts timestamp) timestamp(ts) partition by DAY WAL");
+            createMatView("mv", "select ts, count() cnt from base sample by 1h");
+            // Insert enough rows to fill segment 0 and drain so the view refreshes at least once
+            // (lastRefreshBaseTxn > -1, state valid).
+            execute(
+                    "insert into base values ('a', 1.0, '2024-09-10T12:00'), ('a', 2.0, '2024-09-10T12:01')," +
+                            " ('a', 3.0, '2024-09-10T12:02'), ('a', 4.0, '2024-09-10T12:03')," +
+                            " ('a', 5.0, '2024-09-10T12:04')"
+            );
+            drainQueues();
+
+            // Advance the base beyond the view's lastRefreshBaseTxn WITHOUT running mat-view refresh,
+            // so a gap exists that the truncate scan must read. Ten 5-row batches with rollover at 10
+            // rows creates segments 1-5 inside the gap (matching the segment numbering the scan visits).
+            for (int i = 0; i < 10; i++) {
+                execute(
+                        "insert into base values ('a', " + (100 + i) + ".0, '2024-09-10T13:0" + i + ":00')," +
+                                " ('a', " + (200 + i) + ".0, '2024-09-10T13:0" + i + ":30')," +
+                                " ('a', " + (300 + i) + ".0, '2024-09-10T14:0" + i + ":00')," +
+                                " ('a', " + (400 + i) + ".0, '2024-09-10T14:0" + i + ":30')," +
+                                " ('a', " + (500 + i) + ".0, '2024-09-10T15:0" + i + ":00')"
+                );
+            }
+            drainWalQueue();
+
+            // Delete segment 5's event file so loader.load() throws a CairoException when
+            // hasBaseTableTruncateInWalGap tries to open it during the next hydrateMatViewStateStore call.
+            final TableToken baseTableToken = engine.getTableTokenIfExists("base");
+            Assert.assertNotNull(baseTableToken);
+            try (Path path = new Path()) {
+                path.of(engine.getConfiguration().getDbRoot()).concat(baseTableToken)
+                        .concat(WAL_NAME_BASE).put(1).slash().put(5).concat(EVENT_FILE_NAME);
+                engine.getConfiguration().getFilesFacade().removeQuiet(path.$());
+            }
+
+            // Drain any pre-existing queued mat-view tasks (the base-commit notification may have
+            // already enqueued one) so the queue is empty before the hydrate call.
+            final MatViewStateStoreImpl store = (MatViewStateStoreImpl) engine.getMatViewStateStore();
+            final MatViewRefreshTask task = new MatViewRefreshTask();
+            while (store.tryDequeueRefreshTask(task)) {
+                // drain
+            }
+
+            // Simulate the role-promote hydrate path. The truncate scan's load() will throw because
+            // the WAL segment file is missing. The fix catches the exception inside
+            // hasBaseTableTruncateInWalGap and returns false, allowing enqueueIncrementalRefresh to
+            // run. Without the fix the view is silently left unscheduled.
+            engine.hydrateMatViewStateStore();
+
+            boolean scheduled = false;
+            while (store.tryDequeueRefreshTask(task)) {
+                if (task.operation == MatViewRefreshTask.INCREMENTAL_REFRESH) {
+                    scheduled = true;
+                }
+            }
+            Assert.assertTrue("a missing-WAL truncate scan on hydrate must not skip refresh scheduling", scheduled);
+        });
+    }
+
+    @Test
     public void testImmediatePeriodMatView() throws Exception {
         testPeriodRefresh("immediate", null, true);
     }
