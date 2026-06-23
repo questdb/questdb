@@ -1542,6 +1542,16 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     /**
+     * Whether materialized-view refresh task execution is temporarily suspended (e.g. a role promote
+     * has built and hydrated the real store but has not yet opened writes). Default: never suspended.
+     * Enterprise overrides this for the promote window so a hydrate-enqueued task is not consumed and
+     * dropped while the engine is still read-only.
+     */
+    public boolean isMatViewRefreshSuspended() {
+        return false;
+    }
+
+    /**
      * Reports whether this engine currently refuses writes. Reads the LIVE state on every
      * call so callers can re-check it per write batch rather than trusting a value captured
      * earlier (for example, a SecurityContext cached at connection time). The base engine

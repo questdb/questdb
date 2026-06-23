@@ -1413,6 +1413,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
     private boolean processNotifications() {
         boolean refreshed = false;
+        if (engine.isMatViewRefreshSuspended()) {
+            // A role promote has hydrated the real store but not yet opened writes. Do not dequeue or
+            // execute any task while the engine is still read-only -- executing here would refuse the
+            // view WalWriter and drop or mis-handle the hydrate-enqueued catch-up work. The tasks stay
+            // queued and run after the gate clears (writes open).
+            return false;
+        }
         while (stateStore.tryDequeueRefreshTask(refreshTask)) {
             if (checkIfBaseTableDropped(refreshTask)) {
                 continue;
