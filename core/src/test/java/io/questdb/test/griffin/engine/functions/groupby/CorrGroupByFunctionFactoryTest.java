@@ -263,9 +263,11 @@ public class CorrGroupByFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table tbl1(x double, y double)");
             execute("insert into 'tbl1' VALUES (1e153, 1e153), (-1e153, -1e153)");
-            assertSql(
-                    "corr\n1.0\n", "select corr(x, y) from tbl1"
-            );
+            assertQuery("select corr(x, y) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("corr\n1.0\n");
         });
     }
 
@@ -274,9 +276,11 @@ public class CorrGroupByFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table tbl1(x double, y double)");
             execute("insert into 'tbl1' VALUES (1e153, -1e153), (-1e153, 1e153)");
-            assertSql(
-                    "corr\n-1.0\n", "select corr(x, y) from tbl1"
-            );
+            assertQuery("select corr(x, y) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("corr\n-1.0\n");
         });
     }
 

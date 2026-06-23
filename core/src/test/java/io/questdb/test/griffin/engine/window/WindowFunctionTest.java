@@ -1110,36 +1110,30 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "(1, 1, 1e153, 1e153), (2, 1, -1e153, -1e153), " +
                     "(3, 2, 1e153, -1e153), (4, 2, -1e153, 1e153)");
 
-            // Naive code path: corr() over (partition by i) with no order-by.
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, corr(y, x) over (partition by i) cr from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tcr
                             1970-01-01T00:00:00.000001Z\t1\t1.0
                             1970-01-01T00:00:00.000002Z\t1\t1.0
                             1970-01-01T00:00:00.000003Z\t2\t-1.0
                             1970-01-01T00:00:00.000004Z\t2\t-1.0
-                            """),
-                    "select ts, i, corr(y, x) over (partition by i) cr from tab",
-                    "ts",
-                    true,
-                    true
-            );
+                            """));
 
-            // Welford code path: corr() over (partition by i order by ts).
-            // The second row in each partition has count >= 2 and exercises computeCorrWelford.
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+            assertQuery("select ts, i, corr(y, x) over (partition by i order by ts) cr from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
                             ts\ti\tcr
                             1970-01-01T00:00:00.000001Z\t1\tnull
                             1970-01-01T00:00:00.000002Z\t1\t1.0
                             1970-01-01T00:00:00.000003Z\t2\tnull
                             1970-01-01T00:00:00.000004Z\t2\t-1.0
-                            """),
-                    "select ts, i, corr(y, x) over (partition by i order by ts) cr from tab",
-                    "ts",
-                    false,
-                    true
-            );
+                            """));
         });
     }
 
