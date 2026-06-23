@@ -626,6 +626,10 @@ impl<W: Write> ParquetFile<W> {
         self.schema = schema;
     }
 
+    pub fn set_sorting_columns(&mut self, sorting_columns: Option<Vec<SortingColumn>>) {
+        self.sorting_columns = sorting_columns;
+    }
+
     pub fn sorting_columns(&self) -> Option<&[SortingColumn]> {
         self.sorting_columns.as_deref()
     }

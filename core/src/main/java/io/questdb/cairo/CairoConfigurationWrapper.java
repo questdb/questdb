@@ -543,6 +543,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getMatViewRefreshMemoryLimitBytes() {
+        return getDelegate().getMatViewRefreshMemoryLimitBytes();
+    }
+
+    @Override
     public long getMatViewRefreshOomRetryTimeout() {
         return getDelegate().getMatViewRefreshOomRetryTimeout();
     }
@@ -835,6 +840,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getQueryCacheEventQueueCapacity() {
         return getDelegate().getQueryCacheEventQueueCapacity();
+    }
+
+    @Override
+    public long getQueryContinuationWakeIntervalMillis() {
+        return getDelegate().getQueryContinuationWakeIntervalMillis();
+    }
+
+    @Override
+    public long getQueryMemoryLimitBytes() {
+        return getDelegate().getQueryMemoryLimitBytes();
     }
 
     @Override
@@ -1173,8 +1188,8 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlParquetFrameCacheCapacity() {
-        return getDelegate().getSqlParquetFrameCacheCapacity();
+    public long getSqlParquetCacheMemorySize() {
+        return getDelegate().getSqlParquetCacheMemorySize();
     }
 
     @Override
@@ -1213,8 +1228,8 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlSortKeyMaxPages() {
-        return getDelegate().getSqlSortKeyMaxPages();
+    public long getSqlSortKeyMaxBytes() {
+        return getDelegate().getSqlSortKeyMaxBytes();
     }
 
     @Override
@@ -1223,8 +1238,8 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlSortLightValueMaxPages() {
-        return getDelegate().getSqlSortLightValueMaxPages();
+    public long getSqlSortLightValueMaxBytes() {
+        return getDelegate().getSqlSortLightValueMaxBytes();
     }
 
     @Override
@@ -1233,8 +1248,8 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlSortValueMaxPages() {
-        return getDelegate().getSqlSortValueMaxPages();
+    public long getSqlSortValueMaxBytes() {
+        return getDelegate().getSqlSortValueMaxBytes();
     }
 
     @Override
@@ -1248,6 +1263,21 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getSqlWindowCacheMaxBytes() {
+        return getDelegate().getSqlWindowCacheMaxBytes();
+    }
+
+    @Override
+    public String getSqlWindowCacheMaxPagesConfigKey() {
+        return getDelegate().getSqlWindowCacheMaxPagesConfigKey();
+    }
+
+    @Override
+    public int getSqlWindowCacheMaxPagesResolved() {
+        return getDelegate().getSqlWindowCacheMaxPagesResolved();
+    }
+
+    @Override
     public int getSqlWindowInitialRangeBufferSize() {
         return getDelegate().getSqlWindowInitialRangeBufferSize();
     }
@@ -1258,8 +1288,8 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlWindowRowIdMaxPages() {
-        return getDelegate().getSqlWindowRowIdMaxPages();
+    public long getSqlWindowRowIdMaxBytes() {
+        return getDelegate().getSqlWindowRowIdMaxBytes();
     }
 
     @Override
@@ -1278,8 +1308,8 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlWindowTreeKeyMaxPages() {
-        return getDelegate().getSqlWindowTreeKeyMaxPages();
+    public long getSqlWindowTreeKeyMaxBytes() {
+        return getDelegate().getSqlWindowTreeKeyMaxBytes();
     }
 
     @Override
@@ -1353,6 +1383,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getTimerShardCount() {
+        return getDelegate().getTimerShardCount();
+    }
+
+    @Override
     public int getTxnScoreboardEntryCount() {
         return getDelegate().getTxnScoreboardEntryCount();
     }
@@ -1385,6 +1420,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getWalApplyLookAheadTransactionCount() {
         return getDelegate().getWalApplyLookAheadTransactionCount();
+    }
+
+    @Override
+    public long getWalApplyMemoryLimitBytes() {
+        return getDelegate().getWalApplyMemoryLimitBytes();
     }
 
     @Override
@@ -1523,6 +1563,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isCairoSqlLegacyUnionColumnPropagation() {
+        return getDelegate().isCairoSqlLegacyUnionColumnPropagation();
+    }
+
+    @Override
     public boolean isCheckpointRecoveryEnabled() {
         return getDelegate().isCheckpointRecoveryEnabled();
     }
@@ -1628,6 +1673,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlDistinctGroupByRewriteEnabled() {
+        return getDelegate().isSqlDistinctGroupByRewriteEnabled();
+    }
+
+    @Override
     public boolean isSqlJitDebugEnabled() {
         return getDelegate().isSqlJitDebugEnabled();
     }
@@ -1670,6 +1720,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isSqlParquetRowGroupPruningEnabled() {
         return getDelegate().isSqlParquetRowGroupPruningEnabled();
+    }
+
+    @Override
+    public boolean isSqlWindowCachedLightEnabled() {
+        return getDelegate().isSqlWindowCachedLightEnabled();
     }
 
     @Override

@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.RecordArray;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -153,12 +154,21 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
         RecordCursor masterCursor = masterFactory.getCursor(executionContext);
         RecordCursor slaveCursor = null;
         try {
+            // emitJoinRecord() revisits master rows via recordAt() in output (master_ts +
+            // offset) order, so the set of simultaneously active master rows spans the offset
+            // grid. A wide horizon over fine partitions can keep more than MONOTONIC's 4 frames
+            // live at once, so SCATTERED avoids re-decode thrash (at the cost of the full budget).
+            masterCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
             slaveCursor = slaveFactory.getCursor(executionContext);
-            cursor.of(masterCursor, slaveCursor, executionContext.getCircuitBreaker());
+            cursor.of(masterCursor, slaveCursor, executionContext);
             return cursor;
         } catch (Throwable ex) {
             Misc.free(masterCursor);
             Misc.free(slaveCursor);
+            // of() binds the per-query tracker before materializing the slave; close() frees the
+            // partial RecordArray under that tracker. master/slave are adopted only after the
+            // materialization, so this does not double-free them.
+            Misc.free(cursor);
             throw ex;
         }
     }
@@ -190,6 +200,7 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
     @Override
     protected void _close() {
         Misc.freeIfCloseable(getMetadata());
+        Misc.free(cursor);
         Misc.free(masterFactory);
         Misc.free(slaveFactory);
     }
@@ -596,14 +607,14 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
             emittedRowCount = 0;
         }
 
-        void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
-            this.masterCursor = masterCursor;
-            this.masterRecord = masterCursor.getRecord();
-            this.slaveCursor = slaveCursor;
-            this.circuitBreaker = circuitBreaker;
+        void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext executionContext) {
+            final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
 
-            // Materialize the slave cursor into RecordArray to enable random access
+            // Materialize the slave cursor into RecordArray to enable random access.
+            // Bind the per-query tracker before the first put so the materialization is charged to
+            // (and capped by) the query memory limit; clear() releases any prior backing first.
             slaveRecordArray.clear();
+            slaveRecordArray.setMemoryTracker(executionContext.getMemoryTracker());
             slaveRecordOffsets.clear();
             if (slaveCursor.size() > Integer.MAX_VALUE) {
                 throw CairoException.critical(-1)
@@ -640,6 +651,14 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
             // Free any existing iterator blocks from previous execution
             freeAllIteratorBlocks();
             resetLocalState();
+
+            // Adopt the cursors last: the materialization above can breach the query memory limit,
+            // and the factory getCursor() catch frees the local cursors plus this cursor's partial
+            // RecordArray. Assigning here keeps a breach from double-freeing master/slave.
+            this.masterCursor = masterCursor;
+            this.masterRecord = masterCursor.getRecord();
+            this.slaveCursor = slaveCursor;
+            this.circuitBreaker = circuitBreaker;
         }
     }
 }

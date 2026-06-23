@@ -39,102 +39,114 @@ public class BrokenIntReadTest extends AbstractCairoTest {
 
     @Test
     public void testFailToReadInt_ColumnCountOfFirstTable() throws Exception {
-        String expected = "adrelid\tadnum\tadbin\n" +
-                "2\t1\t\n" +
-                "2\t2\t\n" +
-                "2\t3\t\n" +
-                "2\t4\t\n" +
-                "2\t5\t\n" +
-                "2\t1\t\n" +
-                "2\t2\t\n" +
-                "2\t3\t\n" +
-                "2\t4\t\n" +
-                "2\t5\t\n";
+        String expected = """
+                adrelid\tadnum\tadbin
+                2\t1\t
+                2\t2\t
+                2\t3\t
+                2\t4\t
+                2\t5\t
+                2\t1\t
+                2\t2\t
+                2\t3\t
+                2\t4\t
+                2\t5\t
+                """;
 
         testFailOnRead(2, expected);
     }
 
     @Test
     public void testFailToReadInt_ColumnCountOfSecondTable() throws Exception {
-        String expected = "adrelid\tadnum\tadbin\n" +
-                "2\t1\t\n" +
-                "2\t2\t\n" +
-                "2\t3\t\n" +
-                "2\t4\t\n" +
-                "2\t5\t\n" +
-                "2\t1\t\n" +
-                "2\t2\t\n" +
-                "2\t3\t\n" +
-                "2\t4\t\n" +
-                "2\t5\t\n";
+        String expected = """
+                adrelid\tadnum\tadbin
+                2\t1\t
+                2\t2\t
+                2\t3\t
+                2\t4\t
+                2\t5\t
+                2\t1\t
+                2\t2\t
+                2\t3\t
+                2\t4\t
+                2\t5\t
+                """;
 
         testFailOnRead(4, expected);
     }
 
     @Test
     public void testFailToReadInt_ColumnCountOfThirdTable() throws Exception {
-        String expected = "adrelid\tadnum\tadbin\n" +
-                "2\t1\t\n" +
-                "2\t2\t\n" +
-                "2\t3\t\n" +
-                "2\t4\t\n" +
-                "2\t5\t\n" +
-                "2\t1\t\n" +
-                "2\t2\t\n" +
-                "2\t3\t\n" +
-                "2\t4\t\n" +
-                "2\t5\t\n";
+        String expected = """
+                adrelid\tadnum\tadbin
+                2\t1\t
+                2\t2\t
+                2\t3\t
+                2\t4\t
+                2\t5\t
+                2\t1\t
+                2\t2\t
+                2\t3\t
+                2\t4\t
+                2\t5\t
+                """;
 
         testFailOnRead(6, expected);
     }
 
     @Test
     public void testFailToReadInt_TableIdOfFirstTable() throws Exception {
-        String expected = "adrelid\tadnum\tadbin\n" +
-                "2\t1\t\n" +
-                "2\t2\t\n" +
-                "2\t3\t\n" +
-                "2\t4\t\n" +
-                "2\t5\t\n" +
-                "2\t1\t\n" +
-                "2\t2\t\n" +
-                "2\t3\t\n" +
-                "2\t4\t\n" +
-                "2\t5\t\n";
+        String expected = """
+                adrelid\tadnum\tadbin
+                2\t1\t
+                2\t2\t
+                2\t3\t
+                2\t4\t
+                2\t5\t
+                2\t1\t
+                2\t2\t
+                2\t3\t
+                2\t4\t
+                2\t5\t
+                """;
 
         testFailOnRead(1, expected);
     }
 
     @Test
     public void testFailToReadInt_TableIdOfSecondTable() throws Exception {
-        String expected = "adrelid\tadnum\tadbin\n" +
-                "2\t1\t\n" +
-                "2\t2\t\n" +
-                "2\t3\t\n" +
-                "2\t4\t\n" +
-                "2\t5\t\n" +
-                "2\t1\t\n" +
-                "2\t2\t\n" +
-                "2\t3\t\n" +
-                "2\t4\t\n" +
-                "2\t5\t\n";
+        String expected = """
+                adrelid\tadnum\tadbin
+                2\t1\t
+                2\t2\t
+                2\t3\t
+                2\t4\t
+                2\t5\t
+                2\t1\t
+                2\t2\t
+                2\t3\t
+                2\t4\t
+                2\t5\t
+                """;
 
         testFailOnRead(3, expected);
     }
 
     @Test
     public void testFailToReadInt_TableIdOfThirdTable() throws Exception {
-        String expected = "adrelid\tadnum\tadbin\n" +
-                "2\t1\t\n" +
-                "2\t2\t\n" +
-                "2\t3\t\n" +
-                "2\t4\t\n" +
-                "2\t5\t\n" +
-                "2\t1\t\n" +
-                "2\t2\t\n" +
-                "2\t3\t\n" +
-                "2\t4\t\n" +
-                "2\t5\t\n";
+        String expected = """
+                adrelid\tadnum\tadbin
+                2\t1\t
+                2\t2\t
+                2\t3\t
+                2\t4\t
+                2\t5\t
+                2\t1\t
+                2\t2\t
+                2\t3\t
+                2\t4\t
+                2\t5\t
+                """;
 
         testFailOnRead(5, expected);
     }
@@ -185,13 +197,9 @@ public class BrokenIntReadTest extends AbstractCairoTest {
         ff = new BrokenIntRead(i);
         assertMemoryLeak(ff, () -> {
             createTables(ff);
-            printSqlResult(
-                    expected,
-                    "pg_catalog.pg_attrdef order by 1",
-                    null,
-                    true,
-                    false
-            );
+            assertQuery("pg_catalog.pg_attrdef order by 1")
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 

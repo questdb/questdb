@@ -28,7 +28,6 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.std.Files;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.Os;
-import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
@@ -61,8 +60,14 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     public static final int FILE_TOO_SMALL = METADATA_VERSION_MISMATCH - 1;
     public static final int SEQUENCER_METADATA_OPEN_FAILED = FILE_TOO_SMALL - 1;
     public static final int NON_CRITICAL = -1;
+    // Single source of truth for the write-refusal message a read-only node emits. Both a static
+    // read-only OSS instance and an enterprise node acting as a read-only replica reach this
+    // message, so the wording stays in one place to keep every emitter consistent and to make a
+    // future role-neutral reword a one-line change. The wording is retained as-is because the
+    // string is asserted across roughly twenty OSS/enterprise/e2e test files; centralizing the
+    // literal first lets any later reword land without scattering the change.
+    public static final String READ_ONLY_ACCESS_MESSAGE = "replica access is read-only";
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
-    private static final ThreadLocal<CairoException> tlException = new ThreadLocal<>(CairoException::new);
     protected final StringSink message = new StringSink();
     protected final StringSink nativeBacktrace = new StringSink();
     protected int errno;
@@ -419,9 +424,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     }
 
     private static CairoException instance(int errno) {
-        CairoException ex = tlException.get();
-        // This is to have correct stack trace in local debugging with -ea option
-        assert (ex = new CairoException()) != null;
+        // With continuations there is a possibility that multiple
+        // threads use the same instance with thread local / carrier local.
+        // Abolish ThreadLocal exception idea
+        CairoException ex = new CairoException();
         ex.clear(errno);
         return ex;
     }

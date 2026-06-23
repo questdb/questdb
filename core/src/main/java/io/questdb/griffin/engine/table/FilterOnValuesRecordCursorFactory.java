@@ -227,6 +227,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
     protected void _close() {
         super._close();
         Misc.free(filter);
+        Misc.free(rowCursorFactory);
         Misc.free(cursor);
         Misc.freeObjList(cursorFactories);
     }

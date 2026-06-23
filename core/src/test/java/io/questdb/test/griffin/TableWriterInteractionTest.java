@@ -69,14 +69,11 @@ public class TableWriterInteractionTest extends AbstractCairoTest {
                 w.commit();
             }
 
-            TestUtils.assertSql(
-                    engine,
-                    sqlExecutionContext,
-                    "xyz where x = 'ELLO'",
-                    sink,
-                    "timestamp\tx\ty\n" +
-                            "2019-04-29T12:00:04.877721Z\tELLO\ttest\n"
-            );
+            assertQuery("xyz where x = 'ELLO'")
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .returns("timestamp\tx\ty\n" +
+                            "2019-04-29T12:00:04.877721Z\tELLO\ttest\n");
         });
     }
 }

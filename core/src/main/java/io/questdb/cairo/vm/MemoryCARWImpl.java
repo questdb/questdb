@@ -30,11 +30,13 @@ import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Long256Acceptor;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * A version of {@link MemoryPARWImpl} that uses a single contiguous memory region instead of pages.
@@ -46,13 +48,26 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
     private static final Log LOG = LogFactory.getLog(MemoryCARWImpl.class);
     private final Long256Acceptor long256Acceptor = this::putLong256;
     private final int maxPages;
+    private final String maxPagesConfigKey;
     private final int memoryTag;
     private long appendAddress = 0;
+    // Per-query native memory tracker bound by the owning factory / function at
+    // cursor or init() time. Null when no per-query limit applies; all
+    // Unsafe.{malloc,realloc,free} calls degrade to the global-only overloads
+    // in that case. The class is lazy by design (the constructor does not
+    // allocate native memory), so a setter is enough (no openOnInit knob).
+    @Nullable
+    private MemoryTracker memoryTracker;
     private long sizeMsb;
 
     public MemoryCARWImpl(long pageSize, int maxPages, int memoryTag) {
+        this(pageSize, maxPages, memoryTag, null);
+    }
+
+    public MemoryCARWImpl(long pageSize, int maxPages, int memoryTag, String maxPagesConfigKey) {
         this.memoryTag = memoryTag;
         this.maxPages = maxPages;
+        this.maxPagesConfigKey = maxPagesConfigKey;
         setPageSize(pageSize);
     }
 
@@ -80,7 +95,7 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
         super.clear();
         if (pageAddress != 0) {
             long baseLength = lim - pageAddress;
-            Unsafe.free(pageAddress, baseLength, memoryTag);
+            Unsafe.free(pageAddress, baseLength, memoryTag, memoryTracker);
             handleMemoryReleased();
             size = 0;
         }
@@ -137,6 +152,11 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
         putLong256(hexString, start, end, long256Acceptor);
     }
 
+    @Override
+    public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        this.memoryTracker = tracker;
+    }
+
     /**
      * Skips given number of bytes. Same as logically appending 0-bytes. Advantage of this method is that
      * no memory write takes place.
@@ -190,7 +210,12 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
         }
 
         if (newPageCount > maxPages) {
-            throw LimitOverflowException.instance().put("Maximum number of pages (").put(maxPages).put(") breached in VirtualMemory");
+            LimitOverflowException ex = LimitOverflowException.instance();
+            ex.put("Maximum number of pages (").put(maxPages).put(") breached in VirtualMemory");
+            if (maxPagesConfigKey != null) {
+                ex.put(" (raise ").put(maxPagesConfigKey).put(')');
+            }
+            throw ex;
         }
 
         long newBaseAddress;
@@ -247,12 +272,12 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
     protected long reallocateMemory(long currentBaseAddress, long currentSize, long newSize) {
         if (currentBaseAddress != 0) {
             if (currentSize != newSize) {
-                return Unsafe.realloc(currentBaseAddress, currentSize, newSize, memoryTag);
+                return Unsafe.realloc(currentBaseAddress, currentSize, newSize, memoryTag, memoryTracker);
             } else {
                 return currentBaseAddress;
             }
         }
-        return Unsafe.malloc(newSize, memoryTag);
+        return Unsafe.malloc(newSize, memoryTag, memoryTracker);
     }
 
     protected final void setPageSize(long size) {

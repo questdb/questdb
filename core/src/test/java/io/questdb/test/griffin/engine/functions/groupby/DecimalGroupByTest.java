@@ -83,7 +83,7 @@ public class DecimalGroupByTest extends AbstractCairoTest {
                 continue;
             }
             try {
-                assertAvgFuzz(rnd, precision, scale, targetScale, 3, 10, 1000);
+                assertAvgFuzz(rnd, precision, scale, targetScale);
             } catch (Throwable th) {
                 System.err.printf("Failed at iteration %d with precision %d, scale %d and targetScale %d\n", i, precision, scale, targetScale);
                 throw th;
@@ -787,7 +787,7 @@ public class DecimalGroupByTest extends AbstractCairoTest {
             int precision = rnd.nextInt(72) + 1;
             int scale = rnd.nextInt(precision);
             try {
-                assertSumFuzz(rnd, precision, scale, 3, 10, 1000);
+                assertSumFuzz(rnd, precision, scale);
             } catch (Throwable th) {
                 System.err.printf("Failed at iteration %d with precision %d and scale %d\n", i, precision, scale);
                 throw th;
@@ -886,8 +886,8 @@ public class DecimalGroupByTest extends AbstractCairoTest {
         assertAvg(precision, scale, targetScale, src256, dst256);
     }
 
-    private void assertAvgFuzz(Rnd rnd, int precision, int scale, int targetScale, int nanRate, int nMaps, int maxRowsPerMap) {
-        try (var loader = new RandomDecimalLoader(rnd, precision, scale, nanRate)) {
+    private void assertAvgFuzz(Rnd rnd, int precision, int scale, int targetScale) {
+        try (var loader = new RandomDecimalLoader(rnd, precision, scale, 3)) {
             GroupByFunction func;
             if (scale == targetScale) {
                 func = AvgDecimalGroupByFunctionFactory.newInstance(loader, 0);
@@ -900,8 +900,8 @@ public class DecimalGroupByTest extends AbstractCairoTest {
 
             var maps = new LinkedList<MapValue>();
             loader.reset();
-            for (int i = 0; i < nMaps; i++) {
-                var map = buildMap(types.getColumnCount(), func, rnd.nextPositiveInt() % maxRowsPerMap);
+            for (int i = 0; i < 10; i++) {
+                var map = buildMap(types.getColumnCount(), func, rnd.nextPositiveInt() % 1000);
                 maps.push(map);
             }
 
@@ -1018,8 +1018,8 @@ public class DecimalGroupByTest extends AbstractCairoTest {
         }
     }
 
-    private void assertSumFuzz(Rnd rnd, int precision, int scale, int nanRate, int nMaps, int maxRowsPerMap) {
-        try (var loader = new RandomDecimalLoader(rnd, precision, scale, nanRate)) {
+    private void assertSumFuzz(Rnd rnd, int precision, int scale) {
+        try (var loader = new RandomDecimalLoader(rnd, precision, scale, 3)) {
             GroupByFunction func;
             func = SumDecimalGroupByFunctionFactory.newInstance(loader, 0);
 
@@ -1027,9 +1027,9 @@ public class DecimalGroupByTest extends AbstractCairoTest {
             func.initValueTypes(types);
 
             var maps = new LinkedList<Triple<MapValue, BigDecimal, Integer>>();
-            for (int i = 0; i < nMaps; i++) {
+            for (int i = 0; i < 10; i++) {
                 loader.reset();
-                var map = buildMap(types.getColumnCount(), func, rnd.nextPositiveInt() % maxRowsPerMap);
+                var map = buildMap(types.getColumnCount(), func, rnd.nextPositiveInt() % 1000);
                 var acc = loader.getAccumulator();
                 var count = loader.getCount();
                 // Check that the accumulation worked properly on a per-map basis
@@ -1127,7 +1127,14 @@ public class DecimalGroupByTest extends AbstractCairoTest {
                                     ddl,
                                     sqlExecutionContext
                             );
-                            TestUtils.assertSql(engine, sqlExecutionContext, query, sink, expected);
+                            assertQuery(query)
+                                    .withEngine(engine)
+                                    .withContext(sqlExecutionContext)
+                                    .noLeakCheck()
+                                    .inferTimestamp()
+                                    .inferRandomAccess()
+                                    .sizeMayVary()
+                                    .returns(expected);
                         },
                         configuration,
                         LOG

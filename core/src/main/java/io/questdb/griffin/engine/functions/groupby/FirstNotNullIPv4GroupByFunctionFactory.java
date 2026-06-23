@@ -87,8 +87,12 @@ public class FirstNotNullIPv4GroupByFunctionFactory implements FunctionFactory {
 
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
-            if (mapValue.getIPv4(valueIndex + 1) == Numbers.IPv4_NULL) {
-                computeFirst(mapValue, record, rowId);
+            final int value = arg.getIPv4(record);
+            if (value != Numbers.IPv4_NULL) {
+                if (mapValue.getIPv4(valueIndex + 1) == Numbers.IPv4_NULL || rowId < mapValue.getLong(valueIndex)) {
+                    mapValue.putLong(valueIndex, rowId);
+                    mapValue.putInt(valueIndex + 1, value);
+                }
             }
         }
 

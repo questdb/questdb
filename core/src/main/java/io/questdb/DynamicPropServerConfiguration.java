@@ -100,6 +100,11 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
             PropertyKey.CAIRO_PARQUET_EXPORT_COPY_REPORT_FREQUENCY_LINES,
             PropertyKey.CAIRO_SQL_COPY_EXPORT_ROOT,
             PropertyKey.CAIRO_SQL_COPIER_CHUNKED,
+            PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES,
+            PropertyKey.CAIRO_MAT_VIEW_REFRESH_MEMORY_LIMIT_BYTES,
+            PropertyKey.CAIRO_WAL_APPLY_MEMORY_LIMIT_BYTES,
+            PropertyKey.MEMORY_USAGE_LOG_ENABLED,
+            PropertyKey.MEMORY_USAGE_LOG_INTERVAL,
             PropertyKey.QWP_EGRESS_COMPRESSION_FORCE_LEVEL
     ));
     private static final Function<String, ? extends ConfigPropertyKey> keyResolver = (k) -> {

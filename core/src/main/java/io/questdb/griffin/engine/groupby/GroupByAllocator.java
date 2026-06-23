@@ -25,8 +25,10 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.Reopenable;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 /**
@@ -51,4 +53,13 @@ public interface GroupByAllocator extends QuietCloseable, Mutable, Reopenable {
     long malloc(long size);
 
     long realloc(long ptr, long oldSize, long newSize);
+
+    /**
+     * Binds the per-query native memory tracker. Must be called before the
+     * backing chunks are (re)allocated via {@link #reopen()} so that the
+     * tracker observes both the allocator's chunks and all GROUP BY function
+     * state allocated through it. A {@code null} tracker degrades to
+     * global-only accounting.
+     */
+    void setMemoryTracker(@Nullable MemoryTracker tracker);
 }

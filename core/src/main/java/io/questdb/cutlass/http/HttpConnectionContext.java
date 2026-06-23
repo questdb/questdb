@@ -238,6 +238,15 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         LOG.debug().$("closed [fd=").$(fd).I$();
     }
 
+    public void drainRecvBuffer() {
+        try {
+            while (socket.recv(recvBuffer, recvBufferSize) > 0) {
+                // discard
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
     @Override
     public void fail(HttpRequestProcessorSelector selector, HttpException e) throws PeerIsSlowToReadException, ServerDisconnectException {
         LOG.info().$("failed to retry query [fd=").$(getFd()).I$();
@@ -439,15 +448,6 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
     public void resumeResponseSend() throws PeerIsSlowToReadException, PeerDisconnectedException {
         responseSink.resumeSend();
-    }
-
-    public void drainRecvBuffer() {
-        try {
-            while (socket.recv(recvBuffer, recvBufferSize) > 0) {
-                // discard
-            }
-        } catch (Throwable ignored) {
-        }
     }
 
     public void scheduleRetry(HttpRequestProcessor processor, RescheduleContext rescheduleContext) throws PeerIsSlowToReadException, ServerDisconnectException {
@@ -1157,8 +1157,12 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         final HttpRequestProcessor processor = resolveResumeProcessor(selector);
         try {
             processor.resumeRecv(this);
-            // resumeRecv is not designed to complete normally (has a while-true loop). This line is unreachable.
-            return true;
+
+            // resumeRecv() returned normally -> the processor is ready to read from a websocket again.
+            // We don't return true, because that would make the infrastructure call us immediately again
+            // and we would monopolize the thread. Instead, we use PeerIsSlowToWriteException as a signal
+            // to be registered for reading. This gives the worker thread a chance to run other processors.
+            throw registerDispatcherRead();
         } catch (PeerIsSlowToReadException | PeerIsSlowToWriteException e) {
             // Need more data from/to peer
             throw e;

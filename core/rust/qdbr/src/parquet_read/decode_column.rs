@@ -95,6 +95,7 @@ pub fn decode_single_timestamp_value(
         row_hi,
         column_name,
         row_group_index,
+        true,
     )?;
     if bufs.data_vec.len() < 8 {
         return Err(fmt_err!(
@@ -160,6 +161,11 @@ pub fn decode_column_chunk_with_params(
     row_hi: usize,
     column_name: &str,
     row_group_index: usize,
+    // When false, the existing buffer contents are kept and this chunk is appended
+    // after them. Used to decode a contiguous run of row groups into one buffer
+    // (see parquet_meta_decode::decode_row_group_range). The var-size sinks write
+    // absolute data_vec offsets, so appended chunks stay internally consistent.
+    reset_bufs: bool,
 ) -> ParquetResult<usize> {
     let page_reader = SlicePageReader::from_parts(
         file_data,
@@ -183,8 +189,10 @@ pub fn decode_column_chunk_with_params(
         ..
     } = ctx;
 
-    varchar_slice_buf_pool.append(&mut bufs.page_buffers);
-    bufs.reset();
+    if reset_bufs {
+        varchar_slice_buf_pool.append(&mut bufs.page_buffers);
+        bufs.reset();
+    }
 
     let mut varchar_slice_page_bufs: Vec<Vec<u8>> = Vec::new();
     varchar_slice_dict_bufs.clear();
@@ -294,7 +302,7 @@ pub fn decode_column_chunk_with_params(
         varchar_slice_dict_bufs,
         varchar_slice_buf_pool,
     );
-    bufs.refresh_ptrs();
+    bufs.refresh_ptrs()?;
     Ok(row_count)
 }
 
@@ -543,7 +551,7 @@ pub fn decode_column_chunk_filtered_with_params<const FILL_NULLS: bool>(
         varchar_slice_dict_bufs,
         varchar_slice_buf_pool,
     );
-    bufs.refresh_ptrs();
+    bufs.refresh_ptrs()?;
     if FILL_NULLS {
         Ok(row_hi - row_lo)
     } else {
@@ -706,6 +714,7 @@ mod tests {
             row_hi,
             "col",
             0,
+            true,
         )
         .unwrap();
 
@@ -951,6 +960,7 @@ mod tests {
             5,
             "col",
             0,
+            true,
         );
         assert!(
             result.is_err(),

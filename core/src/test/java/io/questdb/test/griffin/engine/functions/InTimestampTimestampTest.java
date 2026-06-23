@@ -26,30 +26,19 @@ package io.questdb.test.griffin.engine.functions;
 
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.SqlException;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.tools.BindVariableTestTuple;
+import io.questdb.test.tools.BindVarTuple;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class InTimestampTimestampTest extends AbstractCairoTest {
 
     @Test
-    public void testBindVarRuntimeConstantsWithConstant() throws SqlException {
-        execute("""
-                create table MovementLog(
-                ts timestamp,
-                initParticipantId long,
-                initParticipantIdType symbol,
-                movementBusinessDate date,
-                slotId timestamp
-                ) timestamp(ts) partition by day wal
-                """);
-
-        final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
-        tuples.add(new BindVariableTestTuple(
+    public void testBindVarRuntimeConstantsWithConstant() throws Exception {
+        final ObjList<BindVarTuple> cases = new ObjList<>();
+        cases.add(BindVarTuple.ok(
                 "runtime constants",
                 "participantId\tparticipantIdType\n",
                 bindVariableService -> {
@@ -59,21 +48,29 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
                 }
         ));
 
-        assertSql("""
+        assertQuery("""
                 SELECT DISTINCT initParticipantId AS participantId, initParticipantIdType AS participantIdType
                 FROM 'MovementLog'
                 WHERE movementBusinessDate=$1 AND slotId IN ($2, '1970-01-01T00:00:00.005000Z', $3)
                 ORDER BY participantId
-                LIMIT 0,6""", tuples);
+                LIMIT 0,6""")
+                .ddl("""
+                        create table MovementLog(
+                        ts timestamp,
+                        initParticipantId long,
+                        initParticipantIdType symbol,
+                        movementBusinessDate date,
+                        slotId timestamp
+                        ) timestamp(ts) partition by day wal
+                        """)
+                .assertBinds(cases);
     }
 
     @Test
-    public void testBindVarTypeChange() throws SqlException {
-        execute("create table test as (select rnd_int() a, timestamp_sequence(0, 1000) ts from long_sequence(100))");
-
+    public void testBindVarTypeChange() throws Exception {
         // when more than one argument supplied, the function will match exact values from the list
-        final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
-        tuples.add(new BindVariableTestTuple(
+        final ObjList<BindVarTuple> cases = new ObjList<>();
+        cases.add(BindVarTuple.ok(
                 "simple",
                 """
                         a\tts
@@ -88,7 +85,7 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
                 }
         ));
 
-        tuples.add(new BindVariableTestTuple(
+        cases.add(BindVarTuple.ok(
                 "type change",
                 """
                         a\tts
@@ -103,7 +100,7 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
                 }
         ));
 
-        tuples.add(new BindVariableTestTuple(
+        cases.add(BindVarTuple.ok(
                 "type change with varchar",
                 """
                         a\tts
@@ -118,24 +115,26 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
                 }
         ));
 
-        assertSql("test where ts in ($1,$2,$3)", tuples);
+        assertQuery("test where ts in ($1,$2,$3)")
+                .ddl("create table test as (select rnd_int() a, timestamp_sequence(0, 1000) ts from long_sequence(100))")
+                .assertBinds(cases);
     }
 
     @Test
-    public void testIntervalBindVariable() throws SqlException {
+    public void testIntervalBindVariable() throws Exception {
         execute("create table test as (select rnd_int() a, timestamp_sequence(0, 1000) ts from long_sequence(10000))");
 
         // baseline
-        assertSql(
-                """
+        assertQuery("select timestamp_floor('1s', ts), count() from test where ts in '1970-01-01T00:00:02'")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         timestamp_floor\tcount
                         1970-01-01T00:00:02.000000Z\t1000
-                        """,
-                "select timestamp_floor('1s', ts), count() from test where ts in '1970-01-01T00:00:02'"
-        );
+                        """);
 
-        final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
-        tuples.add(new BindVariableTestTuple(
+        final ObjList<BindVarTuple> cases = new ObjList<>();
+        cases.add(BindVarTuple.ok(
                 "2s",
                 """
                         timestamp_floor\tcount
@@ -144,14 +143,14 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
                 bindVariableService -> bindVariableService.setStr(0, "1970-01-01T00:00:02")
         ));
 
-        tuples.add(new BindVariableTestTuple(
+        cases.add(BindVarTuple.fails(
                 "int interval",
+                64,
                 "unsupported bind variable type [INT] expected one of [STRING or VARCHAR]",
-                bindVariableService -> bindVariableService.setInt(0, 10),
-                64
+                bindVariableService -> bindVariableService.setInt(0, 10)
         ));
 
-        tuples.add(new BindVariableTestTuple(
+        cases.add(BindVarTuple.ok(
                 "2s",
                 """
                         timestamp_floor\tcount
@@ -160,47 +159,40 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
                 bindVariableService -> bindVariableService.setStr(0, "1970-01-01T00:00:03")
         ));
 
-        assertSql(
-                "select timestamp_floor('1s', ts), count() from test where ts in $1",
-                tuples
-        );
+        assertQuery("select timestamp_floor('1s', ts), count() from test where ts in $1")
+                .noLeakCheck()
+                .expectSize()
+                .assertBinds(cases);
     }
 
     @Test
-    public void testListOfTimestamps() throws SqlException {
+    public void testListOfTimestamps() throws Exception {
         execute("create table test as (select rnd_int() a, timestamp_sequence(0, 1000) ts from long_sequence(100))");
 
-        assertSql(
-                """
+        assertQuery("test where ts in ('1970-01-01T00:00:00.070000Z', 77000, '1970-01-01'::date)")
+                .noLeakCheck()
+                .returns("""
                         a\tts
                         -1148479920\t1970-01-01T00:00:00.000000Z
                         -2144581835\t1970-01-01T00:00:00.070000Z
                         -296610933\t1970-01-01T00:00:00.077000Z
-                        """,
-                "test where ts in ('1970-01-01T00:00:00.070000Z', 77000, '1970-01-01'::date)"
-        );
+                        """);
     }
 
     @Test
     public void testListOfTimestampsInvalidInput() throws Exception {
         execute("create table test as (select rnd_int() a, timestamp_sequence(0, 1000) ts from long_sequence(100))");
 
-        assertException(
-                "test where ts in ('1970-01-01T00:00:0.070000Z', 'abc')",
-                18,
-                "Invalid date [str=1970-01-01T00:00:0.070000Z]"
-        );
+        assertQuery("test where ts in ('1970-01-01T00:00:0.070000Z', 'abc')")
+                .fails(18, "Invalid date [str=1970-01-01T00:00:0.070000Z]");
     }
 
     @Test
     public void testListOfTimestampsUnsupportedType() throws Exception {
         execute("create table test as (select rnd_int() a, timestamp_sequence(0, 1000) ts from long_sequence(100))");
 
-        assertException(
-                "test where ts in ('1970-01-01T00:00:00.070000Z', true)",
-                49,
-                "cannot compare TIMESTAMP with type BOOLEAN"
-        );
+        assertQuery("test where ts in ('1970-01-01T00:00:00.070000Z', true)")
+                .fails(49, "cannot compare TIMESTAMP with type BOOLEAN");
     }
 
     @Test

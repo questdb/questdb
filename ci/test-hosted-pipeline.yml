@@ -1,0 +1,40 @@
+# On-demand macOS/Windows test pipeline.
+trigger: none
+
+pr:
+  branches:
+    include:
+      - master
+  drafts: false
+
+variables:
+  QDB_LOG_W_FILE_LOCATION: "$(Build.BinariesDirectory)/tests.log"
+  ARCHIVED_LOGS: "$(Build.ArtifactStagingDirectory)/questdb-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk).zip"
+  DIFF_COVER_THRESHOLD_PCT: 50
+  excludeTests: ""
+  includeTests: "%regex[.*[^o].class]"
+  MAVEN_CACHE_FOLDER: $(HOME)/.m2/repository
+  MAVEN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx3g -XX:+UseParallelGC"
+  # Kept in sync with test-pipeline.yml. These hosted (mac/windows) agents resolve from
+  # Maven Central, not the cache, so the retry is a harmless no-op for them; keeping
+  # MAVEN_RUN_OPTS identical across pipelines avoids drift. See test-pipeline.yml for rationale.
+  MAVEN_RUN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Dmaven.resolver.transport=wagon -Dmaven.wagon.httpconnectionManager.ttlSeconds=30 -Dmaven.wagon.http.retryHandler.count=3 "
+  MAVEN_VERSION: "version"
+  MAVEN_VERSION_OPTION: "Default"
+  # Hosted mac/windows jobs (hosted-jobs.yml) override this to "-pl core -am" and
+  # drop the unused web console.
+  TEST_REACTOR_ARGS: ""
+  WEB_CONSOLE_PROFILE: "-P build-web-console"
+
+stages:
+  - stage: CheckChanges
+    displayName: "Check Changes"
+    jobs:
+      - template: templates/check-changes-job.yml
+
+  - stage: HostedRunTestsBranches
+    displayName: "Hosted Running tests"
+    dependsOn:
+      - CheckChanges
+    jobs:
+      - template: templates/hosted-jobs.yml

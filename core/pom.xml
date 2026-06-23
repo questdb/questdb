@@ -33,10 +33,10 @@
         <outputPath>target</outputPath>
         <runtime.assembly>none</runtime.assembly>
         <javac.target>25</javac.target>
-        <argLine>-ea -Dfile.encoding=UTF-8 -XX:+UseParallelGC --sun-misc-unsafe-memory-access=allow --enable-native-access=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.reflect=ALL-UNNAMED --add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/java.time.zone=ALL-UNNAMED</argLine>
+        <argLine>-ea -Dfile.encoding=UTF-8 -XX:+UseParallelGC --sun-misc-unsafe-memory-access=allow --enable-native-access=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.reflect=ALL-UNNAMED --add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/java.time.zone=ALL-UNNAMED --add-exports=java.base/jdk.internal.vm=ALL-UNNAMED --add-exports=java.base/jdk.internal.vm=io.questdb</argLine>
         <test.exclude>None</test.exclude>
         <test.include>%regex[.*[^o].class]</test.include><!-- exclude module-info.class-->
-        <web.console.version>1.2.2</web.console.version>
+        <web.console.version>1.2.3</web.console.version>
         <qdbr.path>rust/qdbr</qdbr.path>
         <qdbr.release>false</qdbr.release>
 
@@ -45,10 +45,10 @@
         -->
         <qdbr.rustflags>-D warnings</qdbr.rustflags>
 
-        <questdb.client.version>1.3.2</questdb.client.version>
+        <questdb.client.version>1.3.5-SNAPSHOT</questdb.client.version>
     </properties>
 
-    <version>9.4.1-SNAPSHOT</version>
+    <version>9.4.4-SNAPSHOT</version>
     <groupId>org.questdb</groupId>
     <artifactId>questdb</artifactId>
     <packaging>jar</packaging>
@@ -99,6 +99,8 @@
                     <compilerArgs>
                         <arg>-J-XX:-TieredCompilation</arg>
                         <arg>-J-XX:TieredStopAtLevel=1</arg>
+                        <arg>--add-exports=java.base/jdk.internal.vm=io.questdb</arg>
+                        <arg>--add-exports=java.base/jdk.internal.vm=io.questdb.test</arg>
                     </compilerArgs>
                     <fork>true</fork>
                     <source>${javac.compile.source}</source>
@@ -234,9 +236,35 @@
 
     <profiles>
         <profile>
+            <!-- CI gives every surefire fork (and any replacement fork that reuses a slot) its own
+                 test log path, so a dead fork's lingering Windows file handle cannot make the next
+                 fork die reopening a shared tests.log with ERROR_SHARING_VIOLATION (errno=32).
+                 Active only when QDB_LOG_W_FILE_LOCATION is exported (CI); local runs are unchanged.
+                 forkNumber separates concurrent forks, %p (the JVM pid) separates fork generations. -->
+            <id>per-fork-test-log</id>
+            <activation>
+                <property>
+                    <name>env.QDB_LOG_W_FILE_LOCATION</name>
+                </property>
+            </activation>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <configuration>
+                            <environmentVariables>
+                                <QDB_LOG_W_FILE_LOCATION>${env.QDB_LOG_W_FILE_LOCATION}.fork-${surefire.forkNumber}.pid-%p</QDB_LOG_W_FILE_LOCATION>
+                            </environmentVariables>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+        <profile>
             <id>local-client</id>
             <properties>
-                <questdb.client.version>1.3.2</questdb.client.version>
+                <questdb.client.version>1.3.5-SNAPSHOT</questdb.client.version>
             </properties>
         </profile>
         <profile>
@@ -260,6 +288,9 @@
                             <sourceFileExcludes>
                                 <sourceFileExclude>${excludePattern1}</sourceFileExclude>
                             </sourceFileExcludes>
+                            <additionalOptions>
+                                <additionalOption>--add-exports java.base/jdk.internal.vm=io.questdb</additionalOption>
+                            </additionalOptions>
                         </configuration>
                     </plugin>
                 </plugins>
@@ -286,6 +317,9 @@
                             <sourceFileExcludes>
                                 <sourceFileExclude>${excludePattern1}</sourceFileExclude>
                             </sourceFileExcludes>
+                            <additionalOptions>
+                                <additionalOption>--add-exports java.base/jdk.internal.vm=io.questdb</additionalOption>
+                            </additionalOptions>
                         </configuration>
                     </plugin>
                     <plugin>

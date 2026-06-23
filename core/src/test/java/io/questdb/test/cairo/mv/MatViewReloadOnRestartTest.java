@@ -1080,7 +1080,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
         // we can assert for all transports that the error is logged
         capture.waitFor("error in line 1: table: price_1h; cannot modify materialized view: price_1h");
 
-        refreshJob.run(0);
+        refreshJob.run();
         drainWalQueue(main.getEngine());
         assertSql(main, expected, "price_1h order by ts, sym");
     }

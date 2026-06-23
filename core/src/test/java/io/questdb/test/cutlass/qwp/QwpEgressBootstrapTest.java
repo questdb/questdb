@@ -197,6 +197,83 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
     }
 
     /**
+     * Empty arrays vs NULL arrays over QWP egress. QuestDB stores a non-null
+     * empty array (cardinality 0) distinct from a NULL array, and the server's
+     * egress encoder emits the empty array inline (nDims >= 1 with a 0-length
+     * dimension), reserving the null bitmap for genuine NULLs. The client
+     * decoder must round-trip all three of: a regular array, an empty array,
+     * and a NULL -- keeping empty and NULL distinct.
+     */
+    @Test
+    public void testEmptyAndNullArrayColumns() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = startEgressServer()) {
+                serverMain.execute("CREATE TABLE arr_e(d DOUBLE[], ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+                // Monotonic designated timestamps keep WAL scan order aligned with
+                // insert order (DOUBLE[] columns cannot be ORDER BY'd).
+                // Row 0: regular array. Row 1: empty array. Row 2: NULL.
+                serverMain.execute("INSERT INTO arr_e VALUES (ARRAY[1.0, 2.0], 1::TIMESTAMP)");
+                serverMain.execute("INSERT INTO arr_e VALUES (ARRAY[]::DOUBLE[], 2::TIMESTAMP)");
+                serverMain.execute("INSERT INTO arr_e VALUES (NULL, 3::TIMESTAMP)");
+                serverMain.awaitTable("arr_e");
+
+                final int[] count = {0};
+                final boolean[] isNull = {false, false, false};
+                final int[] nDims = {-1, -1, -1};
+                final double[][] elems = new double[3][];
+                final String[] errMsg = {null};
+                try (QwpQueryClient client = QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
+                    client.connect();
+                    client.execute("SELECT d FROM arr_e", new QwpColumnBatchHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                            for (int r = 0; r < batch.getRowCount(); r++) {
+                                int row = count[0]++;
+                                isNull[row] = batch.isNull(0, r);
+                                if (!isNull[row]) {
+                                    nDims[row] = batch.getArrayNDims(0, r);
+                                    elems[row] = batch.getDoubleArrayElements(0, r);
+                                }
+                            }
+                        }
+
+                        @Override
+                        public void onEnd(long totalRows) {
+                        }
+
+                        @Override
+                        public void onError(byte status, String message) {
+                            errMsg[0] = message;
+                        }
+                    });
+                } catch (Throwable th) {
+                    // A decode failure may surface as a thrown exception rather than
+                    // onError, depending on where in the pipeline it trips.
+                    errMsg[0] = String.valueOf(th.getMessage());
+                }
+
+                // The crux: with the current decoder the empty-array row makes
+                // QwpResultBatchDecoder reject the server's own frame
+                // ("ARRAY dim 0 must be >= 1: 0").
+                Assert.assertNull("egress decode rejected the server's empty-array frame: " + errMsg[0], errMsg[0]);
+                Assert.assertEquals(3, count[0]);
+
+                // Row 0: regular 1-D array round-trips.
+                Assert.assertFalse(isNull[0]);
+                Assert.assertEquals(1, nDims[0]);
+                Assert.assertArrayEquals(new double[]{1.0, 2.0}, elems[0], 0.0);
+                // Row 1: empty array -> non-null, 1-D, zero elements (distinct from NULL).
+                Assert.assertFalse("empty array must NOT be null", isNull[1]);
+                Assert.assertEquals(1, nDims[1]);
+                Assert.assertEquals(0, elems[1].length);
+                // Row 2: NULL array -> null.
+                Assert.assertTrue("NULL array must be null", isNull[2]);
+            }
+        });
+    }
+
+    /**
      * Two back-to-back queries on one WebSocket connection must both succeed. Exercises
      * the dispatch loop resetting between requests and the per-query state cleanup.
      */
@@ -419,11 +496,11 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
             // Simulate a streaming-active state without actual native resources by
             // calling beginStreaming with null factory/cursor. The defensive endStreaming
             // inside beginStreaming is idempotent for null.
-            state.beginStreaming(1L, null, null, 0, 0, false, 0L, null);
+            state.beginStreaming(1L, null, null, 0, 0L, null);
             Assert.assertTrue(state.isStreamingActive());
             // A second beginStreaming must not double-free (endStreaming handles nulls)
             // and must transition to the new requestId cleanly.
-            state.beginStreaming(2L, null, null, 0, 0, false, 0L, null);
+            state.beginStreaming(2L, null, null, 0, 0L, null);
             Assert.assertTrue(state.isStreamingActive());
             state.endStreaming();
             Assert.assertFalse(state.isStreamingActive());
@@ -567,31 +644,23 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
     }
 
     /**
-     * Regression: a per-connection schema-cache poisoning bug in
-     * {@link QwpEgressUpgradeProcessor}'s retry-once loop. Pre-fix,
-     * {@code findOrAllocateSchemaId()} was called inside the retry loop
-     * BEFORE {@code getCursor()}. When cursor acquisition threw
-     * {@code TableReferenceOutOfDateException} (e.g. because the cached
-     * factory was compiled against a now-dropped table), the catch block
-     * freed the factory but did NOT remove the fingerprint from the
-     * per-connection schema cache. The retry attempt then saw the
-     * fingerprint as "reuse" and shipped the first batch in reference
-     * mode against an id the client had never registered; the client
-     * decoder rejected with "schema id N not registered on this connection".
-     * Post-fix: schema-id allocation moved AFTER the retry loop, so a
-     * failed cursor acquisition can never poison the per-connection cache.
+     * Regression: the egress processor's retry-once loop must recover when a
+     * cached {@link RecordCursorFactory} (keyed by SQL text in
+     * {@code selectCache}) was compiled against a table that has since been
+     * dropped and recreated. {@code getCursor} throws
+     * {@code TableReferenceOutOfDateException}; the loop drops the stale factory,
+     * recompiles, and the query must still return correct results.
      * <p>
      * Trigger: seed connection runs a SELECT (server caches the factory
      * in {@code selectCache} by SQL text); DROP+CREATE the table under
      * the same name with the same shape (factory becomes stale); a fresh
      * connection runs the same SELECT -- {@code selectCache.poll} returns
-     * the stale factory, {@code getCursor} throws, and pre-fix the retry
-     * would ship reference mode against an id the client never registered.
-     * The query cache must be enabled; the test default is off and would
-     * hide the bug because the no-op cache never returns a stale factory.
+     * the stale factory and {@code getCursor} throws, exercising the recompile
+     * path. The query cache must be enabled; the test default is off and would
+     * hide the path because the no-op cache never returns a stale factory.
      */
     @Test
-    public void testDropRecreateDoesNotPoisonSchemaCache() throws Exception {
+    public void testDropRecreateRecompilesStaleFactory() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startServerWithRetry(
                     PropertyKey.HTTP_QUERY_CACHE_ENABLED.getEnvVarName(), "true"
@@ -678,16 +747,17 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
     }
 
     /**
-     * Spec {@code docs/qwp/wire-egress.md:278-279} requires the server to send
-     * one RESULT_BATCH with row_count = 0 on every empty result, including when the
-     * schema id is reused from an earlier query on the same connection. Otherwise
-     * the client's per-query onBatch callback never fires and downstream consumers
+     * The QWP egress spec (see
+     * {@code https://questdb.com/docs/connect/wire-protocols/qwp-egress-websocket/})
+     * requires the server to send
+     * one RESULT_BATCH with row_count = 0 on every empty result. Otherwise the
+     * client's per-query onBatch callback never fires and downstream consumers
      * that rely on it to learn per-query column metadata silently break.
      * <p>
      * Two queries on one connection with identical column shape: query 1 returns
-     * rows (schema id allocated, full schema shipped), query 2 returns an empty
-     * result with the same shape (schemaAlreadyKnown == true). Both queries must
-     * deliver at least one RESULT_BATCH to the client.
+     * rows, query 2 returns an empty result with the same shape. Each query ships
+     * its schema inline in batch 0, so both must deliver at least one
+     * RESULT_BATCH to the client.
      */
     @Test
     public void testEmptyResultSetOnReusedSchemaStillDeliversOneBatch() throws Exception {
@@ -710,8 +780,7 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
                         "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
                     client.connect();
 
-                    // Query 1: populates the connection-scoped schema cache with a fresh id
-                    // for shape (id LONG, name STRING).
+                    // Query 1: returns rows for shape (id LONG, name STRING).
                     client.execute("SELECT id, name FROM reuse_t WHERE id >= 0", new QwpColumnBatchHandler() {
                         @Override
                         public void onBatch(QwpColumnBatch batch) {
@@ -729,8 +798,9 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
                         }
                     });
 
-                    // Query 2: identical column shape -> server hits schemaAlreadyKnown=true.
-                    // WHERE predicate filters everything out -> empty cursor.
+                    // Query 2: identical column shape, but the WHERE predicate
+                    // filters everything out -> empty cursor. Batch 0 still ships
+                    // the schema.
                     client.execute("SELECT id, name FROM reuse_t WHERE id < 0", new QwpColumnBatchHandler() {
                         @Override
                         public void onBatch(QwpColumnBatch batch) {
@@ -754,7 +824,7 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
                 Assert.assertEquals(3, q1Rows[0]);
                 Assert.assertTrue("q2 RESULT_END must still fire", q2EndSeen[0]);
                 Assert.assertEquals(0, q2Rows[0]);
-                Assert.assertEquals("empty-result q2 on reused schema must still deliver one RESULT_BATCH (spec sec. 7)",
+                Assert.assertEquals("empty-result q2 must still deliver one RESULT_BATCH (spec sec. 7)",
                         1, q2Batches[0]);
                 Assert.assertEquals("schema must surface to the handler on q2 even with no rows",
                         2, q2SchemaCols[0]);
@@ -1113,11 +1183,11 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
     }
 
     /**
-     * C5: many unique symbols across multiple batches -> exercises both the per-batch dict
-     * growth and the schema-reference (mode 0x01) path on batches 2+.
+     * C5: many unique symbols across multiple batches -> exercises the per-batch
+     * dict growth on batches 2+ (each batch carries the full inline schema).
      */
     @Test
-    public void testManyUniqueSymbolsSchemaReference() throws Exception {
+    public void testManyUniqueSymbolsAcrossBatches() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (TestServerMain serverMain = startEgressServer()) {
                 serverMain.execute("CREATE TABLE sym_t(s SYMBOL, ts TIMESTAMP) "
@@ -1689,8 +1759,9 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
     }
 
     /**
-     * C1: spec divergence on symbol dictionaries. {@code docs/qwp/wire-egress.md}
-     * sec 12 says egress uses connection-scoped delta dictionaries; the Phase-1 implementation
+     * C1: spec divergence on symbol dictionaries. The QWP egress spec
+     * ({@code https://questdb.com/docs/connect/wire-protocols/qwp-egress-websocket/})
+     * says egress uses connection-scoped delta dictionaries; the Phase-1 implementation
      * sends an inline per-batch dict every time. This test pins the actual wire behavior
      * so spec or implementation drift gets caught loudly.
      */

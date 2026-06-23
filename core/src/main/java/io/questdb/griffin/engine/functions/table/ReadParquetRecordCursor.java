@@ -33,6 +33,7 @@ import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
@@ -100,15 +101,24 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     private long fileSize = 0;
     private long filterBufEnd;
     private boolean isFilterListPrepared;
+    // true while inside skipRows(): defeats the post-skip clamp so the skip
+    // loop's switchToNextRowGroup decodes full row groups -- the skip can land
+    // anywhere inside the group, and a [0, remaining) clamp would cut off the
+    // rows at and after the landing position.
+    private boolean isInSkipRows;
+    private long maxRowsAfterSkip = RecordCursor.UNBOUNDED_ROW_COUNT;
     private int rowGroupIndex;
     private long rowGroupRowCount;
+    private long rowsProducedSinceSkip;
 
     public ReadParquetRecordCursor(FilesFacade ff, RecordMetadata metadata, @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions) {
         try {
             this.ff = ff;
             this.metadata = metadata;
             this.decoder = new ParquetFileDecoder();
-            this.rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+            // keepClosed: defer the native allocation to the first reopen() in
+            // of() so it lands under the per-query tracker bound there.
+            this.rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER, true);
             this.columns = new DirectIntList(32, MemoryTag.NATIVE_DEFAULT);
             this.record = new ParquetRecord(metadata.getColumnCount());
             this.pushdownFilterConditions = pushdownFilterConditions;
@@ -240,14 +250,38 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
 
     @Override
     public boolean hasNext() {
+        // decodeRowGroup() returns the full row group size even for a clamped decode,
+        // so rowGroupRowCount alone cannot bound reads: rows at and past the cap are
+        // undecoded memory and the cursor must hard-stop before serving them.
+        if (rowsProducedSinceSkip >= maxRowsAfterSkip) {
+            return false;
+        }
         if (++currentRowInRowGroup < rowGroupRowCount) {
+            rowsProducedSinceSkip++;
             return true;
         }
 
         try {
-            return switchToNextRowGroup();
+            if (switchToNextRowGroup()) {
+                rowsProducedSinceSkip++;
+                return true;
+            }
+            return false;
         } catch (CairoException ex) {
-            throw CairoException.nonCritical().put("Error reading. Parquet file is likely corrupted");
+            // A memory-limit breach (per-query or global RSS) is not corruption:
+            // surface it unchanged so isOutOfMemory() and the limit message reach
+            // the caller instead of a misleading "corrupted file" message.
+            if (ex.isOutOfMemory()) {
+                throw ex;
+            }
+            // Preserve the underlying decode error (e.g. the native parquet guard message)
+            // instead of discarding it. ex shares the thread-local CairoException flyweight
+            // that nonCritical() resets, so copy its message to a String first, then append
+            // it to the friendly wrapper.
+            final String cause = ex.getFlyweightMessage().toString();
+            throw CairoException.nonCritical()
+                    .put("Error reading. Parquet file is likely corrupted: ")
+                    .put(cause);
         }
     }
 
@@ -257,6 +291,7 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         this.fileSize = ff.length(fd);
         this.addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
         decoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+        rowGroupBuffers.setMemoryTracker(executionContext.getMemoryTracker());
         rowGroupBuffers.reopen();
         columns.reopen();
         columns.clear();
@@ -297,30 +332,41 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     }
 
     @Override
-    public void skipRows(Counter rowCount) {
-        long toSkip = rowCount.get();
+    public void skipRows(Counter rowCount, long maxRowsAfterSkip) {
+        this.maxRowsAfterSkip = maxRowsAfterSkip;
+        this.rowsProducedSinceSkip = 0;
+        this.isInSkipRows = true;
+        try {
+            long toSkip = rowCount.get();
 
-        while (toSkip > 0) {
-            if (currentRowInRowGroup + 1 >= rowGroupRowCount) {
-                try {
-                    if (!switchToNextRowGroup()) {
+            while (toSkip > 0) {
+                if (currentRowInRowGroup + 1 >= rowGroupRowCount) {
+                    try {
+                        if (!switchToNextRowGroup()) {
+                            return;
+                        }
+                    } catch (CairoException ex) {
+                        // Preserve the underlying decode error instead of discarding it (see hasNext).
+                        final String cause = ex.getFlyweightMessage().toString();
+                        throw CairoException.nonCritical()
+                                .put("Error reading. Parquet file is likely corrupted: ")
+                                .put(cause);
+                    }
+                    toSkip--;
+                    rowCount.dec();
+                    if (toSkip == 0) {
                         return;
                     }
-                } catch (CairoException ex) {
-                    throw CairoException.nonCritical().put("Error reading. Parquet file is likely corrupted");
                 }
-                toSkip--;
-                rowCount.dec();
-                if (toSkip == 0) {
-                    return;
-                }
-            }
 
-            long availableToSkip = rowGroupRowCount - currentRowInRowGroup - 1;
-            long skipNow = Math.min(toSkip, availableToSkip);
-            currentRowInRowGroup += (int) skipNow;
-            toSkip -= skipNow;
-            rowCount.dec(skipNow);
+                long availableToSkip = rowGroupRowCount - currentRowInRowGroup - 1;
+                long skipNow = Math.min(toSkip, availableToSkip);
+                currentRowInRowGroup += (int) skipNow;
+                toSkip -= skipNow;
+                rowCount.dec(skipNow);
+            }
+        } finally {
+            this.isInSkipRows = false;
         }
     }
 
@@ -329,6 +375,8 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         rowGroupIndex = -1;
         rowGroupRowCount = -1;
         currentRowInRowGroup = -1;
+        maxRowsAfterSkip = RecordCursor.UNBOUNDED_ROW_COUNT;
+        rowsProducedSinceSkip = 0;
     }
 
     private long getStrAddr(int col) {
@@ -352,7 +400,17 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
             }
 
             final int rowGroupSize = decoder.metadata().getRowGroupSize(rowGroupIndex);
-            rowGroupRowCount = decoder.decodeRowGroup(rowGroupBuffers, columns, rowGroupIndex, 0, rowGroupSize);
+            final int decodeHi;
+            if (isInSkipRows) {
+                decodeHi = rowGroupSize;
+            } else {
+                final long remaining = maxRowsAfterSkip - rowsProducedSinceSkip;
+                if (remaining <= 0) {
+                    return false;
+                }
+                decodeHi = (int) Math.min(rowGroupSize, remaining);
+            }
+            rowGroupRowCount = decoder.decodeRowGroup(rowGroupBuffers, columns, rowGroupIndex, 0, decodeHi);
 
             for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
                 dataPtrs.add(rowGroupBuffers.getChunkDataPtr(i));

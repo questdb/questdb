@@ -47,8 +47,10 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.RecordComparator;
+import io.questdb.griffin.engine.orderby.EncodedTopKBuffer;
 import io.questdb.griffin.engine.orderby.LimitedSizeLongTreeChain;
 import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
+import io.questdb.griffin.engine.orderby.SortKeyEncoder;
 import io.questdb.griffin.engine.orderby.SortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.SortedRecordCursorFactory;
 import io.questdb.jit.CompiledFilter;
@@ -139,8 +141,15 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final int order = base.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
         frameSequence.of(base, executionContext, order);
-        cursor.of(frameSequence);
-        return cursor;
+        try {
+            cursor.of(frameSequence);
+            return cursor;
+        } catch (Throwable th) {
+            // On a mid-reopen breach, close() drains the partially reopened atom and resets isOpen
+            // so the cached factory stays reusable.
+            cursor.close();
+            throw th;
+        }
     }
 
     @Override
@@ -212,8 +221,6 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
         record.init(frameMemory);
         final DirectLongList rows = filterCtx.getFilteredRows(slotId);
         rows.clear();
-        final LimitedSizeLongTreeChain chain = atom.getTreeChain(slotId);
-        final RecordComparator comparator = atom.getComparator(slotId);
         final CompiledFilter compiledFilter = filterCtx.getCompiledFilter();
         final Function filter = filterCtx.getFilter(slotId);
         try {
@@ -237,19 +244,32 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
                 filterCtx.getSelectivityStats(slotId).update(rows.size(), frameRowCount);
             }
 
-            if (useLateMaterialization && frameMemory.populateRemainingColumns(filterCtx.getFilterUsedColumnIndexes(), rows, true)) {
-                record.init(frameMemory);
-            }
+            if (atom.isEncoded()) {
+                final IntHashSet skipColumnIndexes = atom.getEncodedSkipColumnIndexes();
+                if (useLateMaterialization
+                        && frameMemory.populateRemainingColumns(skipColumnIndexes != null ? skipColumnIndexes : filterCtx.getFilterUsedColumnIndexes(), rows, true)) {
+                    record.init(frameMemory);
+                }
+                final SortKeyEncoder encoder = atom.getEncoder(slotId);
+                final EncodedTopKBuffer topK = atom.getTopK(slotId);
+                encoder.encodeFrame(frameMemory, frameIndex, rows, frameRowCount, topK, record);
+            } else {
+                if (useLateMaterialization && frameMemory.populateRemainingColumns(filterCtx.getFilterUsedColumnIndexes(), rows, true)) {
+                    record.init(frameMemory);
+                }
 
-            for (long p = 0, n = rows.size(); p < n; p++) {
-                long r = rows.get(p);
-                record.setRowIndex(r);
+                final LimitedSizeLongTreeChain chain = atom.getTreeChain(slotId);
+                final RecordComparator comparator = atom.getComparator(slotId);
+                for (long p = 0, n = rows.size(); p < n; p++) {
+                    long r = rows.get(p);
+                    record.setRowIndex(r);
 
-                // Tree chain is liable to re-position record to
-                // other rows to do record comparison. We must use our
-                // own record instance in case base cursor keeps
-                // state in the record it returns.
-                chain.put(record, frameMemoryPool, recordB, comparator);
+                    // Tree chain is liable to re-position record to
+                    // other rows to do record comparison. We must use our
+                    // own record instance in case base cursor keeps
+                    // state in the record it returns.
+                    chain.put(record, frameMemoryPool, recordB, comparator);
+                }
             }
         } finally {
             recordB.clear();
@@ -275,19 +295,28 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
         final AsyncFilterContext filterCtx = atom.getFilterContext();
         final PageFrameMemoryPool frameMemoryPool = filterCtx.getMemoryPool(slotId);
         final PageFrameMemoryRecord recordB = atom.getRecordB(slotId);
-        final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
-        record.init(frameMemory);
-        final LimitedSizeLongTreeChain chain = atom.getTreeChain(slotId);
-        final RecordComparator comparator = atom.getComparator(slotId);
         try {
-            for (long r = 0; r < frameRowCount; r++) {
-                record.setRowIndex(r);
+            if (atom.isEncoded()) {
+                // Only the sort-key columns are read, so only they are decoded.
+                final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex, atom.getSortKeyColumnIndexes());
+                record.init(frameMemory);
+                final SortKeyEncoder encoder = atom.getEncoder(slotId);
+                final EncodedTopKBuffer topK = atom.getTopK(slotId);
+                encoder.encodeFrame(frameMemory, frameIndex, null, frameRowCount, topK, record);
+            } else {
+                final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
+                record.init(frameMemory);
+                final LimitedSizeLongTreeChain chain = atom.getTreeChain(slotId);
+                final RecordComparator comparator = atom.getComparator(slotId);
+                for (long r = 0; r < frameRowCount; r++) {
+                    record.setRowIndex(r);
 
-                // Tree chain is liable to re-position record to
-                // other rows to do record comparison. We must use our
-                // own record instance in case base cursor keeps
-                // state in the record it returns.
-                chain.put(record, frameMemoryPool, recordB, comparator);
+                    // Tree chain is liable to re-position record to
+                    // other rows to do record comparison. We must use our
+                    // own record instance in case base cursor keeps
+                    // state in the record it returns.
+                    chain.put(record, frameMemoryPool, recordB, comparator);
+                }
             }
         } finally {
             recordB.clear();

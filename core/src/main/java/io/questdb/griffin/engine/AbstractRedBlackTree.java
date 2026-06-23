@@ -26,8 +26,10 @@ package io.questdb.griffin.engine;
 
 import io.questdb.cairo.Reopenable;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * A native memory heap-based red-black tree. Used in ORDER BY factories.
@@ -44,6 +46,8 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
     protected static final byte RED = 1;
     // P + L + R + C + REF + LAST_REF
     private static final long BLOCK_SIZE = 4 + 4 + 4 + 4 + 4 + 4; // 24, must be divisible by 8
+    // Upper bound enforced by the compressed-offset encoding (offsets are 8-byte-aligned and
+    // stored as 32-bit ints), independent of any user-supplied byte cap.
     private static final long MAX_KEY_HEAP_SIZE_LIMIT = (Integer.toUnsignedLong(-1) - 1) << 3;
     private static final long OFFSET_COLOUR = 12;
     // offset to last reference in value chain (kept to avoid having to traverse whole chain on each addition)
@@ -51,19 +55,34 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
     private static final long OFFSET_REF = 16;
     private static final long OFFSET_RIGHT = 8;
     private final long initialKeyHeapSize;
+    private final String keyHeapConfigKey;
     private final long maxKeyHeapSize;
+    // Per-query native memory tracker bound by the owning factory at cursor start.
+    // Null when no per-query limit applies; all Unsafe.{malloc,realloc,free} calls
+    // degrade to the global-only overloads in that case.
+    @Nullable
+    protected MemoryTracker memoryTracker;
     protected int root = -1;
     private long keyHeapLimit;
     private long keyHeapPos;
     private long keyHeapSize;
     private long keyHeapStart;
 
-    public AbstractRedBlackTree(long keyPageSize, int keyMaxPages) {
+    public AbstractRedBlackTree(long keyPageSize, long maxKeyHeapBytes, String keyHeapConfigKey) {
+        this(keyPageSize, maxKeyHeapBytes, keyHeapConfigKey, true);
+    }
+
+    public AbstractRedBlackTree(long keyPageSize, long maxKeyHeapBytes, String keyHeapConfigKey, boolean openOnInit) {
         assert keyPageSize >= BLOCK_SIZE;
         keyHeapSize = initialKeyHeapSize = keyPageSize;
-        keyHeapStart = keyHeapPos = Unsafe.malloc(keyHeapSize, MemoryTag.NATIVE_TREE_CHAIN);
-        keyHeapLimit = keyHeapStart + keyHeapSize;
-        maxKeyHeapSize = Math.min(keyPageSize * keyMaxPages, MAX_KEY_HEAP_SIZE_LIMIT);
+        maxKeyHeapSize = Math.min(Math.max(maxKeyHeapBytes, keyPageSize), MAX_KEY_HEAP_SIZE_LIMIT);
+        this.keyHeapConfigKey = keyHeapConfigKey;
+        if (openOnInit) {
+            keyHeapStart = keyHeapPos = Unsafe.malloc(keyHeapSize, MemoryTag.NATIVE_TREE_CHAIN, memoryTracker);
+            keyHeapLimit = keyHeapStart + keyHeapSize;
+        }
+        // else: keyHeapStart stays 0; first reopen() allocates initial backing under
+        // whatever MemoryTracker is bound at that time.
     }
 
     @Override
@@ -76,7 +95,7 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
     public void close() {
         root = -1;
         if (keyHeapStart != 0) {
-            keyHeapStart = Unsafe.free(keyHeapStart, keyHeapSize, MemoryTag.NATIVE_TREE_CHAIN);
+            keyHeapStart = Unsafe.free(keyHeapStart, keyHeapSize, MemoryTag.NATIVE_TREE_CHAIN, memoryTracker);
             keyHeapLimit = keyHeapPos = 0;
             keyHeapSize = 0;
         }
@@ -86,9 +105,13 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
     public void reopen() {
         if (keyHeapStart == 0) {
             keyHeapSize = initialKeyHeapSize;
-            keyHeapStart = keyHeapPos = Unsafe.malloc(keyHeapSize, MemoryTag.NATIVE_TREE_CHAIN);
+            keyHeapStart = keyHeapPos = Unsafe.malloc(keyHeapSize, MemoryTag.NATIVE_TREE_CHAIN, memoryTracker);
             keyHeapLimit = keyHeapStart + keyHeapSize;
         }
+    }
+
+    public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        this.memoryTracker = tracker;
     }
 
     public long size() {
@@ -107,9 +130,14 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
         if (keyHeapPos + BLOCK_SIZE > keyHeapLimit) {
             final long newHeapSize = keyHeapSize << 1;
             if (newHeapSize > maxKeyHeapSize) {
-                throw LimitOverflowException.instance().put("limit of ").put(maxKeyHeapSize).put(" memory exceeded in RedBlackTree");
+                LimitOverflowException ex = LimitOverflowException.instance();
+                ex.put("limit of ").put(maxKeyHeapSize).put(" memory exceeded in RedBlackTree");
+                if (keyHeapConfigKey != null) {
+                    ex.put(" (raise ").put(keyHeapConfigKey).put(')');
+                }
+                throw ex;
             }
-            long newHeapPos = Unsafe.realloc(keyHeapStart, keyHeapSize, newHeapSize, MemoryTag.NATIVE_TREE_CHAIN);
+            long newHeapPos = Unsafe.realloc(keyHeapStart, keyHeapSize, newHeapSize, MemoryTag.NATIVE_TREE_CHAIN, memoryTracker);
 
             keyHeapSize = newHeapSize;
             long delta = newHeapPos - keyHeapStart;

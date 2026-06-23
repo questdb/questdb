@@ -79,7 +79,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT count() FROM async_auto_flush", "count\n25\n");
+            assertQuery("SELECT count() FROM async_auto_flush")
+                    .noLeakCheck()
+                    .returnsOnce("count\n25\n");
         });
     }
 
@@ -108,7 +110,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT count() FROM async_large", "count\n25000000\n");
+            assertQuery("SELECT count() FROM async_large")
+                    .noLeakCheck()
+                    .returnsOnce("count\n25000000\n");
         });
     }
 
@@ -125,7 +129,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT count() FROM async_multi", "count\n200000\n");
+            assertQuery("SELECT count() FROM async_multi")
+                    .noLeakCheck()
+                    .returnsOnce("count\n200000\n");
         });
     }
 
@@ -140,8 +146,12 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT count() FROM async_single", "count\n1\n");
-            assertSql("SELECT value FROM async_single", "value\n42\n");
+            assertQuery("SELECT count() FROM async_single")
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
+            assertQuery("SELECT value FROM async_single")
+                    .noLeakCheck()
+                    .returnsOnce("value\n42\n");
         });
     }
 
@@ -169,7 +179,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT count() FROM ack_stress", "count\n200\n");
+            assertQuery("SELECT count() FROM ack_stress")
+                    .noLeakCheck()
+                    .returnsOnce("count\n200\n");
         });
     }
 
@@ -191,8 +203,12 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
 
             drainWalQueue();
             drainWalQueue();
-            assertSql("SELECT count() FROM async_table_a", "count\n50\n");
-            assertSql("SELECT count() FROM async_table_b", "count\n50\n");
+            assertQuery("SELECT count() FROM async_table_a")
+                    .noLeakCheck()
+                    .returnsOnce("count\n50\n");
+            assertQuery("SELECT count() FROM async_table_b")
+                    .noLeakCheck()
+                    .returnsOnce("count\n50\n");
         });
     }
 
@@ -213,7 +229,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT count() FROM async_row_flush", "count\n50\n");
+            assertQuery("SELECT count() FROM async_row_flush")
+                    .noLeakCheck()
+                    .returnsOnce("count\n50\n");
         });
     }
 
@@ -227,7 +245,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT count() FROM test_at_now", "count\n1\n");
+            assertQuery("SELECT count() FROM test_at_now")
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
         });
     }
 
@@ -262,35 +282,32 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT \"column\", type FROM table_columns('" + table + "') WHERE \"column\" = 'b'",
-                    "column\ttype\nb\tBINARY\n"
-            );
+            assertQuery("SELECT \"column\", type FROM table_columns('" + table + "') WHERE \"column\" = 'b'")
+                    .noLeakCheck()
+                    .returnsOnce("column\ttype\nb\tBINARY\n");
             // length() returns -1 for NULL and the byte count otherwise.
             // Row 2 is NULL (column omitted), row 3 is an empty non-null
             // BINARY -- pinned distinct from null.
-            assertSql(
-                    "SELECT length(b) AS len FROM " + table + " ORDER BY ts",
-                    """
+            assertQuery("SELECT length(b) AS len FROM " + table + " ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             len
                             6
                             -1
                             0
-                            """
-            );
+                            """);
             // Stronger regression than length() alone: pin isNull(b) so a
             // future regression that flips empty back to null (e.g. by
             // restoring the putBin(addr, 0) -> NULL_LEN shortcut) trips
             // here rather than only in length-based assertions.
-            assertSql(
-                    "SELECT b IS NULL AS isnull FROM " + table + " ORDER BY ts",
-                    """
+            assertQuery("SELECT b IS NULL AS isnull FROM " + table + " ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             isnull
                             false
                             true
                             false
-                            """
-            );
+                            """);
         });
     }
 
@@ -310,7 +327,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT b FROM " + table, "b\n42\n");
+            assertQuery("SELECT b FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("b\n42\n");
         });
     }
 
@@ -333,10 +352,12 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT count() FROM " + table, "count\n1\n");
-            assertSql(
-                    "SELECT d64, d128, d256 FROM " + table,
-                    """
+            assertQuery("SELECT count() FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
+            assertQuery("SELECT d64, d128, d256 FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("""
                             d64\td128\td256
                             123.45\t67.890\t1111.1
                             """);
@@ -383,69 +404,26 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
 
             drainWalQueue();
             // Verify auto-created column types match the declared precisions.
-            assertSql(
-                    "SELECT \"column\", type FROM table_columns('" + table + "') WHERE \"column\" LIKE 'g%' ORDER BY \"column\"",
-                    """
+            assertQuery("SELECT \"column\", type FROM table_columns('" + table + "') WHERE \"column\" LIKE 'g%' ORDER BY \"column\"")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             column\ttype
                             g15\tGEOHASH(3c)
                             g20\tGEOHASH(4c)
                             g35\tGEOHASH(7c)
                             g5\tGEOHASH(1c)
-                            """
-            );
+                            """);
             // Round-trip values. Row 1 was bit-packed: 0x1F renders as 'z' (the
             // last base32 digit), 0x7FFF / 0xFFFFF / 0x7FFFFFFFF are the all-ones
             // payload for each precision and render to the top base32 chars.
-            assertSql(
-                    "SELECT g5, g15, g20, g35 FROM " + table + " ORDER BY ts",
-                    """
+            assertQuery("SELECT g5, g15, g20, g35 FROM " + table + " ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             g5\tg15\tg20\tg35
                             z\tzzz\tzzzz\tzzzzzzz
                             u\tu33\tu33d\ts24se0g
                             \t\t\t
-                            """
-            );
-        });
-    }
-
-    @Test
-    public void testIntColumnIntoIPv4TranslatesNullSentinel() throws Exception {
-        runInContext((port) -> {
-            String table = "test_qwp_int_to_ipv4_null";
-            // The IPv4 arm of QwpWalAppender.appendToWalColumnar accepts
-            // qwpType == TYPE_INT as a legacy-client migration path (a
-            // client that predates TYPE_IPV4 can still ingest into an
-            // IPv4 column by sending int bits). But INT's NULL sentinel
-            // (Integer.MIN_VALUE = 0x80000000) is not IPv4's NULL
-            // sentinel (0 = 0.0.0.0). Without translation the bit
-            // pattern lands verbatim through putFixedColumn's no-bitmap
-            // memcpy fast path, and reads back as the valid address
-            // 128.0.0.0 -- silently changing what the user wrote (a
-            // NULL on the INT side) into a non-null IPv4 value.
-            execute("CREATE TABLE " + table + " (addr IPv4, ts TIMESTAMP) "
-                    + "TIMESTAMP(ts) PARTITION BY DAY WAL");
-
-            try (QwpWebSocketSender sender = connectWs(port)) {
-                sender.table(table)
-                        .intColumn("addr", Integer.MIN_VALUE)   // INT_NULL
-                        .at(1_000_000, ChronoUnit.MICROS);
-                // Sanity row to confirm the TYPE_INT migration path
-                // still ingests real values correctly after the fix.
-                sender.table(table)
-                        .intColumn("addr", 0x0A000001)          // 10.0.0.1
-                        .at(2_000_000, ChronoUnit.MICROS);
-                sender.flush();
-            }
-
-            drainWalQueue();
-            assertSql(
-                    "SELECT coalesce(addr::string, 'null') v FROM " + table + " ORDER BY ts",
-                    """
-                            v
-                            null
-                            10.0.0.1
-                            """
-            );
+                            """);
         });
     }
 
@@ -476,19 +454,17 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
 
             drainWalQueue();
             // Verify the column was auto-created with the right QuestDB type.
-            assertSql(
-                    "SELECT type FROM table_columns('" + table + "') WHERE column = 'addr'",
-                    "type\nIPv4\n"
-            );
-            assertSql(
-                    "SELECT coalesce(addr::string, 'null') v FROM " + table + " ORDER BY ts",
-                    """
+            assertQuery("SELECT type FROM table_columns('" + table + "') WHERE column = 'addr'")
+                    .noLeakCheck()
+                    .returnsOnce("type\nIPv4\n");
+            assertQuery("SELECT coalesce(addr::string, 'null') v FROM " + table + " ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             v
                             192.168.1.1
                             null
                             10.0.0.1
-                            """
-            );
+                            """);
         });
     }
 
@@ -526,13 +502,14 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT msg FROM " + table, "msg\nhello\n");
+            assertQuery("SELECT msg FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("msg\nhello\n");
             // stringColumn() must send the VARCHAR wire type (0x0F), so the
             // auto-created column type must be VARCHAR, not STRING.
-            assertSql(
-                    "SELECT \"column\", type FROM table_columns('" + table + "') WHERE \"column\" = 'msg'",
-                    "column\ttype\nmsg\tVARCHAR\n"
-            );
+            assertQuery("SELECT \"column\", type FROM table_columns('" + table + "') WHERE \"column\" = 'msg'")
+                    .noLeakCheck()
+                    .returnsOnce("column\ttype\nmsg\tVARCHAR\n");
         });
     }
 
@@ -568,14 +545,13 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT length(b) AS len FROM " + table + " ORDER BY ts",
-                    """
+            assertQuery("SELECT length(b) AS len FROM " + table + " ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             len
                             4
                             4
-                            """
-            );
+                            """);
         });
     }
 
@@ -620,10 +596,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT length(b) AS len FROM " + table,
-                    "len\n5\n"
-            );
+            assertQuery("SELECT length(b) AS len FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("len\n5\n");
         });
     }
 
@@ -652,10 +627,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT count() FROM " + table,
-                    "count\n0\n"
-            );
+            assertQuery("SELECT count() FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("count\n0\n");
         });
     }
 
@@ -682,10 +656,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT count() FROM " + table,
-                    "count\n0\n"
-            );
+            assertQuery("SELECT count() FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("count\n0\n");
         });
     }
 
@@ -712,10 +685,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT count() FROM " + table,
-                    "count\n0\n"
-            );
+            assertQuery("SELECT count() FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("count\n0\n");
         });
     }
 
@@ -758,10 +730,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT count() FROM " + table,
-                    "count\n0\n"
-            );
+            assertQuery("SELECT count() FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("count\n0\n");
         });
     }
 
@@ -781,10 +752,12 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT count() FROM " + table, "count\n2\n");
-            assertSql(
-                    "SELECT b, timestamp FROM " + table + " ORDER BY timestamp",
-                    """
+            assertQuery("SELECT count() FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("count\n2\n");
+            assertQuery("SELECT b, timestamp FROM " + table + " ORDER BY timestamp")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             b\ttimestamp
                             true\t1970-01-01T00:00:01.000000Z
                             false\t1970-01-01T00:00:02.000000Z
@@ -815,7 +788,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT count() FROM " + table, "count\n3\n");
+            assertQuery("SELECT count() FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("count\n3\n");
         });
     }
 
@@ -835,10 +810,12 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT count() FROM " + table, "count\n2\n");
-            assertSql(
-                    "SELECT c, timestamp FROM " + table + " ORDER BY timestamp",
-                    """
+            assertQuery("SELECT count() FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("count\n2\n");
+            assertQuery("SELECT c, timestamp FROM " + table + " ORDER BY timestamp")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             c\ttimestamp
                             A\t1970-01-01T00:00:01.000000Z
                             Z\t1970-01-01T00:00:02.000000Z
@@ -899,10 +876,12 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT count() FROM " + table, "count\n1\n");
-            assertSql(
-                    "SELECT from_string FROM " + table,
-                    """
+            assertQuery("SELECT count() FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
+            assertQuery("SELECT from_string FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("""
                             from_string
                             true
                             """);
@@ -981,10 +960,12 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT count() FROM " + table, "count\n1\n");
-            assertSql(
-                    "SELECT from_double, from_float, from_int, from_long, from_short, from_string FROM " + table,
-                    """
+            assertQuery("SELECT count() FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
+            assertQuery("SELECT from_double, from_float, from_int, from_long, from_short, from_string FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("""
                             from_double\tfrom_float\tfrom_int\tfrom_long\tfrom_short\tfrom_string
                             42\t7\t42\t42\t42\t42
                             """);
@@ -1052,10 +1033,12 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT count() FROM " + table, "count\n1\n");
-            assertSql(
-                    "SELECT from_string FROM " + table,
-                    """
+            assertQuery("SELECT count() FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
+            assertQuery("SELECT from_string FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("""
                             from_string
                             A
                             """);
@@ -1127,10 +1110,12 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT count() FROM " + table, "count\n1\n");
-            assertSql(
-                    "SELECT from_byte, from_int, from_long, from_short, from_string FROM " + table,
-                    """
+            assertQuery("SELECT count() FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
+            assertQuery("SELECT from_byte, from_int, from_long, from_short, from_string FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("""
                             from_byte\tfrom_int\tfrom_long\tfrom_short\tfrom_string
                             1970-01-01T00:00:00.000Z\t1970-01-02T00:00:00.000Z\t1970-01-02T00:00:00.000Z\t1970-01-01T00:00:00.000Z\t2022-02-25T00:00:00.000Z
                             """);
@@ -1201,10 +1186,12 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT count() FROM " + table, "count\n1\n");
-            assertSql(
-                    "SELECT from_byte, from_double, from_float, from_int, from_long, from_string FROM " + table,
-                    """
+            assertQuery("SELECT count() FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
+            assertQuery("SELECT from_byte, from_double, from_float, from_int, from_long, from_string FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("""
                             from_byte\tfrom_double\tfrom_float\tfrom_int\tfrom_long\tfrom_string
                             42.00\t123.45\t1.50\t42.00\t42.00\t123.45
                             """);
@@ -1308,8 +1295,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                 sender.flush();
             }
             drainWalQueue();
-            assertSql("SELECT from_int, from_long, from_byte, from_short FROM " + dec8,
-                    "from_int\tfrom_long\tfrom_byte\tfrom_short\n5.0\t5.0\t5.0\t5.0\n");
+            assertQuery("SELECT from_int, from_long, from_byte, from_short FROM " + dec8)
+                    .noLeakCheck()
+                    .returnsOnce("from_int\tfrom_long\tfrom_byte\tfrom_short\n5.0\t5.0\t5.0\t5.0\n");
 
             // dec16: DECIMAL(4,1)
             String dec16 = "test_qwp_dec16_coerce";
@@ -1324,8 +1312,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                 sender.flush();
             }
             drainWalQueue();
-            assertSql("SELECT from_int, from_long, from_byte, from_short FROM " + dec16,
-                    "from_int\tfrom_long\tfrom_byte\tfrom_short\n42.0\t42.0\t42.0\t42.0\n");
+            assertQuery("SELECT from_int, from_long, from_byte, from_short FROM " + dec16)
+                    .noLeakCheck()
+                    .returnsOnce("from_int\tfrom_long\tfrom_byte\tfrom_short\n42.0\t42.0\t42.0\t42.0\n");
 
             // dec32: DECIMAL(6,2)
             String dec32 = "test_qwp_dec32_coerce";
@@ -1340,8 +1329,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                 sender.flush();
             }
             drainWalQueue();
-            assertSql("SELECT from_int, from_long, from_byte, from_short FROM " + dec32,
-                    "from_int\tfrom_long\tfrom_byte\tfrom_short\n42.00\t42.00\t42.00\t42.00\n");
+            assertQuery("SELECT from_int, from_long, from_byte, from_short FROM " + dec32)
+                    .noLeakCheck()
+                    .returnsOnce("from_int\tfrom_long\tfrom_byte\tfrom_short\n42.00\t42.00\t42.00\t42.00\n");
 
             // dec64: DECIMAL(18,2)
             String dec64 = "test_qwp_dec64_coerce";
@@ -1357,8 +1347,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                 sender.flush();
             }
             drainWalQueue();
-            assertSql("SELECT from_int, from_long, from_byte, from_short, from_string FROM " + dec64,
-                    "from_int\tfrom_long\tfrom_byte\tfrom_short\tfrom_string\n2147483647.00\t42.00\t42.00\t42.00\t123.45\n");
+            assertQuery("SELECT from_int, from_long, from_byte, from_short, from_string FROM " + dec64)
+                    .noLeakCheck()
+                    .returnsOnce("from_int\tfrom_long\tfrom_byte\tfrom_short\tfrom_string\n2147483647.00\t42.00\t42.00\t42.00\t123.45\n");
 
             // dec128: DECIMAL(38,2)
             String dec128 = "test_qwp_dec128_coerce";
@@ -1374,8 +1365,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                 sender.flush();
             }
             drainWalQueue();
-            assertSql("SELECT from_int, from_long, from_byte, from_short, from_string FROM " + dec128,
-                    "from_int\tfrom_long\tfrom_byte\tfrom_short\tfrom_string\n42.00\t1000000000.00\t42.00\t42.00\t123.45\n");
+            assertQuery("SELECT from_int, from_long, from_byte, from_short, from_string FROM " + dec128)
+                    .noLeakCheck()
+                    .returnsOnce("from_int\tfrom_long\tfrom_byte\tfrom_short\tfrom_string\n42.00\t1000000000.00\t42.00\t42.00\t123.45\n");
 
             // dec256: DECIMAL(76,2)
             String dec256 = "test_qwp_dec256_coerce";
@@ -1391,8 +1383,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                 sender.flush();
             }
             drainWalQueue();
-            assertSql("SELECT from_int, from_long, from_byte, from_short, from_string FROM " + dec256,
-                    "from_int\tfrom_long\tfrom_byte\tfrom_short\tfrom_string\n42.00\t9223372036854775807.00\t42.00\t42.00\t123.45\n");
+            assertQuery("SELECT from_int, from_long, from_byte, from_short, from_string FROM " + dec256)
+                    .noLeakCheck()
+                    .returnsOnce("from_int\tfrom_long\tfrom_byte\tfrom_short\tfrom_string\n42.00\t9223372036854775807.00\t42.00\t42.00\t123.45\n");
 
             // cross-decimal: dec64 from dec128/dec256
             String xDec64 = "test_qwp_x_dec64_coerce";
@@ -1405,8 +1398,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                 sender.flush();
             }
             drainWalQueue();
-            assertSql("SELECT from_dec128, from_dec256 FROM " + xDec64,
-                    "from_dec128\tfrom_dec256\n123.45\t123.45\n");
+            assertQuery("SELECT from_dec128, from_dec256 FROM " + xDec64)
+                    .noLeakCheck()
+                    .returnsOnce("from_dec128\tfrom_dec256\n123.45\t123.45\n");
 
             // cross-decimal: dec128 from dec64/dec256
             String xDec128 = "test_qwp_x_dec128_coerce";
@@ -1419,8 +1413,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                 sender.flush();
             }
             drainWalQueue();
-            assertSql("SELECT from_dec64, from_dec256 FROM " + xDec128,
-                    "from_dec64\tfrom_dec256\n123.45\t123.45\n");
+            assertQuery("SELECT from_dec64, from_dec256 FROM " + xDec128)
+                    .noLeakCheck()
+                    .returnsOnce("from_dec64\tfrom_dec256\n123.45\t123.45\n");
 
             // cross-decimal: dec256 from dec64/dec128
             String xDec256 = "test_qwp_x_dec256_coerce";
@@ -1433,8 +1428,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                 sender.flush();
             }
             drainWalQueue();
-            assertSql("SELECT from_dec64, from_dec128 FROM " + xDec256,
-                    "from_dec64\tfrom_dec128\n123.45\t123.45\n");
+            assertQuery("SELECT from_dec64, from_dec128 FROM " + xDec256)
+                    .noLeakCheck()
+                    .returnsOnce("from_dec64\tfrom_dec128\n123.45\t123.45\n");
         });
     }
 
@@ -1459,7 +1455,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT count() FROM " + table, "count\n1\n");
+            assertQuery("SELECT count() FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
         });
     }
 
@@ -1549,7 +1547,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT count() FROM " + table, "count\n1\n");
+            assertQuery("SELECT count() FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
         });
     }
 
@@ -1599,10 +1599,12 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT count() FROM " + table, "count\n1\n");
-            assertSql(
-                    "SELECT from_string FROM " + table,
-                    """
+            assertQuery("SELECT count() FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
+            assertQuery("SELECT from_string FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("""
                             from_string
                             s24se
                             """);
@@ -1678,10 +1680,12 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT count() FROM " + table, "count\n1\n");
-            assertSql(
-                    "SELECT from_byte, from_double, from_float, from_long, from_short, from_string FROM " + table,
-                    """
+            assertQuery("SELECT count() FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
+            assertQuery("SELECT from_byte, from_double, from_float, from_long, from_short, from_string FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("""
                             from_byte\tfrom_double\tfrom_float\tfrom_long\tfrom_short\tfrom_string
                             42\t100000\t42\t42\t42\t42
                             """);
@@ -1748,10 +1752,12 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT count() FROM " + table, "count\n1\n");
-            assertSql(
-                    "SELECT from_byte, from_double, from_float, from_int, from_short, from_string FROM " + table,
-                    """
+            assertQuery("SELECT count() FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
+            assertQuery("SELECT from_byte, from_double, from_float, from_int, from_short, from_string FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("""
                             from_byte\tfrom_double\tfrom_float\tfrom_int\tfrom_short\tfrom_string
                             42\t42\t1000\t42\t42\t1000000000000
                             """);
@@ -1774,10 +1780,12 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT count() FROM " + table, "count\n1\n");
-            assertSql(
-                    "SELECT from_string FROM " + table,
-                    """
+            assertQuery("SELECT count() FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
+            assertQuery("SELECT from_string FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("""
                             from_string
                             0x04000000000000000300000000000000020000000000000001
                             """);
@@ -1883,10 +1891,12 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT count() FROM " + table, "count\n1\n");
-            assertSql(
-                    "SELECT from_byte, from_double, from_float, from_int, from_long, from_string FROM " + table,
-                    """
+            assertQuery("SELECT count() FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
+            assertQuery("SELECT from_byte, from_double, from_float, from_int, from_long, from_string FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("""
                             from_byte\tfrom_double\tfrom_float\tfrom_int\tfrom_long\tfrom_string
                             42\t100\t42\t1000\t42\t42
                             """);
@@ -1961,16 +1971,18 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT count() FROM " + table, "count\n1\n");
-            assertSql(
-                    "SELECT from_bool, from_byte, from_char, from_decimal, from_symbol FROM " + table,
-                    """
+            assertQuery("SELECT count() FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
+            assertQuery("SELECT from_bool, from_byte, from_char, from_decimal, from_symbol FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("""
                             from_bool\tfrom_byte\tfrom_char\tfrom_decimal\tfrom_symbol
                             true\t42\tZ\t123.45\tsym_val
                             """);
-            assertSql(
-                    "SELECT from_uuid, from_timestamp FROM " + table,
-                    """
+            assertQuery("SELECT from_uuid, from_timestamp FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("""
                             from_uuid\tfrom_timestamp
                             a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\t2022-02-25T00:00:00.000Z
                             """);
@@ -2018,10 +2030,10 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT coalesce(addr_str, 'null') s, coalesce(addr_vc, 'null') v"
-                            + " FROM " + table + " ORDER BY ts",
-                    """
+            assertQuery("SELECT coalesce(addr_str, 'null') s, coalesce(addr_vc, 'null') v"
+                    + " FROM " + table + " ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             s\tv
                             192.168.1.1\t192.168.1.1
                             null\tnull
@@ -2066,11 +2078,13 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT count() FROM " + table, "count\n1\n");
-            assertSql(
-                    "SELECT uuid_str IS NULL AS u_s, uuid_vc IS NULL AS u_v,"
-                            + " l256_str IS NULL AS l_s, l256_vc IS NULL AS l_v FROM " + table,
-                    """
+            assertQuery("SELECT count() FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
+            assertQuery("SELECT uuid_str IS NULL AS u_s, uuid_vc IS NULL AS u_v,"
+                    + " l256_str IS NULL AS l_s, l256_vc IS NULL AS l_v FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("""
                             u_s\tu_v\tl_s\tl_v
                             true\ttrue\ttrue\ttrue
                             """);
@@ -2099,7 +2113,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT count() FROM " + table, "count\n1\n");
+            assertQuery("SELECT count() FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
         });
     }
 
@@ -2153,10 +2169,12 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT count() FROM " + table, "count\n1\n");
-            assertSql(
-                    "SELECT from_byte, from_int, from_long, from_short, from_string FROM " + table,
-                    """
+            assertQuery("SELECT count() FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
+            assertQuery("SELECT from_byte, from_int, from_long, from_short, from_string FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("""
                             from_byte\tfrom_int\tfrom_long\tfrom_short\tfrom_string
                             1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:00.000000Z\t2022-02-25T00:00:00.000000Z
                             """);
@@ -2218,10 +2236,12 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT count() FROM " + table, "count\n1\n");
-            assertSql(
-                    "SELECT from_string FROM " + table,
-                    """
+            assertQuery("SELECT count() FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
+            assertQuery("SELECT from_string FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("""
                             from_string
                             2022-02-25T00:00:00.000000000Z
                             """);
@@ -2259,10 +2279,12 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT count() FROM " + table, "count\n1\n");
-            assertSql(
-                    "SELECT from_string FROM " + table,
-                    """
+            assertQuery("SELECT count() FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
+            assertQuery("SELECT from_string FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("""
                             from_string
                             a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11
                             """);
@@ -2347,16 +2369,18 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT count() FROM " + table, "count\n1\n");
-            assertSql(
-                    "SELECT from_bool, from_byte, from_char, from_decimal, from_symbol, from_string FROM " + table,
-                    """
+            assertQuery("SELECT count() FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
+            assertQuery("SELECT from_bool, from_byte, from_char, from_decimal, from_symbol, from_string FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("""
                             from_bool\tfrom_byte\tfrom_char\tfrom_decimal\tfrom_symbol\tfrom_string
                             true\t42\tZ\t123.45\tsym_val\thello
                             """);
-            assertSql(
-                    "SELECT from_uuid, from_timestamp FROM " + table,
-                    """
+            assertQuery("SELECT from_uuid, from_timestamp FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("""
                             from_uuid\tfrom_timestamp
                             a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\t2022-02-25T00:00:00.000Z
                             """);
@@ -2413,10 +2437,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
 
             for (int s = 0; s < senderCount; s++) {
                 drainWalQueue();
-                assertSql(
-                        "SELECT count() FROM concurrent_diff_" + s,
-                        "count\n" + rowsPerSender + "\n"
-                );
+                assertQuery("SELECT count() FROM concurrent_diff_" + s)
+                        .noLeakCheck()
+                        .returnsOnce("count\n" + rowsPerSender + "\n");
             }
         });
     }
@@ -2461,17 +2484,97 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT count() FROM concurrent_same",
-                    "count\n" + (senderCount * rowsPerSender) + "\n"
-            );
+            assertQuery("SELECT count() FROM concurrent_same")
+                    .noLeakCheck()
+                    .returnsOnce("count\n" + (senderCount * rowsPerSender) + "\n");
             // Verify each sender contributed its rows
             for (int s = 0; s < senderCount; s++) {
-                assertSql(
-                        "SELECT count() FROM concurrent_same WHERE sender_id = " + s,
-                        "count\n" + rowsPerSender + "\n"
-                );
+                assertQuery("SELECT count() FROM concurrent_same WHERE sender_id = " + s)
+                        .noLeakCheck()
+                        .returnsOnce("count\n" + rowsPerSender + "\n");
             }
+        });
+    }
+
+    // Covers the binary double-to-DECIMAL conversion under concurrent senders.
+    // The QWP WebSocket path uses a per-connection QwpWalAppender, so this is
+    // correctness coverage of the conversion, not a repro of the cross-worker
+    // scratch race fixed in the ILP/TCP path; that race is reproduced by
+    // LineTcpWalDecimalConcurrencyTest.
+    @Test
+    public void testConcurrentSenders_sameTable_doubleToDecimal() throws Exception {
+        sendChunk = Integer.MAX_VALUE;
+        recvChunk = Integer.MAX_VALUE;
+        runInContext((port) -> {
+            String table = "concurrent_decimal";
+            execute("CREATE TABLE " + table + " (" +
+                    "sender_id LONG, " +
+                    "row_id LONG, " +
+                    "variant LONG, " +
+                    "price DECIMAL(38,18), " +
+                    "quantity DECIMAL(38,18), " +
+                    "ts TIMESTAMP" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            int senderCount = 16;
+            int rowsPerSender = 5000;
+            int autoFlushRows = 100;
+            double[] prices = {1.25, 2.5, 999999.875, 12345.125};
+            double[] quantities = {1024.5, 2048.25, 4096.125, 8192.875};
+            CyclicBarrier barrier = new CyclicBarrier(senderCount);
+            AtomicReference<Throwable> error = new AtomicReference<>();
+
+            Thread[] threads = new Thread[senderCount];
+            for (int s = 0; s < senderCount; s++) {
+                final int senderIdx = s;
+                threads[s] = new Thread(() -> {
+                    try (QwpWebSocketSender sender = connectWs(port,
+                            autoFlushRows,
+                            1024 * 1024,
+                            100_000_000L)) {
+                        barrier.await();
+                        for (int i = 0; i < rowsPerSender; i++) {
+                            int variant = (senderIdx + i) & 3;
+                            sender.table(table)
+                                    .longColumn("sender_id", senderIdx)
+                                    .longColumn("row_id", i)
+                                    .longColumn("variant", variant)
+                                    .doubleColumn("price", prices[variant])
+                                    .doubleColumn("quantity", quantities[variant])
+                                    .at(1_000_000_000_000L + senderIdx * 1_000_000L + i * 1000L, ChronoUnit.MICROS);
+                        }
+                        sender.flush();
+                    } catch (Throwable t) {
+                        error.compareAndSet(null, t);
+                    }
+                });
+                threads[s].start();
+            }
+
+            for (Thread t : threads) {
+                t.join();
+            }
+            if (error.get() != null) {
+                throw new RuntimeException("sender thread failed", error.get());
+            }
+
+            drainWalQueue();
+            assertQuery("SELECT count() FROM " + table)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n" + (senderCount * rowsPerSender) + "\n");
+            assertQuery(
+                    "SELECT count() FROM " + table + " WHERE " +
+                            "(variant = 0 AND (price != 1.25::decimal(38,18) OR quantity != 1024.5::decimal(38,18))) OR " +
+                            "(variant = 1 AND (price != 2.5::decimal(38,18) OR quantity != 2048.25::decimal(38,18))) OR " +
+                            "(variant = 2 AND (price != 999999.875::decimal(38,18) OR quantity != 4096.125::decimal(38,18))) OR " +
+                            "(variant = 3 AND (price != 12345.125::decimal(38,18) OR quantity != 8192.875::decimal(38,18)))"
+            )
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n0\n");
         });
     }
 
@@ -2518,22 +2621,137 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT count() FROM concurrent_sym",
-                    "count\n" + (senderCount * rowsPerSender) + "\n"
-            );
+            assertQuery("SELECT count() FROM concurrent_sym")
+                    .noLeakCheck()
+                    .returnsOnce("count\n" + (senderCount * rowsPerSender) + "\n");
             // Verify all 3 symbol values are present
-            assertSql(
-                    "SELECT count_distinct(sym) FROM concurrent_sym",
-                    "count_distinct\n" + symbols.length + "\n"
-            );
+            assertQuery("SELECT count_distinct(sym) FROM concurrent_sym")
+                    .noLeakCheck()
+                    .returnsOnce("count_distinct\n" + symbols.length + "\n");
             // Verify each sender contributed its rows
             for (int s = 0; s < senderCount; s++) {
-                assertSql(
-                        "SELECT count() FROM concurrent_sym WHERE sender_id = " + s,
-                        "count\n" + rowsPerSender + "\n"
-                );
+                assertQuery("SELECT count() FROM concurrent_sym WHERE sender_id = " + s)
+                        .noLeakCheck()
+                        .returnsOnce("count\n" + rowsPerSender + "\n");
             }
+        });
+    }
+
+    @Test
+    public void testDecimal() throws Exception {
+        runInContext((port) -> {
+            String table = "test_qwp_decimal";
+
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                sender.table(table)
+                        .decimalColumn("d", "123.45")
+                        .at(1_000_000, ChronoUnit.MICROS);
+                sender.table(table)
+                        .decimalColumn("d", "-999.99")
+                        .at(2_000_000, ChronoUnit.MICROS);
+                sender.table(table)
+                        .decimalColumn("d", "0.01")
+                        .at(3_000_000, ChronoUnit.MICROS);
+                sender.table(table)
+                        .decimalColumn("d", Decimal256.fromLong(42_000, 2))
+                        .at(4_000_000, ChronoUnit.MICROS);
+                sender.flush();
+            }
+
+            drainWalQueue();
+            assertQuery("SELECT count() FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("count\n4\n");
+        });
+    }
+
+    @Test
+    public void testDecimalRescale() throws Exception {
+        runInContext((port) -> {
+            String table = "test_qwp_decimal_rescale";
+            execute("CREATE TABLE " + table + " (" +
+                    "d DECIMAL(10, 4), " +
+                    "ts TIMESTAMP" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                // Send with scale=2, but column expects scale=4 - should rescale
+                sender.table(table)
+                        .decimalColumn("d", Decimal64.fromLong(12_345, 2))
+                        .at(1_000_000, ChronoUnit.MICROS);
+                sender.flush();
+            }
+
+            drainWalQueue();
+            assertQuery("SELECT count() FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
+            assertQuery("SELECT d FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("""
+                            d
+                            123.4500
+                            """);
+        });
+    }
+
+    @Test
+    public void testDeferredCommitConnectionDropRollsBack() throws Exception {
+        runInContext((port) -> {
+            // Send deferred messages then close without committing
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                sender.setDeferCommit(true);
+                for (int i = 0; i < 10; i++) {
+                    sender.table("defer_drop")
+                            .longColumn("id", i)
+                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
+                }
+                sender.flush();
+
+                // Close without ever clearing the defer flag — server should roll back
+            }
+
+            drainWalQueue();
+
+            // Table may not even exist, or if auto-created it should have 0 committed rows
+            try {
+                assertQuery("SELECT count() FROM defer_drop")
+                        .noLeakCheck()
+                        .returnsOnce("count\n0\n");
+            } catch (AssertionError e) {
+                // Table was never created — that's also correct
+                if (!e.getMessage().contains("defer_drop")) {
+                    throw e;
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testDeferredCommitEmptyFinalMessage() throws Exception {
+        runInContext((port) -> {
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                // Deferred messages carry all the data
+                sender.setDeferCommit(true);
+                for (int i = 0; i < 20; i++) {
+                    sender.table("defer_empty_final")
+                            .longColumn("id", i)
+                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
+                }
+                sender.flush();
+
+                // Final message without defer flag and with more rows triggers commit
+                sender.setDeferCommit(false);
+                sender.table("defer_empty_final")
+                        .longColumn("id", 99)
+                        .at(1_000_000_100_000L, ChronoUnit.MICROS);
+                sender.flush();
+            }
+
+            drainWalQueue();
+            assertQuery("SELECT count() FROM defer_empty_final")
+                    .noLeakCheck()
+                    .returnsOnce("count\n21\n");
         });
     }
 
@@ -2569,11 +2787,12 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT count() FROM defer_happy", "count\n30\n");
-            assertSql(
-                    "SELECT min(id), max(id) FROM defer_happy",
-                    "min\tmax\n0\t29\n"
-            );
+            assertQuery("SELECT count() FROM defer_happy")
+                    .noLeakCheck()
+                    .returnsOnce("count\n30\n");
+            assertQuery("SELECT min(id), max(id) FROM defer_happy")
+                    .noLeakCheck()
+                    .returnsOnce("min\tmax\n0\t29\n");
         });
     }
 
@@ -2607,92 +2826,12 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT count() FROM defer_mixed_a", "count\n15\n");
-            assertSql("SELECT count() FROM defer_mixed_b", "count\n15\n");
-        });
-    }
-
-    @Test
-    public void testDeferredCommitEmptyFinalMessage() throws Exception {
-        runInContext((port) -> {
-            try (QwpWebSocketSender sender = connectWs(port)) {
-                // Deferred messages carry all the data
-                sender.setDeferCommit(true);
-                for (int i = 0; i < 20; i++) {
-                    sender.table("defer_empty_final")
-                            .longColumn("id", i)
-                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
-                }
-                sender.flush();
-
-                // Final message without defer flag and with more rows triggers commit
-                sender.setDeferCommit(false);
-                sender.table("defer_empty_final")
-                        .longColumn("id", 99)
-                        .at(1_000_000_100_000L, ChronoUnit.MICROS);
-                sender.flush();
-            }
-
-            drainWalQueue();
-            assertSql("SELECT count() FROM defer_empty_final", "count\n21\n");
-        });
-    }
-
-    @Test
-    public void testDeferredCommitSingleDeferredMessage() throws Exception {
-        runInContext((port) -> {
-            try (QwpWebSocketSender sender = connectWs(port)) {
-                // One deferred message
-                sender.setDeferCommit(true);
-                for (int i = 0; i < 5; i++) {
-                    sender.table("defer_single")
-                            .longColumn("id", i)
-                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
-                }
-                sender.flush();
-
-                // Immediately followed by a committing message
-                sender.setDeferCommit(false);
-                for (int i = 5; i < 10; i++) {
-                    sender.table("defer_single")
-                            .longColumn("id", i)
-                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
-                }
-                sender.flush();
-            }
-
-            drainWalQueue();
-            assertSql("SELECT count() FROM defer_single", "count\n10\n");
-        });
-    }
-
-    @Test
-    public void testDeferredCommitConnectionDropRollsBack() throws Exception {
-        runInContext((port) -> {
-            // Send deferred messages then close without committing
-            try (QwpWebSocketSender sender = connectWs(port)) {
-                sender.setDeferCommit(true);
-                for (int i = 0; i < 10; i++) {
-                    sender.table("defer_drop")
-                            .longColumn("id", i)
-                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
-                }
-                sender.flush();
-
-                // Close without ever clearing the defer flag — server should roll back
-            }
-
-            drainWalQueue();
-
-            // Table may not even exist, or if auto-created it should have 0 committed rows
-            try {
-                assertSql("SELECT count() FROM defer_drop", "count\n0\n");
-            } catch (AssertionError e) {
-                // Table was never created — that's also correct
-                if (!e.getMessage().contains("defer_drop")) {
-                    throw e;
-                }
-            }
+            assertQuery("SELECT count() FROM defer_mixed_a")
+                    .noLeakCheck()
+                    .returnsOnce("count\n15\n");
+            assertQuery("SELECT count() FROM defer_mixed_b")
+                    .noLeakCheck()
+                    .returnsOnce("count\n15\n");
         });
     }
 
@@ -2736,11 +2875,12 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT count() FROM defer_multi_cycle", "count\n30\n");
-            assertSql(
-                    "SELECT min(id), max(id) FROM defer_multi_cycle",
-                    "min\tmax\n0\t29\n"
-            );
+            assertQuery("SELECT count() FROM defer_multi_cycle")
+                    .noLeakCheck()
+                    .returnsOnce("count\n30\n");
+            assertQuery("SELECT min(id), max(id) FROM defer_multi_cycle")
+                    .noLeakCheck()
+                    .returnsOnce("min\tmax\n0\t29\n");
         });
     }
 
@@ -2781,16 +2921,50 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             drainWalQueue();
 
             // Original row in table_a survives; the mismatched row was not committed
-            assertSql("SELECT px FROM defer_mismatch_a", "px\n1.5\n");
+            assertQuery("SELECT px FROM defer_mismatch_a")
+                    .noLeakCheck()
+                    .returnsOnce("px\n1.5\n");
 
             // Deferred rows for table_b were rolled back together with the error
             try {
-                assertSql("SELECT count() FROM defer_mismatch_b", "count\n0\n");
+                assertQuery("SELECT count() FROM defer_mismatch_b")
+                        .noLeakCheck()
+                        .returnsOnce("count\n0\n");
             } catch (AssertionError e) {
                 if (!e.getMessage().contains("defer_mismatch_b")) {
                     throw e;
                 }
             }
+        });
+    }
+
+    @Test
+    public void testDeferredCommitSingleDeferredMessage() throws Exception {
+        runInContext((port) -> {
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                // One deferred message
+                sender.setDeferCommit(true);
+                for (int i = 0; i < 5; i++) {
+                    sender.table("defer_single")
+                            .longColumn("id", i)
+                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
+                }
+                sender.flush();
+
+                // Immediately followed by a committing message
+                sender.setDeferCommit(false);
+                for (int i = 5; i < 10; i++) {
+                    sender.table("defer_single")
+                            .longColumn("id", i)
+                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
+                }
+                sender.flush();
+            }
+
+            drainWalQueue();
+            assertQuery("SELECT count() FROM defer_single")
+                    .noLeakCheck()
+                    .returnsOnce("count\n10\n");
         });
     }
 
@@ -2831,73 +3005,17 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT host, val, timestamp FROM defer_symbol ORDER BY timestamp")
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .returns("""
                             host\tval\ttimestamp
                             server-01\t1\t1970-01-01T00:00:01.000000Z
                             server-02\t2\t1970-01-01T00:00:02.000000Z
                             server-01\t3\t1970-01-01T00:00:03.000000Z
                             server-03\t4\t1970-01-01T00:00:04.000000Z
                             server-02\t5\t1970-01-01T00:00:05.000000Z
-                            """,
-                    "SELECT host, val, timestamp FROM defer_symbol ORDER BY timestamp",
-                    "timestamp",
-                    true,
-                    true
-            );
-        });
-    }
-
-    @Test
-    public void testDecimal() throws Exception {
-        runInContext((port) -> {
-            String table = "test_qwp_decimal";
-
-            try (QwpWebSocketSender sender = connectWs(port)) {
-                sender.table(table)
-                        .decimalColumn("d", "123.45")
-                        .at(1_000_000, ChronoUnit.MICROS);
-                sender.table(table)
-                        .decimalColumn("d", "-999.99")
-                        .at(2_000_000, ChronoUnit.MICROS);
-                sender.table(table)
-                        .decimalColumn("d", "0.01")
-                        .at(3_000_000, ChronoUnit.MICROS);
-                sender.table(table)
-                        .decimalColumn("d", Decimal256.fromLong(42_000, 2))
-                        .at(4_000_000, ChronoUnit.MICROS);
-                sender.flush();
-            }
-
-            drainWalQueue();
-            assertSql("SELECT count() FROM " + table, "count\n4\n");
-        });
-    }
-
-    @Test
-    public void testDecimalRescale() throws Exception {
-        runInContext((port) -> {
-            String table = "test_qwp_decimal_rescale";
-            execute("CREATE TABLE " + table + " (" +
-                    "d DECIMAL(10, 4), " +
-                    "ts TIMESTAMP" +
-                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
-
-            try (QwpWebSocketSender sender = connectWs(port)) {
-                // Send with scale=2, but column expects scale=4 - should rescale
-                sender.table(table)
-                        .decimalColumn("d", Decimal64.fromLong(12_345, 2))
-                        .at(1_000_000, ChronoUnit.MICROS);
-                sender.flush();
-            }
-
-            drainWalQueue();
-            assertSql("SELECT count() FROM " + table, "count\n1\n");
-            assertSql(
-                    "SELECT d FROM " + table,
-                    """
-                            d
-                            123.4500
                             """);
         });
     }
@@ -2927,10 +3045,12 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT count() FROM " + table, "count\n5\n");
-            assertSql(
-                    "SELECT value FROM " + table + " ORDER BY timestamp LIMIT 3",
-                    """
+            assertQuery("SELECT count() FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("count\n5\n");
+            assertQuery("SELECT value FROM " + table + " ORDER BY timestamp LIMIT 3")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             value
                             3.14
                             -2.718
@@ -2958,7 +3078,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT count() FROM " + table, "count\n1\n");
+            assertQuery("SELECT count() FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
         });
     }
 
@@ -3019,29 +3141,27 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             //   4  -> non-null with payload bytes
             //   -1 -> NULL (implicit via omitted column)
             //   0  -> empty non-null (regression target)
-            assertSql(
-                    "SELECT length(b) AS len FROM " + table + " ORDER BY ts",
-                    """
+            assertQuery("SELECT length(b) AS len FROM " + table + " ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             len
                             4
                             -1
                             0
-                            """
-            );
+                            """);
             // IS NULL pins null-vs-empty independently of length(), so a
             // future regression that emits empty as NULL on the wire but
             // keeps the length prefix at 0 (e.g. a server-side change that
             // re-introduces fillNulls for BINARY column-tops) is caught
             // here.
-            assertSql(
-                    "SELECT b IS NULL AS isnull FROM " + table + " ORDER BY ts",
-                    """
+            assertQuery("SELECT b IS NULL AS isnull FROM " + table + " ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             isnull
                             false
                             true
                             false
-                            """
-            );
+                            """);
         });
     }
 
@@ -3094,10 +3214,12 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT count() FROM " + table, "count\n3\n");
-            assertSql(
-                    "SELECT f FROM " + table + " ORDER BY timestamp",
-                    """
+            assertQuery("SELECT count() FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("count\n3\n");
+            assertQuery("SELECT f FROM " + table + " ORDER BY timestamp")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             f
                             1.5
                             -2.25
@@ -3146,7 +3268,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
 
             drainWalQueue();
             // Expected once fixed: both rows ingested.
-            assertSql("SELECT count() FROM " + table, "count\n2\n");
+            assertQuery("SELECT count() FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("count\n2\n");
         });
     }
 
@@ -3247,15 +3371,57 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT count() FROM " + table, "count\n4\n");
-            assertSql(
-                    "SELECT value FROM " + table + " ORDER BY timestamp",
-                    """
+            assertQuery("SELECT count() FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("count\n4\n");
+            assertQuery("SELECT value FROM " + table + " ORDER BY timestamp")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             value
                             -2147483647
                             0
                             2147483647
                             null
+                            """);
+        });
+    }
+
+    @Test
+    public void testIntColumnIntoIPv4TranslatesNullSentinel() throws Exception {
+        runInContext((port) -> {
+            String table = "test_qwp_int_to_ipv4_null";
+            // The IPv4 arm of QwpWalAppender.appendToWalColumnar accepts
+            // qwpType == TYPE_INT as a legacy-client migration path (a
+            // client that predates TYPE_IPV4 can still ingest into an
+            // IPv4 column by sending int bits). But INT's NULL sentinel
+            // (Integer.MIN_VALUE = 0x80000000) is not IPv4's NULL
+            // sentinel (0 = 0.0.0.0). Without translation the bit
+            // pattern lands verbatim through putFixedColumn's no-bitmap
+            // memcpy fast path, and reads back as the valid address
+            // 128.0.0.0 -- silently changing what the user wrote (a
+            // NULL on the INT side) into a non-null IPv4 value.
+            execute("CREATE TABLE " + table + " (addr IPv4, ts TIMESTAMP) "
+                    + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                sender.table(table)
+                        .intColumn("addr", Integer.MIN_VALUE)   // INT_NULL
+                        .at(1_000_000, ChronoUnit.MICROS);
+                // Sanity row to confirm the TYPE_INT migration path
+                // still ingests real values correctly after the fix.
+                sender.table(table)
+                        .intColumn("addr", 0x0A000001)          // 10.0.0.1
+                        .at(2_000_000, ChronoUnit.MICROS);
+                sender.flush();
+            }
+
+            drainWalQueue();
+            assertQuery("SELECT coalesce(addr::string, 'null') v FROM " + table + " ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("""
+                            v
+                            null
+                            10.0.0.1
                             """);
         });
     }
@@ -3283,10 +3449,12 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT count() FROM " + table, "count\n4\n");
-            assertSql(
-                    "SELECT value FROM " + table + " ORDER BY timestamp",
-                    """
+            assertQuery("SELECT count() FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("count\n4\n");
+            assertQuery("SELECT value FROM " + table + " ORDER BY timestamp")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             value
                             -9223372036854775807
                             0
@@ -3310,10 +3478,12 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT count() FROM " + table, "count\n1\n");
-            assertSql(
-                    "SELECT value FROM " + table,
-                    """
+            assertQuery("SELECT count() FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
+            assertQuery("SELECT value FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("""
                             value
                             0x04000000000000000300000000000000020000000000000001
                             """);
@@ -3364,10 +3534,12 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT count() FROM " + table, "count\n3\n");
-            assertSql(
-                    "SELECT id FROM " + table + " ORDER BY timestamp LIMIT 2",
-                    """
+            assertQuery("SELECT count() FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("count\n3\n");
+            assertQuery("SELECT id FROM " + table + " ORDER BY timestamp LIMIT 2")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             id
                             1
                             2
@@ -3395,11 +3567,13 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT count() FROM " + table, "count\n1\n");
+            assertQuery("SELECT count() FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
             // Nanoseconds should be truncated to microseconds
-            assertSql(
-                    "SELECT value, ts FROM " + table,
-                    """
+            assertQuery("SELECT value, ts FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("""
                             value\tts
                             42\t2022-02-25T00:00:00.123456Z
                             """);
@@ -3426,10 +3600,12 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT count() FROM " + table, "count\n2\n");
-            assertSql(
-                    "SELECT id FROM " + table + " ORDER BY timestamp",
-                    """
+            assertQuery("SELECT count() FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("count\n2\n");
+            assertQuery("SELECT id FROM " + table + " ORDER BY timestamp")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             id
                             1
                             2
@@ -3457,11 +3633,13 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT count() FROM " + table, "count\n1\n");
+            assertQuery("SELECT count() FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
             // Microseconds should be scaled to nanoseconds
-            assertSql(
-                    "SELECT value, ts FROM " + table,
-                    """
+            assertQuery("SELECT value, ts FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("""
                             value\tts
                             99\t2022-02-25T00:00:00.111111000Z
                             """);
@@ -3492,7 +3670,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT count() FROM " + table, "count\n3\n");
+            assertQuery("SELECT count() FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("count\n3\n");
         });
     }
 
@@ -3514,7 +3694,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT count() FROM " + table, "count\n" + rowCount + "\n");
+            assertQuery("SELECT count() FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("count\n" + rowCount + "\n");
         });
     }
 
@@ -3550,19 +3732,17 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT value FROM test_null_double ORDER BY timestamp",
-                    """
+            assertQuery("SELECT value FROM test_null_double ORDER BY timestamp")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             value
                             3.14
                             null
                             2.72
-                            """
-            );
-            assertSql(
-                    "SELECT count() FROM test_null_double WHERE value IS NULL",
-                    "count\n1\n"
-            );
+                            """);
+            assertQuery("SELECT count() FROM test_null_double WHERE value IS NULL")
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
         });
     }
 
@@ -3583,19 +3763,17 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT value FROM test_null_long ORDER BY timestamp",
-                    """
+            assertQuery("SELECT value FROM test_null_long ORDER BY timestamp")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             value
                             42
                             null
                             99
-                            """
-            );
-            assertSql(
-                    "SELECT count() FROM test_null_long WHERE value IS NULL",
-                    "count\n1\n"
-            );
+                            """);
+            assertQuery("SELECT count() FROM test_null_long WHERE value IS NULL")
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
         });
     }
 
@@ -3613,25 +3791,21 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT count() FROM test_null_mixed",
-                    "count\n20\n"
-            );
+            assertQuery("SELECT count() FROM test_null_mixed")
+                    .noLeakCheck()
+                    .returnsOnce("count\n20\n");
             // 10 odd rows have null strings
-            assertSql(
-                    "SELECT count() FROM test_null_mixed WHERE s IS NULL",
-                    "count\n10\n"
-            );
+            assertQuery("SELECT count() FROM test_null_mixed WHERE s IS NULL")
+                    .noLeakCheck()
+                    .returnsOnce("count\n10\n");
             // Rows 0, 3, 6, 9, 12, 15, 18 -> 7 null longs
-            assertSql(
-                    "SELECT count() FROM test_null_mixed WHERE l IS NULL",
-                    "count\n7\n"
-            );
+            assertQuery("SELECT count() FROM test_null_mixed WHERE l IS NULL")
+                    .noLeakCheck()
+                    .returnsOnce("count\n7\n");
             // Rows 0, 4, 8, 12, 16 -> 5 null doubles
-            assertSql(
-                    "SELECT count() FROM test_null_mixed WHERE d IS NULL",
-                    "count\n5\n"
-            );
+            assertQuery("SELECT count() FROM test_null_mixed WHERE d IS NULL")
+                    .noLeakCheck()
+                    .returnsOnce("count\n5\n");
         });
     }
 
@@ -3651,18 +3825,15 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT count() FROM test_null_string",
-                    "count\n3\n"
-            );
-            assertSql(
-                    "SELECT count() FROM test_null_string WHERE message IS NULL",
-                    "count\n1\n"
-            );
-            assertSql(
-                    "SELECT count() FROM test_null_string WHERE message IS NOT NULL",
-                    "count\n2\n"
-            );
+            assertQuery("SELECT count() FROM test_null_string")
+                    .noLeakCheck()
+                    .returnsOnce("count\n3\n");
+            assertQuery("SELECT count() FROM test_null_string WHERE message IS NULL")
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
+            assertQuery("SELECT count() FROM test_null_string WHERE message IS NOT NULL")
+                    .noLeakCheck()
+                    .returnsOnce("count\n2\n");
         });
     }
 
@@ -3678,8 +3849,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                 sender.flush();
             }
             drainWalQueue();
-            assertSql("SELECT b, ts FROM " + boolTable + " ORDER BY ts",
-                    "b\tts\ntrue\t1970-01-01T00:00:01.000000Z\nfalse\t1970-01-01T00:00:02.000000Z\n");
+            assertQuery("SELECT b, ts FROM " + boolTable + " ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("b\tts\ntrue\t1970-01-01T00:00:01.000000Z\nfalse\t1970-01-01T00:00:02.000000Z\n");
 
             // byte: null string -> 0
             String byteTable = "test_qwp_null_string_to_byte";
@@ -3690,8 +3862,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                 sender.flush();
             }
             drainWalQueue();
-            assertSql("SELECT b, ts FROM " + byteTable + " ORDER BY ts",
-                    "b\tts\n42\t1970-01-01T00:00:01.000000Z\n0\t1970-01-01T00:00:02.000000Z\n");
+            assertQuery("SELECT b, ts FROM " + byteTable + " ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("b\tts\n42\t1970-01-01T00:00:01.000000Z\n0\t1970-01-01T00:00:02.000000Z\n");
 
             // char: null string -> empty
             String charTable = "test_qwp_null_string_to_char";
@@ -3702,8 +3875,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                 sender.flush();
             }
             drainWalQueue();
-            assertSql("SELECT c, ts FROM " + charTable + " ORDER BY ts",
-                    "c\tts\nA\t1970-01-01T00:00:01.000000Z\n\t1970-01-01T00:00:02.000000Z\n");
+            assertQuery("SELECT c, ts FROM " + charTable + " ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("c\tts\nA\t1970-01-01T00:00:01.000000Z\n\t1970-01-01T00:00:02.000000Z\n");
 
             // date: null string -> empty
             String dateTable = "test_qwp_null_string_to_date";
@@ -3714,8 +3888,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                 sender.flush();
             }
             drainWalQueue();
-            assertSql("SELECT d, ts FROM " + dateTable + " ORDER BY ts",
-                    "d\tts\n2022-02-25T00:00:00.000Z\t1970-01-01T00:00:01.000000Z\n\t1970-01-01T00:00:02.000000Z\n");
+            assertQuery("SELECT d, ts FROM " + dateTable + " ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("d\tts\n2022-02-25T00:00:00.000Z\t1970-01-01T00:00:01.000000Z\n\t1970-01-01T00:00:02.000000Z\n");
 
             // decimal: null string -> empty
             String decTable = "test_qwp_null_string_to_decimal";
@@ -3726,8 +3901,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                 sender.flush();
             }
             drainWalQueue();
-            assertSql("SELECT d, ts FROM " + decTable + " ORDER BY ts",
-                    "d\tts\n123.45\t1970-01-01T00:00:01.000000Z\n\t1970-01-01T00:00:02.000000Z\n");
+            assertQuery("SELECT d, ts FROM " + decTable + " ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("d\tts\n123.45\t1970-01-01T00:00:01.000000Z\n\t1970-01-01T00:00:02.000000Z\n");
 
             // float: null string -> null
             String floatTable = "test_qwp_null_string_to_float";
@@ -3738,8 +3914,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                 sender.flush();
             }
             drainWalQueue();
-            assertSql("SELECT f, ts FROM " + floatTable + " ORDER BY ts",
-                    "f\tts\n3.14\t1970-01-01T00:00:01.000000Z\nnull\t1970-01-01T00:00:02.000000Z\n");
+            assertQuery("SELECT f, ts FROM " + floatTable + " ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("f\tts\n3.14\t1970-01-01T00:00:01.000000Z\nnull\t1970-01-01T00:00:02.000000Z\n");
 
             // geohash: null string -> empty
             String geoTable = "test_qwp_null_string_to_geohash";
@@ -3750,8 +3927,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                 sender.flush();
             }
             drainWalQueue();
-            assertSql("SELECT g, ts FROM " + geoTable + " ORDER BY ts",
-                    "g\tts\ns09wh\t1970-01-01T00:00:01.000000Z\n\t1970-01-01T00:00:02.000000Z\n");
+            assertQuery("SELECT g, ts FROM " + geoTable + " ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("g\tts\ns09wh\t1970-01-01T00:00:01.000000Z\n\t1970-01-01T00:00:02.000000Z\n");
 
             // int/long/double: null string -> null
             String numTable = "test_qwp_null_string_to_numeric";
@@ -3762,8 +3940,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                 sender.flush();
             }
             drainWalQueue();
-            assertSql("SELECT i, l, d, ts FROM " + numTable + " ORDER BY ts",
-                    "i\tl\td\tts\n42\t100\t3.14\t1970-01-01T00:00:01.000000Z\nnull\tnull\tnull\t1970-01-01T00:00:02.000000Z\n");
+            assertQuery("SELECT i, l, d, ts FROM " + numTable + " ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("i\tl\td\tts\n42\t100\t3.14\t1970-01-01T00:00:01.000000Z\nnull\tnull\tnull\t1970-01-01T00:00:02.000000Z\n");
 
             // long256: null string -> empty
             String l256Table = "test_qwp_null_string_to_long256";
@@ -3774,8 +3953,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                 sender.flush();
             }
             drainWalQueue();
-            assertSql("SELECT l, ts FROM " + l256Table + " ORDER BY ts",
-                    "l\tts\n0x01\t1970-01-01T00:00:01.000000Z\n\t1970-01-01T00:00:02.000000Z\n");
+            assertQuery("SELECT l, ts FROM " + l256Table + " ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("l\tts\n0x01\t1970-01-01T00:00:01.000000Z\n\t1970-01-01T00:00:02.000000Z\n");
 
             // short: null string -> 0
             String shortTable = "test_qwp_null_string_to_short";
@@ -3786,8 +3966,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                 sender.flush();
             }
             drainWalQueue();
-            assertSql("SELECT s, ts FROM " + shortTable + " ORDER BY ts",
-                    "s\tts\n42\t1970-01-01T00:00:01.000000Z\n0\t1970-01-01T00:00:02.000000Z\n");
+            assertQuery("SELECT s, ts FROM " + shortTable + " ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("s\tts\n42\t1970-01-01T00:00:01.000000Z\n0\t1970-01-01T00:00:02.000000Z\n");
 
             // symbol: null string -> empty
             String symTable = "test_qwp_null_string_to_symbol";
@@ -3798,8 +3979,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                 sender.flush();
             }
             drainWalQueue();
-            assertSql("SELECT s, ts FROM " + symTable + " ORDER BY ts",
-                    "s\tts\nalpha\t1970-01-01T00:00:01.000000Z\n\t1970-01-01T00:00:02.000000Z\n");
+            assertQuery("SELECT s, ts FROM " + symTable + " ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("s\tts\nalpha\t1970-01-01T00:00:01.000000Z\n\t1970-01-01T00:00:02.000000Z\n");
 
             // timestamp: null string -> empty
             String tsTable = "test_qwp_null_string_to_timestamp";
@@ -3810,8 +3992,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                 sender.flush();
             }
             drainWalQueue();
-            assertSql("SELECT t, ts FROM " + tsTable + " ORDER BY ts",
-                    "t\tts\n2022-02-25T00:00:00.000000Z\t1970-01-01T00:00:01.000000Z\n\t1970-01-01T00:00:02.000000Z\n");
+            assertQuery("SELECT t, ts FROM " + tsTable + " ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("t\tts\n2022-02-25T00:00:00.000000Z\t1970-01-01T00:00:01.000000Z\n\t1970-01-01T00:00:02.000000Z\n");
 
             // timestamp_ns: null string -> empty
             String tsNsTable = "test_qwp_null_string_to_timestamp_ns";
@@ -3822,8 +4005,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                 sender.flush();
             }
             drainWalQueue();
-            assertSql("SELECT t, ts FROM " + tsNsTable + " ORDER BY ts",
-                    "t\tts\n2022-02-25T00:00:00.000000000Z\t1970-01-01T00:00:01.000000Z\n\t1970-01-01T00:00:02.000000Z\n");
+            assertQuery("SELECT t, ts FROM " + tsNsTable + " ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("t\tts\n2022-02-25T00:00:00.000000000Z\t1970-01-01T00:00:01.000000Z\n\t1970-01-01T00:00:02.000000Z\n");
 
             // uuid: null string -> empty
             String uuidTable = "test_qwp_null_string_to_uuid";
@@ -3834,8 +4018,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                 sender.flush();
             }
             drainWalQueue();
-            assertSql("SELECT u, ts FROM " + uuidTable + " ORDER BY ts",
-                    "u\tts\na0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\t1970-01-01T00:00:01.000000Z\n\t1970-01-01T00:00:02.000000Z\n");
+            assertQuery("SELECT u, ts FROM " + uuidTable + " ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("u\tts\na0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\t1970-01-01T00:00:01.000000Z\n\t1970-01-01T00:00:02.000000Z\n");
 
             // varchar: null string -> empty
             String varcharTable = "test_qwp_null_string_to_varchar";
@@ -3846,8 +4031,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                 sender.flush();
             }
             drainWalQueue();
-            assertSql("SELECT v, ts FROM " + varcharTable + " ORDER BY ts",
-                    "v\tts\nhello\t1970-01-01T00:00:01.000000Z\n\t1970-01-01T00:00:02.000000Z\n");
+            assertQuery("SELECT v, ts FROM " + varcharTable + " ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("v\tts\nhello\t1970-01-01T00:00:01.000000Z\n\t1970-01-01T00:00:02.000000Z\n");
         });
     }
 
@@ -3863,8 +4049,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                 sender.flush();
             }
             drainWalQueue();
-            assertSql("SELECT s, ts FROM " + strTable + " ORDER BY ts",
-                    "s\tts\nhello\t1970-01-01T00:00:01.000000Z\n\t1970-01-01T00:00:02.000000Z\n");
+            assertQuery("SELECT s, ts FROM " + strTable + " ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("s\tts\nhello\t1970-01-01T00:00:01.000000Z\n\t1970-01-01T00:00:02.000000Z\n");
 
             // null symbol to SYMBOL
             String symTable = "test_qwp_null_symbol_to_symbol";
@@ -3875,8 +4062,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                 sender.flush();
             }
             drainWalQueue();
-            assertSql("SELECT s, ts FROM " + symTable + " ORDER BY ts",
-                    "s\tts\nalpha\t1970-01-01T00:00:01.000000Z\n\t1970-01-01T00:00:02.000000Z\n");
+            assertQuery("SELECT s, ts FROM " + symTable + " ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("s\tts\nalpha\t1970-01-01T00:00:01.000000Z\n\t1970-01-01T00:00:02.000000Z\n");
 
             // null symbol to VARCHAR
             String varcharTable = "test_qwp_null_symbol_to_varchar";
@@ -3887,8 +4075,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                 sender.flush();
             }
             drainWalQueue();
-            assertSql("SELECT v, ts FROM " + varcharTable + " ORDER BY ts",
-                    "v\tts\nhello\t1970-01-01T00:00:01.000000Z\n\t1970-01-01T00:00:02.000000Z\n");
+            assertQuery("SELECT v, ts FROM " + varcharTable + " ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("v\tts\nhello\t1970-01-01T00:00:01.000000Z\n\t1970-01-01T00:00:02.000000Z\n");
         });
     }
 
@@ -3981,62 +4170,48 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
 
             drainWalQueue();
 
-            assertSql(
-                    "SELECT bool_col FROM omit_all ORDER BY ts",
-                    "bool_col\ntrue\nfalse\nfalse\nfalse\n"
-            );
-            assertSql(
-                    "SELECT byte_col FROM omit_all ORDER BY ts",
-                    "byte_col\n1\n0\n-1\n0\n"
-            );
-            assertSql(
-                    "SELECT char_col FROM omit_all ORDER BY ts",
-                    "char_col\nA\n\nZ\n\n"
-            );
-            assertSql(
-                    "SELECT double_col FROM omit_all ORDER BY ts",
-                    "double_col\n1.5\nnull\n-2.5\nnull\n"
-            );
-            assertSql(
-                    "SELECT float_col FROM omit_all ORDER BY ts",
-                    "float_col\n1.5\nnull\n-2.5\nnull\n"
-            );
-            assertSql(
-                    "SELECT int_col FROM omit_all ORDER BY ts",
-                    "int_col\n42\nnull\n-100\nnull\n"
-            );
-            assertSql(
-                    "SELECT long256_col FROM omit_all ORDER BY ts",
-                    "long256_col\n0x01\n\n0x02000000000000000000000000000000000000000000000000\n\n"
-            );
-            assertSql(
-                    "SELECT long_col FROM omit_all ORDER BY ts",
-                    "long_col\n100\nnull\n-200\nnull\n"
-            );
-            assertSql(
-                    "SELECT short_col FROM omit_all ORDER BY ts",
-                    "short_col\n100\n0\n-200\n0\n"
-            );
-            assertSql(
-                    "SELECT string_col FROM omit_all ORDER BY ts",
-                    "string_col\nhello\n\nworld\n\n"
-            );
-            assertSql(
-                    "SELECT symbol_col FROM omit_all ORDER BY ts",
-                    "symbol_col\nalpha\n\nbeta\n\n"
-            );
-            assertSql(
-                    "SELECT timestamp_col FROM omit_all ORDER BY ts",
-                    "timestamp_col\n2022-02-25T00:00:00.000000Z\n\n2022-02-25T00:00:01.000000Z\n\n"
-            );
-            assertSql(
-                    "SELECT uuid_col FROM omit_all ORDER BY ts",
-                    "uuid_col\na0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n\n11111111-2222-3333-4444-555555555555\n\n"
-            );
-            assertSql(
-                    "SELECT varchar_col FROM omit_all ORDER BY ts",
-                    "varchar_col\nhello\n\nworld\n\n"
-            );
+            assertQuery("SELECT bool_col FROM omit_all ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("bool_col\ntrue\nfalse\nfalse\nfalse\n");
+            assertQuery("SELECT byte_col FROM omit_all ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("byte_col\n1\n0\n-1\n0\n");
+            assertQuery("SELECT char_col FROM omit_all ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("char_col\nA\n\nZ\n\n");
+            assertQuery("SELECT double_col FROM omit_all ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("double_col\n1.5\nnull\n-2.5\nnull\n");
+            assertQuery("SELECT float_col FROM omit_all ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("float_col\n1.5\nnull\n-2.5\nnull\n");
+            assertQuery("SELECT int_col FROM omit_all ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("int_col\n42\nnull\n-100\nnull\n");
+            assertQuery("SELECT long256_col FROM omit_all ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("long256_col\n0x01\n\n0x02000000000000000000000000000000000000000000000000\n\n");
+            assertQuery("SELECT long_col FROM omit_all ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("long_col\n100\nnull\n-200\nnull\n");
+            assertQuery("SELECT short_col FROM omit_all ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("short_col\n100\n0\n-200\n0\n");
+            assertQuery("SELECT string_col FROM omit_all ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("string_col\nhello\n\nworld\n\n");
+            assertQuery("SELECT symbol_col FROM omit_all ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("symbol_col\nalpha\n\nbeta\n\n");
+            assertQuery("SELECT timestamp_col FROM omit_all ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("timestamp_col\n2022-02-25T00:00:00.000000Z\n\n2022-02-25T00:00:01.000000Z\n\n");
+            assertQuery("SELECT uuid_col FROM omit_all ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("uuid_col\na0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n\n11111111-2222-3333-4444-555555555555\n\n");
+            assertQuery("SELECT varchar_col FROM omit_all ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("varchar_col\nhello\n\nworld\n\n");
         });
     }
 
@@ -4067,33 +4242,33 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
 
             drainWalQueue();
 
-            assertSql("SELECT count() FROM ooo_test", "count\n" + rowCount + "\n");
+            assertQuery("SELECT count() FROM ooo_test")
+                    .noLeakCheck()
+                    .returnsOnce("count\n" + rowCount + "\n");
 
             // Verify data is sorted by timestamp after ingestion
-            assertSql(
-                    "SELECT val FROM ooo_test ORDER BY timestamp LIMIT 5",
-                    """
+            assertQuery("SELECT val FROM ooo_test ORDER BY timestamp LIMIT 5")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             val
                             4999
                             4998
                             4997
                             4996
                             4995
-                            """
-            );
+                            """);
 
             // Verify the last rows
-            assertSql(
-                    "SELECT val FROM ooo_test ORDER BY timestamp DESC LIMIT 5",
-                    """
+            assertQuery("SELECT val FROM ooo_test ORDER BY timestamp DESC LIMIT 5")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             val
                             0
                             1
                             2
                             3
                             4
-                            """
-            );
+                            """);
         });
     }
 
@@ -4117,30 +4292,32 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             drainWalQueue();
 
             // verify row counts
-            assertSql("SELECT count() FROM schema_iso_a", "count\n10\n");
-            assertSql("SELECT count() FROM schema_iso_b", "count\n10\n");
+            assertQuery("SELECT count() FROM schema_iso_a")
+                    .noLeakCheck()
+                    .returnsOnce("count\n10\n");
+            assertQuery("SELECT count() FROM schema_iso_b")
+                    .noLeakCheck()
+                    .returnsOnce("count\n10\n");
 
             // verify table A stores LONG values
-            assertSql(
-                    "SELECT value FROM schema_iso_a ORDER BY timestamp LIMIT 3",
-                    """
+            assertQuery("SELECT value FROM schema_iso_a ORDER BY timestamp LIMIT 3")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             value
                             0
                             100
                             200
-                            """
-            );
+                            """);
 
             // verify table B stores DOUBLE values
-            assertSql(
-                    "SELECT value FROM schema_iso_b ORDER BY timestamp LIMIT 3",
-                    """
+            assertQuery("SELECT value FROM schema_iso_b ORDER BY timestamp LIMIT 3")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             value
                             0.0
                             1.5
                             3.0
-                            """
-            );
+                            """);
         });
     }
 
@@ -4170,10 +4347,12 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT count() FROM " + table, "count\n2\n");
-            assertSql(
-                    "SELECT city, temp, humidity, sunny, note, timestamp FROM " + table + " ORDER BY timestamp",
-                    """
+            assertQuery("SELECT count() FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("count\n2\n");
+            assertQuery("SELECT city, temp, humidity, sunny, note, timestamp FROM " + table + " ORDER BY timestamp")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             city\ttemp\thumidity\tsunny\tnote\ttimestamp
                             London\t22.5\t48\ttrue\tclear sky\t1970-01-01T00:00:01.000000Z
                             Berlin\t18.3\t65\tfalse\tovercast\t1970-01-01T00:00:02.000000Z
@@ -4201,7 +4380,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT count() FROM " + table, "count\n3\n");
+            assertQuery("SELECT count() FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("count\n3\n");
         });
     }
 
@@ -4224,10 +4405,12 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT count() FROM " + table, "count\n3\n");
-            assertSql(
-                    "SELECT message FROM " + table + " ORDER BY timestamp",
-                    """
+            assertQuery("SELECT count() FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("count\n3\n");
+            assertQuery("SELECT message FROM " + table + " ORDER BY timestamp")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             message
                             Hello, World!
                             \
@@ -4280,16 +4463,15 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
             drainWalQueue();
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT px, timestamp FROM " + table + " ORDER BY timestamp")
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .returns("""
                             px\ttimestamp
                             1.5\t1970-01-01T00:00:01.000000Z
                             2.5\t1970-01-01T00:00:03.000000Z
-                            """,
-                    "SELECT px, timestamp FROM " + table + " ORDER BY timestamp",
-                    "timestamp",
-                    true,
-                    true);
+                            """);
         });
     }
 
@@ -4313,10 +4495,12 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT count() FROM " + table, "count\n3\n");
-            assertSql(
-                    "SELECT s, timestamp FROM " + table + " ORDER BY timestamp",
-                    """
+            assertQuery("SELECT count() FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("count\n3\n");
+            assertQuery("SELECT s, timestamp FROM " + table + " ORDER BY timestamp")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             s\ttimestamp
                             alpha\t1970-01-01T00:00:01.000000Z
                             beta\t1970-01-01T00:00:02.000000Z
@@ -4339,7 +4523,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT count() FROM " + table, "count\n1\n");
+            assertQuery("SELECT count() FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
         });
     }
 
@@ -4361,11 +4547,13 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT count() FROM " + table, "count\n1\n");
+            assertQuery("SELECT count() FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
             // Microseconds scaled to nanoseconds
-            assertSql(
-                    "SELECT ts_col, ts FROM " + table,
-                    """
+            assertQuery("SELECT ts_col, ts FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("""
                             ts_col\tts
                             2022-02-25T00:00:00.111111000Z\t1970-01-01T00:00:01.000000Z
                             """);
@@ -4411,7 +4599,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT count() FROM " + table, "count\n1\n");
+            assertQuery("SELECT count() FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
         });
     }
 
@@ -4433,11 +4623,13 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT count() FROM " + table, "count\n1\n");
+            assertQuery("SELECT count() FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
             // Nanoseconds truncated to microseconds
-            assertSql(
-                    "SELECT ts_col, ts FROM " + table,
-                    """
+            assertQuery("SELECT ts_col, ts FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("""
                             ts_col\tts
                             2022-02-25T00:00:00.123456Z\t1970-01-01T00:00:01.000000Z
                             """);
@@ -4475,11 +4667,13 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT count() FROM " + table, "count\n3\n");
+            assertQuery("SELECT count() FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("count\n3\n");
             // Nanosecond values divided by 1000, sub-microsecond remainder truncated
-            assertSql(
-                    "SELECT ts_col, value FROM " + table + " ORDER BY ts",
-                    """
+            assertQuery("SELECT ts_col, value FROM " + table + " ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             ts_col\tvalue
                             2022-02-25T00:00:00.123456Z\t1
                             2022-02-25T00:00:00.234567Z\t2
@@ -4507,10 +4701,12 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT count() FROM " + table, "count\n2\n");
-            assertSql(
-                    "SELECT u, timestamp FROM " + table + " ORDER BY timestamp",
-                    """
+            assertQuery("SELECT count() FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("count\n2\n");
+            assertQuery("SELECT u, timestamp FROM " + table + " ORDER BY timestamp")
+                    .noLeakCheck()
+                    .returnsOnce("""
                             u\ttimestamp
                             a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\t1970-01-01T00:00:01.000000Z
                             11111111-2222-3333-4444-555555555555\t1970-01-01T00:00:02.000000Z
@@ -4563,7 +4759,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT count() FROM " + table, "count\n1\n");
+            assertQuery("SELECT count() FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
         });
     }
 

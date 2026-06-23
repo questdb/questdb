@@ -439,7 +439,7 @@ sits ready to be wired in by Phase 2b.
       `PostingIndexChainEntry.resolveGenDirOffset(chain.getHeadEntryOffset(), g)`.
     - The four `writeMetadataPage(...)` callsites (one in `flushAllPending`
       for sparse-gen append, three in the seal paths
-      `reencodeMonolithic`/`reencodeWithStrideDecoding`/`sealIncremental`)
+      `reencodeWithPerKeyStreaming`/`reencodeWithStrideDecoding`/`sealIncremental`)
       are replaced by a single helper `publishToChain(...)` that decides
       between `chain.extendHead` (head matches the writer's `sealTxn` —
       sparse-gen append or fd-based reseal) and `chain.appendNewEntry`
