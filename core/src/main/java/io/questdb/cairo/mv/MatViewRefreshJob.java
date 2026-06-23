@@ -844,11 +844,16 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 // A read-only refusal from the role gate (the node is, or just became, a replica):
                 // the refresh job acquires its WalWriter via the read-only chokepoint, which throws
                 // an authorization error on a replica. This is a transient role condition, NOT a
-                // refresh failure -- re-enqueue the task so it retries after a re-promote, and do
-                // NOT invalidate the view or its dependents. The refresh job runs under the internal
-                // all-access context, so an authorization error here can only be the read-only gate;
-                // a genuine ACL denial cannot reach this path.
-                if (stateStore != null) {
+                // refresh failure -- so do NOT invalidate the view or its dependents (return true).
+                // Re-enqueue the task so it retries after a re-promote, but ONLY when the node is not
+                // already read-only: during a demote the lifecycle thread drains this same queue to
+                // empty, and a re-enqueue here would self-feed that drain forever (the queue never
+                // empties). A node that is read-only discards its refresh queue at the demote's NoOp
+                // swap and rebuilds it from disk on the next promote, so re-enqueuing during the
+                // read-only window is pure wasted work that only traps the quiesce drain. The refresh
+                // job runs under the internal all-access context, so an authorization error here can
+                // only be the read-only gate; a genuine ACL denial cannot reach this path.
+                if (stateStore != null && !engine.isReadOnlyMode()) {
                     if (refreshTask == null || refreshTask.operation == MatViewRefreshTask.INCREMENTAL_REFRESH) {
                         stateStore.enqueueIncrementalRefresh(viewToken);
                     } else if (refreshTask.operation == MatViewRefreshTask.FULL_REFRESH) {
@@ -858,13 +863,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     } else {
                         return false;
                     }
-                    LOG.debug().$("materialized view refresh deferred, node is read-only [view=").$(viewToken).I$();
-                    return true;
                 }
-                // No store to re-enqueue against (an inner refresh-time failure rather than the
-                // acquire path). The caller's outer handling will still skip invalidation only if
-                // we return true, but we cannot requeue here, so fall through to today's semantics.
-                return false;
+                // Fires on EVERY read-only refusal, requeued or not: the contract is retry-later, never
+                // invalidate, so always return true. When the node is already read-only the requeue above
+                // is skipped (the work is rebuilt from disk on the next promote), but the refusal is still
+                // a deferral, not a failure.
+                LOG.debug().$("materialized view refresh deferred, node is read-only [view=").$(viewToken).I$();
+                return true;
             }
             if (ex.isTableDoesNotExist()) {
                 // Can be that the mat view underlying table is in the middle of being renamed at this moment,
