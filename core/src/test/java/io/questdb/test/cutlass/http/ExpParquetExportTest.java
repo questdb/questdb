@@ -2242,19 +2242,26 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                             "(1, 10000, 'JAN'), (1, 400, 'JAN'), (2, 4500, 'JAN'), (2, 35000, 'JAN'), " +
                             "(1, 5000, 'FEB'), (1, 3000, 'FEB'), (2, 200, 'FEB'), (2, 90500, 'FEB'), " +
                             "(1, 6000, 'MAR'), (1, 5000, 'MAR'), (2, 2500, 'MAR'), (2, 9500, 'MAR')", sqlExecutionContext);
-                    testHttpClient.setKeepConnection(true);
-                    testHttpClient.assertGetParquet(
-                            "/exp",
-                            1219,
-                            "monthly_sales PIVOT (SUM(amount) FOR month IN (select distinct month from monthly_sales order by month) GROUP BY empid) ORDER BY empid"
-                    );
-                    engine.execute("INSERT INTO monthly_sales VALUES (3, 9000, 'APRIL')", sqlExecutionContext);
-                    testHttpClient.setKeepConnection(false);
-                    testHttpClient.assertGetParquet(
-                            "/exp",
-                            1512,
-                            "monthly_sales PIVOT (SUM(amount) FOR month IN (select distinct month from monthly_sales order by month) GROUP BY empid) ORDER BY empid"
-                    );
+                    // Keep-alive holds the connection open across the two requests, so use a local
+                    // client rather than the shared static testHttpClient -- as the other keep-alive
+                    // tests in this class do. Try-with-resources closes the local client even if an
+                    // assertion throws, so a failure here cannot strand keep-alive state and a socket
+                    // on the shared client and bleed a descriptor into another test's leak check.
+                    try (TestHttpClient client = new TestHttpClient()) {
+                        client.setKeepConnection(true);
+                        client.assertGetParquet(
+                                "/exp",
+                                1219,
+                                "monthly_sales PIVOT (SUM(amount) FOR month IN (select distinct month from monthly_sales order by month) GROUP BY empid) ORDER BY empid"
+                        );
+                        engine.execute("INSERT INTO monthly_sales VALUES (3, 9000, 'APRIL')", sqlExecutionContext);
+                        client.setKeepConnection(false);
+                        client.assertGetParquet(
+                                "/exp",
+                                1512,
+                                "monthly_sales PIVOT (SUM(amount) FOR month IN (select distinct month from monthly_sales order by month) GROUP BY empid) ORDER BY empid"
+                        );
+                    }
                 });
     }
 

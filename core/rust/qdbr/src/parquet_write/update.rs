@@ -122,7 +122,14 @@ pub struct ParquetUpdater {
     target_col_id_to_pos: Option<RapidHashMap<i32, usize>>,
     parquet_meta_fd: Option<File>,
     parquet_meta_file_size: u64,
-    existing_parquet_meta_file_size: i64,
+    // The append base: the `_pm` offset-0 header (the reader's getFileSize()),
+    // threaded in from Java parallel to the parse anchor (parquet_meta_file_size).
+    // New incremental bytes land here, strictly past any orphaned dead footer a
+    // rolled-back update left between the parse anchor and the append base.
+    append_base: u64,
+    // The existing parquet data-file size, used only as a first-time (`<= 0`) vs
+    // incremental gate in end(). It is not a `_pm` size.
+    existing_parquet_file_size: i64,
     result_parquet_meta_size: i64,
     // Per-VARCHAR-column "still all-ASCII" tracker, keyed by parquet field_id.
     // Seeded at construction from the old qdb_meta's ascii flag:
@@ -161,7 +168,8 @@ impl ParquetUpdater {
         min_compression_ratio: f64,
         parquet_meta_fd: Option<File>,
         parquet_meta_file_size: u64,
-        existing_parquet_meta_file_size: i64,
+        append_base: u64,
+        existing_parquet_file_size: i64,
     ) -> ParquetResult<Self> {
         fn version_from(value: i32) -> ParquetResult<Version> {
             match value {
@@ -376,7 +384,8 @@ impl ParquetUpdater {
             target_col_id_to_pos: None,
             parquet_meta_fd,
             parquet_meta_file_size,
-            existing_parquet_meta_file_size,
+            append_base,
+            existing_parquet_file_size,
             result_parquet_meta_size: -1,
             varchar_all_ascii,
         })
@@ -1002,7 +1011,7 @@ impl ParquetUpdater {
                 .map(|i| i as i32)
                 .unwrap_or(-1);
 
-            if self.is_rewrite || self.existing_parquet_meta_file_size <= 0 {
+            if self.is_rewrite || self.existing_parquet_file_size <= 0 {
                 let thrift_row_groups = self.parquet_file.row_groups();
                 let bloom_bitsets = self.parquet_file.bloom_bitsets();
 
@@ -1027,9 +1036,23 @@ impl ParquetUpdater {
                 let thrift_row_groups = self.parquet_file.row_groups();
                 let bloom_bitsets = self.parquet_file.bloom_bitsets();
 
-                // Incremental update: read existing _pm, append new/changed blocks.
-                let existing_size = self.parquet_meta_file_size;
-                let mut existing_pm = vec![0u8; existing_size as usize];
+                // Incremental update: read the committed _pm and append the new
+                // snapshot. Two distinct offsets drive this, both threaded in
+                // from Java:
+                //  - parse anchor: the committed head resolved from `_txn`
+                //    (`parquet_meta_file_size`). Drives which footer is parsed,
+                //    the new footer's `prev`, and the reused row-group offsets.
+                //  - append base: the `_pm` offset-0 header (the Java reader's
+                //    getFileSize()). New bytes land there, strictly past any
+                //    orphaned dead footer a rolled-back update left in
+                //    [parse anchor, append base), so committed and reader-mapped
+                //    bytes are never overwritten. The two coincide unless a prior
+                //    update patched the header but crashed before its `_txn`
+                //    commit (the crash window). The table write lock is held, so
+                //    the header is stable between the Java read and this write.
+                let parse_anchor = self.parquet_meta_file_size;
+                let append_base = self.append_base;
+                let mut existing_pm = vec![0u8; append_base as usize];
                 parquet_meta_file
                     .seek(SeekFrom::Start(0))
                     .map_err(ParquetError::from)?;
@@ -1040,7 +1063,8 @@ impl ParquetUpdater {
 
                 let result = crate::parquet_metadata::update_parquet_metadata(
                     &existing_pm,
-                    existing_size,
+                    parse_anchor,
+                    append_base,
                     thrift_row_groups,
                     footer_offset,
                     footer_length,
@@ -1048,35 +1072,22 @@ impl ParquetUpdater {
                     self.result_unused_bytes,
                 )?;
 
-                // The append-only invariant: write after the existing trailer
-                // so previously committed `parquetMetaFileSize` snapshots stay
-                // valid for stale readers. update_parquet_metadata returns an
-                // error rather than producing a full-rewrite buffer.
+                // Write the new snapshot at the append base. The header still
+                // points at the committed footer here: commit_parquet_meta
+                // patches it after the index build. So any failure before that
+                // header patch lands leaves the committed header and footer
+                // intact, with the new bytes an invisible dead tail past the
+                // header. Once the patch lands the snapshot is published even if
+                // commit_parquet_meta's own fsync then throws (see its doc); the
+                // committed `_txn` size is unchanged, so readers walk the MVCC
+                // chain back to the committed footer regardless.
                 parquet_meta_file
-                    .seek(SeekFrom::Start(existing_size))
+                    .seek(SeekFrom::Start(append_base))
                     .map_err(ParquetError::from)?;
                 parquet_meta_file
                     .write_all(&result.bytes)
                     .map_err(ParquetError::from)
                     .context("could not write _pm file")?;
-
-                // Patch parquet_meta_file_size in the header — last write for atomicity.
-                // Sequential write syscalls on the same fd are ordered by the
-                // kernel, and Linux pread / MAP_SHARED reads observe writes
-                // in this order, so once a reader sees the patched header
-                // size it is guaranteed to see the appended row group blocks
-                // and new footer too. No additional Java-side fence is
-                // required — the previous comment referencing loadFence was
-                // incorrect.
-                parquet_meta_file
-                    .seek(SeekFrom::Start(
-                        crate::parquet_metadata::types::HEADER_PARQUET_META_FILE_SIZE_OFF as u64,
-                    ))
-                    .map_err(ParquetError::from)?;
-                parquet_meta_file
-                    .write_all(&result.new_file_size.to_le_bytes())
-                    .map_err(ParquetError::from)
-                    .context("could not patch header parquet_meta_file_size in _pm file")?;
 
                 self.result_parquet_meta_size = result.new_file_size as i64;
             }
@@ -1089,17 +1100,37 @@ impl ParquetUpdater {
         self.result_unused_bytes
     }
 
-    /// Flushes pending writes for the `_pm` file to durable storage. The
-    /// caller must invoke this before the matching `_txn` commit, otherwise a
-    /// power loss can leave the partition referenced by `_txn` while `_pm`
-    /// is still only in the page cache. Returns `Ok(())` when no `_pm` fd
-    /// was attached.
-    pub fn sync_parquet_meta(&mut self) -> ParquetResult<()> {
+    /// Publishes the new `_pm` snapshot: patches the committed
+    /// `parquet_meta_file_size` into the header (the MVCC commit signal), then
+    /// fsyncs when `sync` is set. The caller must invoke this after `end()` wrote
+    /// the new footer and the index build mapped it, and before the matching
+    /// `_txn` commit. The header patch is the last `_pm` write, so a failure
+    /// before it leaves the committed header and footer intact; the fsync
+    /// (skipped in NOSYNC commit mode) stops a power loss from leaving `_txn`
+    /// pointing at a footer the page cache lost. A no-op when no `_pm` fd is
+    /// attached.
+    pub fn commit_parquet_meta(&mut self, sync: bool) -> ParquetResult<()> {
+        let new_file_size = self.result_parquet_meta_size;
         if let Some(ref mut parquet_meta_file) = self.parquet_meta_fd {
+            debug_assert!(
+                new_file_size > 0,
+                "commit_parquet_meta called before end() wrote the _pm"
+            );
             parquet_meta_file
-                .sync_data()
+                .seek(SeekFrom::Start(
+                    crate::parquet_metadata::types::HEADER_PARQUET_META_FILE_SIZE_OFF as u64,
+                ))
+                .map_err(ParquetError::from)?;
+            parquet_meta_file
+                .write_all(&(new_file_size as u64).to_le_bytes())
                 .map_err(ParquetError::from)
-                .context("could not fsync _pm file")?;
+                .context("could not patch header parquet_meta_file_size in _pm file")?;
+            if sync {
+                parquet_meta_file
+                    .sync_data()
+                    .map_err(ParquetError::from)
+                    .context("could not fsync _pm file")?;
+            }
         }
         Ok(())
     }
@@ -2042,7 +2073,8 @@ mod tests {
                 100.0,                          // min_compression_ratio (impossibly high)
                 None,                           // parquet_meta_fd
                 0,                              // parquet_meta_file_size
-                -1,                             // existing_parquet_meta_file_size
+                0,                              // append_base
+                -1,                             // existing_parquet_file_size
             )?;
 
             updater.insert_row_group(&new_partition, 1)?;
@@ -2102,7 +2134,8 @@ mod tests {
                 0.5,  // min_compression_ratio: ratio check active but easily met
                 None, // parquet_meta_fd
                 0,    // parquet_meta_file_size
-                -1,   // existing_parquet_meta_file_size
+                0,    // append_base
+                -1,   // existing_parquet_file_size
             )?;
 
             updater.insert_row_group(&new_partition, 1)?;
@@ -3440,6 +3473,7 @@ mod tests {
             0.0,
             None,
             0,
+            0,
             -1,
         )?;
 
@@ -3535,6 +3569,7 @@ mod tests {
             0.0,
             None,
             0,
+            0,
             -1,
         )?;
 
@@ -3629,6 +3664,7 @@ mod tests {
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
             None,
+            0,
             0,
             -1,
         )?;
@@ -3739,6 +3775,7 @@ mod tests {
             0.0,
             None,
             0,
+            0,
             -1,
         )?;
 
@@ -3823,6 +3860,7 @@ mod tests {
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
             None,
+            0,
             0,
             -1,
         )?;

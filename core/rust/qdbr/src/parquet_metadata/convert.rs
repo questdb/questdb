@@ -557,45 +557,55 @@ pub fn generate_parquet_metadata(
 
 /// Updates an existing `_pm` file incrementally (append-only).
 ///
-/// Compares the new parquet row groups against the existing `_pm` to determine
-/// which row groups are unchanged, changed, or new. Unchanged row groups keep
-/// their original offsets (no data rewritten). Only new/changed blocks and a
-/// new footer are appended after the existing trailer, leaving the previous
-/// bytes intact so that any older committed `parquetMetaFileSize` continues
-/// to resolve to a consistent older snapshot.
+/// Compares the new parquet row groups against the committed `_pm`: unchanged
+/// row groups keep their original offsets (no data rewritten); only new/changed
+/// blocks and a new footer are appended at `append_base`, leaving the committed
+/// bytes -- and any orphaned dead-footer tail in [parse anchor, append_base) --
+/// intact, so any older committed `parquetMetaFileSize` still resolves to a
+/// consistent snapshot.
 ///
-/// Returns the bytes the caller must append at `existing_parquet_meta_file_size` and
-/// the resulting file size. Returns an error when the new row group count is
-/// smaller than the existing one (compaction is not supported in the in-place
-/// path; the writer's row-group entry list cannot drop existing references).
+/// `existing_parquet_meta_file_size` is the committed parse anchor (drives which
+/// footer is parsed, the new footer's `prev`, and the reused offsets);
+/// `append_base` (the published header, `>=` the parse anchor) is where the new
+/// bytes land. `existing_parquet_meta` must span at least `append_base` bytes.
+///
+/// Returns the bytes to append at `append_base` and the resulting file size.
+/// Errors when the new row group count is smaller than the existing one
+/// (compaction is not supported in the in-place path).
 #[allow(clippy::too_many_arguments)]
 pub fn update_parquet_metadata(
     existing_parquet_meta: &[u8],
     existing_parquet_meta_file_size: u64,
+    append_base: u64,
     thrift_row_groups: &[parquet2::thrift_format::RowGroup],
     parquet_footer_offset: u64,
     parquet_footer_length: u32,
     bloom_bitsets: &[Vec<Option<Vec<u8>>>],
     unused_bytes: u64,
 ) -> ParquetResult<ParquetMetaUpdateResult> {
-    let existing_parquet_meta_len =
-        usize::try_from(existing_parquet_meta_file_size).map_err(|_| {
-            parquet_meta_err!(
-                ParquetMetaErrorKind::Truncated,
-                "_pm file size {} exceeds addressable range",
-                existing_parquet_meta_file_size
-            )
-        })?;
-    let existing_parquet_meta = existing_parquet_meta
-        .get(..existing_parquet_meta_len)
-        .ok_or_else(|| {
-            parquet_meta_err!(
-                ParquetMetaErrorKind::Truncated,
-                "_pm file size {} exceeds available data {}",
-                existing_parquet_meta_file_size,
-                existing_parquet_meta.len()
-            )
-        })?;
+    // append_base (the published header, >= the parse anchor) bounds the new
+    // footer's position; the buffer must reach it so finish folds any dead
+    // footer in [parse anchor, append_base) into the cumulative CRC. Guarded
+    // here because append_base comes from the on-disk header: a corrupt value
+    // must error, not panic via JNI.
+    let append_base_len = usize::try_from(append_base).map_err(|_| {
+        parquet_meta_err!(
+            ParquetMetaErrorKind::Truncated,
+            "_pm append base {} exceeds addressable range",
+            append_base
+        )
+    })?;
+    if append_base < existing_parquet_meta_file_size
+        || existing_parquet_meta.len() < append_base_len
+    {
+        return Err(parquet_meta_err!(
+            ParquetMetaErrorKind::InvalidValue,
+            "_pm append base {} out of range [parse anchor {}, available {}]",
+            append_base,
+            existing_parquet_meta_file_size,
+            existing_parquet_meta.len()
+        ));
+    }
 
     // Read the existing _pm to get row group fingerprints (byte_range_start of first column).
     let existing_reader = crate::parquet_metadata::reader::ParquetMetaReader::from_file_size(
@@ -679,11 +689,8 @@ pub fn update_parquet_metadata(
 
     updater.parquet_footer(parquet_footer_offset, parquet_footer_length);
     updater.unused_bytes(unused_bytes);
-    let (append_bytes, new_file_size) = updater.finish()?;
-    debug_assert_eq!(
-        new_file_size,
-        existing_parquet_meta_file_size + append_bytes.len() as u64
-    );
+    let (append_bytes, new_file_size) = updater.finish_appending_at(append_base)?;
+    debug_assert_eq!(new_file_size, append_base + append_bytes.len() as u64);
 
     Ok(ParquetMetaUpdateResult { bytes: append_bytes, new_file_size })
 }
@@ -2376,9 +2383,17 @@ mod tests {
         }
         extended_rgs.push(new_rg);
 
-        let result =
-            update_parquet_metadata(&initial_pm, initial_size, &extended_rgs, 200, 60, &[], 0)
-                .unwrap();
+        let result = update_parquet_metadata(
+            &initial_pm,
+            initial_size,
+            initial_size,
+            &extended_rgs,
+            200,
+            60,
+            &[],
+            0,
+        )
+        .unwrap();
 
         assert!(!result.bytes.is_empty(), "should have append bytes");
 
@@ -2404,6 +2419,85 @@ mod tests {
         // obtained before the new snapshot was published.
         let old_reader = ParquetMetaReader::from_file_size(&initial_pm, initial_size).unwrap();
         assert_eq!(old_reader.row_group_count(), 1);
+    }
+
+    #[test]
+    fn update_parquet_metadata_appends_past_dead_footer() {
+        let parquet_data = write_multi_column_parquet(80);
+        let mut cursor = Cursor::new(&parquet_data);
+        let metadata = read_metadata_with_size(&mut cursor, parquet_data.len() as u64).unwrap();
+        let qdb_meta = extract_qdb_meta_from(&metadata);
+        let thrift_meta = metadata.into_thrift();
+
+        let mut cursor2 = Cursor::new(&parquet_data);
+        let metadata2 = read_metadata_with_size(&mut cursor2, parquet_data.len() as u64).unwrap();
+        let col_infos = col_infos_from_schema(metadata2.schema_descr.columns(), qdb_meta.as_ref());
+
+        let (initial_pm, _) = generate_parquet_metadata(
+            &col_infos,
+            &thrift_meta.row_groups,
+            0,
+            &[0],
+            100,
+            50,
+            &[],
+            0,
+            -1,
+        )
+        .unwrap();
+        let s0 = initial_pm.len() as u64;
+
+        // Two-row-group target: the original row group (unchanged) plus a new one.
+        let mut extended_rgs = thrift_meta.row_groups.clone();
+        let mut new_rg = extended_rgs[0].clone();
+        for col in &mut new_rg.columns {
+            if let Some(ref mut meta) = col.meta_data {
+                meta.data_page_offset += 10_000; // different fingerprint -> treated as new
+            }
+        }
+        extended_rgs.push(new_rg);
+
+        // Crash window: a prior update published a footer at [s0, s1) (header
+        // patched to s1) then crashed before its `_txn` commit. The committed
+        // head stays s0 (the dead footer never matched `_txn`).
+        let dead = update_parquet_metadata(&initial_pm, s0, s0, &extended_rgs, 200, 60, &[], 0)
+            .unwrap()
+            .bytes;
+        let mut physical_after_fail = initial_pm.clone();
+        physical_after_fail.extend_from_slice(&dead);
+        let s1 = physical_after_fail.len() as u64;
+        assert!(s1 > s0, "dead footer must extend the physical file");
+
+        // The next successful update parses the committed head (s0) and appends
+        // past the dead footer at the append base (the dirty-ahead header, s1).
+        let result =
+            update_parquet_metadata(&physical_after_fail, s0, s1, &extended_rgs, 300, 70, &[], 0)
+                .unwrap();
+        assert_eq!(result.new_file_size, s1 + result.bytes.len() as u64);
+
+        let mut full = physical_after_fail.clone();
+        full.extend_from_slice(&result.bytes);
+        full[crate::parquet_metadata::types::HEADER_PARQUET_META_FILE_SIZE_OFF
+            ..crate::parquet_metadata::types::HEADER_PARQUET_META_FILE_SIZE_OFF + 8]
+            .copy_from_slice(&result.new_file_size.to_le_bytes());
+
+        // The writer appended only past s1: committed + dead bytes untouched
+        // (bar the header size field), and the dead footer is byte-identical.
+        assert_eq!(&full[8..s1 as usize], &physical_after_fail[8..s1 as usize]);
+        assert_eq!(&full[s0 as usize..s1 as usize], &dead[..]);
+
+        // A reader at the new committed size verifies the cumulative CRC, which
+        // now spans the dead region, and the new footer chains onto s0 --
+        // orphaning the dead footer out of the MVCC chain.
+        let new_reader = ParquetMetaReader::from_file_size(&full, result.new_file_size).unwrap();
+        new_reader.verify_checksum().unwrap();
+        assert_eq!(new_reader.row_group_count(), 2);
+        assert_eq!(new_reader.prev_parquet_meta_file_size(), s0);
+
+        // The committed snapshot still resolves independently at s0.
+        let old_reader = ParquetMetaReader::from_file_size(&initial_pm, s0).unwrap();
+        assert_eq!(old_reader.row_group_count(), 1);
+        old_reader.verify_checksum().unwrap();
     }
 
     /// Builds a `Vec<ParquetMetaColumnInfo>` from the given parquet schema and
@@ -2485,7 +2579,16 @@ mod tests {
 
         // Drop the third row group and ask for an update with only 2.
         let two_rgs = three_rgs[..2].to_vec();
-        let result = update_parquet_metadata(&initial_pm, initial_size, &two_rgs, 100, 50, &[], 0);
+        let result = update_parquet_metadata(
+            &initial_pm,
+            initial_size,
+            initial_size,
+            &two_rgs,
+            100,
+            50,
+            &[],
+            0,
+        );
 
         let err = match result {
             Ok(_) => panic!("update should fail when row groups shrink"),
@@ -2500,6 +2603,72 @@ mod tests {
             msg.contains("escalate to rewrite mode"),
             "expected escalation hint in error, got: {msg}"
         );
+    }
+
+    #[test]
+    fn update_rejects_invalid_append_base() {
+        // The append base comes from the on-disk `_pm` header; a corrupt value
+        // must error (not panic via JNI) before any parsing. Build a valid
+        // 1-row-group `_pm` and a 2-row-group target that would otherwise
+        // append cleanly, then drive the guard with three bad append bases.
+        let parquet_data = write_multi_column_parquet(80);
+        let mut cursor = Cursor::new(&parquet_data);
+        let metadata = read_metadata_with_size(&mut cursor, parquet_data.len() as u64).unwrap();
+        let qdb_meta = extract_qdb_meta_from(&metadata);
+        let thrift_meta = metadata.into_thrift();
+
+        let mut cursor2 = Cursor::new(&parquet_data);
+        let metadata2 = read_metadata_with_size(&mut cursor2, parquet_data.len() as u64).unwrap();
+        let col_infos = col_infos_from_schema(metadata2.schema_descr.columns(), qdb_meta.as_ref());
+
+        let (initial_pm, _) = generate_parquet_metadata(
+            &col_infos,
+            &thrift_meta.row_groups,
+            0,
+            &[0],
+            100,
+            50,
+            &[],
+            0,
+            -1,
+        )
+        .unwrap();
+        let parse_anchor = initial_pm.len() as u64;
+
+        // A 2-row-group target so the update is well-formed apart from the base.
+        let mut extended_rgs = thrift_meta.row_groups.clone();
+        let mut new_rg = extended_rgs[0].clone();
+        for col in &mut new_rg.columns {
+            if let Some(ref mut meta) = col.meta_data {
+                meta.data_page_offset += 10_000;
+            }
+        }
+        extended_rgs.push(new_rg);
+
+        // parse_anchor - 1: below the committed head; parse_anchor + 1: one byte
+        // past the buffer end; u64::MAX: still addressable as usize on 64-bit, so
+        // it trips the buffer-length check rather than the try_from overflow.
+        for &bad_base in &[parse_anchor - 1, parse_anchor + 1, u64::MAX] {
+            let result = update_parquet_metadata(
+                &initial_pm,
+                parse_anchor,
+                bad_base,
+                &extended_rgs,
+                200,
+                60,
+                &[],
+                0,
+            );
+            let err = match result {
+                Ok(_) => panic!("append base {bad_base} must be rejected"),
+                Err(e) => e,
+            };
+            let msg = format!("{err}");
+            assert!(
+                msg.contains("append base") && msg.contains("out of range"),
+                "append base {bad_base}: expected an 'out of range' guard error, got: {msg}"
+            );
+        }
     }
 
     #[test]

@@ -27,16 +27,22 @@ package io.questdb.test.cairo.parquet;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -161,6 +167,147 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             Assert.assertFalse("background thread did not stop", bg.isAlive());
             Assert.assertNull("background thread threw: " + bgError.get(), bgError.get());
             Assert.assertTrue("background should have iterated", iterations.get() > 0);
+        });
+    }
+
+    @Test
+    public void testConcurrentReaderSurvivesFailedInPlaceUpdate() throws Exception {
+        // Failed-update companion to testCanSkipRowGroupSurvivesConcurrentO3Merge:
+        // a pinned reader must keep working across a failed in-place update. The
+        // failed update writes a footer past the committed head but never patches
+        // the header (commitParquetMeta runs only after the index build) and never
+        // truncates, so the reader's mapped [0, header) is untouched. A guard
+        // against disturbing a live reader, not a SIGBUS repro -- the no-truncate
+        // design makes that structurally unreachable.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "1.0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, Long.MAX_VALUE);
+
+        final AtomicBoolean armed = new AtomicBoolean(false);
+        final AtomicInteger openROCount = new AtomicInteger(0);
+        final FilesFacade dodgyFacade = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                // Fail the 2nd data.parquet openRO (the mapRO inside updateParquetIndexes).
+                if (armed.get() && Utf8s.endsWithAscii(name, "data.parquet")) {
+                    if (openROCount.incrementAndGet() == 2) {
+                        return -1;
+                    }
+                }
+                return super.openRO(name);
+            }
+        };
+
+        assertMemoryLeak(dodgyFacade, () -> {
+            execute(
+                    """
+                            CREATE TABLE x (a INT, ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            // 3 row groups -> in-place update mode.
+            execute(
+                    """
+                            INSERT INTO x(a, ts) VALUES
+                            (1,  '2020-01-01T00:00:00.000Z'),
+                            (2,  '2020-01-01T01:00:00.000Z'),
+                            (3,  '2020-01-01T02:00:00.000Z'),
+                            (4,  '2020-01-01T03:00:00.000Z'),
+                            (5,  '2020-01-01T04:00:00.000Z'),
+                            (6,  '2020-01-01T05:00:00.000Z'),
+                            (7,  '2020-01-01T06:00:00.000Z'),
+                            (8,  '2020-01-01T07:00:00.000Z'),
+                            (9,  '2020-01-01T08:00:00.000Z'),
+                            (10, '2020-01-01T09:00:00.000Z'),
+                            (11, '2020-01-01T10:00:00.000Z'),
+                            (12, '2020-01-01T11:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(a, ts) VALUES (99, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            final TableToken tableToken = engine.verifyTableName("x");
+            final AtomicReference<Throwable> bgError = new AtomicReference<>();
+            final AtomicLong iterations = new AtomicLong();
+            final AtomicBoolean stop = new AtomicBoolean();
+            final CountDownLatch started = new CountDownLatch(1);
+
+            Thread bg = new Thread(() -> {
+                try (
+                        TableReader reader = engine.getReader("x");
+                        DirectLongList emptyFilters = new DirectLongList(0, MemoryTag.NATIVE_DEFAULT)
+                ) {
+                    int parquetIdx = findParquetPartitionIndex(reader);
+                    if (parquetIdx < 0) {
+                        throw new IllegalStateException("no parquet partition");
+                    }
+                    reader.openPartition(parquetIdx);
+                    ParquetMetaFileReader meta = reader
+                            .getAndInitParquetPartitionDecoder(parquetIdx)
+                            .metadata();
+                    int rgCount = meta.getRowGroupCount();
+                    if (rgCount < 2) {
+                        throw new IllegalStateException("expected >= 2 row groups, got " + rgCount);
+                    }
+                    started.countDown();
+                    while (!stop.get()) {
+                        for (int i = 0; i < rgCount; i++) {
+                            if (meta.canSkipRowGroup(i, emptyFilters, 0)) {
+                                throw new IllegalStateException("empty filter list must never skip");
+                            }
+                        }
+                        iterations.incrementAndGet();
+                    }
+                } catch (Throwable e) {
+                    bgError.set(e);
+                } finally {
+                    started.countDown();
+                }
+            }, "parquet-meta-canskip-loop-failed-update");
+            bg.setDaemon(true);
+            bg.start();
+
+            Assert.assertTrue("background thread failed to start", started.await(10, TimeUnit.SECONDS));
+            Assert.assertNull("background thread threw before main work", bgError.get());
+
+            // Failed in-place update + rollback, concurrent with the pinned reader.
+            armed.set(true);
+            execute(
+                    """
+                            INSERT INTO x(a, ts) VALUES
+                            (50, '2020-01-01T00:30:00.000Z'),
+                            (51, '2020-01-01T01:30:00.000Z')
+                            """
+            );
+            drainWalQueue();
+            armed.set(false);
+            Assert.assertTrue("failed update must suspend the table", engine.getTableSequencerAPI().isSuspended(tableToken));
+
+            // Give the loop time to iterate across the failed-update boundary.
+            long target = iterations.get() + 200;
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+            while (iterations.get() < target && bgError.get() == null && System.nanoTime() < deadline) {
+                Thread.sleep(1);
+            }
+
+            stop.set(true);
+            bg.join(30_000);
+            Assert.assertFalse("background thread did not stop", bg.isAlive());
+            Assert.assertNull("background thread threw: " + bgError.get(), bgError.get());
+            Assert.assertTrue("background should have iterated", iterations.get() > 0);
+
+            // Recover and verify the data.
+            execute("ALTER TABLE x RESUME WAL");
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+            assertQuery("SELECT count() FROM x WHERE ts >= '2020-01-01' AND ts < '2020-01-02'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n14\n");
         });
     }
 
