@@ -34,6 +34,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.std.Numbers;
+import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -523,6 +524,54 @@ public class RecentWriteTrackerIntegrationTest extends AbstractCairoTest {
 
             Assert.assertNotNull("hydrate_test1 should be tracked", tracker.getWriteStats(token1));
             Assert.assertNotNull("hydrate_test2 should be tracked", tracker.getWriteStats(token2));
+        });
+    }
+
+    @Test
+    public void testHydrateTimestampNsDoesNotUseNativeTimestampAsEvictionActivity() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE hydrate_ns_activity (ts TIMESTAMP_NS, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO hydrate_ns_activity VALUES ('2024-01-01T00:00:00.000000123Z'::TIMESTAMP_NS, 1)");
+            drainWalQueue();
+
+            RecentWriteTracker tracker = engine.getRecentWriteTracker();
+            tracker.clear();
+            engine.hydrateRecentWriteTracker();
+
+            TableToken hydratedToken = engine.verifyTableName("hydrate_ns_activity");
+            RecentWriteTracker.WriteStats hydratedStats = tracker.getWriteStats(hydratedToken);
+            Assert.assertNotNull(hydratedStats);
+            Assert.assertTrue(hydratedStats.getLastWalTimestamp() > 1_000_000_000_000_000_000L);
+
+            int capacity = tracker.getMaxCapacity();
+            long newerActivityTimestamp = MicrosecondClockImpl.INSTANCE.getTicks() + 1_000_000_000L;
+            TableToken liveToken = new TableToken("live_activity", "live_activity", null, 100_000, false, false, false);
+            tracker.recordWrite(liveToken, newerActivityTimestamp, 1L, 1L);
+            for (int i = 0; i < capacity - 1; i++) {
+                int tableId = 101_000 + i;
+                String tableName = "protected_activity_" + i;
+                tracker.recordWrite(
+                        new TableToken(tableName, tableName, null, tableId, false, false, false),
+                        newerActivityTimestamp + i + 1L,
+                        1L,
+                        1L
+                );
+            }
+
+            for (int i = 0; i < capacity; i++) {
+                int tableId = 202_000 + i;
+                String tableName = "old_activity_" + i;
+                tracker.recordWrite(
+                        new TableToken(tableName, tableName, null, tableId, false, false, false),
+                        i + 1L,
+                        1L,
+                        1L
+                );
+            }
+
+            Assert.assertEquals(capacity, tracker.size());
+            Assert.assertNotNull("live wall-clock activity should survive eviction", tracker.getWriteStats(liveToken));
+            Assert.assertNull("hydrated native nanosecond data timestamp must not pin eviction activity", tracker.getWriteStats(hydratedToken));
         });
     }
 

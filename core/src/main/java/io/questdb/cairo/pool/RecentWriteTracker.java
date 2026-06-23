@@ -410,7 +410,7 @@ public class RecentWriteTracker {
                             walTimestamp,
                             tableMinTimestamp,
                             tableMaxTimestamp,
-                            getInitialActivityTimestamp(writeTimestamp, walTimestamp)
+                            MicrosecondClockImpl.INSTANCE.getTicks()
                     )
             );
             if (existing != null) {
@@ -459,14 +459,6 @@ public class RecentWriteTracker {
     @TestOnly
     public int size() {
         return writeStats.size();
-    }
-
-    private static long getInitialActivityTimestamp(long timestamp, long walTimestamp) {
-        if (timestamp == Numbers.LONG_NULL && walTimestamp == Numbers.LONG_NULL) {
-            return MicrosecondClockImpl.INSTANCE.getTicks();
-        }
-        // Hydration has no live activity time, so seed activity from persisted data timestamps.
-        return Math.max(timestamp, walTimestamp);
     }
 
     private void evictIfNeeded() {
