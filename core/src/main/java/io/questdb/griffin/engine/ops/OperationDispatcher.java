@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriterAPI;
@@ -33,10 +34,30 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.WeakSelfReturningObjectPool;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
+
+import java.util.concurrent.locks.Lock;
 
 public abstract class OperationDispatcher<T extends AbstractOperation> {
 
-    private static final String FORCE_OPERATION_APPLY_REASON = "Force Alter Operation";
+    public static final String FORCE_OPERATION_APPLY_REASON = "Force Alter Operation";
+    // Test seam: when non-null, execute() runs this hook in the EntryUnavailableException async-enqueue
+    // catch branch (the writer-pool-exhausted fallback), just before it acquires the role-switch read
+    // lock for the authoritative re-check and enqueue. A test installs a hook that pauses there so a
+    // concurrent PRIMARY-to-REPLICA demote can flip the role flag (the demote takes the write side of
+    // the same lock) before the paused operation acquires the read side and re-checks -- coordinating
+    // the async fallback against a demote deterministically without host load. Null in production (the
+    // default): the fire-site is a single static volatile read with no side effect.
+    @TestOnly
+    private static volatile Runnable asyncEnqueueObserver;
+    // Test seam: when non-null, execute() runs this hook just before it externalizes the operation
+    // via apply(), i.e. inside the role-switch read-lock hold once the fence below is in place. A test
+    // can install a hook that pauses there so a concurrent PRIMARY-to-REPLICA demote either blocks
+    // behind the read hold or expires its tryLock budget, exercising the demote race deterministically
+    // without host load. Null in production (the default): the fire-site is one volatile read with a
+    // null check, negligible (the volatile read is an acquire load, not eliminable, but trivially cheap).
+    @TestOnly
+    private static volatile Runnable preApplyObserver;
     private final DoneOperationFuture doneFuture = new DoneOperationFuture();
     private final CairoEngine engine;
     private final WeakSelfReturningObjectPool<OperationFutureImpl> futurePool;
@@ -46,6 +67,28 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
         this.engine = engine;
         futurePool = new WeakSelfReturningObjectPool<>(pool -> new OperationFutureImpl(engine, pool), 2);
         this.lockReason = lockReason;
+    }
+
+    /**
+     * Test seam: installs a hook execute() fires at the top of the EntryUnavailableException
+     * async-enqueue catch branch. Pass null to uninstall. The hook is shared across dispatcher
+     * instances, so an installer must scope its own pause to the statement under test. Never set
+     * outside tests -- the field defaults to null and the fire-site is a no-op then.
+     */
+    @TestOnly
+    public static void setAsyncEnqueueObserver(Runnable observer) {
+        asyncEnqueueObserver = observer;
+    }
+
+    /**
+     * Test seam: installs a hook execute() fires just before apply(). Pass null to uninstall. The
+     * hook is shared across dispatcher instances (the per-CompiledQuery dispatchers are anonymous and
+     * not individually reachable), so an installer must scope its own pause to the statement under
+     * test. Never set outside tests -- the field defaults to null and the fire-site is a no-op then.
+     */
+    @TestOnly
+    public static void setPreApplyObserver(Runnable observer) {
+        preApplyObserver = observer;
     }
 
     public OperationFuture execute(
@@ -61,7 +104,15 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
         boolean isDone = false;
         final TableToken tableToken = operation.getTableToken();
         try (TableWriterAPI writer = !operation.isForceWalBypass() ? engine.getTableWriterAPI(tableToken, lockReason) : engine.getWriter(tableToken, FORCE_OPERATION_APPLY_REASON)) {
-            final long result = apply(operation, writer);
+            // Both-trees pre-externalization fire-point: fire the role-switch mint observer here, before
+            // applyFenced acquires the role-switch read lock. The post-fence preApplyObserver below
+            // fires only inside the fence, so a reverted/absent dispatcher fence would fire nothing and
+            // a demote-race witness would degrade to a timing-only sleep window. Firing the shared mint
+            // observer before the fence lets a witness arm one seam that trips whether or not the fence
+            // wraps the externalization. A strict no-op in production (the observer field is null) and on
+            // the existing fenced path (the post-fence preApplyObserver still fires).
+            engine.fireRoleSwitchMintObserver();
+            final long result = applyFenced(operation, writer);
             isDone = true;
             return doneFuture.of(result);
         } catch (EntryUnavailableException busyException) {
@@ -74,19 +125,121 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
             if (eventSubSeq == null) {
                 throw busyException;
             }
-            OperationFutureImpl future = futurePool.pop();
-            future.of(
-                    operation,
-                    sqlExecutionContext,
-                    eventSubSeq,
-                    operation.getTableNamePosition(),
-                    closeOnDone
-            );
-            return future;
+            fireAsyncEnqueueObserver();
+            // Demote write-fence for the async-enqueue fallback. The success path is fenced in
+            // applyFenced, but a WAL writer-pool exhaustion routes here: the enqueue applies the
+            // operation through the legacy non-WAL writer pool (getWriterOrPublishCommand), which mints
+            // no replicated sequencer txn for a WAL table, so on a demoting node the change is
+            // acknowledged but never replicated -- a silent acked-loss. Re-check read-only before
+            // enqueuing so a demote that flipped the flag refuses cleanly instead. (Separately, a WAL
+            // UPDATE should never reach this non-WAL fallback at all; that pre-existing,
+            // role-switch-independent robustness gap is left for a dedicated fix.)
+            //
+            // The eager check below is a fast-refuse optimization; the authoritative re-check runs
+            // under the role-switch READ lock, mirroring applyFenced. Holding the read lock around the
+            // re-check and the enqueue serializes the externalization against the role flip, which
+            // takes the WRITE side around its REPLICA flag publish: either the flip ran first (the
+            // in-lock re-check sees read-only and refuses without enqueuing) or the enqueue runs fully
+            // as PRIMARY and the flip's write acquire waits for this read hold to release.
+            if (engine.isReadOnlyMode()) {
+                throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+            }
+            // Both-trees pre-externalization fire-point for the async-enqueue fallback, mirroring the
+            // inline-apply path above: fire the shared role-switch mint observer before acquiring the
+            // role-switch read lock so a reverted/absent fence here still trips a witness. A strict
+            // no-op in production (the observer field is null).
+            engine.fireRoleSwitchMintObserver();
+            final Lock lock = engine.getRoleSwitchReadLock();
+            lock.lock();
+            try {
+                if (engine.isReadOnlyMode()) {
+                    throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+                }
+                OperationFutureImpl future = futurePool.pop();
+                future.of(
+                        operation,
+                        sqlExecutionContext,
+                        eventSubSeq,
+                        operation.getTableNamePosition(),
+                        closeOnDone
+                );
+                return future;
+            } finally {
+                lock.unlock();
+            }
         } finally {
             if (closeOnDone && isDone) {
                 operation.close();
             }
+        }
+    }
+
+    private static void fireAsyncEnqueueObserver() {
+        final Runnable observer = asyncEnqueueObserver;
+        if (observer != null) {
+            observer.run();
+        }
+    }
+
+    private static void firePreApplyObserver() {
+        final Runnable observer = preApplyObserver;
+        if (observer != null) {
+            observer.run();
+        }
+    }
+
+    /**
+     * Demote write-fence for the inline-apply success path, mirroring InsertOperationImpl.commit and
+     * JsonQueryProcessor.executeDdlFenced. Both pg-wire (msgExecuteUpdate / msgExecuteDDL) and HTTP
+     * /exec (executeUpdate / executeAlterTable) funnel WAL UPDATE and ALTER through here. The writer is
+     * acquired while the node is still PRIMARY (the eager getTableWriterAPI gate passed), but only
+     * apply() externalizes the operation: it mints a sequencer txn and hands the change to the WAL
+     * uploader. A PRIMARY-to-REPLICA demote landing between that eager gate and apply() drains only the
+     * non-WAL writer pool, so it does not wait for this in-flight WAL operation; the operation would
+     * otherwise mint a txn on an already-demoting node and acknowledge client success for a change the
+     * uploader never sends, which the downloader's same-lineage reconcile then silently supersedes.
+     * <p>
+     * Holding the role-switch READ lock across apply() serializes the externalization against the role
+     * flip, which takes the WRITE side around its REPLICA flag publish: either the flip ran first (the
+     * in-lock re-check sees read-only and refuses without externalizing) or this operation runs fully as
+     * PRIMARY and the flip's write acquire waits for this read hold to release. The READ side lets
+     * concurrent commits on other tables/protocols run in parallel; only the role flip is excluded.
+     * <p>
+     * The refusal here is a plain engine.isReadOnlyMode() re-check, NOT the ReadOnlyStatementGate
+     * predicate the DDL fence uses. That is deliberate and safe: this dispatcher only ever applies WAL
+     * UPDATE and ALTER, and the one refused-type exemption the gate carries -- the HTTP parquet
+     * exporter's temp-table DROP a read-only replica keeps -- never reaches here (DROP routes through
+     * executeDdl -> executeDdlFenced, not the UPDATE/ALTER dispatchers). A blanket gate-predicate call
+     * is unnecessary and a future reader must not "fix" this into a blanket refusal that would refuse an
+     * exempted DROP it never sees.
+     * <p>
+     * The fence is a strict no-op for pure-OSS deployments: the read lock is uncontended and
+     * isReadOnlyMode() returns the static read-only-instance flag, so the only cost is one uncontended
+     * lock/unlock and one volatile read. The EntryUnavailableException async-queue branch in execute()
+     * is the writer-busy enqueue fallback. It is NOT only a non-WAL path: a WAL writer-pool exhaustion
+     * routes a WAL UPDATE here too, and the legacy enqueue applies it without minting a replicated
+     * sequencer txn, so on a demoting node it would be a silent acked-loss. That branch therefore
+     * carries its own read-only re-check under the same role-switch READ lock (see execute()),
+     * symmetric with this fence: the re-check and the enqueue are atomic against the flip's flag
+     * publish, refusing cleanly on a demote. The inline-apply success path is the one fenced here.
+     */
+    private long applyFenced(T operation, TableWriterAPI writer) {
+        if (engine.isReadOnlyMode()) {
+            throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+        }
+        final Lock lock = engine.getRoleSwitchReadLock();
+        lock.lock();
+        try {
+            // Authoritative in-lock re-check against the role flip, which holds the WRITE side of this
+            // lock around the REPLICA flag publish. apply() runs inside the read hold so the flip cannot
+            // interleave (its write acquire waits), while other commits share the read side.
+            if (engine.isReadOnlyMode()) {
+                throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+            }
+            firePreApplyObserver();
+            return apply(operation, writer);
+        } finally {
+            lock.unlock();
         }
     }
 

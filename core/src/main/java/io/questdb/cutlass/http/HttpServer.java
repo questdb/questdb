@@ -27,6 +27,7 @@ package io.questdb.cutlass.http;
 import io.questdb.ServerConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cutlass.AcceptGatedJob;
 import io.questdb.cutlass.http.processors.ExportQueryProcessor;
 import io.questdb.cutlass.http.processors.LineHttpPingProcessor;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
@@ -65,9 +66,11 @@ import io.questdb.std.str.Utf8String;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class HttpServer implements Closeable {
     static final NoOpAssociativeCache<RecordCursorFactory> NO_OP_CACHE = new NoOpAssociativeCache<>();
+    private final AtomicBoolean acceptOpen;
     private final ActiveConnectionTracker activeConnectionTracker;
     private final ObjList<Closeable> closeables = new ObjList<>();
     private final IODispatcher<HttpConnectionContext> dispatcher;
@@ -88,6 +91,16 @@ public class HttpServer implements Closeable {
             WorkerPool networkSharedPool,
             SocketFactory socketFactory
     ) {
+        this(configuration, networkSharedPool, socketFactory, new AtomicBoolean(true));
+    }
+
+    public HttpServer(
+            HttpServerConfiguration configuration,
+            WorkerPool networkSharedPool,
+            SocketFactory socketFactory,
+            AtomicBoolean acceptOpen
+    ) {
+        this.acceptOpen = acceptOpen;
         this.workerCount = networkSharedPool.getWorkerCount();
         this.selectorFactory = new HttpRequestProcessorSelectorFactory(workerCount);
 
@@ -105,9 +118,9 @@ public class HttpServer implements Closeable {
         this.activeConnectionTracker = new ActiveConnectionTracker(configuration.getHttpContextConfiguration());
         this.httpContextFactory = new HttpContextFactory(configuration, socketFactory, selectCache, activeConnectionTracker);
         this.dispatcher = IODispatchers.create(configuration, httpContextFactory);
-        networkSharedPool.assign(dispatcher);
+        networkSharedPool.assign(new AcceptGatedJob(dispatcher, acceptOpen));
         this.rescheduleContext = new WaitProcessor(configuration.getWaitProcessorConfiguration(), dispatcher);
-        networkSharedPool.assign(rescheduleContext);
+        networkSharedPool.assign(new AcceptGatedJob(rescheduleContext, acceptOpen));
 
         for (int i = 0; i < workerCount; i++) {
             // Eagerly materialise the per-worker selector so that the Job has
@@ -123,7 +136,8 @@ public class HttpServer implements Closeable {
                     rescheduleContext,
                     selectorFactory,
                     selector,
-                    false
+                    false,
+                    acceptOpen
             ));
 
             // http context factory has thread local pools
@@ -398,6 +412,9 @@ public class HttpServer implements Closeable {
      * scratch; the new generation does not alias it.
      */
     private static final class HttpRequestJob implements Job {
+        // Gate shared with the server: until accept opens, run() must not poll the IO queue.
+        // Propagated to every rotation clone so the gate holds across continuation generations.
+        private final AtomicBoolean acceptOpen;
         private final IODispatcher<HttpConnectionContext> dispatcher;
         private final HttpServer owner;
         private final IORequestProcessor<HttpConnectionContext> processor;
@@ -416,7 +433,8 @@ public class HttpServer implements Closeable {
                 WaitProcessor rescheduleContext,
                 HttpRequestProcessorSelectorFactory selectorFactory,
                 HttpRequestProcessorSelectorImpl selector,
-                boolean recyclableSelector
+                boolean recyclableSelector,
+                AtomicBoolean acceptOpen
         ) {
             this.owner = owner;
             this.dispatcher = dispatcher;
@@ -424,6 +442,7 @@ public class HttpServer implements Closeable {
             this.selectorFactory = selectorFactory;
             this.selector = selector;
             this.recyclableSelector = recyclableSelector;
+            this.acceptOpen = acceptOpen;
             // Lambda reads this.selector at invocation time (field access via
             // captured `this`), so a recycle/re-acquire cycle flows through
             // transparently.
@@ -435,14 +454,16 @@ public class HttpServer implements Closeable {
         public Job cloneInstance() {
             // Fresh selector + fresh handler instances for the new
             // generation. The parked cont's frame keeps the previous
-            // selector reference, so no aliasing.
+            // selector reference, so no aliasing. The accept gate carries over
+            // so a rotation clone stays gated until accept opens.
             return new HttpRequestJob(
                     owner,
                     dispatcher,
                     rescheduleContext,
                     selectorFactory,
                     selectorFactory.acquire(),
-                    true
+                    true,
+                    acceptOpen
             );
         }
 
@@ -469,6 +490,11 @@ public class HttpServer implements Closeable {
 
         @Override
         public boolean run(@NotNull WorkerContext workerContext) {
+            // Short-circuit the IO loop until accept is opened. Mirrors the gate on the
+            // dispatcher/reschedule Jobs so no path polls the IO queue before accept opens.
+            if (!acceptOpen.get()) {
+                return false;
+            }
             if (selector == null) {
                 // Snapshot reused from Worker.snapshotPool after a prior
                 // recycle: re-acquire a selector for this generation.
