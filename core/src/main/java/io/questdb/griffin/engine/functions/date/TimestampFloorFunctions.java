@@ -134,6 +134,7 @@ final class TimestampFloorFunctions {
         private final char addUnit;
         private final Function arg;
         private final TimestampDriver.TimestampFloorWithStrideMethod floor;
+        private final boolean isExactlyInvertible;
         private final int stride;
         private final CharSequence unit;
 
@@ -144,6 +145,7 @@ final class TimestampFloorFunctions {
             this.stride = stride;
             this.floor = timestampDriver.getTimestampFloorWithStrideMethod(unit);
             this.addUnit = fixedStrideUnitChar(unit);
+            this.isExactlyInvertible = isExactlyInvertible();
         }
 
         @Override
@@ -164,8 +166,7 @@ final class TimestampFloorFunctions {
 
         @Override
         public int invertTimestampInterval(Interval io) {
-            // fixed-width units only: calendar strides lack a constant bucket size
-            if (addUnit == 0) {
+            if (!isExactlyInvertible) {
                 return NONE;
             }
             long lo = io.getLo();
@@ -210,6 +211,17 @@ final class TimestampFloorFunctions {
                 return 'n';
             }
             return 0;
+        }
+
+        // EXACT only when add() reproduces the floor's bucket boundaries; a sub-resolution
+        // stride (e.g. nanoseconds on a micro column) does not, and must stay a row filter.
+        private boolean isExactlyInvertible() {
+            if (addUnit == 0) {
+                return false;
+            }
+            final long b0 = floor.floor(0, stride);
+            final long next = timestampDriver.add(b0, addUnit, stride);
+            return next > b0 && floor.floor(next, stride) == next && floor.floor(next - 1, stride) == b0;
         }
     }
 }

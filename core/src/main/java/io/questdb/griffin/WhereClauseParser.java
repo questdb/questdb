@@ -1250,12 +1250,12 @@ public final class WhereClauseParser implements Mutable {
             // An unset end defaults to the open sentinel, which foldInvert treats as unbounded.
             long loConst = Long.MIN_VALUE;
             long hiConst = Long.MAX_VALUE;
-            boolean constSet = false;
+            boolean hasConstBound = false;
             if (loBoundNode != null) {
                 switch (resolveScalarBound(outType, outDriver, loBoundNode, equalsTo, true, functionParser, metadata, executionContext)) {
                     case BOUND_CONST:
                         loConst = resolvedBoundConst;
-                        constSet = true;
+                        hasConstBound = true;
                         break;
                     case BOUND_FUNC:
                         loBound = resolvedBoundFunc;
@@ -1275,7 +1275,7 @@ public final class WhereClauseParser implements Mutable {
                 switch (resolveScalarBound(outType, outDriver, hiBoundNode, equalsTo, false, functionParser, metadata, executionContext)) {
                     case BOUND_CONST:
                         hiConst = resolvedBoundConst;
-                        constSet = true;
+                        hasConstBound = true;
                         break;
                     case BOUND_FUNC:
                         hiBound = resolvedBoundFunc;
@@ -1296,7 +1296,7 @@ public final class WhereClauseParser implements Mutable {
             final int soundness;
             // Fold the constant ends now; this also grades soundness (bound-independent).
             // A pure-runtime predicate has no constant ends, so probe with an open interval.
-            if (constSet || !hasRuntime) {
+            if (hasConstBound || !hasRuntime) {
                 intervalScratch.of(loConst, hiConst);
                 soundness = foldInvert(tempMonotonicChain, intervalScratch);
                 if (soundness == MonotonicTimestampFunction.NONE) {
@@ -2511,9 +2511,9 @@ public final class WhereClauseParser implements Mutable {
         if (head == null) {
             return false;
         }
-        final boolean identity = tempMonotonicChain.size() == 0;
+        final boolean isIdentity = tempMonotonicChain.size() == 0;
         Misc.free(head);
-        return identity;
+        return isIdentity;
     }
 
     private boolean isNull(ExpressionNode node) {
@@ -2950,7 +2950,7 @@ public final class WhereClauseParser implements Mutable {
         }
         if (isFunc(boundNode)) {
             final Function bound = functionParser.parseFunction(boundNode, metadata, executionContext);
-            boolean keep = false;
+            boolean isRetained = false;
             try {
                 if (isTimestamp) {
                     checkFunctionCanBeTimestamp(metadata, executionContext, bound, boundNode.position);
@@ -2973,12 +2973,12 @@ public final class WhereClauseParser implements Mutable {
                 }
                 if (bound.isRuntimeConstant()) {
                     resolvedBoundFunc = bound;
-                    keep = true;
+                    isRetained = true;
                     return BOUND_FUNC;
                 }
                 return BOUND_FAIL;
             } finally {
-                if (!keep) {
+                if (!isRetained) {
                     Misc.free(bound);
                 }
             }

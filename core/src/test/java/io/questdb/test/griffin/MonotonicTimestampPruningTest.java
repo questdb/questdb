@@ -385,6 +385,22 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExactInversionDropsFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            createTrades();
+            // an EXACT inversion captures the predicate fully, so no residual row filter remains
+            assertQuery("SELECT * FROM trades WHERE date_trunc('day', timestamp) = '2022-01-03'")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Interval forward scan on: trades")
+                    .withPlanNotContaining("filter:")
+                    .returns("""
+                            price\ttimestamp
+                            200.0\t2022-01-03T12:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testFloorMicrosecondBoundary() throws Exception {
         assertMemoryLeak(() -> {
             createTrades();
@@ -392,6 +408,22 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
             assertQuery("SELECT * FROM trades WHERE timestamp_floor('U', timestamp) = '2022-01-03T12:00:00.000000Z'")
                     .timestamp("timestamp")
                     .withPlanContaining("Interval forward scan on: trades")
+                    .returns("""
+                            price\ttimestamp
+                            200.0\t2022-01-03T12:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testFloorSubMicroStrideFallback() throws Exception {
+        assertMemoryLeak(() -> {
+            createTrades();
+            // a 500ns stride is finer than the micro column resolution, so the arithmetic
+            // inverse would collapse; the inverter must fall back and keep the row filter
+            assertQuery("SELECT * FROM trades WHERE timestamp_floor('500n', timestamp) = '2022-01-03T12:00:00.000000Z'")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Frame forward scan on: trades")
                     .returns("""
                             price\ttimestamp
                             200.0\t2022-01-03T12:00:00.000000Z
@@ -454,6 +486,25 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
                     .withPlanContaining("Interval forward scan on: trades")
                     .returns("""
                             price\ttimestamp
+                            250.0\t2022-01-04T12:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testFunctionOnBothSidesFallsBack() throws Exception {
+        assertMemoryLeak(() -> {
+            createTrades();
+            // a bound that is itself a function of the timestamp cannot be inverted, so the
+            // predicate stays a plain row filter (this one is always true)
+            assertQuery("SELECT * FROM trades WHERE date_trunc('day', timestamp) <= dateadd('d', 1, timestamp)")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Frame forward scan on: trades")
+                    .returns("""
+                            price\ttimestamp
+                            100.0\t2022-01-01T12:00:00.000000Z
+                            150.0\t2022-01-02T12:00:00.000000Z
+                            200.0\t2022-01-03T12:00:00.000000Z
                             250.0\t2022-01-04T12:00:00.000000Z
                             """);
         });
@@ -732,6 +783,21 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
                             200.0\t2022-01-03T12:00:00.000000Z
                             250.0\t2022-01-04T12:00:00.000000Z
                             """);
+        });
+    }
+
+    @Test
+    public void testYearBelowNanoRangeIsEmpty() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE yn (price DOUBLE, timestamp TIMESTAMP_NS) TIMESTAMP(timestamp) PARTITION BY YEAR;");
+            execute("INSERT INTO yn VALUES " +
+                    "(1, '2021-06-01T00:00:00.000000000Z')," +
+                    "(2, '2022-06-01T00:00:00.000000000Z');");
+            // a nanosecond column cannot represent any year <= 1676, so the predicate matches
+            // nothing -- the bound is below the range, not above it
+            assertQuery("SELECT * FROM yn WHERE year(timestamp) <= 1676")
+                    .timestamp("timestamp")
+                    .returns("price\ttimestamp\n");
         });
     }
 

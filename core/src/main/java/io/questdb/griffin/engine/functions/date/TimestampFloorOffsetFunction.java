@@ -39,6 +39,7 @@ public final class TimestampFloorOffsetFunction extends TimestampFunction implem
     private final char addUnit;
     private final Function arg;
     private final TimestampDriver.TimestampFloorWithOffsetMethod floor;
+    private final boolean isExactlyInvertible;
     private final String name;
     private final long offset;
     private final int stride;
@@ -54,6 +55,7 @@ public final class TimestampFloorOffsetFunction extends TimestampFunction implem
         // add()/dateadd use the lowercase microsecond unit while ceil/floor use the uppercase one
         this.addUnit = unit == 'U' ? 'u' : unit;
         floor = this.timestampDriver.getTimestampFloorWithOffsetMethod(unit);
+        this.isExactlyInvertible = isExactlyInvertible();
     }
 
     @Override
@@ -74,8 +76,7 @@ public final class TimestampFloorOffsetFunction extends TimestampFunction implem
 
     @Override
     public int invertTimestampInterval(Interval io) {
-        // fixed-width units only: calendar strides lack a constant bucket size
-        if (!isFixedUnit(unit)) {
+        if (!isExactlyInvertible) {
             return NONE;
         }
         long lo = io.getLo();
@@ -116,5 +117,16 @@ public final class TimestampFloorOffsetFunction extends TimestampFunction implem
     private static boolean isFixedUnit(char unit) {
         return unit == 's' || unit == 'm' || unit == 'h' || unit == 'd'
                 || unit == 'T' || unit == 'U' || unit == 'n';
+    }
+
+    // EXACT only when add() reproduces the floor's bucket boundaries; a sub-resolution
+    // stride (e.g. nanoseconds on a micro column) does not, and must stay a row filter.
+    private boolean isExactlyInvertible() {
+        if (!isFixedUnit(unit)) {
+            return false;
+        }
+        final long b0 = floor.floor(offset, stride, offset);
+        final long next = timestampDriver.add(b0, addUnit, stride);
+        return next > b0 && floor.floor(next, stride, offset) == next && floor.floor(next - 1, stride, offset) == b0;
     }
 }

@@ -101,6 +101,7 @@ public class CastTimestampToTimestampFunctionFactory implements FunctionFactory 
                     hi = Math.floorDiv(hi, NANOS_PER_MICRO);
                 }
             } else if (ColumnType.isTimestampMicro(outType) && ColumnType.isTimestampNano(leftTimestampType)) {
+                // the nano source is always >= 1970-01-01 (>= 0), so nanos/1000 truncates as floor
                 if (lo != Numbers.LONG_NULL) {
                     if (lo > Long.MAX_VALUE / NANOS_PER_MICRO || lo < Long.MIN_VALUE / NANOS_PER_MICRO) {
                         return NONE;

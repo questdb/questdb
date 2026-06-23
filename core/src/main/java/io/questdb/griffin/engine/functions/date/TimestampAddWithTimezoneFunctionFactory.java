@@ -173,19 +173,19 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory 
             // 48h bounds any zone offset difference (e.g. Samoa's 2011 date-line shift);
             // calendar units add a further +/-1 unit of day-clamping slack.
             final long margin = timestampDriver.fromDays(2);
-            final boolean calendar = period == 'M' || period == 'y';
+            final boolean isCalendar = period == 'M' || period == 'y';
             long lo = io.getLo();
             long hi = io.getHi();
             if (lo != Numbers.LONG_NULL) {
                 lo = periodAddFunction.add(lo, -stride);
-                if (calendar) {
+                if (isCalendar) {
                     lo = periodAddFunction.add(lo, -1);
                 }
                 lo = lo < Long.MIN_VALUE + margin ? Numbers.LONG_NULL : lo - margin;
             }
             if (hi != Long.MAX_VALUE) {
                 hi = periodAddFunction.add(hi, -stride);
-                if (calendar) {
+                if (isCalendar) {
                     hi = periodAddFunction.add(hi, 1);
                 }
                 hi = hi > Long.MAX_VALUE - margin ? Long.MAX_VALUE : hi + margin;
