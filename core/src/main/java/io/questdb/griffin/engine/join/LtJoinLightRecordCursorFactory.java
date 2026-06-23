@@ -83,7 +83,7 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
             this.slaveKeySink = slaveKeySink;
             this.toleranceInterval = toleranceInterval;
 
-            joinKeyMap = MapFactory.createUnorderedMap(configuration, joinColumnTypes, valueTypes);
+            joinKeyMap = MapFactory.createUnorderedMap(configuration, joinColumnTypes, valueTypes, false, false);
             this.cursor = new LtJoinLightRecordCursor(
                     columnSplit,
                     joinKeyMap,
@@ -112,7 +112,7 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
         try {
             slaveCursor = slaveFactory.getCursor(executionContext);
             slaveCursor.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
-            cursor.of(masterCursor, slaveCursor);
+            cursor.of(masterCursor, slaveCursor, executionContext);
             return cursor;
         } catch (Throwable e) {
             Misc.free(slaveCursor);
@@ -179,7 +179,7 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
             this.joinKeyMap = joinKeyMap;
             this.masterTimestampIndex = masterTimestampIndex;
             this.slaveTimestampIndex = slaveTimestampIndex;
-            this.isOpen = true;
+            this.isOpen = false;
             if (masterTimestampType == slaveTimestampType) {
                 masterTimestampScale = slaveTimestampScale = 1L;
             } else {
@@ -297,9 +297,10 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
             slaveCursor.toTop();
         }
 
-        void of(RecordCursor masterCursor, RecordCursor slaveCursor) {
+        void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext executionContext) {
             if (!isOpen) {
                 isOpen = true;
+                joinKeyMap.setMemoryTracker(executionContext.getMemoryTracker());
                 joinKeyMap.reopen();
             }
             if (symbolTranslatingRecord != null) {

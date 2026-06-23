@@ -57,6 +57,16 @@ public class HeapRowCursorFactory implements RowCursorFactory {
 
     @Override
     public void close() {
+        // Free the row cursors directly off the factory's own list. getCursor()
+        // builds them into `cursors` and only later hands the list to the
+        // HeapRowCursor via cursor.of(); if getCursor() throws after building
+        // some cursors but before that hand-off (e.g. an OOM mid-build on the
+        // very first page frame), HeapRowCursor.cursors is still null and
+        // Misc.free(cursor) would never reach them. Draining `cursors` here
+        // reclaims those stranded cursors; once cursor.of() has run it shares
+        // this same list, so the HeapRowCursor's own close() drains it to empty
+        // and this call is a no-op.
+        Misc.freeObjListAndClear(cursors);
         Misc.free(cursor);
     }
 
