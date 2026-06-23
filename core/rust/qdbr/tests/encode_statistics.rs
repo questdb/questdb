@@ -28,6 +28,8 @@ use qdb_core::col_type::{ColumnType, ColumnTypeTag};
 use questdbr::parquet_write::schema::Partition;
 use questdbr::parquet_write::ParquetWriter;
 
+use arrow::array::UInt32Array;
+
 use crate::common::encode::{
     build_qdb_varchar_data, make_primitive_column, make_symbol_column, make_varchar_column,
     serialize_as_symbols, write_parquet,
@@ -418,7 +420,7 @@ fn questdb_parquet_exposes_min_max_and_null_count_to_external_readers() {
 
 /// The UTF-8 truncation bound the writer applies to String/Symbol/Varchar min/max
 /// (mirrors `UTF8_STATS_TRUNCATE_LEN` in `parquet_write::util`). Advancing the last
-/// codepoint of the max can grow its encoding by up to 3 bytes.
+/// codepoint of the max can grow its encoding by at most 1 byte.
 const TEXT_STATS_BOUND: usize = 64;
 
 /// A single multi-megabyte (here multi-kilobyte) text value must NOT bloat the
@@ -462,7 +464,7 @@ fn questdb_parquet_truncates_long_string_statistics() {
         min.len()
     );
     assert!(
-        max.len() <= TEXT_STATS_BOUND + 3,
+        max.len() <= TEXT_STATS_BOUND + 1,
         "max stays bounded, got {} bytes",
         max.len()
     );
@@ -659,7 +661,7 @@ fn questdb_parquet_truncates_long_symbol_statistics() {
         "symbol min must truncate to the UTF-8 bound, not the 9-byte binary clamp"
     );
     assert!(
-        max.len() > 9 && max.len() <= TEXT_STATS_BOUND + 3,
+        max.len() > 9 && max.len() <= TEXT_STATS_BOUND + 1,
         "symbol max stays within the UTF-8 bound, got {} bytes",
         max.len()
     );
@@ -674,4 +676,130 @@ fn questdb_parquet_truncates_long_symbol_statistics() {
         .expect("thrift symbol statistics");
     assert_eq!(thrift_stats.is_min_value_exact, Some(false));
     assert_eq!(thrift_stats.is_max_value_exact, Some(false));
+}
+
+/// IPv4 addresses are stored as INT32 but logically UINT_32, so external readers
+/// compare their min/max statistics as unsigned. The `RLE_DICTIONARY` encoder must
+/// therefore compute those bounds with unsigned ordering, like the Plain/Delta
+/// paths. If it used signed `i32` ordering, an address with the high bit set (any
+/// `>= 128.0.0.0`, stored as a negative `i32`) would land on the wrong side of the
+/// bound, and a conformant reader pruning `WHERE ip > '199.0.0.0'` would skip the
+/// row group that actually holds the match -- silently dropping rows.
+///
+/// This drives the real `ParquetWriter` with a dict-encoded IPv4 column split into
+/// two row groups (low addresses, then a sign-straddling high one), reads the
+/// per-row-group bounds back with the independent Arrow reader, and replays the
+/// unsigned row-group pruning an external engine would do.
+#[test]
+fn questdb_parquet_ipv4_dict_unsigned_bounds_survive_external_pruning() {
+    // Row group 0: all below 128.0.0.0 (positive i32). Row group 1: a
+    // sign-straddling high address that is a negative i32.
+    const RG0_MIN: u32 = 0x0100_0000; // 1.0.0.0
+    const RG0_MAX: u32 = 0x6400_0000; // 100.0.0.0
+    const RG1_MIN: u32 = 0x0A00_0000; // 10.0.0.0
+    const RG1_MAX: u32 = 0xC800_0000; // 200.0.0.0 (negative as i32)
+    const PROBE: u32 = 0xC700_0000; // 199.0.0.0; only row group 1 has an address above it
+
+    let ips: Vec<i32> = vec![
+        RG0_MIN as i32,
+        0x4000_0000, // 64.0.0.0
+        RG0_MAX as i32,
+        RG1_MIN as i32,
+        RG1_MAX as i32,
+    ];
+    let ip_bytes = as_bytes(&ips);
+
+    let column = make_primitive_column(
+        "ip",
+        ColumnType::new(ColumnTypeTag::IPv4, 0).code(),
+        ip_bytes.as_ptr(),
+        ip_bytes.len(),
+        ips.len(),
+        Encoding::RleDictionary.config(),
+    );
+    let partition = Partition {
+        table: "compat".to_string(),
+        columns: vec![column],
+    };
+
+    // Split into two row groups (3 + 2 rows) so unsigned pruning can pick one.
+    let mut buf = Cursor::new(Vec::new());
+    ParquetWriter::new(&mut buf)
+        .with_statistics(true)
+        .with_row_group_size(Some(3))
+        .finish(partition)
+        .expect("ParquetWriter::finish");
+    let data = buf.into_inner();
+
+    let metadata = external_metadata(&data);
+    assert_eq!(metadata.num_row_groups(), 2, "expected two row groups");
+
+    // Decode each row group's min/max from the footer as unsigned u32 -- the order
+    // a conformant reader uses for a UINT_32 column with TypeDefinedOrder.
+    let rg_bounds = |i: usize| -> (u32, u32) {
+        let stats = metadata
+            .row_group(i)
+            .column(0)
+            .statistics()
+            .expect("ipv4 statistics");
+        let min = u32::from_le_bytes(
+            stats
+                .min_bytes_opt()
+                .expect("min_value present")
+                .try_into()
+                .expect("4-byte ipv4 min"),
+        );
+        let max = u32::from_le_bytes(
+            stats
+                .max_bytes_opt()
+                .expect("max_value present")
+                .try_into()
+                .expect("4-byte ipv4 max"),
+        );
+        (min, max)
+    };
+
+    assert_eq!(
+        rg_bounds(0),
+        (RG0_MIN, RG0_MAX),
+        "row group 0 unsigned bounds"
+    );
+    assert_eq!(
+        rg_bounds(1),
+        (RG1_MIN, RG1_MAX),
+        "row group 1 unsigned bounds; a signed encoder would report max=10.0.0.0 here"
+    );
+
+    // Replay the row-group skipping an external reader does for `ip > PROBE`,
+    // comparing unsigned: a row group is kept iff its unsigned max is above PROBE.
+    let kept: Vec<usize> = (0..metadata.num_row_groups())
+        .filter(|&i| rg_bounds(i).1 > PROBE)
+        .collect();
+    assert_eq!(
+        kept,
+        vec![1],
+        "unsigned pruning must keep exactly row group 1 (holds 200.0.0.0); the signed \
+         bug would prune it and drop the match"
+    );
+
+    // The kept row group really does contain a match for the probe, so pruning it
+    // would have lost data.
+    let reader = ParquetRecordBatchReaderBuilder::try_new(Bytes::from(data))
+        .expect("arrow reader")
+        .with_row_groups(vec![1])
+        .build()
+        .expect("build reader over row group 1");
+    let mut matched = false;
+    for batch in reader.flatten() {
+        let arr = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<UInt32Array>()
+            .expect("UInt32Array");
+        matched |= arr.iter().flatten().any(|v| v > PROBE);
+    }
+    assert!(
+        matched,
+        "row group 1 must contain an address > 199.0.0.0, so pruning it drops rows"
+    );
 }

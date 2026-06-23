@@ -267,9 +267,10 @@ fn truncate_min_utf8(mut value: Vec<u8>, max_len: usize) -> Vec<u8> {
 /// already U+10FFFF). Falls back to the untruncated `value` when no shorter ceiling
 /// exists (every retained codepoint is U+10FFFF) or `value` is not valid UTF-8.
 ///
-/// Advancing a codepoint can grow its UTF-8 length (e.g. U+007F -> U+0080), so the
-/// result may exceed `max_len` by up to 3 bytes -- still bounded, versus an
-/// untruncated value of arbitrary length.
+/// Advancing a codepoint can grow its UTF-8 length by one byte (e.g. U+007F ->
+/// U+0080), and only the last retained codepoint is advanced (a carry drops
+/// trailing codepoints), so the result exceeds `max_len` by at most 1 byte --
+/// still bounded, versus an untruncated value of arbitrary length.
 fn truncate_max_utf8(value: Vec<u8>, max_len: usize) -> Vec<u8> {
     if value.len() <= max_len {
         return value;
@@ -812,7 +813,7 @@ mod tests {
         // ASCII: incremented prefix, byte-wise >= the original, length still bounded.
         let original = vec![b'm'; 200];
         let max = super::truncate_max_utf8(original.clone(), 64);
-        assert!(max.len() <= 64 + 3, "ceiling stays bounded");
+        assert!(max.len() <= 64 + 1, "ceiling stays bounded");
         assert!(max.as_slice() >= original.as_slice());
         assert!(std::str::from_utf8(&max).is_ok());
 
@@ -879,7 +880,7 @@ mod tests {
         let min = parquet_stats.min_value.unwrap();
         let max = parquet_stats.max_value.unwrap();
         assert_eq!(min.len(), 64, "min truncated to the bound");
-        assert!(max.len() <= 64 + 3, "max stays bounded");
+        assert!(max.len() <= 64 + 1, "max stays bounded");
         assert!(
             min.as_slice() <= lo.as_slice(),
             "min is a floor for both values"
