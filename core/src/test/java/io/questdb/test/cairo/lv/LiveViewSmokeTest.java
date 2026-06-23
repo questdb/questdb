@@ -124,6 +124,40 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             "('2026-08-01T00:00:00.000000Z', 'b', 6.000m), " +
             "('2026-08-01T01:00:00.000000Z', 'b', 12.000m), " +
             "('2026-08-01T02:00:00.000000Z', 'b', 18.000m)";
+    // Two symbols across two days for the bivariate Welford stateful family
+    // (covar_samp); the day boundary also exercises the anchor reset.
+    private static final String STATEFUL_COVAR_INSERT = "('2026-08-01T00:00:00.000000Z', 'a', 10.0, 100.0, 0.0), " +
+            "('2026-08-01T01:00:00.000000Z', 'a', 20.0, 250.0, 0.0), " +
+            "('2026-08-01T02:00:00.000000Z', 'a', 35.0, 400.0, 0.0), " +
+            "('2026-08-02T00:00:00.000000Z', 'a', 5.0, 50.0, 0.0), " +
+            "('2026-08-02T01:00:00.000000Z', 'a', 25.0, 300.0, 0.0), " +
+            "('2026-08-01T00:00:00.000000Z', 'b', 7.0, 70.0, 0.0), " +
+            "('2026-08-01T01:00:00.000000Z', 'b', 11.0, 90.0, 0.0), " +
+            "('2026-08-02T00:00:00.000000Z', 'b', 100.0, 900.0, 0.0), " +
+            "('2026-08-02T01:00:00.000000Z', 'b', 50.0, 480.0, 0.0), " +
+            "('2026-08-02T02:00:00.000000Z', 'b', 75.0, 700.0, 0.0)";
+    // Two symbols within a single day (x, y, vol populated) for the EMA / Kahan /
+    // correlation stateful family; the anchor never fires, so the oracle is a
+    // plain PARTITION BY sym window.
+    private static final String STATEFUL_SINGLE_DAY_INSERT = "('2026-08-01T00:00:00.000000Z', 'a', 10.0, 100.0, 100.0), " +
+            "('2026-08-01T01:00:00.000000Z', 'a', 20.0, 250.0, 200.0), " +
+            "('2026-08-01T02:00:00.000000Z', 'a', 30.0, 400.0, 150.0), " +
+            "('2026-08-01T03:00:00.000000Z', 'a', 40.0, 470.0, 250.0), " +
+            "('2026-08-01T00:00:00.000000Z', 'b', 5.0, 50.0, 300.0), " +
+            "('2026-08-01T01:00:00.000000Z', 'b', 15.0, 130.0, 120.0), " +
+            "('2026-08-01T02:00:00.000000Z', 'b', 25.0, 300.0, 180.0)";
+    // Two symbols across two days for the univariate Welford stateful family
+    // (var_samp / variance); the day boundary also exercises the anchor reset.
+    private static final String STATEFUL_VAR_INSERT = "('2026-08-01T00:00:00.000000Z', 'a', 10.0, 0.0, 0.0), " +
+            "('2026-08-01T01:00:00.000000Z', 'a', 20.0, 0.0, 0.0), " +
+            "('2026-08-01T02:00:00.000000Z', 'a', 35.0, 0.0, 0.0), " +
+            "('2026-08-02T00:00:00.000000Z', 'a', 5.0, 0.0, 0.0), " +
+            "('2026-08-02T01:00:00.000000Z', 'a', 25.0, 0.0, 0.0), " +
+            "('2026-08-01T00:00:00.000000Z', 'b', 7.0, 0.0, 0.0), " +
+            "('2026-08-01T01:00:00.000000Z', 'b', 11.0, 0.0, 0.0), " +
+            "('2026-08-02T00:00:00.000000Z', 'b', 100.0, 0.0, 0.0), " +
+            "('2026-08-02T01:00:00.000000Z', 'b', 50.0, 0.0, 0.0), " +
+            "('2026-08-02T02:00:00.000000Z', 'b', 75.0, 0.0, 0.0)";
 
     private static boolean drainJob(Job job) {
         boolean any = false;
@@ -893,6 +927,70 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
                 LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
                 WindowFunction fn = unwrapWindowFunctions(lv).getQuick(0);
+                Assert.assertTrue(fn.supportsSnapshot());
+                Map fnMap = fn.getPartitionMap();
+                Assert.assertEquals(2L, fnMap.size());
+
+                try (MemoryCARW s1 = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                     MemoryCARW s2 = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+                    LiveViewFunctionSnapshot.write(s1, fn);
+                    final long len = s1.getAppendOffset();
+                    fn.toTop();
+                    Assert.assertEquals(0L, fnMap.size());
+                    LiveViewFunctionSnapshot.restore(s1, 0L, fn, 1);
+                    Assert.assertEquals(2L, fnMap.size());
+                    LiveViewFunctionSnapshot.write(s2, fn);
+                    Assert.assertEquals(len, s2.getAppendOffset());
+                    for (long i = 0; i < len; i++) {
+                        Assert.assertEquals("snapshot byte mismatch at " + i, s1.getByte(i), s2.getByte(i));
+                    }
+                }
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    // Drives a partitioned unbounded-preceding (anchor) live view over a stateful
+    // EMA / Welford / Kahan window function: cross-checks the materialized view
+    // against the same window recomputed straight over the base table, then
+    // performs a byte-exact snapshot/restore round-trip of the function's
+    // partition state (write -> toTop -> restore -> write again). The anchor
+    // window and a plain PARTITION BY ... ORDER BY ts unbounded-preceding window
+    // resolve to the identical migrated function class, so the recompute is a
+    // bit-exact oracle - no hand-computed Welford/EMA expectations needed.
+    private void assertStatefulAnchorRoundTrip(
+            String fnExpr,
+            String oracleWindow,
+            String insertValues
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE, y DOUBLE, vol DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, " + fnExpr + " OVER w AS a FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, sym, x, y, vol) VALUES " + insertValues);
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                // The view must equal the same window recomputed directly over the
+                // base table. ORDER BY sym, ts gives both sides a total order;
+                // genericStringMatch tolerates SYMBOL-vs-STRING on the passthrough.
+                TestUtils.assertSqlCursors(
+                        engine,
+                        sqlExecutionContext,
+                        "(SELECT ts, sym, " + fnExpr + " OVER (" + oracleWindow + ") AS a FROM base) ORDER BY 2, 1",
+                        "(SELECT ts, sym, a FROM lv) ORDER BY 2, 1",
+                        LOG,
+                        true
+                );
+
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                WindowFunction fn = lv.getAnchorWindow().getFunctions().getQuick(0);
                 Assert.assertTrue(fn.supportsSnapshot());
                 Map fnMap = fn.getPartitionMap();
                 Assert.assertEquals(2L, fnMap.size());
@@ -9117,6 +9215,72 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
             execute("DROP LIVE VIEW lv");
         });
+    }
+
+    @Test
+    public void testCorrOverUnboundedPartitionRowsSnapshotRoundTrip() throws Exception {
+        // corr shares the bivariate Welford state migrated for live views; the
+        // restart-restore test covers it end-to-end, this adds the byte-exact
+        // snapshot round-trip.
+        assertStatefulAnchorRoundTrip("corr(x, y)", "PARTITION BY sym ORDER BY ts", STATEFUL_SINGLE_DAY_INSERT);
+    }
+
+    @Test
+    public void testCovarSampOverUnboundedPartitionRowsSnapshotRoundTrip() throws Exception {
+        // covar_samp shares the bivariate Welford state with covar_pop / corr;
+        // multi-day data also exercises the anchor reset across the day boundary.
+        assertStatefulAnchorRoundTrip(
+                "covar_samp(x, y)",
+                "PARTITION BY sym, timestamp_floor('1d', ts) ORDER BY ts",
+                STATEFUL_COVAR_INSERT
+        );
+    }
+
+    @Test
+    public void testEmaPeriodOverPartitionSnapshotRoundTrip() throws Exception {
+        assertStatefulAnchorRoundTrip("avg(x, 'period', 5)", "PARTITION BY sym ORDER BY ts", STATEFUL_SINGLE_DAY_INSERT);
+    }
+
+    @Test
+    public void testEmaTimeWeightedOverPartitionSnapshotRoundTrip() throws Exception {
+        assertStatefulAnchorRoundTrip("avg(x, 'minute', 5)", "PARTITION BY sym ORDER BY ts", STATEFUL_SINGLE_DAY_INSERT);
+    }
+
+    @Test
+    public void testKsumOverUnboundedPartitionRowsSnapshotRoundTrip() throws Exception {
+        assertStatefulAnchorRoundTrip("ksum(x)", "PARTITION BY sym ORDER BY ts", STATEFUL_SINGLE_DAY_INSERT);
+    }
+
+    @Test
+    public void testVarSampOverUnboundedPartitionRowsSnapshotRoundTrip() throws Exception {
+        // var_samp reuses the univariate Welford accumulator migrated for live
+        // views; multi-day data also exercises the anchor reset.
+        assertStatefulAnchorRoundTrip(
+                "var_samp(x)",
+                "PARTITION BY sym, timestamp_floor('1d', ts) ORDER BY ts",
+                STATEFUL_VAR_INSERT
+        );
+    }
+
+    @Test
+    public void testVarianceOverUnboundedPartitionRowsSnapshotRoundTrip() throws Exception {
+        // variance is the var_samp alias; verifies it routes to the same migrated
+        // snapshot-capable class.
+        assertStatefulAnchorRoundTrip(
+                "variance(x)",
+                "PARTITION BY sym, timestamp_floor('1d', ts) ORDER BY ts",
+                STATEFUL_VAR_INSERT
+        );
+    }
+
+    @Test
+    public void testVwemaPeriodOverPartitionSnapshotRoundTrip() throws Exception {
+        assertStatefulAnchorRoundTrip("avg(x, 'period', 5, vol)", "PARTITION BY sym ORDER BY ts", STATEFUL_SINGLE_DAY_INSERT);
+    }
+
+    @Test
+    public void testVwemaTimeWeightedOverPartitionSnapshotRoundTrip() throws Exception {
+        assertStatefulAnchorRoundTrip("avg(x, 'minute', 5, vol)", "PARTITION BY sym ORDER BY ts", STATEFUL_SINGLE_DAY_INSERT);
     }
 
     @Test
