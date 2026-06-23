@@ -54,9 +54,12 @@ public class TimestampMonotonicInverter extends UntypedFunction {
     private final Function head;
     private final Function hiBound;
     private final short hiBoundAdjustment;
+    private final long hiConst;
     private final Interval io = new Interval();
+    private final boolean isBetween;
     private final Function loBound;
     private final short loBoundAdjustment;
+    private final long loConst;
     private final TimestampDriver timestampDriver;
 
     public TimestampMonotonicInverter(
@@ -64,16 +67,22 @@ public class TimestampMonotonicInverter extends UntypedFunction {
             ObjList<MonotonicTimestampFunction> chain,
             Function loBound,
             short loBoundAdjustment,
+            long loConst,
             Function hiBound,
             short hiBoundAdjustment,
+            long hiConst,
+            boolean isBetween,
             TimestampDriver timestampDriver
     ) {
         this.head = head;
         this.chain = chain;
         this.loBound = loBound;
         this.loBoundAdjustment = loBoundAdjustment;
+        this.loConst = loConst;
         this.hiBound = hiBound;
         this.hiBoundAdjustment = hiBoundAdjustment;
+        this.hiConst = hiConst;
+        this.isBetween = isBetween;
         this.timestampDriver = timestampDriver;
     }
 
@@ -101,7 +110,7 @@ public class TimestampMonotonicInverter extends UntypedFunction {
             }
             lo += loBoundAdjustment;
         } else {
-            lo = Numbers.LONG_NULL;
+            lo = loConst;
         }
 
         long hi;
@@ -112,7 +121,14 @@ public class TimestampMonotonicInverter extends UntypedFunction {
             }
             hi += hiBoundAdjustment;
         } else {
-            hi = Long.MAX_VALUE;
+            hi = hiConst;
+        }
+
+        // BETWEEN tolerates reversed bounds; every bound here is a point, so normalizing is exact
+        if (isBetween && lo > hi) {
+            final long t = lo;
+            lo = hi;
+            hi = t;
         }
 
         io.of(lo, hi);

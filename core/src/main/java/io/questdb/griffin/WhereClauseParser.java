@@ -504,7 +504,7 @@ public final class WhereClauseParser implements Mutable {
         ExpressionNode col = node.args.getLast();
         if (col.type != ExpressionNode.LITERAL) {
             if (referencesTimestamp(col)) {
-                return analyzeMonotonicTimestamp(timestampDriver, model, node, col, node.args.getQuick(1), node.args.getQuick(0), true, functionParser, metadata, executionContext);
+                return analyzeMonotonicTimestamp(timestampDriver, model, node, col, node.args.getQuick(1), node.args.getQuick(0), true, true, functionParser, metadata, executionContext);
             }
             return false;
         }
@@ -610,7 +610,7 @@ public final class WhereClauseParser implements Mutable {
         }
 
         if (a.type != ExpressionNode.LITERAL && referencesTimestamp(a) && (b.type == ExpressionNode.CONSTANT || isFunc(b))) {
-            if (analyzeMonotonicTimestamp(timestampDriver, model, node, a, b, b, true, functionParser, m, executionContext)) {
+            if (analyzeMonotonicTimestamp(timestampDriver, model, node, a, b, b, true, false, functionParser, m, executionContext)) {
                 return true;
             }
         }
@@ -785,8 +785,8 @@ public final class WhereClauseParser implements Mutable {
             return analyzeTimestampLess(timestampDriver, model, node, equalsTo, functionParser, metadata, executionContext, node.lhs);
         }
 
-        return analyzeMonotonicTimestamp(timestampDriver, model, node, node.lhs, node.rhs, null, equalsTo, functionParser, metadata, executionContext)
-                || analyzeMonotonicTimestamp(timestampDriver, model, node, node.rhs, null, node.lhs, equalsTo, functionParser, metadata, executionContext);
+        return analyzeMonotonicTimestamp(timestampDriver, model, node, node.lhs, node.rhs, null, equalsTo, false, functionParser, metadata, executionContext)
+                || analyzeMonotonicTimestamp(timestampDriver, model, node, node.rhs, null, node.lhs, equalsTo, false, functionParser, metadata, executionContext);
     }
 
     private boolean analyzeIn(
@@ -812,7 +812,7 @@ public final class WhereClauseParser implements Mutable {
                     final ExpressionNode inArg = node.rhs;
                     return Chars.isQuoted(inArg.token)
                             ? analyzeMonotonicTimestampInInterval(model, node, col, inArg, functionParser, metadata, executionContext)
-                            : analyzeMonotonicTimestamp(timestampDriver, model, node, col, inArg, inArg, true, functionParser, metadata, executionContext);
+                            : analyzeMonotonicTimestamp(timestampDriver, model, node, col, inArg, inArg, true, false, functionParser, metadata, executionContext);
                 }
                 // a no-op wrapper reduces `g(ts) IN X` to `ts IN X`
                 if (isIdentityTimestampOperand(col, functionParser, metadata, executionContext)) {
@@ -840,9 +840,9 @@ public final class WhereClauseParser implements Mutable {
             FunctionParser functionParser,
             RecordMetadata metadata,
             SqlExecutionContext executionContext,
-            boolean colIsDesignatedTimestamp
+            boolean isDesignatedTimestampColumn
     ) throws SqlException {
-        if (!colIsDesignatedTimestamp && !isTimestamp(col)) {
+        if (!isDesignatedTimestampColumn && !isTimestamp(col)) {
             return false;
         }
         int oldIntervalFuncType = executionContext.getIntervalFunctionType();
@@ -1060,8 +1060,8 @@ public final class WhereClauseParser implements Mutable {
             return analyzeTimestampGreater(timestampDriver, model, node, equalsTo, functionParser, metadata, executionContext, node.lhs);
         }
 
-        return analyzeMonotonicTimestamp(timestampDriver, model, node, node.lhs, null, node.rhs, equalsTo, functionParser, metadata, executionContext)
-                || analyzeMonotonicTimestamp(timestampDriver, model, node, node.rhs, node.lhs, null, equalsTo, functionParser, metadata, executionContext);
+        return analyzeMonotonicTimestamp(timestampDriver, model, node, node.lhs, null, node.rhs, equalsTo, false, functionParser, metadata, executionContext)
+                || analyzeMonotonicTimestamp(timestampDriver, model, node, node.rhs, node.lhs, null, equalsTo, false, functionParser, metadata, executionContext);
     }
 
     // checks and merges given in list with temp keys
@@ -1231,6 +1231,7 @@ public final class WhereClauseParser implements Mutable {
             ExpressionNode loBoundNode,
             ExpressionNode hiBoundNode,
             boolean equalsTo,
+            boolean isBetween,
             FunctionParser functionParser,
             RecordMetadata metadata,
             SqlExecutionContext executionContext
@@ -1250,12 +1251,10 @@ public final class WhereClauseParser implements Mutable {
             // An unset end defaults to the open sentinel, which foldInvert treats as unbounded.
             long loConst = Long.MIN_VALUE;
             long hiConst = Long.MAX_VALUE;
-            boolean hasConstBound = false;
             if (loBoundNode != null) {
                 switch (resolveScalarBound(outType, outDriver, loBoundNode, equalsTo, true, functionParser, metadata, executionContext)) {
                     case BOUND_CONST:
                         loConst = resolvedBoundConst;
-                        hasConstBound = true;
                         break;
                     case BOUND_FUNC:
                         loBound = resolvedBoundFunc;
@@ -1275,7 +1274,6 @@ public final class WhereClauseParser implements Mutable {
                 switch (resolveScalarBound(outType, outDriver, hiBoundNode, equalsTo, false, functionParser, metadata, executionContext)) {
                     case BOUND_CONST:
                         hiConst = resolvedBoundConst;
-                        hasConstBound = true;
                         break;
                     case BOUND_FUNC:
                         hiBound = resolvedBoundFunc;
@@ -1293,12 +1291,15 @@ public final class WhereClauseParser implements Mutable {
             }
 
             final boolean hasRuntime = loBound != null || hiBound != null;
-            final int soundness;
-            // Fold the constant ends now; this also grades soundness (bound-independent).
-            // A pure-runtime predicate has no constant ends, so probe with an open interval.
-            if (hasConstBound || !hasRuntime) {
+            if (!hasRuntime) {
+                // BETWEEN tolerates reversed bounds; both ends are points, so normalizing is exact
+                if (isBetween && loConst > hiConst) {
+                    final long t = loConst;
+                    loConst = hiConst;
+                    hiConst = t;
+                }
                 intervalScratch.of(loConst, hiConst);
-                soundness = foldInvert(tempMonotonicChain, intervalScratch);
+                final int soundness = foldInvert(tempMonotonicChain, intervalScratch);
                 if (soundness == MonotonicTimestampFunction.NONE) {
                     return false;
                 }
@@ -1308,33 +1309,34 @@ public final class WhereClauseParser implements Mutable {
                     return true;
                 }
                 model.intersectIntervals(intervalScratch.getLo(), intervalScratch.getHi());
-            } else {
-                soundness = foldInvertProbe(tempMonotonicChain);
-                if (soundness == MonotonicTimestampFunction.NONE) {
-                    return false;
+                if (soundness == MonotonicTimestampFunction.EXACT) {
+                    node.intrinsicValue = IntrinsicModel.TRUE;
+                    return true;
                 }
-            }
-
-            if (hasRuntime) {
-                model.intersectMonotonicTimestamp(new TimestampMonotonicInverter(
-                        head,
-                        new ObjList<>(tempMonotonicChain),
-                        loBound,
-                        loBound != null ? adjustComparison(equalsTo, true) : 0,
-                        hiBound,
-                        hiBound != null ? adjustComparison(equalsTo, false) : 0,
-                        outDriver
-                ));
-                head = loBound = hiBound = null; // ownership transferred to the inverter
-                // a runtime bound may not be invertible when the scan opens, so it only prunes
-                // and the predicate stays a residual filter
                 return false;
             }
 
-            if (soundness == MonotonicTimestampFunction.EXACT) {
-                node.intrinsicValue = IntrinsicModel.TRUE;
-                return true;
+            // A constant end of a mixed BETWEEN is carried into the inverter (as a point) rather than
+            // applied statically, so both ends are resolved and normalized together at scan open.
+            final int soundness = foldInvertProbe(tempMonotonicChain);
+            if (soundness == MonotonicTimestampFunction.NONE) {
+                return false;
             }
+            model.intersectMonotonicTimestamp(new TimestampMonotonicInverter(
+                    head,
+                    new ObjList<>(tempMonotonicChain),
+                    loBound,
+                    loBound != null ? adjustComparison(equalsTo, true) : 0,
+                    loConst,
+                    hiBound,
+                    hiBound != null ? adjustComparison(equalsTo, false) : 0,
+                    hiConst,
+                    isBetween,
+                    outDriver
+            ));
+            head = loBound = hiBound = null; // ownership transferred to the inverter
+            // a runtime bound may not be invertible when the scan opens, so it only prunes
+            // and the predicate stays a residual filter
             return false;
         } catch (SqlException | CairoException e) {
             return false;

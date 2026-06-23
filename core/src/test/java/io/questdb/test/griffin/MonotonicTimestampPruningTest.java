@@ -37,6 +37,7 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
             assertQuery("SELECT * FROM trades WHERE timestamp + 86_400_000_000 >= '2022-01-03' AND timestamp + 86_400_000_000 < '2022-01-05'")
                     .timestamp("timestamp")
                     .withPlanContaining("Interval forward scan on: trades")
+                    .withPlanNotContaining("filter:")
                     .returns("""
                             price\ttimestamp
                             150.0\t2022-01-02T12:00:00.000000Z
@@ -142,6 +143,64 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBetweenReversedConstant() throws Exception {
+        assertMemoryLeak(() -> {
+            createTrades();
+            // reversed constant bounds are normalized rather than collapsed to empty
+            assertQuery("SELECT * FROM trades WHERE date_trunc('day', timestamp) BETWEEN '2022-01-04' AND '2022-01-02'")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Interval forward scan on: trades")
+                    .withPlanNotContaining("filter:")
+                    .returns("""
+                            price\ttimestamp
+                            150.0\t2022-01-02T12:00:00.000000Z
+                            200.0\t2022-01-03T12:00:00.000000Z
+                            250.0\t2022-01-04T12:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testBetweenReversedMixed() throws Exception {
+        assertMemoryLeak(() -> {
+            createTrades();
+            bindVariableService.clear();
+            bindVariableService.setTimestamp(0, 1_641_254_400_000_000L); // 2022-01-04T00:00:00Z
+            // mixed runtime/constant bounds resolve reversed at scan open: the inverter prunes
+            // nothing and the retained row filter returns the normalized range
+            assertQuery("SELECT * FROM trades WHERE date_trunc('day', timestamp) BETWEEN $1 AND '2022-01-02'")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Interval forward scan on: trades")
+                    .returns("""
+                            price\ttimestamp
+                            150.0\t2022-01-02T12:00:00.000000Z
+                            200.0\t2022-01-03T12:00:00.000000Z
+                            250.0\t2022-01-04T12:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testBetweenReversedRuntime() throws Exception {
+        assertMemoryLeak(() -> {
+            createTrades();
+            bindVariableService.clear();
+            bindVariableService.setTimestamp(0, 1_641_254_400_000_000L); // 2022-01-04T00:00:00Z
+            bindVariableService.setTimestamp(1, 1_641_081_600_000_000L); // 2022-01-02T00:00:00Z
+            // both bounds are full runtime values, so the inverter normalizes (swaps) and still prunes
+            assertQuery("SELECT * FROM trades WHERE date_trunc('day', timestamp) BETWEEN $1 AND $2")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Interval forward scan on: trades")
+                    .returns("""
+                            price\ttimestamp
+                            150.0\t2022-01-02T12:00:00.000000Z
+                            200.0\t2022-01-03T12:00:00.000000Z
+                            250.0\t2022-01-04T12:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testCastToLongBetween() throws Exception {
         assertMemoryLeak(() -> {
             createTrades();
@@ -162,6 +221,7 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
             assertQuery("SELECT * FROM trades WHERE timestamp::long >= 1_641_211_200_000_000")
                     .timestamp("timestamp")
                     .withPlanContaining("Interval forward scan on: trades")
+                    .withPlanNotContaining("filter:")
                     .returns("""
                             price\ttimestamp
                             200.0\t2022-01-03T12:00:00.000000Z
@@ -192,6 +252,7 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
             assertQuery("SELECT * FROM trades WHERE dateadd('d', 1, timestamp) >= '2022-01-04'")
                     .timestamp("timestamp")
                     .withPlanContaining("Interval forward scan on: trades")
+                    .withPlanNotContaining("filter:")
                     .returns("""
                             price\ttimestamp
                             200.0\t2022-01-03T12:00:00.000000Z
@@ -631,10 +692,38 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNotEqualsFallback() throws Exception {
+        assertMemoryLeak(() -> {
+            createTrades();
+            // a negated predicate is not pushed onto the timestamp axis; it stays a row filter
+            assertQuery("SELECT * FROM trades WHERE date_trunc('day', timestamp) != '2022-01-03'")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Frame forward scan on: trades")
+                    .returns("""
+                            price\ttimestamp
+                            100.0\t2022-01-01T12:00:00.000000Z
+                            150.0\t2022-01-02T12:00:00.000000Z
+                            250.0\t2022-01-04T12:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testNullBound() throws Exception {
         assertMemoryLeak(() -> {
             createTrades();
             assertQuery("SELECT * FROM trades WHERE date_trunc('day', timestamp) >= null")
+                    .timestamp("timestamp")
+                    .returns("price\ttimestamp\n");
+        });
+    }
+
+    @Test
+    public void testNullBoundWithSiblingConjunct() throws Exception {
+        assertMemoryLeak(() -> {
+            createTrades();
+            // the null bound makes the whole conjunction empty even alongside a matchable sibling
+            assertQuery("SELECT * FROM trades WHERE date_trunc('day', timestamp) >= null AND price > 0")
                     .timestamp("timestamp")
                     .returns("price\ttimestamp\n");
         });
@@ -652,6 +741,24 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
                             150.0\t2022-01-02T12:00:00.000000Z
                             200.0\t2022-01-03T12:00:00.000000Z
                             """);
+        });
+    }
+
+    @Test
+    public void testRuntimeBoundWithFalseSibling() throws Exception {
+        assertMemoryLeak(() -> {
+            setCurrentMicros(1_641_168_000_000_000L); // 2022-01-03T00:00:00Z
+            try {
+                createTrades();
+                // the runtime predicate registers a deferred inverter, then the always-false
+                // sibling makes the model empty before it is built; the inverter must be freed,
+                // not leaked, and the result must be empty
+                assertQuery("SELECT * FROM trades WHERE date_trunc('day', timestamp) >= now() AND timestamp::long = null")
+                        .timestamp("timestamp")
+                        .returns("price\ttimestamp\n");
+            } finally {
+                setCurrentMicros(-1);
+            }
         });
     }
 
@@ -688,6 +795,7 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
             assertQuery("SELECT * FROM trades WHERE timestamp_ceil('h', timestamp) >= '2022-01-03T13:00:00.000000Z'")
                     .timestamp("timestamp")
                     .withPlanContaining("Interval forward scan on: trades")
+                    .withPlanNotContaining("filter:")
                     .returns("""
                             price\ttimestamp
                             200.0\t2022-01-03T12:00:00.000000Z
@@ -808,6 +916,7 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
             assertQuery("SELECT * FROM y WHERE year(timestamp) >= 2023")
                     .timestamp("timestamp")
                     .withPlanContaining("Interval forward scan on: y")
+                    .withPlanNotContaining("filter:")
                     .returns("""
                             price\ttimestamp
                             3.0\t2023-06-01T00:00:00.000000Z
