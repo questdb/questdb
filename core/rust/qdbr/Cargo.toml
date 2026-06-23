@@ -29,7 +29,7 @@ nonmax = "0.5.5"
 seq-macro = "0.3.6"
 rapidhash = "4.4.1"
 zstd = "0.13"
-memmap2 = "0.9.8"
+memmap2 = "0.9.11"
 
 [dev-dependencies]
 parquet = "56.2.0"
