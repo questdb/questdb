@@ -1386,6 +1386,15 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                             setInvalidState(viewState, walWriter, invalidationReason, invalidationTimestamp);
                             break;
                         } catch (CairoException ex) {
+                            if (ex.isAuthorizationError()) {
+                                // The role flipped read-only after the top-of-method guard (a demote
+                                // racing this in-flight invalidate). Acquiring the writer is refused.
+                                // Defer the same way the top guard does -- mark pending and re-enqueue --
+                                // instead of looping on the refused acquire forever. The finally unlocks.
+                                viewState.markAsPendingInvalidation();
+                                stateStore.enqueueInvalidate(viewToken, invalidationReason);
+                                return;
+                            }
                             if (!handleErrorRetryRefresh(ex, viewToken, null, null)) {
                                 throw ex;
                             }
