@@ -1035,8 +1035,15 @@ impl<W: Write> ParquetFile<W> {
                 let page_specs = std::mem::take(&mut self.page_specs);
                 let copied_page_index = std::mem::take(&mut self.copied_page_index);
 
-                // Index the new groups before they merge into the footer.
-                if source_offset_indexed {
+                // Index the new groups before they merge into the footer, but
+                // only when every new group is itself indexable: a raw-copied
+                // group whose source lacked an OffsetIndex is not. Combined with
+                // source_offset_indexed, this keeps the file from mixing indexed
+                // and unindexed row groups (which strict readers reject), the
+                // same all-or-nothing rule the Mode::Write branch applies.
+                let new_groups_indexable = (0..groups.len())
+                    .all(|i| !page_specs[i].is_empty() || copied_page_index[i].is_some());
+                if source_offset_indexed && new_groups_indexable {
                     write_page_index(
                         &mut self.writer,
                         &mut self.offset,
