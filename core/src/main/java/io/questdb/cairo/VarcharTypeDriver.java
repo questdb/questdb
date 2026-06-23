@@ -728,13 +728,6 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     @Override
     public long setAppendPosition(long pos, MemoryMA auxMem, MemoryMA dataMem) {
         if (pos > 0) {
-            // first we need to calculate already used space. both data and aux vectors.
-            long auxVectorOffset = getAuxVectorOffset(pos - 1); // the last entry we are NOT overwriting
-            auxMem.jumpTo(auxVectorOffset);
-            long auxEntryPtr = auxMem.getAppendAddress();
-
-            long dataVectorSize = getDataVectorSize(auxEntryPtr);
-
             // Crash-consistency guard. The data offset lives in bytes 8-15 of the aux
             // entry and is written after the row's data bytes; on reopen we trust it to
             // place the append cursor at the end of the data vector. A torn or partially
@@ -751,9 +744,28 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
             // window is inherent to commit.mode=nosync (the default), which performs no
             // msync/fsync at all - recent commits may be lost or torn on power loss by
             // design. Use commit.mode=sync (or snapshots/WAL) when durability matters.
+            //
+            // Read entry[pos-2]'s data end FIRST, while its own page is the one mapped:
+            // this aux memory is paged (MemoryPMARImpl maps ~one segment at a time and
+            // unmaps the rest), so reading getAppendAddress()-WIDTH off entry[pos-1]
+            // would dereference the prior, now-unmapped segment whenever (pos-1)*WIDTH
+            // lands on a page boundary - garbage / SIGSEGV, a false positive on large
+            // tables.
+            long prevDataVectorSize = -1;
             if (pos > 1) {
+                auxMem.jumpTo(getAuxVectorOffset(pos - 2));
+                prevDataVectorSize = getDataVectorSize(auxMem.getAppendAddress());
+            }
+
+            // first we need to calculate already used space. both data and aux vectors.
+            long auxVectorOffset = getAuxVectorOffset(pos - 1); // the last entry we are NOT overwriting
+            auxMem.jumpTo(auxVectorOffset);
+            long auxEntryPtr = auxMem.getAppendAddress();
+
+            long dataVectorSize = getDataVectorSize(auxEntryPtr);
+
+            if (prevDataVectorSize != -1) {
                 long lastDataOffset = getDataOffset(auxEntryPtr);
-                long prevDataVectorSize = getDataVectorSize(auxEntryPtr - VARCHAR_AUX_WIDTH_BYTES);
                 if (lastDataOffset < prevDataVectorSize) {
                     throw CairoException.critical(0)
                             .put("varchar aux vector is damaged, possible torn write on the last entry [pos=").put(pos)

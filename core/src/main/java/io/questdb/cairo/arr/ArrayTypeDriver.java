@@ -705,6 +705,21 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     @Override
     public long setAppendPosition(long pos, MemoryMA auxMem, MemoryMA dataMem) {
         if (pos > 0) {
+            // Crash-consistency guard (mirrors VarcharTypeDriver). Data offsets are monotonic; the last
+            // row's data start must be >= the previous row's data end. A lower value means the aux tail
+            // was torn/partially flushed - fail loudly instead of placing the cursor inside committed data.
+            //
+            // Read entry[pos-2]'s data end FIRST, while its own page is the one mapped: this aux memory
+            // is paged (MemoryPMARImpl maps ~one segment at a time and unmaps the rest), so reading
+            // getAppendAddress()-WIDTH off entry[pos-1] would dereference the prior, now-unmapped segment
+            // whenever (pos-1)*WIDTH lands on a page boundary - garbage / SIGSEGV, a false positive on
+            // large tables.
+            long prevDataVectorSize = -1;
+            if (pos > 1) {
+                auxMem.jumpTo(getAuxVectorOffset(pos - 2));
+                prevDataVectorSize = calcDataOffsetEnd(auxMem.getAppendAddress());
+            }
+
             // first we need to calculate already used space. both data and aux vectors.
             long auxVectorOffset = getAuxVectorOffset(pos - 1); // the last entry we are NOT overwriting
             auxMem.jumpTo(auxVectorOffset);
@@ -712,12 +727,8 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
 
             long dataVectorSize = calcDataOffsetEnd(auxEntryPtr);
 
-            // Crash-consistency guard (mirrors VarcharTypeDriver). Data offsets are monotonic; the last
-            // row's data start must be >= the previous row's data end. A lower value means the aux tail
-            // was torn/partially flushed - fail loudly instead of placing the cursor inside committed data.
-            if (pos > 1) {
+            if (prevDataVectorSize != -1) {
                 long lastDataOffset = readDataOffset(auxEntryPtr);
-                long prevDataVectorSize = calcDataOffsetEnd(auxEntryPtr - ARRAY_AUX_WIDTH_BYTES);
                 if (lastDataOffset < prevDataVectorSize) {
                     throw CairoException.critical(0)
                             .put("array aux vector is damaged, possible torn write on the last entry [pos=").put(pos)
