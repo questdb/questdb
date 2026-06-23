@@ -8780,15 +8780,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             if (!Os.isWindows() && configuration.getCommitMode() != CommitMode.NOSYNC) {
-                final long partDirFd = TableUtils.openRONoCache(ff, path.slash$(), LOG);
-                if (partDirFd != -1) {
-                    ff.fsyncAndClose(partDirFd);
+                // fsync the new partition directory, then the table root, so the partition's
+                // directory entry is durable before the next _txn commit. Use a scratch Path:
+                // mutating the shared `path` buffer here (trimTo(pathSize).$()) would NUL-clobber
+                // the partition separator and corrupt every subsequent column-file open.
+                try (Path dirPath = new Path()) {
+                    dirPath.of(path).slash$();
+                    final long partDirFd = TableUtils.openRONoCache(ff, dirPath.$(), LOG);
+                    if (partDirFd != -1) {
+                        ff.fsyncAndClose(partDirFd);
+                    }
+                    dirPath.trimTo(pathSize).$();
+                    final long rootDirFd = TableUtils.openRONoCache(ff, dirPath.$(), LOG);
+                    if (rootDirFd != -1) {
+                        ff.fsyncAndClose(rootDirFd);
+                    }
                 }
-                final long rootDirFd = TableUtils.openRONoCache(ff, path.trimTo(pathSize).$(), LOG);
-                if (rootDirFd != -1) {
-                    ff.fsyncAndClose(rootDirFd);
-                }
-                path.trimTo(plen);
             }
 
             assert columnCount > 0;
