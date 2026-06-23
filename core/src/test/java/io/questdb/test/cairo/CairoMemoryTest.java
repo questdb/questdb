@@ -390,7 +390,7 @@ public class CairoMemoryTest extends AbstractTest {
                     Assert.fail("expected CairoException");
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "could not get length");
-                    Assert.assertEquals(CairoException.ERRNO_FILE_DOES_NOT_EXIST, e.getErrno());
+                    Assert.assertTrue(Files.isErrnoFileDoesNotExist(e.getErrno()));
                     Assert.assertTrue(e.isFileCannotRead());
                 }
             }
