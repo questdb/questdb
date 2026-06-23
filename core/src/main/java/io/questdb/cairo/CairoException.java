@@ -464,10 +464,11 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         this.errno = errno;
         cacheable = false;
         interruption = false;
-        // cancellation and preferencesOutOfDateError are only ever set true; resetting them here is
-        // required because instance() reuses a thread-local flyweight. Without these resets the flags
-        // stay sticky across reuse, so an unrelated exception built later on the same worker thread
-        // would inherit a stale cancellation/preferences-out-of-date classification.
+        // clear() fully resets state so the instance starts from a clean slate. The base
+        // CairoException.instance() allocates a fresh object every call, so for it these flag resets
+        // are belt-and-suspenders. They are load-bearing for subclasses that still recycle a pooled
+        // flyweight through this method (e.g. LineProtocolException via ThreadLocal): without a full
+        // reset a stale flag would leak onto the next exception built on the same flyweight.
         cancellation = false;
         preferencesOutOfDateError = false;
         authorizationError = false;

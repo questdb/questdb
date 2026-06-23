@@ -34,11 +34,11 @@ import java.lang.reflect.Method;
 
 public class CairoExceptionTest extends AbstractTest {
 
-    // CairoException is a reused thread-local flyweight: instance() calls clear(errno) to recycle it.
-    // cancellation and preferencesOutOfDateError are only ever set true, so clear() MUST reset them;
-    // otherwise a stale flag leaks onto an unrelated exception built later on the same worker thread
-    // (e.g. a corrupt-parquet decode error inheriting cancellation=true from an earlier CANCEL QUERY).
-    // These guards invoke clear() directly so they hold even under -ea, where instance() allocates fresh.
+    // clear(errno) must fully reset CairoException state. The base instance() now allocates a fresh
+    // object every call, but clear() is shared with subclasses that recycle a pooled flyweight (e.g.
+    // LineProtocolException via ThreadLocal), so a write-once cancellation/preferences-out-of-date
+    // flag must not survive a reset and leak onto the next exception built on the same flyweight.
+    // These guards set a flag, invoke clear() directly, and assert the flag is back to false.
     @Test
     public void testClearResetsStickyCancellationFlag() throws Exception {
         CairoException ex = CairoException.queryCancelled();

@@ -273,20 +273,16 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
             // classification and message, not be relabeled as a corrupt-file error, so wire processors
             // that branch on isInterruption()/isCancellation() still see it rather than a read error.
             // Every breaker exception sets the interruption flag (queryCancelled/queryTimedOut/remote
-            // disconnect), so isInterruption() alone identifies them. We must NOT also key on
-            // isCancellation(): that flag is sticky on the reused thread-local CairoException flyweight
-            // (clear() does not reset it), so a stale cancellation from an earlier CANCEL QUERY on this
-            // worker thread would misclassify a genuinely corrupt decode error as a cancellation.
+            // disconnect), so isInterruption() identifies all of them; isCancellation() alone would miss
+            // a timeout, which sets interruption but not cancellation. Key on isInterruption().
             // Likewise, a memory-limit breach (per-query or global RSS) is not corruption:
             // surface it unchanged so isOutOfMemory() and the limit message reach
             // the caller instead of a misleading "corrupted file" message.
             if (ex.isInterruption() || ex.isOutOfMemory()) {
                 throw ex;
             }
-            // Preserve the underlying decode error (e.g. the native parquet guard message)
-            // instead of discarding it. ex shares the thread-local CairoException flyweight
-            // that nonCritical() resets, so copy its message to a String first, then append
-            // it to the friendly wrapper.
+            // Preserve the underlying decode error (e.g. the native parquet guard message) instead of
+            // discarding it: read ex's message into a String before building the wrapper exception.
             final String cause = ex.getFlyweightMessage().toString();
             throw CairoException.nonCritical()
                     .put("Error reading. Parquet file is likely corrupted: ")
@@ -357,8 +353,8 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
                         }
                     } catch (CairoException ex) {
                         // A tripped circuit breaker must keep its classification and message instead of
-                        // being relabeled as a corrupt-file error. Key only on isInterruption() (set by
-                        // every breaker exception); isCancellation() is sticky on the flyweight (see hasNext).
+                        // being relabeled as a corrupt-file error. Key on isInterruption(), set by every
+                        // breaker exception; isCancellation() alone would miss a timeout (see hasNext).
                         if (ex.isInterruption()) {
                             throw ex;
                         }
