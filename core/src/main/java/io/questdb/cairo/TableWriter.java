@@ -10941,13 +10941,31 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             throw e;
         } finally {
             path.trimTo(pathSize);
-            other.trimTo(pathSize);
             for (long i = 0, n = columnFdAndDataSize.size() / 3; i < n; i++) {
                 final long dstAuxFd = columnFdAndDataSize.get(3L * i);
-                ff.close(dstAuxFd);
                 final long dstDataFd = columnFdAndDataSize.get(3L * i + 1);
+                if (configuration.getCommitMode() != CommitMode.NOSYNC) {
+                    if (dstDataFd != -1) {
+                        ff.fsync(dstDataFd);
+                    }
+                    if (dstAuxFd != -1) {
+                        ff.fsync(dstAuxFd);
+                    }
+                }
+                ff.close(dstAuxFd);
                 ff.close(dstDataFd);
             }
+            if (!Os.isWindows() && configuration.getCommitMode() != CommitMode.NOSYNC) {
+                try {
+                    final long partDirFd = TableUtils.openRONoCache(ff, other.trimTo(newPartitionDirLen).slash$(), LOG);
+                    if (partDirFd != -1) {
+                        ff.fsyncAndClose(partDirFd);
+                    }
+                } catch (CairoException ex) {
+                    LOG.error().$("could not fsync native partition dir [path=").$(other).$(", errno=").$(ex.getErrno()).I$();
+                }
+            }
+            other.trimTo(pathSize);
             columnFdAndDataSize.resetCapacity();
             parquetFileDecoder.close();
             if (parquetAddr != 0) {
@@ -12342,6 +12360,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         // rename _meta to _meta.prev
         renameMetaToMetaPrev();
+        if (!Os.isWindows() && configuration.getCommitMode() != CommitMode.NOSYNC) {
+            final long dirFd = TableUtils.openRONoCache(ff, path.trimTo(pathSize).$(), LOG);
+            if (dirFd != -1) {
+                ff.fsyncAndClose(dirFd);
+            }
+        }
 
         // after we moved _meta to _meta.prev
         // we have to have _todo to restore _meta should anything go wrong
@@ -12349,6 +12373,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         // rename _meta.swp to _meta
         renameSwapMetaToMeta();
+        if (!Os.isWindows() && configuration.getCommitMode() != CommitMode.NOSYNC) {
+            final long dirFd = TableUtils.openRONoCache(ff, path.trimTo(pathSize).$(), LOG);
+            if (dirFd != -1) {
+                ff.fsyncAndClose(dirFd);
+            }
+        }
     }
 
     private int rewriteMetadata(TableWriterMetadata metadata) {
@@ -12420,6 +12450,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             ddlMem.sync(false);
+            if (configuration.getCommitMode() != CommitMode.NOSYNC) {
+                path.trimTo(pathSize).concat(META_SWAP_FILE_NAME);
+                if (index > 0) {
+                    path.put('.').put(index);
+                }
+                final long swpFd = TableUtils.openRONoCache(ff, path.$(), LOG);
+                if (swpFd != -1) {
+                    ff.fsyncAndClose(swpFd);
+                }
+                path.trimTo(pathSize);
+            }
             return index;
         } catch (Throwable th) {
             LOG.critical().$("could not write to metadata file, rolling back DDL [path=").$(path).$(']').$();
