@@ -244,7 +244,7 @@ public class Mig941Test extends AbstractCairoTest {
                 try {
                     ParquetMetaFileReader reader = new ParquetMetaFileReader();
                     reader.of(parquetMetaAddr, parquetMetaSize);
-                    reader.resolveFooter(Long.MAX_VALUE);
+                    reader.resolveLastFooter();
                     Assert.assertEquals(1, reader.getColumnCount());
                     Assert.assertEquals(2, reader.getRowGroupCount());
                     // MIN_PRESENT=bit0, MIN_INLINED=bit1, MAX_PRESENT=bit3, MAX_INLINED=bit4.
@@ -334,7 +334,7 @@ public class Mig941Test extends AbstractCairoTest {
                         parquetMetaReader.of(parquetMetaAddr, parquetMetaSize);
                         Assert.assertTrue(
                                 "regenerated _pm must resolve a footer (partition " + i + ")",
-                                parquetMetaReader.resolveFooter(Long.MAX_VALUE)
+                                parquetMetaReader.resolveLastFooter()
                         );
                         Assert.assertEquals(2, parquetMetaReader.getColumnCount());
                     } finally {
@@ -447,7 +447,7 @@ public class Mig941Test extends AbstractCairoTest {
                 try {
                     ParquetMetaFileReader reader = new ParquetMetaFileReader();
                     reader.of(parquetMetaAddr, parquetMetaSize);
-                    reader.resolveFooter(Long.MAX_VALUE);
+                    reader.resolveLastFooter();
                     Assert.assertEquals(2, reader.getColumnCount());
                     Assert.assertEquals(1, reader.getRowGroupCount());
                     Assert.assertTrue(reader.getParquetFileSize() > 0);
@@ -600,7 +600,7 @@ public class Mig941Test extends AbstractCairoTest {
                     try {
                         ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
                         parquetMetaReader.of(parquetMetaAddr, parquetMetaSize);
-                        parquetMetaReader.resolveFooter(Long.MAX_VALUE);
+                        parquetMetaReader.resolveLastFooter();
                         Assert.assertEquals(2, parquetMetaReader.getColumnCount());
                         Assert.assertEquals(1, parquetMetaReader.getRowGroupCount());
                     } finally {
@@ -664,7 +664,7 @@ public class Mig941Test extends AbstractCairoTest {
                 try {
                     ParquetMetaFileReader reader = new ParquetMetaFileReader();
                     reader.of(parquetMetaAddr, parquetMetaSize);
-                    reader.resolveFooter(Long.MAX_VALUE);
+                    reader.resolveLastFooter();
                     Assert.assertEquals(2, reader.getColumnCount());
                     Assert.assertEquals(1, reader.getRowGroupCount());
                 } finally {
@@ -730,7 +730,7 @@ public class Mig941Test extends AbstractCairoTest {
                 try {
                     ParquetMetaFileReader reader = new ParquetMetaFileReader();
                     reader.of(parquetMetaAddr, parquetMetaSize);
-                    reader.resolveFooter(Long.MAX_VALUE);
+                    reader.resolveLastFooter();
                     Assert.assertEquals(2, reader.getColumnCount());
                     Assert.assertEquals(1, reader.getRowGroupCount());
                 } finally {
@@ -1092,7 +1092,7 @@ public class Mig941Test extends AbstractCairoTest {
                 try {
                     ParquetMetaFileReader reader = new ParquetMetaFileReader();
                     reader.of(parquetMetaAddr, parquetMetaSize);
-                    reader.resolveFooter(Long.MAX_VALUE);
+                    reader.resolveLastFooter();
                     Assert.assertEquals(2, reader.getColumnCount());
                     Assert.assertEquals(1, reader.getRowGroupCount());
                 } finally {
@@ -1285,7 +1285,7 @@ public class Mig941Test extends AbstractCairoTest {
                     try {
                         ParquetMetaFileReader r = new ParquetMetaFileReader();
                         r.of(pmAddr, pmSize);
-                        Assert.assertTrue("resolveFooter on regenerated _pm " + i, r.resolveFooter(Long.MAX_VALUE));
+                        Assert.assertTrue("resolveFooter on regenerated _pm " + i, r.resolveLastFooter());
                         Assert.assertEquals(2, r.getColumnCount());
                         Assert.assertTrue("at least one row group", r.getRowGroupCount() >= 1);
                     } finally {
@@ -1414,7 +1414,7 @@ public class Mig941Test extends AbstractCairoTest {
                 try {
                     ParquetMetaFileReader reader = new ParquetMetaFileReader();
                     reader.of(parquetMetaAddr, parquetMetaSize);
-                    reader.resolveFooter(Long.MAX_VALUE);
+                    reader.resolveLastFooter();
                     Assert.assertEquals(3, reader.getColumnCount());
                     // The consistency guarantee is only meaningfully exercised
                     // when copied and fresh row groups coexist, so guard that the
