@@ -35,6 +35,7 @@ import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.mp.Job;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
 /**
@@ -52,6 +53,18 @@ import org.junit.Test;
  * </ul>
  */
 public class LiveViewTest extends AbstractCairoTest {
+
+    // Pin the test clock below all test data before each test. A non-BACKFILL
+    // view's lower bound is the CREATE wall-clock moment, and the forward-append
+    // refresh path drops rows below it. The test data is timestamped in the past,
+    // so without a pinned clock the floor would land at real "now", above the
+    // data, and every row would be dropped as pre-CREATE. currentMicros is a
+    // static that leaks across tests, so pinning it here also makes the suite
+    // order-independent. Tests that need a specific CREATE moment override this.
+    @Before
+    public void pinClockBelowTestData() {
+        setCurrentMicros(0L);
+    }
 
     private static boolean drainJob(Job job) {
         boolean any = false;

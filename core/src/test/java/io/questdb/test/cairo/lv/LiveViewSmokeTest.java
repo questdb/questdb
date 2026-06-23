@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.file.AppendableBlock;
 import io.questdb.cairo.file.BlockFileWriter;
@@ -74,6 +75,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -87,6 +89,19 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * suite is rewritten in delta plan task #8.
  */
 public class LiveViewSmokeTest extends AbstractCairoTest {
+
+    // Pin the test clock below all test data before each test. A non-BACKFILL
+    // view's lower bound is the CREATE wall-clock moment, and the forward-append
+    // refresh path drops rows below it (matching the O3 replay). The test data
+    // is timestamped in the past (2024-2026), so without a pinned clock the
+    // floor would land at real "now", above the data, and every row would be
+    // dropped as pre-CREATE. currentMicros is a static that leaks across tests,
+    // so pinning it here also makes the suite order-independent. Tests that need
+    // a specific CREATE moment override this with their own setCurrentMicros.
+    @Before
+    public void pinClockBelowTestData() {
+        setCurrentMicros(0L);
+    }
 
     // Shared fixtures for the avg(DECIMAL, targetScale) rescale round-trip tests.
     // Two partitions (a, b) of three hourly rows; with a 3-row / 2-hour frame the
@@ -2215,6 +2230,12 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     @Test
     public void testWalPurgeHonorsLvConsumedSeqTxnFloor() throws Exception {
         assertMemoryLeak(() -> {
+            // Override the class default (epoch): the WAL purge job's interval gate
+            // only fires once the clock is past one check interval (30s), so a clock
+            // frozen at epoch would skip every sweep. Pin it below the data so the
+            // view still materializes the rows, but far enough past epoch for the
+            // purge to run.
+            setCurrentMicros(MicrosTimestampDriver.floor("2026-05-31T00:00:00.000000Z"));
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
@@ -3564,9 +3585,13 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
         // WAL stream incrementally, not base partitions, so physical partition
         // eviction never reaches the LV's read path.
         assertMemoryLeak(() -> {
-            // Data sits in 2020, well before the real wall clock, so TTL's
-            // wall-clock protection (it evicts relative to min(maxTimestamp,
-            // wallClock)) keys off the data max and the eviction is deterministic.
+            // Pin the clock just below the 2020 data at CREATE so the non-BACKFILL
+            // view's lower bound sits under the rows (the forward-append path drops
+            // rows below it). The clock is advanced past the data max before the
+            // TTL-triggering insert below so TTL's wall-clock protection (it evicts
+            // relative to min(maxTimestamp, wallClock)) keys off the data max and
+            // the eviction is deterministic.
+            setCurrentMicros(MicrosTimestampDriver.floor("2020-01-01T00:00:00.000000Z"));
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY TTL 1 DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 200ms AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
@@ -3592,7 +3617,9 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
             // A later commit advances the base max to 2020-01-10, pushing both
             // earlier partitions outside the 1-day window: TTL evicts them at apply
-            // time, leaving only the new row in the base table.
+            // time, leaving only the new row in the base table. Advance the clock
+            // past the new max so the wall-clock protection keys off the data max.
+            setCurrentMicros(MicrosTimestampDriver.floor("2020-01-12T00:00:00.000000Z"));
             execute("INSERT INTO base (ts, x) VALUES ('2020-01-10T12:00:00.000000Z', 3)");
             drainWalQueue();
             assertQuery("SELECT ts, x FROM base").noLeakCheck().timestamp("ts").expectSize().returns("ts\tx\n" +
@@ -10068,6 +10095,93 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                             "lv\t1\n");
 
             execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testNonBackfillForwardAndO3ReplayAgreeOnSubFloorRows() throws Exception {
+        // A non-BACKFILL view's lower bound is the CREATE wall-clock moment. The
+        // O3 head-miss replay seeds its scan at that floor and drops every row
+        // below it; the forward-append path must drop sub-floor rows as well.
+        // Otherwise a back-dated row would be kept when it arrives in order
+        // (forward) but dropped when it arrives out of order (replay) - the
+        // view's contents would depend on the arrival path, not the data. This
+        // drives both paths over identical data straddling the floor and asserts
+        // they produce the same rows, with the sub-floor rows dropped either way.
+        //
+        // The complementary "O3 row below the floor is rejected and counted"
+        // case is testO3LateRowBelowLowerBoundIsRejectedAndCounted; this is the
+        // forward-path twin of it.
+        final long floorMicros = MicrosTimestampDriver.floor("2026-04-01T00:00:05.000000Z");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base_fwd (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE base_o3 (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            // Pin the clock at the floor so each non-BACKFILL view's lower bound
+            // is 2026-04-01T00:00:05.
+            setCurrentMicros(floorMicros);
+            execute("CREATE LIVE VIEW lv_fwd FLUSH EVERY 100ms AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base_fwd");
+            execute("CREATE LIVE VIEW lv_o3 FLUSH EVERY 100ms AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base_o3");
+
+            LiveViewInstance fwd = engine.getLiveViewRegistry().getViewInstance("lv_fwd");
+            LiveViewInstance o3 = engine.getLiveViewRegistry().getViewInstance("lv_o3");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Forward path: a single in-order commit straddling the floor.
+                // The two sub-floor rows (01, 02) precede the two above-floor
+                // rows (06, 07) in ts order, so the commit is not out of order
+                // and goes through the forward-append path.
+                execute("INSERT INTO base_fwd (ts, x) VALUES " +
+                        "('2026-04-01T00:00:01.000000Z', 1), " +
+                        "('2026-04-01T00:00:02.000000Z', 2), " +
+                        "('2026-04-01T00:00:06.000000Z', 6), " +
+                        "('2026-04-01T00:00:07.000000Z', 7)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                // O3 path, step 1: the above-floor rows arrive first and are
+                // forward-appended, advancing the watermark to 00:00:07.
+                execute("INSERT INTO base_o3 (ts, x) VALUES " +
+                        "('2026-04-01T00:00:06.000000Z', 6), " +
+                        "('2026-04-01T00:00:07.000000Z', 7)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                // O3 path, step 2: the sub-floor rows arrive back-dated as a
+                // second commit whose min ts is below the watermark, triggering
+                // an O3 head-miss replay. The replay re-scans from the floor and
+                // never sees the sub-floor rows. Clear the per-view flush gate so
+                // the back-to-back cycle is not rate-limited by FLUSH EVERY.
+                o3.setLastFlushTimeUs(Numbers.LONG_NULL);
+                execute("INSERT INTO base_o3 (ts, x) VALUES " +
+                        "('2026-04-01T00:00:01.000000Z', 1), " +
+                        "('2026-04-01T00:00:02.000000Z', 2)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            // Both paths drop the sub-floor rows and keep only the above-floor
+            // rows, with identical row numbers.
+            final String expected = "ts\tx\trn\n" +
+                    "2026-04-01T00:00:06.000000Z\t6\t1\n" +
+                    "2026-04-01T00:00:07.000000Z\t7\t2\n";
+            assertQuery("SELECT ts, x, rn FROM lv_fwd ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns(expected);
+            assertQuery("SELECT ts, x, rn FROM lv_o3 ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns(expected);
+
+            // The forward path drops in-order sub-floor rows silently - they are
+            // pre-CREATE data excluded by the floor, not out-of-order arrivals,
+            // so they are not counted as O3 rejections. The replay path, by
+            // contrast, rejects the back-dated commit that sits below the floor.
+            Assert.assertEquals("in-order sub-floor rows are not O3 rejections", 0L, fwd.getO3RejectedCount());
+            Assert.assertEquals("the back-dated sub-floor commit is an O3 rejection", 2L, o3.getO3RejectedCount());
+
+            execute("DROP LIVE VIEW lv_fwd");
+            execute("DROP LIVE VIEW lv_o3");
         });
     }
 

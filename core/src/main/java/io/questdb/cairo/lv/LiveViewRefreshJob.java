@@ -458,7 +458,19 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         RecordCursorFactory pageFrameFactory = filter != null ? filterFactory.getBaseFactory() : filterFactory;
         TableToken baseToken = instance.getDefinition().getBaseTableToken();
         RecordMetadata baseMetadata = pageFrameFactory.getMetadata();
+        final int baseTimestampIndex = baseMetadata.getTimestampIndex();
         buildColumnMappings(baseMetadata, baseToken);
+
+        // Floor the forward-append path takes too. A non-BACKFILL view's lower
+        // bound is the CREATE wall-clock moment; a BACKFILL view's is the
+        // earliest visible base row. O3 head-miss replay already seeds its scan
+        // at this floor and drops everything below it, so the forward-append
+        // path must drop sub-floor rows as well - otherwise a back-dated row
+        // would be kept when it arrives in order (forward) but dropped when it
+        // arrives out of order (replay), making the view's contents depend on
+        // the arrival path rather than the data. Only reachable for data
+        // ingested before CREATE, which production does not do.
+        final long viewLowerBoundTimestamp = instance.getDefinition().getViewLowerBoundTimestamp();
 
         // Decide whether the in-memory tier can be populated
         // for this LV. Only LVs whose output schema is fully fixed-width are
@@ -597,8 +609,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // is not counted here, an accepted V1 under-count on a
                         // rare path. These rows are dropped by the replay's lower-
                         // bound cursor and never reach the on-disk tier.
-                        final long viewLowerBound = instance.getDefinition().getViewLowerBoundTimestamp();
-                        if (dataInfo.getMaxTimestamp() < viewLowerBound) {
+                        if (dataInfo.getMaxTimestamp() < viewLowerBoundTimestamp) {
                             instance.bumpO3RejectedCount(dataInfo.getEndRowID() - dataInfo.getStartRowID());
                         }
                         break;
@@ -625,16 +636,23 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     );
                     walRecordCursor.of(walFrameCursor, baseMetadata);
 
-                    RecordCursor source = walRecordCursor;
+                    // Drop rows below the view's lower bound before the window
+                    // sees them, matching the O3 head-miss replay's lower-bound
+                    // seed so both paths agree on sub-floor rows. This commit is
+                    // not out of order (intra/cross-commit O3 was diverted to the
+                    // replay above), so its rows are ts-ascending and the
+                    // skip-prefix cursor drops exactly the sub-floor prefix.
+                    tsLowerBoundCursor.of(walRecordCursor, baseTimestampIndex, viewLowerBoundTimestamp);
+                    RecordCursor source = tsLowerBoundCursor;
                     if (filter != null) {
-                        filteringCursor.of(walRecordCursor, filter, executionContext);
+                        filteringCursor.of(source, filter, executionContext);
                         source = filteringCursor;
                     }
                     LiveViewWindow anchorWindow = instance.getAnchorWindow();
                     if (anchorWindow != null) {
-                        // Anchor dispatch sits between the filter (or raw WAL cursor)
-                        // and the window cursor so window functions see resetPartition
-                        // before pass1 evaluates the row.
+                        // Anchor dispatch sits between the filter (or lower-bound
+                        // cursor) and the window cursor so window functions see
+                        // resetPartition before pass1 evaluates the row.
                         anchorDispatchingCursor.of(source, anchorWindow, executionContext);
                         source = anchorDispatchingCursor;
                     }
