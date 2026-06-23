@@ -156,10 +156,18 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
             }
             if (isFixedUnit(period)) {
                 if (lo != Numbers.LONG_NULL) {
-                    lo = periodAddFunction.add(lo, -stride);
+                    final long invLo = periodAddFunction.add(lo, -stride);
+                    if (periodAddFunction.add(invLo, stride) != lo) {
+                        return NONE;
+                    }
+                    lo = invLo;
                 }
                 if (hi != Long.MAX_VALUE) {
-                    hi = periodAddFunction.add(hi, -stride);
+                    final long invHi = periodAddFunction.add(hi, -stride);
+                    if (periodAddFunction.add(invHi, stride) != hi) {
+                        return NONE;
+                    }
+                    hi = invHi;
                 }
                 io.of(lo, hi);
                 return EXACT;

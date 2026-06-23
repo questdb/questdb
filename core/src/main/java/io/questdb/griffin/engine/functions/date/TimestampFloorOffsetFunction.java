@@ -36,6 +36,7 @@ import io.questdb.std.Numbers;
 
 
 public final class TimestampFloorOffsetFunction extends TimestampFunction implements UnaryFunction, MonotonicTimestampFunction {
+    private final char addUnit;
     private final Function arg;
     private final TimestampDriver.TimestampFloorWithOffsetMethod floor;
     private final String name;
@@ -50,6 +51,8 @@ public final class TimestampFloorOffsetFunction extends TimestampFunction implem
         this.stride = stride;
         this.offset = offset;
         this.unit = unit;
+        // add()/dateadd use the lowercase microsecond unit while ceil/floor use the uppercase one
+        this.addUnit = unit == 'U' ? 'u' : unit;
         floor = this.timestampDriver.getTimestampFloorWithOffsetMethod(unit);
     }
 
@@ -77,12 +80,22 @@ public final class TimestampFloorOffsetFunction extends TimestampFunction implem
         }
         long lo = io.getLo();
         long hi = io.getHi();
+        // below the origin every timestamp floors to the origin
+        if (offset != 0) {
+            if (hi != Long.MAX_VALUE && hi < offset) {
+                io.of(Long.MAX_VALUE, Numbers.LONG_NULL);
+                return EXACT;
+            }
+            if (lo != Numbers.LONG_NULL && lo <= offset) {
+                lo = Numbers.LONG_NULL;
+            }
+        }
         if (lo != Numbers.LONG_NULL) {
             final long b = floor.floor(lo, stride, offset);
-            lo = b == lo ? lo : timestampDriver.add(b, unit, stride);
+            lo = b == lo ? lo : timestampDriver.add(b, addUnit, stride);
         }
         if (hi != Long.MAX_VALUE) {
-            hi = timestampDriver.add(floor.floor(hi, stride, offset), unit, stride) - 1;
+            hi = timestampDriver.add(floor.floor(hi, stride, offset), addUnit, stride) - 1;
         }
         io.of(lo, hi);
         return EXACT;

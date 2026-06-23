@@ -181,16 +181,23 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
 
     // 48h bounds any zone offset difference (e.g. Samoa's 2011 date-line shift); the
     // floor can drop the input by up to two buckets (DST-gap re-flooring).
-    static int invertFloorSuperset(Interval io, TimestampDriver timestampDriver, char unit, int stride) {
+    static int invertFloorSuperset(Interval io, TimestampDriver timestampDriver, char unit, int stride, long effectiveOffset) {
         if (!isFixedStrideUnit(unit)) {
             return MonotonicTimestampFunction.NONE;
         }
         final long margin = timestampDriver.fromDays(2);
-        final long bucket = timestampDriver.add(0, unit, stride);
+        // add()/dateadd use the lowercase microsecond unit while ceil/floor use the uppercase one
+        final long bucket = timestampDriver.add(0, unit == 'U' ? 'u' : unit, stride);
         long lo = io.getLo();
         long hi = io.getHi();
         if (lo != Numbers.LONG_NULL) {
-            lo = lo < Long.MIN_VALUE + margin ? Numbers.LONG_NULL : lo - margin;
+            if (lo < Long.MIN_VALUE + margin) {
+                lo = Numbers.LONG_NULL;
+            } else {
+                final long loWidened = lo - margin;
+                // below the origin every timestamp floors to the origin
+                lo = effectiveOffset != 0 && loWidened <= effectiveOffset ? Numbers.LONG_NULL : loWidened;
+            }
         }
         if (hi != Long.MAX_VALUE) {
             final long widen = 2 * bucket + margin;
@@ -443,7 +450,7 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
 
         @Override
         public int invertTimestampInterval(Interval io) {
-            return invertFloorSuperset(io, timestampDriver, unit, stride);
+            return invertFloorSuperset(io, timestampDriver, unit, stride, effectiveOffset);
         }
 
         @Override
@@ -530,7 +537,7 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
 
         @Override
         public int invertTimestampInterval(Interval io) {
-            return invertFloorSuperset(io, timestampDriver, unit, stride);
+            return invertFloorSuperset(io, timestampDriver, unit, stride, effectiveOffset);
         }
 
         @Override
@@ -615,7 +622,7 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
 
         @Override
         public int invertTimestampInterval(Interval io) {
-            return invertFloorSuperset(io, timestampDriver, unit, stride);
+            return invertFloorSuperset(io, timestampDriver, unit, stride, effectiveOffset);
         }
 
         @Override

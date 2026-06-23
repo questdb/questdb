@@ -47,7 +47,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
-import io.questdb.std.ObjectPool;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
@@ -4369,7 +4368,6 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             RecordMetadata m = ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? metadata : metadataNanos;
             return e.extract(
                     column -> column,
-                    new ObjectPool<>(ExpressionNode.FACTORY, 16),
                     compiler.testParseExpression(seq, queryModel),
                     m,
                     preferredColumn,
@@ -4390,7 +4388,6 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             RecordMetadata m = ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? noDesignatedTimestampNorIdxMetadata : noDesignatedTimestampNorIdxMetadataNanos;
             return e.extract(
                     column -> column,
-                    new ObjectPool<>(ExpressionNode.FACTORY, 16),
                     compiler.testParseExpression(seq, queryModel),
                     m,
                     null,
@@ -4410,7 +4407,6 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             return e.extract(
                     column -> column,
-                    new ObjectPool<>(ExpressionNode.FACTORY, 16),
                     compiler.testParseExpression(seq, queryModel),
                     noTimestampMetadata,
                     null,
@@ -4431,7 +4427,6 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             RecordMetadata m = ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? nonEmptyMetadata : nonEmptyMetadataNanos;
             return e.extract(
                     column -> column,
-                    new ObjectPool<>(ExpressionNode.FACTORY, 16),
                     compiler.testParseExpression("sym = 'X' and ex = 'Y' and mode = 'Z'", queryModel),
                     m,
                     null,
@@ -4556,7 +4551,6 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             RecordMetadata m = ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? unindexedMetadata : unindexedMetadataNanos;
             return e.extract(
                     column -> column,
-                    new ObjectPool<>(ExpressionNode.FACTORY, 16),
                     compiler.testParseExpression(seq, queryModel),
                     m,
                     preferredColumn,

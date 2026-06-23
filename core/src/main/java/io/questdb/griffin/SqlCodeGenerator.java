@@ -8596,7 +8596,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             expressionNodePool, whereClause);
                                     distinctIntrinsic = whereClauseParser.extract(
                                             tableModel,
-                                            expressionNodePool,
                                             whereClause,
                                             tableMeta,
                                             null,
@@ -10226,7 +10225,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 intrinsicModel = whereClauseParser.extract(
                         model,
-                        expressionNodePool,
                         whereClause,
                         metadata,
                         preferredKeyColumn,

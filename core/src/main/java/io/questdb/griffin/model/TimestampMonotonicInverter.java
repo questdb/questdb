@@ -118,6 +118,11 @@ public class TimestampMonotonicInverter extends UntypedFunction {
         io.of(lo, hi);
         for (int i = 0, n = chain.size(); i < n; i++) {
             if (chain.getQuick(i).invertTimestampInterval(io) == MonotonicTimestampFunction.NONE) {
+                // bound outside the invertible range: impose no interval, leaving it to the filter
+                out.add(Numbers.LONG_NULL, Long.MAX_VALUE);
+                return;
+            }
+            if (io.getLo() > io.getHi()) {
                 return;
             }
         }

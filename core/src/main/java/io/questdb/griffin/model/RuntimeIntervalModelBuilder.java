@@ -148,7 +148,8 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     }
 
     public void intersectEmpty() {
-        clear();
+        // free the runtime functions gathered so far; ownership has not been transferred via build()
+        freeAndClear();
         intervalApplied = true;
     }
 

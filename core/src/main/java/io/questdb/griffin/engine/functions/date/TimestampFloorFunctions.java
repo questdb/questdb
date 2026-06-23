@@ -85,7 +85,9 @@ final class TimestampFloorFunctions {
                 lo = floor.floor(lo) == lo ? lo : ceil.ceil(lo);
             }
             if (hi != Long.MAX_VALUE) {
-                hi = ceil.ceil(hi) - 1;
+                // ceil is the identity for the smallest unit (us/ns), where the bucket is one tick
+                final long c = ceil.ceil(hi);
+                hi = c == hi ? hi : c - 1;
             }
             io.of(lo, hi);
             return EXACT;
@@ -201,7 +203,8 @@ final class TimestampFloorFunctions {
                 return 'T';
             }
             if (Chars.equals(unit, "microsecond")) {
-                return 'U';
+                // 'u', not 'U': add()/dateadd use the lowercase microsecond unit, ceil/floor the upper
+                return 'u';
             }
             if (Chars.equals(unit, "nanosecond")) {
                 return 'n';

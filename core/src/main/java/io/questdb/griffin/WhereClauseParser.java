@@ -39,6 +39,7 @@ import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
 import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.griffin.model.AliasTranslator;
 import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.IntervalOperation;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.model.IntrinsicModel;
 import io.questdb.griffin.model.TimestampMonotonicInverter;
@@ -55,6 +56,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.str.FlyweightCharSequence;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -71,10 +73,10 @@ import static io.questdb.griffin.SqlKeywords.*;
 public final class WhereClauseParser implements Mutable {
     // Resolution outcomes for a single scalar bound of a monotonic-timestamp predicate.
     private static final int BOUND_CONST = 0;     // usable compile-time constant (resolvedBoundConst)
-    private static final int BOUND_EMPTY = 2;     // a NULL-valued bound: the predicate matches no rows
-    private static final int BOUND_FAIL = 4;      // not a usable scalar bound: fall back to a row filter
+    private static final int BOUND_EMPTY = 1;     // a NULL-valued bound: the predicate matches no rows
+    private static final int BOUND_FAIL = 2;      // not a usable scalar bound: fall back to a row filter
     private static final int BOUND_FALSE = 3;     // a NULL keyword bound: the predicate is always false
-    private static final int BOUND_FUNC = 1;      // deferred runtime function (resolvedBoundFunc)
+    private static final int BOUND_FUNC = 4;      // deferred runtime function (resolvedBoundFunc)
     // Internal optimization marker for timestamp predicates pushed through dateadd transforms.
     // and_offset(predicate, unit, offset) wraps predicates that need offset adjustment.
     // This is NOT a user-facing function - it's injected by SqlOptimiser during predicate pushdown.
@@ -90,6 +92,7 @@ public final class WhereClauseParser implements Mutable {
     private static final int INTRINSIC_OP_NOT_EQ = 7;
     private static final CharSequenceIntHashMap intrinsicOps = new CharSequenceIntHashMap();
     private final ObjectPool<FlyweightCharSequence> csPool = new ObjectPool<>(FlyweightCharSequence.FACTORY, 64);
+    private final StringSink intervalSink = new StringSink();
     private final Interval intervalScratch = new Interval();
     private final ObjList<ExpressionNode> keyExclNodes = new ObjList<>();
     private final ObjList<ExpressionNode> keyNodes = new ObjList<>();
@@ -100,6 +103,7 @@ public final class WhereClauseParser implements Mutable {
     // shred a still-needed branch and leave a half-collapsed OR node.
     private final ObjList<ExpressionNode> orIntrinsicNodes = new ObjList<>();
     private final ArrayDeque<ExpressionNode> stack = new ArrayDeque<>();
+    private final LongList tempInIntervals = new LongList();
     private final CharSequenceHashSet tempK = new CharSequenceHashSet();
     private final IntList tempKeyExcludedValuePos = new IntList();
     // expression node types (literal, bind var, etc.) of excluded keys used  when comparing values and generating functions
@@ -136,6 +140,7 @@ public final class WhereClauseParser implements Mutable {
         orIntrinsicNodes.clear();
         tempNodes.clear();
         tempMonotonicChain.clear();
+        tempInIntervals.clear();
         tempKeys.clear();
         tempPos.clear();
         tempType.clear();
@@ -154,7 +159,6 @@ public final class WhereClauseParser implements Mutable {
 
     public IntrinsicModel extract(
             @NotNull AliasTranslator translator,
-            @NotNull ObjectPool<ExpressionNode> expressionNodePool,
             ExpressionNode node,
             @NotNull RecordMetadata m,
             CharSequence preferredKeyColumn,
@@ -172,8 +176,6 @@ public final class WhereClauseParser implements Mutable {
         this.timestamp = timestampIndex < 0 ? null : m.getColumnName(timestampIndex);
         this.noIndex = noIndex;
         this.preferredKeyColumn = preferredKeyColumn;
-
-        stripNoopTimestampCasts(expressionNodePool, node, functionParser, metadata, executionContext);
 
         IntrinsicModel model = models.next();
         int timestampType = reader.getMetadata().getTimestampType();
@@ -804,10 +806,17 @@ public final class WhereClauseParser implements Mutable {
 
         final ExpressionNode col = node.paramCount < 3 ? node.lhs : node.args.getLast();
         if (col.type != ExpressionNode.LITERAL) {
-            if (node.paramCount == 2 && referencesTimestamp(col)) {
-                final ExpressionNode inArg = node.rhs;
-                if (inArg.type == ExpressionNode.CONSTANT || isFunc(inArg)) {
-                    return analyzeMonotonicTimestamp(timestampDriver, model, node, col, inArg, inArg, true, functionParser, metadata, executionContext);
+            if (referencesTimestamp(col)) {
+                if (node.paramCount == 2 && node.rhs.type == ExpressionNode.CONSTANT) {
+                    // a quoted constant is an interval ('2022-01' spans a month), a bare one a point
+                    final ExpressionNode inArg = node.rhs;
+                    return Chars.isQuoted(inArg.token)
+                            ? analyzeMonotonicTimestampInInterval(model, node, col, inArg, functionParser, metadata, executionContext)
+                            : analyzeMonotonicTimestamp(timestampDriver, model, node, col, inArg, inArg, true, functionParser, metadata, executionContext);
+                }
+                // a no-op wrapper reduces `g(ts) IN X` to `ts IN X`
+                if (isIdentityTimestampOperand(col, functionParser, metadata, executionContext)) {
+                    return analyzeInInterval(timestampDriver, model, col, node, false, functionParser, metadata, executionContext, true);
                 }
             }
             return false;
@@ -817,7 +826,7 @@ public final class WhereClauseParser implements Mutable {
         if (metadata.getColumnIndexQuiet(column) == -1) {
             throw SqlException.invalidColumn(col.position, col.token);
         }
-        return analyzeInInterval(timestampDriver, model, col, node, false, functionParser, metadata, executionContext)
+        return analyzeInInterval(timestampDriver, model, col, node, false, functionParser, metadata, executionContext, false)
                 || analyzeListOfValues(model, column, metadata, node, latestByMultiColumn, reader, functionParser, executionContext)
                 || analyzeInLambda(model, column, metadata, node, latestByMultiColumn, reader);
     }
@@ -830,9 +839,10 @@ public final class WhereClauseParser implements Mutable {
             boolean isNegated,
             FunctionParser functionParser,
             RecordMetadata metadata,
-            SqlExecutionContext executionContext
+            SqlExecutionContext executionContext,
+            boolean colIsDesignatedTimestamp
     ) throws SqlException {
-        if (!isTimestamp(col)) {
+        if (!colIsDesignatedTimestamp && !isTimestamp(col)) {
             return false;
         }
         int oldIntervalFuncType = executionContext.getIntervalFunctionType();
@@ -1225,13 +1235,8 @@ public final class WhereClauseParser implements Mutable {
             RecordMetadata metadata,
             SqlExecutionContext executionContext
     ) {
-        if (operandNode == null || operandNode.type == ExpressionNode.LITERAL || !referencesTimestamp(operandNode)) {
-            return false;
-        }
-        Function head;
-        try {
-            head = functionParser.parseFunction(operandNode, metadata, executionContext);
-        } catch (SqlException | CairoException e) {
+        Function head = compileMonotonicChain(operandNode, functionParser, metadata, executionContext);
+        if (head == null) {
             return false;
         }
         Function loBound = null;
@@ -1240,21 +1245,6 @@ public final class WhereClauseParser implements Mutable {
             // Bounds are compared in the outermost function's output domain: a timestamp
             // (any precision) or an integer (year() -> int, ts::long -> long).
             final int outType = head.getType();
-            if (!ColumnType.isTimestamp(outType) && !ColumnType.isInt(outType) && outType != ColumnType.LONG) {
-                return false;
-            }
-            tempMonotonicChain.clear();
-            Function f = head;
-            while (f instanceof MonotonicTimestampFunction m) {
-                tempMonotonicChain.add(m);
-                f = m.getTimestampArg();
-            }
-            final ColumnFunction col = ColumnFunction.unwrap(f);
-            if (tempMonotonicChain.size() == 0
-                    || col == null
-                    || !Chars.equalsIgnoreCase(metadata.getColumnName(col.getColumnIndex()), timestamp)) {
-                return false;
-            }
             final TimestampDriver outDriver = ColumnType.isTimestamp(outType) ? ColumnType.getTimestampDriver(outType) : timestampDriver;
 
             // An unset end defaults to the open sentinel, which foldInvert treats as unbounded.
@@ -1336,6 +1326,9 @@ public final class WhereClauseParser implements Mutable {
                         outDriver
                 ));
                 head = loBound = hiBound = null; // ownership transferred to the inverter
+                // a runtime bound may not be invertible when the scan opens, so it only prunes
+                // and the predicate stays a residual filter
+                return false;
             }
 
             if (soundness == MonotonicTimestampFunction.EXACT) {
@@ -1350,6 +1343,77 @@ public final class WhereClauseParser implements Mutable {
             if (hiBound != loBound) {
                 Misc.free(hiBound);
             }
+            Misc.free(head);
+        }
+    }
+
+    /**
+     * Recognizes {@code g(ts) IN '<interval>'} where the constant denotes a timestamp interval
+     * (a partial date such as '2022-01' spans a whole month), matching the runtime
+     * {@code in()} semantics rather than a single point. The interval is inverted onto the
+     * timestamp axis for partition pruning while the predicate stays a residual row filter, so
+     * a wider-than-exact inversion can never drop matching rows.
+     */
+    private boolean analyzeMonotonicTimestampInInterval(
+            IntrinsicModel model,
+            ExpressionNode node,
+            ExpressionNode operandNode,
+            ExpressionNode inArg,
+            FunctionParser functionParser,
+            RecordMetadata metadata,
+            SqlExecutionContext executionContext
+    ) {
+        final Function head = compileMonotonicChain(operandNode, functionParser, metadata, executionContext);
+        if (head == null) {
+            return false;
+        }
+        try {
+            final int outType = head.getType();
+            // the interval form applies only to timestamp-domain chains
+            if (!ColumnType.isTimestamp(outType)) {
+                return false;
+            }
+            final TimestampDriver outDriver = ColumnType.getTimestampDriver(outType);
+            tempInIntervals.clear();
+            try {
+                IntervalUtils.parseTickExpr(
+                        outDriver,
+                        executionContext.getCairoEngine().getConfiguration(),
+                        inArg.token,
+                        1,
+                        inArg.token.length() - 1,
+                        inArg.position,
+                        tempInIntervals,
+                        IntervalOperation.INTERSECT,
+                        intervalSink,
+                        true
+                );
+            } catch (SqlException | CairoException e) {
+                return false;
+            }
+            // only a single resolved interval is inverted; lists/day-filters fall back to a row filter
+            if (tempInIntervals.size() != 2) {
+                return false;
+            }
+            intervalScratch.of(tempInIntervals.getQuick(0), tempInIntervals.getQuick(1));
+            final int soundness = foldInvert(tempMonotonicChain, intervalScratch);
+            if (soundness == MonotonicTimestampFunction.NONE) {
+                return false;
+            }
+            if (intervalScratch.getLo() > intervalScratch.getHi()) {
+                model.intersectEmpty();
+                node.intrinsicValue = IntrinsicModel.TRUE;
+                return true;
+            }
+            model.intersectIntervals(intervalScratch.getLo(), intervalScratch.getHi());
+            if (soundness == MonotonicTimestampFunction.EXACT) {
+                node.intrinsicValue = IntrinsicModel.TRUE;
+                return true;
+            }
+            return false;
+        } catch (CairoException e) {
+            return false;
+        } finally {
             Misc.free(head);
         }
     }
@@ -1571,7 +1635,7 @@ public final class WhereClauseParser implements Mutable {
             throw SqlException.invalidColumn(col.position, col.token);
         }
 
-        boolean ok = analyzeInInterval(timestampDriver, model, col, node, true, functionParser, metadata, executionContext);
+        boolean ok = analyzeInInterval(timestampDriver, model, col, node, true, functionParser, metadata, executionContext, false);
         if (ok) {
             notNode.intrinsicValue = IntrinsicModel.TRUE;
         } else {
@@ -2143,6 +2207,48 @@ public final class WhereClauseParser implements Mutable {
                 );
     }
 
+    /**
+     * Compiles {@code operandNode} and, when it bottoms out at the designated timestamp through a
+     * (possibly empty) chain of {@link MonotonicTimestampFunction}s, returns the compiled head (the
+     * caller owns it and must free it) with {@link #tempMonotonicChain} populated outermost-first. An
+     * empty chain means the operand compiles to the bare designated timestamp (a no-op wrapper).
+     * Returns null otherwise, freeing any partial compilation. Recognition is speculative: anything
+     * that fails to compile is simply not a monotonic-timestamp chain.
+     */
+    private Function compileMonotonicChain(
+            ExpressionNode operandNode,
+            FunctionParser functionParser,
+            RecordMetadata metadata,
+            SqlExecutionContext executionContext
+    ) {
+        if (operandNode == null || operandNode.type == ExpressionNode.LITERAL || !referencesTimestamp(operandNode)) {
+            return null;
+        }
+        final Function head;
+        try {
+            head = functionParser.parseFunction(operandNode, metadata, executionContext);
+        } catch (SqlException | CairoException e) {
+            return null;
+        }
+        final int outType = head.getType();
+        if (!ColumnType.isTimestamp(outType) && !ColumnType.isInt(outType) && outType != ColumnType.LONG) {
+            Misc.free(head);
+            return null;
+        }
+        tempMonotonicChain.clear();
+        Function f = head;
+        while (f instanceof MonotonicTimestampFunction m) {
+            tempMonotonicChain.add(m);
+            f = m.getTimestampArg();
+        }
+        final ColumnFunction col = ColumnFunction.unwrap(f);
+        if (col == null || !Chars.equalsIgnoreCase(metadata.getColumnName(col.getColumnIndex()), timestamp)) {
+            Misc.free(head);
+            return null;
+        }
+        return head;
+    }
+
     private Function createKeyValueBindVariable(
             FunctionParser functionParser,
             SqlExecutionContext executionContext,
@@ -2346,6 +2452,9 @@ public final class WhereClauseParser implements Mutable {
             if (grade == MonotonicTimestampFunction.SUPERSET) {
                 soundness = MonotonicTimestampFunction.SUPERSET;
             }
+            if (io.getLo() > io.getHi()) {
+                return soundness; // empty preimage stays empty through the rest of the chain
+            }
         }
         return soundness;
     }
@@ -2390,6 +2499,21 @@ public final class WhereClauseParser implements Mutable {
 
     private boolean isGeoHashConstFunction(Function fn) {
         return (fn instanceof AbstractGeoHashFunction) && fn.isConstant();
+    }
+
+    private boolean isIdentityTimestampOperand(
+            ExpressionNode operand,
+            FunctionParser functionParser,
+            RecordMetadata metadata,
+            SqlExecutionContext executionContext
+    ) {
+        final Function head = compileMonotonicChain(operand, functionParser, metadata, executionContext);
+        if (head == null) {
+            return false;
+        }
+        final boolean identity = tempMonotonicChain.size() == 0;
+        Misc.free(head);
+        return identity;
     }
 
     private boolean isNull(ExpressionNode node) {
@@ -2460,36 +2584,6 @@ public final class WhereClauseParser implements Mutable {
 
     private boolean isTimestamp(ExpressionNode n) {
         return Chars.equalsIgnoreCaseNc(n.token, timestamp);
-    }
-
-    private boolean isTimestampIdentityOperand(
-            ExpressionNode operand,
-            FunctionParser functionParser,
-            RecordMetadata metadata,
-            SqlExecutionContext executionContext
-    ) {
-        if (operand == null
-                || operand.token == null
-                || (!Chars.equalsLowerCaseAscii(operand.token, "cast") && !Chars.equals(operand.token, "::"))
-                || !referencesTimestamp(operand)) {
-            return false;
-        }
-        // A same-precision cast on the designated timestamp folds to the bare
-        // column when compiled, so the wrapped operand is just the timestamp.
-        // Recognition is speculative: an operand that does not compile in
-        // isolation is simply not a timestamp identity.
-        final Function f;
-        try {
-            f = functionParser.parseFunction(operand, metadata, executionContext);
-        } catch (SqlException | CairoException e) {
-            return false;
-        }
-        try {
-            final ColumnFunction col = ColumnFunction.unwrap(f);
-            return col != null && Chars.equalsIgnoreCase(metadata.getColumnName(col.getColumnIndex()), timestamp);
-        } finally {
-            Misc.free(f);
-        }
     }
 
     private void markOrIntrinsic(ExpressionNode node) {
@@ -2839,11 +2933,18 @@ public final class WhereClauseParser implements Mutable {
                     throw SqlException.invalidDate(boundNode.token, boundNode.position);
                 }
             } else {
+                final long b;
                 try {
-                    resolvedBoundConst = Numbers.parseLong(boundNode.token) + adjustComparison(equalsTo, isLo);
+                    b = Numbers.parseLong(boundNode.token);
                 } catch (NumericException e) {
                     return BOUND_FAIL;
                 }
+                final short adj = adjustComparison(equalsTo, isLo);
+                // a strict bound just past the type extreme (`x > MAX`, `x < MIN`) matches nothing
+                if ((adj > 0 && b == Long.MAX_VALUE) || (adj < 0 && b == Long.MIN_VALUE)) {
+                    return BOUND_EMPTY;
+                }
+                resolvedBoundConst = b + adj;
             }
             return BOUND_CONST;
         }
@@ -2863,7 +2964,11 @@ public final class WhereClauseParser implements Mutable {
                     if (b == Numbers.LONG_NULL) {
                         return BOUND_EMPTY;
                     }
-                    resolvedBoundConst = b + adjustComparison(equalsTo, isLo);
+                    final short adj = adjustComparison(equalsTo, isLo);
+                    if (adj > 0 && b == Long.MAX_VALUE) {
+                        return BOUND_EMPTY;
+                    }
+                    resolvedBoundConst = b + adj;
                     return BOUND_CONST;
                 }
                 if (bound.isRuntimeConstant()) {
@@ -2879,53 +2984,6 @@ public final class WhereClauseParser implements Mutable {
             }
         }
         return BOUND_FAIL;
-    }
-
-    private ExpressionNode stripIfNoopTimestampCast(
-            ObjectPool<ExpressionNode> expressionNodePool,
-            ExpressionNode operand,
-            FunctionParser functionParser,
-            RecordMetadata metadata,
-            SqlExecutionContext executionContext
-    ) {
-        if (isTimestampIdentityOperand(operand, functionParser, metadata, executionContext)) {
-            return expressionNodePool.next().of(ExpressionNode.LITERAL, timestamp, 0, operand.position);
-        }
-        return operand;
-    }
-
-    private void stripNoopTimestampCasts(
-            ObjectPool<ExpressionNode> expressionNodePool,
-            ExpressionNode node,
-            FunctionParser functionParser,
-            RecordMetadata metadata,
-            SqlExecutionContext executionContext
-    ) {
-        if (timestamp == null) {
-            return;
-        }
-        stack.clear();
-        while (!stack.isEmpty() || node != null) {
-            if (node != null) {
-                if (isAndKeyword(node.token) || isOrKeyword(node.token)) {
-                    stack.push(node.rhs);
-                    node = node.lhs;
-                } else {
-                    node.lhs = stripIfNoopTimestampCast(expressionNodePool, node.lhs, functionParser, metadata, executionContext);
-                    node.rhs = stripIfNoopTimestampCast(expressionNodePool, node.rhs, functionParser, metadata, executionContext);
-                    for (int i = 0, n = node.args.size(); i < n; i++) {
-                        ExpressionNode arg = node.args.getQuick(i);
-                        ExpressionNode stripped = stripIfNoopTimestampCast(expressionNodePool, arg, functionParser, metadata, executionContext);
-                        if (stripped != arg) {
-                            node.args.setQuick(i, stripped);
-                        }
-                    }
-                    node = stack.poll();
-                }
-            } else {
-                node = stack.poll();
-            }
-        }
     }
 
     private boolean translateBetweenToTimestampModel(
