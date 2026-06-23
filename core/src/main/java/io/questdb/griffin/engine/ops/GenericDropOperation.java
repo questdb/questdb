@@ -7,6 +7,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SCSequence;
+import io.questdb.std.Chars;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -81,5 +82,20 @@ public class GenericDropOperation implements Operation {
 
     public boolean ifExists() {
         return ifExists;
+    }
+
+    /**
+     * Reports whether this operation drops a plain table whose name carries the reserved
+     * parquet-export prefix. The engine reserves that prefix exclusively for the temporary tables
+     * the HTTP parquet exporter materializes, and a regular CREATE TABLE rejects any name starting
+     * with it, so a matching DROP can only target an exporter temp table, never a user table. A
+     * read-only replica leaves such a temp table behind when its own cleanup fails, and the admin
+     * then drops it as a purely local operation; the replica read-only ingress gate consults this to
+     * let that local cleanup proceed while still refusing every genuine client DROP.
+     */
+    public boolean isExportTempTableDrop(CharSequence parquetExportTableNamePrefix) {
+        return operationCode == DROP_TABLE
+                && parquetExportTableNamePrefix != null
+                && Chars.startsWith(entityName, parquetExportTableNamePrefix);
     }
 }

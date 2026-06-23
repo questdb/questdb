@@ -301,7 +301,7 @@ public class CopyExportContext {
             }
 
             // serial insert to copy_export_log table to avoid table busy
-            try (TableWriter statusTableWriter = engine.getWriter(statusTableToken, "QuestDB system")) {
+            try (TableWriter statusTableWriter = engine.getWriter(statusTableToken, TableUtils.SYSTEM_WRITER_LOCK_REASON)) {
                 try {
                     MicrosecondClock microsecondClock = engine.getConfiguration().getMicrosecondClock();
                     TableWriter.Row row = statusTableWriter.newRow(microsecondClock.getTicks());

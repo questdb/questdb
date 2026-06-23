@@ -144,6 +144,34 @@ public class LogFactoryTest {
     }
 
     @Test
+    public void testFileWriterExpandsPidToken() throws Exception {
+        final File dir = temp.newFolder();
+        final String template = new File(dir, "pid-token-%p.log").getAbsolutePath();
+
+        try (LogFactory factory = new LogFactory()) {
+            factory.add(new LogWriterConfig(LogLevel.ERROR, (ring, seq, level) -> {
+                LogFileWriter w = new LogFileWriter(ring, seq, level);
+                w.setLocation(template);
+                return w;
+            }));
+
+            factory.bind();
+            factory.startThread();
+
+            final Log logger = factory.create("x");
+            logger.xerror().$("pid token line").$();
+            factory.flushJobs();
+
+            // The writer expands %p to the JVM pid, so concurrent or respawned
+            // processes never collide on the same log file.
+            final File expanded = new File(dir, "pid-token-" + Os.getPid() + ".log");
+            Assert.assertTrue(expanded.exists());
+            Assert.assertFalse(new File(dir, "pid-token-%p.log").exists());
+            Assert.assertTrue(java.nio.file.Files.readString(expanded.toPath()).contains("pid token line"));
+        }
+    }
+
+    @Test
     public void testFlushJobsAndClose() {
         System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, "/test-log.conf");
 
