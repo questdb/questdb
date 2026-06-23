@@ -553,14 +553,27 @@ public class WorkerPoolBootFailureTest {
 
             // Observable proxy for the torn read: halt()'s unconditional first pass would signal worker 0
             // and stop its ticks. On the fixed tree that first pass blocks on workersLock (held by the
-            // parked add), so worker 0 stays RUNNING and free-runs its no-work job loop (thousands of
-            // ticks per 500ms). On the un-fixed tree the first pass reads the partial list immediately and
-            // signals worker 0 -- it stops after at most one in-flight tick. A large delta means halt was
-            // held off; a near-zero delta (<= a couple of in-flight ticks) means it signalled worker 0.
+            // parked add), so worker 0 stays RUNNING and free-runs its no-work job loop; on the un-fixed
+            // tree the first pass reads the partial list immediately and signals worker 0 -- its loop exits
+            // after at most one in-flight tick and the counter freezes.
+            //
+            // Witness it by polling for the tick counter to advance past a small margin within a generous
+            // deadline, NOT by counting ticks inside a fixed wall-clock window. The job returns false every
+            // tick, so worker 0's idle backoff (Os.pause -> Os.sleep) governs its tick RATE; on a slow or
+            // contended runner Os.sleep overshoots and a worker that is correctly held off still ticks only
+            // a few dozen times per second, so a fixed-window count underflows any fixed threshold and the
+            // witness flakes RED even though halt was held off (the observed mac-other failure). The
+            // deadline-poll only needs worker 0 to keep MAKING PROGRESS, however slowly: held off, it clears
+            // the margin near-instantly; signalled (un-fixed tree), it freezes after the in-flight tick and
+            // never clears the margin, timing out at the deadline. The margin sits well above the un-fixed
+            // tree's couple of in-flight ticks, so the two outcomes never overlap.
+            final long requiredTickProgress = 32;
+            final long witnessDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
             final long ticksBefore = jobTicks.get();
-            Thread.sleep(500);
-            final long tickDelta = jobTicks.get() - ticksBefore;
-            worker0KeptTickingWhileParked = tickDelta > 100;
+            while (jobTicks.get() - ticksBefore < requiredTickProgress && System.nanoTime() < witnessDeadline) {
+                Thread.sleep(1);
+            }
+            worker0KeptTickingWhileParked = jobTicks.get() - ticksBefore >= requiredTickProgress;
 
             // Release the parked add: start() finishes the loop, the monitor frees, halt() proceeds.
             releaseStartPark.countDown();
@@ -588,10 +601,10 @@ public class WorkerPoolBootFailureTest {
                     + haltError.get().getMessage(), haltError.get());
         }
 
-        // Core safe-publish assertion (deterministic): halt()'s first pass must be held off by the add
-        // critical section's monitor while start() is parked mid-add -- it cannot read+signal the
-        // half-built list, so worker 0 keeps ticking. On the un-fixed tree the first pass reads the
-        // partial list and signals worker 0, freezing its ticks while still parked: RED.
+        // Core safe-publish assertion: halt()'s first pass must be held off by the add critical section's
+        // monitor while start() is parked mid-add -- it cannot read+signal the half-built list, so worker 0
+        // keeps making progress (the counter advances past the margin). On the un-fixed tree the first pass
+        // reads the partial list and signals worker 0, freezing its progress while still parked: RED.
         Assert.assertTrue("halt()'s first pass must be held off by the add critical section's monitor "
                         + "while start() is parked mid-add (worker 0's ticks froze -- the un-guarded first pass "
                         + "read+signalled the half-built workers list, the safe-publish is missing)",
