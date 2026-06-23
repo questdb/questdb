@@ -244,89 +244,85 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRegisterRollbackWaitsForInFlightCancellerBeforeRecyclingEntry() throws Exception {
+    public void testSlowCancellerPrincipalDoesNotBlockUnregister() throws Exception {
         assertMemoryLeak(() -> {
             final QueryRegistry registry = engine.getQueryRegistry();
-            final CountDownLatch cancellerInGuard = new CountDownLatch(1);
-            final CountDownLatch releaseCanceller = new CountDownLatch(1);
+            final CountDownLatch principalRequested = new CountDownLatch(1);
+            final CountDownLatch releasePrincipal = new CountDownLatch(1);
+            final CountDownLatch unregisterDone = new CountDownLatch(1);
             final CountDownLatch cancellerDone = new CountDownLatch(1);
-            final CountDownLatch newRegistered = new CountDownLatch(1);
             final AtomicReference<Throwable> fault = new AtomicReference<>();
 
-            final Thread ownerThread = new Thread(() -> {
-                try (SqlExecutionContextImpl ownerContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)) {
-                    registry.setListener((query, queryId, ctx) -> {
-                        final Thread cancellerThread = new Thread(() -> {
-                            try (SqlExecutionContextImpl cancelContext = new SqlExecutionContextImpl(
-                                    engine,
-                                    1
-                            ).with(new BlockingPrincipalSecurityContext(cancellerInGuard, releaseCanceller))) {
-                                // The old rollback query may or may not be cancelled
-                                // before retire() wins. The invariant is that the
-                                // Entry is not recycled into the next query first.
-                                registry.cancel(queryId, cancelContext);
-                            } catch (Throwable t) {
-                                fault.compareAndSet(null, t);
-                            } finally {
-                                cancellerDone.countDown();
-                            }
-                        });
-                        cancellerThread.start();
-                        try {
-                            Assert.assertTrue(
-                                    "canceller did not enter lifecycle guard",
-                                    cancellerInGuard.await(5, TimeUnit.SECONDS)
-                            );
-                        } catch (InterruptedException e) {
-                            Thread.currentThread().interrupt();
-                            throw new RuntimeException(e);
-                        }
-                        throw new OutOfMemoryError("simulated register rollback");
-                    });
-
+            try (
+                    SqlExecutionContextImpl ownerContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE);
+                    SqlExecutionContextImpl cancelContext = new SqlExecutionContextImpl(engine, 1).with(
+                            new BlockingPrincipalSecurityContext(principalRequested, releasePrincipal)
+                    )
+            ) {
+                final long queryId = registry.register("SELECT slow principal", ownerContext);
+                final Thread cancellerThread = new Thread(() -> {
                     try {
-                        registry.register("SELECT rollback", ownerContext);
-                        Assert.fail("expected register to throw");
-                    } catch (OutOfMemoryError expected) {
-                        // expected
+                        Assert.assertFalse(registry.cancel(queryId, cancelContext));
+                    } catch (Throwable t) {
+                        fault.compareAndSet(null, t);
                     } finally {
-                        registry.setListener(null);
+                        cancellerDone.countDown();
                     }
-
-                    final long newId = registry.register("SELECT new", ownerContext);
+                }, "query_registry_slow_principal_canceller");
+                final Thread unregisterThread = new Thread(() -> {
                     try {
-                        newRegistered.countDown();
-                        TestUtils.await(cancellerDone);
-                        if (fault.get() != null) {
-                            throw new AssertionError("canceller failed", fault.get());
-                        }
-                        final QueryRegistry.Entry newEntry = registry.getEntry(newId);
-                        Assert.assertNotNull(newEntry);
-                        Assert.assertFalse(newEntry.getCancelled().get());
+                        registry.unregister(queryId, ownerContext);
+                    } catch (Throwable t) {
+                        fault.compareAndSet(null, t);
                     } finally {
-                        registry.unregister(newId, ownerContext);
+                        unregisterDone.countDown();
                     }
-                } catch (Throwable t) {
-                    fault.compareAndSet(null, t);
+                }, "query_registry_unregister");
+
+                cancellerThread.start();
+                try {
+                    Assert.assertTrue("canceller did not request principal", principalRequested.await(5, TimeUnit.SECONDS));
+                    unregisterThread.start();
+                    Assert.assertTrue(
+                            "unregister waited for canceller principal lookup",
+                            unregisterDone.await(5, TimeUnit.SECONDS)
+                    );
                 } finally {
-                    registry.setListener(null);
+                    releasePrincipal.countDown();
+                    unregisterThread.join(5_000);
+                    Assert.assertTrue("canceller did not finish", cancellerDone.await(5, TimeUnit.SECONDS));
+                    cancellerThread.join(5_000);
                 }
-            });
-
-            ownerThread.start();
-            try {
-                Assert.assertTrue("canceller did not enter lifecycle guard", cancellerInGuard.await(5, TimeUnit.SECONDS));
-                Assert.assertFalse(
-                        "register rollback recycled the entry before the in-flight canceller completed",
-                        newRegistered.await(250, TimeUnit.MILLISECONDS)
-                );
-            } finally {
-                releaseCanceller.countDown();
-                ownerThread.join(5_000);
+                Assert.assertFalse("unregister thread hung", unregisterThread.isAlive());
+                Assert.assertFalse("canceller thread hung", cancellerThread.isAlive());
+                if (fault.get() != null) {
+                    throw new AssertionError("worker thread failed", fault.get());
+                }
+                Assert.assertNull(registry.getEntry(queryId));
             }
-            Assert.assertFalse("owner thread hung", ownerThread.isAlive());
-            if (fault.get() != null) {
-                throw new AssertionError("worker thread failed", fault.get());
+        });
+    }
+
+    @Test
+    public void testSuccessfulCancelReadsCancellerPrincipalOnce() throws Exception {
+        assertMemoryLeak(() -> {
+            final QueryRegistry registry = engine.getQueryRegistry();
+            final AtomicInteger principalReads = new AtomicInteger();
+            try (
+                    SqlExecutionContextImpl ownerContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE);
+                    SqlExecutionContextImpl cancelContext = new SqlExecutionContextImpl(engine, 1).with(
+                            new SingleReadPrincipalSecurityContext("admin", principalReads)
+                    )
+            ) {
+                final long queryId = registry.register("SELECT one principal read", ownerContext);
+                try {
+                    Assert.assertTrue(registry.cancel(queryId, cancelContext));
+                    Assert.assertEquals(1, principalReads.get());
+                } finally {
+                    if (registry.getEntry(queryId) != null) {
+                        registry.unregister(queryId, ownerContext);
+                    }
+                }
             }
         });
     }
@@ -507,6 +503,24 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
         @Override
         public String getPrincipal() {
             return principal;
+        }
+    }
+
+    private static class SingleReadPrincipalSecurityContext extends PrincipalSecurityContext {
+        private final AtomicInteger reads;
+
+        private SingleReadPrincipalSecurityContext(String principal, AtomicInteger reads) {
+            super(principal);
+            this.reads = reads;
+        }
+
+        @Override
+        public String getPrincipal() {
+            final int count = reads.incrementAndGet();
+            if (count > 1) {
+                throw new AssertionError("principal read more than once");
+            }
+            return super.getPrincipal();
         }
     }
 }

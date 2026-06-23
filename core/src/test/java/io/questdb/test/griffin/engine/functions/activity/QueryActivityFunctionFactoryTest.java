@@ -354,54 +354,6 @@ public class QueryActivityFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testQueryActivitySkipsCancellingEntry() throws Exception {
-        assertMemoryLeak(() -> {
-            final QueryRegistry registry = engine.getQueryRegistry();
-            final CountDownLatch cancellerHasEntry = new CountDownLatch(1);
-            final CountDownLatch releaseCanceller = new CountDownLatch(1);
-            final CountDownLatch cancellerDone = new CountDownLatch(1);
-            final AtomicReference<Throwable> fault = new AtomicReference<>();
-
-            try (
-                    SqlExecutionContextImpl ownerContext = new SqlExecutionContextImpl(engine, 1).with(new PrincipalSecurityContext("owner"));
-                    SqlExecutionContextImpl cancelContext = new SqlExecutionContextImpl(engine, 1).with(
-                            new BlockingPrincipalSecurityContext("admin", cancellerHasEntry, releaseCanceller)
-                    );
-                    SqlExecutionContextImpl readerContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)
-            ) {
-                final String query = "SELECT cancelling query";
-                final long queryId = registry.register(query, ownerContext);
-                final Thread cancellerThread = new Thread(() -> {
-                    try {
-                        registry.cancel(queryId, cancelContext);
-                    } catch (Throwable t) {
-                        fault.compareAndSet(null, t);
-                    } finally {
-                        cancellerDone.countDown();
-                    }
-                }, "query_activity_canceller");
-
-                cancellerThread.start();
-                try {
-                    Assert.assertTrue("canceller did not enter lifecycle guard", cancellerHasEntry.await(5, TimeUnit.SECONDS));
-                    assertQueryActivityDoesNotReturn(query, readerContext);
-                } finally {
-                    releaseCanceller.countDown();
-                    Assert.assertTrue("canceller did not finish", cancellerDone.await(5, TimeUnit.SECONDS));
-                    cancellerThread.join(5_000);
-                    if (registry.getEntry(queryId) != null) {
-                        registry.unregister(queryId, ownerContext);
-                    }
-                }
-                Assert.assertFalse("canceller thread hung", cancellerThread.isAlive());
-                if (fault.get() != null) {
-                    throw new AssertionError("canceller failed", fault.get());
-                }
-            }
-        });
-    }
-
-    @Test
     public void testQueryActivityRejectsGrowingStringSnapshot() throws Exception {
         assertInjectedPoolNameRejected("SELECT growing pool name", new GrowingCharSequence("pool"));
     }
@@ -454,6 +406,62 @@ public class QueryActivityFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testQueryActivityRejectsShrinkingStringSnapshot() throws Exception {
         assertInjectedPoolNameRejected("SELECT shrinking pool name", new ShrinkingCharSequence());
+    }
+
+    @Test
+    public void testQueryActivitySkipsCancellingEntry() throws Exception {
+        assertMemoryLeak(() -> {
+            final QueryRegistry registry = engine.getQueryRegistry();
+            final CountDownLatch cancellerInGuard = new CountDownLatch(1);
+            final CountDownLatch releaseCanceller = new CountDownLatch(1);
+            final CountDownLatch cancellerDone = new CountDownLatch(1);
+            final AtomicBoolean cancelResult = new AtomicBoolean();
+            final AtomicReference<Throwable> fault = new AtomicReference<>();
+
+            // The owner principal blocks the first time cancel() evaluates
+            // Chars.equals(entry.principal, cancellerPrincipal): that comparison
+            // reads entry.principal.length() inside the first CANCELLING guard, so
+            // the entry stays CANCELLING while the reader snapshots the registry.
+            // query_activity() must reject the non-active lifecycle and skip the row.
+            final BlockingCharSequence ownerPrincipal = new BlockingCharSequence("owner", cancellerInGuard, releaseCanceller);
+
+            try (
+                    SqlExecutionContextImpl ownerContext = new SqlExecutionContextImpl(engine, 1).with(new CharSequencePrincipalSecurityContext(ownerPrincipal));
+                    SqlExecutionContextImpl cancelContext = new SqlExecutionContextImpl(engine, 1).with(new PrincipalSecurityContext("admin"));
+                    SqlExecutionContextImpl readerContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)
+            ) {
+                final String query = "SELECT cancelling query";
+                final long queryId = registry.register(query, ownerContext);
+                final Thread cancellerThread = new Thread(() -> {
+                    try {
+                        cancelResult.set(registry.cancel(queryId, cancelContext));
+                    } catch (Throwable t) {
+                        fault.compareAndSet(null, t);
+                    } finally {
+                        cancellerDone.countDown();
+                    }
+                }, "query_activity_canceller");
+
+                cancellerThread.start();
+                try {
+                    Assert.assertTrue("canceller did not enter the CANCELLING guard", cancellerInGuard.await(5, TimeUnit.SECONDS));
+                    assertQueryActivityDoesNotReturn(query, readerContext);
+                } finally {
+                    releaseCanceller.countDown();
+                    Assert.assertTrue("canceller did not finish", cancellerDone.await(5, TimeUnit.SECONDS));
+                    cancellerThread.join(5_000);
+                    if (registry.getEntry(queryId) != null) {
+                        registry.unregister(queryId, ownerContext);
+                    }
+                }
+                Assert.assertFalse("canceller thread hung", cancellerThread.isAlive());
+                if (fault.get() != null) {
+                    throw new AssertionError("canceller failed", fault.get());
+                }
+                // Once released, the cross-user admin cancel runs to completion.
+                Assert.assertTrue("admin cancel should succeed after release", cancelResult.get());
+            }
+        });
     }
 
     @Test
@@ -586,24 +594,15 @@ public class QueryActivityFunctionFactoryTest extends AbstractCairoTest {
         }
     }
 
-    private static class BlockingPrincipalSecurityContext extends AllowAllSecurityContext {
-        private final AtomicBoolean blocked = new AtomicBoolean();
-        private final CountDownLatch entered;
-        private final String principal;
-        private final CountDownLatch release;
+    private static class CharSequencePrincipalSecurityContext extends AllowAllSecurityContext {
+        private final CharSequence principal;
 
-        private BlockingPrincipalSecurityContext(String principal, CountDownLatch entered, CountDownLatch release) {
+        private CharSequencePrincipalSecurityContext(CharSequence principal) {
             this.principal = principal;
-            this.entered = entered;
-            this.release = release;
         }
 
         @Override
-        public String getPrincipal() {
-            if (blocked.compareAndSet(false, true)) {
-                entered.countDown();
-                await(release, "blocked principal was not released");
-            }
+        public CharSequence getPrincipal() {
             return principal;
         }
     }

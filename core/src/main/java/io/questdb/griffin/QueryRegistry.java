@@ -84,15 +84,22 @@ public class QueryRegistry {
         }
 
         Entry entry = registry.get(queryId);
-        if (entry != null && entry.beginCancel(queryId)) {
+        if (entry != null) {
+            final CharSequence cancellerPrincipal = securityContext.getPrincipal();
+            if (!entry.beginCancel(queryId)) {
+                LOG.info().$("query not found in registry [id=").$(queryId).I$();
+                return false;
+            }
+
             // While the entry is in the CANCELLING state the query owner busy-waits
             // in retire(), so keep the guarded sections minimal: snapshot the fields
             // the permission checks need, then run the checks outside the guard.
-            // authorizeSqlEngineAdmin() is an extension point and may be slow.
+            // SecurityContext methods are extension points and may be slow, so the
+            // canceller principal is already captured before acquiring the guard.
             final boolean isAdminRequired;
             final boolean isWAL;
             try {
-                isAdminRequired = !Chars.equals(entry.principal, securityContext.getPrincipal());
+                isAdminRequired = !Chars.equals(entry.principal, cancellerPrincipal);
                 isWAL = entry.isWAL;
             } finally {
                 entry.activate(queryId);
@@ -117,7 +124,7 @@ public class QueryRegistry {
                     // register() would overwrite once the entry is released and recycled.
                     // The chars are copied into the async log buffer synchronously, so the
                     // owner's retire() busy-wait stays short.
-                    LOG.info().$("cancelling query [user=").$(securityContext.getPrincipal()).$(",queryId=").$(queryId).$(",sql=").$(entry.query).I$();
+                    LOG.info().$("cancelling query [user=").$(cancellerPrincipal).$(",queryId=").$(queryId).$(",sql=").$(entry.query).I$();
                     return true;
                 } finally {
                     entry.activate(queryId);
