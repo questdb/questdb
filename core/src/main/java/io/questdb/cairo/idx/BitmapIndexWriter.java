@@ -422,8 +422,10 @@ public class BitmapIndexWriter implements IndexWriter {
     }
 
     public void sync(boolean async) {
-        keyMem.sync(async);
+        // valueMem (.v, data) before keyMem (.k, pointer): a crash must never leave the key file
+        // referencing value-block offsets that are not yet durable. Matches PostingIndexWriter.sync.
         valueMem.sync(async);
+        keyMem.sync(async);
     }
 
     public void truncate() {

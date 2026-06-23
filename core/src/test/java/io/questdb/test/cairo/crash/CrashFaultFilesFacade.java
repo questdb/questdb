@@ -28,9 +28,13 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     private final Map<Long, String> fdToPath = new HashMap<>();
     private final Map<String, Long> durableSize = new HashMap<>();
     private final Map<String, List<long[]>> tornTails = new HashMap<>();
+    private final java.util.List<String> syncOrder = new java.util.ArrayList<>();
 
     private int durabilityOps = 0;
     private int crashAtOp = -1; // -1 = disarmed
+
+    /** Ordered list of file paths as they were fsync'd/fsyncAndClose'd (for sync-order assertions). */
+    public java.util.List<String> getSyncOrder() { return syncOrder; }
 
     @Override
     public long openAppend(LPSZ name) {
@@ -77,6 +81,10 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     @Override
     public void fsync(long fd) {
         super.fsync(fd);
+        String p = fdToPath.get(fd);
+        if (p != null) {
+            syncOrder.add(p);
+        }
         recordDurable(fd);
         bumpDurabilityOp();
     }
@@ -86,8 +94,11 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         final String p = fdToPath.get(fd);
         final long size = p != null ? super.length(fd) : -1L;
         super.fsyncAndClose(fd); // performs fsync + close; close() below drops the fd
-        if (p != null && size >= 0L) {
-            durableSize.put(p, size);
+        if (p != null) {
+            syncOrder.add(p);
+            if (size >= 0L) {
+                durableSize.put(p, size);
+            }
         }
         bumpDurabilityOp();
     }
@@ -103,6 +114,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         fdToPath.clear();
         durableSize.clear();
         tornTails.clear();
+        syncOrder.clear();
         durabilityOps = 0;
         crashAtOp = -1;
     }
