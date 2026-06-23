@@ -52,6 +52,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     private long fd = -1;
     private int madviseOpts = -1;
     private int memoryTag = MemoryTag.MMAP_DEFAULT;
+    private long lastSyncedSize = 0;
     private long minMappedMemorySize = -1;
 
     public MemoryCMARWImpl(FilesFacade ff, LPSZ name, long extendSegmentSizePow2, long size, int memoryTag, int opts) {
@@ -300,6 +301,10 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
         boolean tCof = this.closeFdOnClose;
         this.closeFdOnClose = other.closeFdOnClose;
         other.closeFdOnClose = tCof;
+
+        long tLastSynced = this.lastSyncedSize;
+        this.lastSyncedSize = other.lastSyncedSize;
+        other.lastSyncedSize = tLastSynced;
     }
 
     @Override
@@ -313,6 +318,13 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
 
     public void sync(boolean async) {
         ff.msync(pageAddress, size, async);
+        // SYNC mode: also make a file EXTEND durable. msync flushes data pages but not the inode
+        // size after a posix_fallocate/ftruncate grow; fsync the fd when the file grew since the
+        // last sync so a crash cannot lose the just-committed extent (P2). ASYNC stays non-blocking.
+        if (!async && size > lastSyncedSize) {
+            ff.fsync(fd);
+            lastSyncedSize = size;
+        }
     }
 
     @Override
@@ -349,6 +361,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
             }
 
             this.size = sz;
+            lastSyncedSize = sz;
             this.lim = pageAddress + sz;
             appendAddress = pageAddress;
             Vect.memset(pageAddress, sz, 0);
@@ -438,6 +451,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
             map0(ff, size);
             this.appendAddress = pageAddress + size;
         }
+        this.lastSyncedSize = this.size;
         if (name != null) {
             LOG.debug().$("open [file=").$(name)
                     .$(", fd=").$(fd)

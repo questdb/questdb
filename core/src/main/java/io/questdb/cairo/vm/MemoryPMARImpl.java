@@ -42,6 +42,7 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     private final CairoConfiguration configuration;
     private long fd = -1;
     private FilesFacade ff;
+    private long lastSyncedSize = 0;
     private int madviseOpts = -1;
     private int mappedPage;
     private long pageAddress = 0;
@@ -126,6 +127,7 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
         mappedPage = -1;
         setExtendSegmentSize(extendSegmentSize);
         fd = TableUtils.openFileRWOrFail(ff, name, opts);
+        this.lastSyncedSize = 0;
         LOG.debug().$("open ").$(name).$(" [fd=").$(fd).$(", extendSegmentSize=").$(extendSegmentSize).$(']').$();
     }
 
@@ -135,12 +137,22 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
         setExtendSegmentSize(extendSegmentSize);
         close(truncate, truncateMode);
         this.fd = fd;
+        this.lastSyncedSize = 0;
         jumpTo(offset);
     }
 
     public void sync(boolean async) {
         if (pageAddress != 0) {
             ff.msync(pageAddress, getPageSize(), async);
+            if (!async) {
+                // File size after mapping page `mappedPage` is (mappedPage+1)*extendSegmentSize
+                // (each mapPage posix_fallocates that length). fsync the extend in SYNC mode.
+                long currentFileSize = (long) (mappedPage + 1) * getExtendSegmentSize();
+                if (currentFileSize > lastSyncedSize) {
+                    ff.fsync(fd);
+                    lastSyncedSize = currentFileSize;
+                }
+            }
         }
     }
 
@@ -155,6 +167,7 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
             throw CairoException.critical(ff.errno()).put("Cannot truncate fd=").put(fd).put(" to ").put(getExtendSegmentSize()).put(" bytes");
         }
         updateLimits(0, pageAddress = mapPage(0));
+        lastSyncedSize = getExtendSegmentSize();
         LOG.debug().$("truncated [fd=").$(fd).$(']').$();
     }
 

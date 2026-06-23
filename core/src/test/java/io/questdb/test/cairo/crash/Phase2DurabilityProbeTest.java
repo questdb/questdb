@@ -1,8 +1,6 @@
 package io.questdb.test.cairo.crash;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.CairoError;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitMode;
 import io.questdb.std.Files;
 import org.junit.Assert;
@@ -12,18 +10,16 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Quantifies P2: in SYNC mode the engine msyncs but never fsyncs, so a file extend's size is not
- * journaled and a crash after a committed transaction can lose it. This probe asserts the CURRENT
- * (buggy) behaviour — the just-committed grown rows are NOT all durable after crash (they are lost,
- * or the reopen detects a _txn/data mismatch and throws). SP2 (fdatasync-on-extend) will INVERT
- * this to assertSyncDurable(all rows present).
+ * Asserts B1 SYNC durability (SP2): after fsync-on-extend is applied in MemoryCMARWImpl and
+ * MemoryPMARImpl, every row committed in SYNC mode must survive a simulated power-loss crash
+ * (file extends are now inode-journaled via fsync). A crash after a SYNC commit must leave ALL
+ * committed rows intact — zero loss.
  *
  * <p>We use a minimal mmap-page size (one OS page = 4096 bytes on Linux) so the column data file
- * extends to a second page during the 200-row batch. The crash harness truncates grown files back
- * to their last-fsynced (baseline) size; because SYNC mode never calls fsync on the data files
- * (only msync), the extended portion is lost after crash. The _txn file retains the post-commit row
- * count in page-cache (it never grew in file size), so on reopen the engine detects a
- * _txn-vs-data size mismatch and throws — the "lostOrThrew" P2 signal.
+ * extends to a second page during the batch. This forces the fsync-on-extend path we are
+ * verifying. The crash harness truncates grown files back to their last-fsynced (baseline) size;
+ * with B1 in place the fsync records the new inode size, so the harness preserves the extended
+ * data after crash.
  */
 public class Phase2DurabilityProbeTest extends AbstractCrashConsistencyTest {
 
@@ -38,7 +34,8 @@ public class Phase2DurabilityProbeTest extends AbstractCrashConsistencyTest {
     public void testSyncCommitLosesExtendOnCrash_currentBehaviour() throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
         // Use a minimal mmap page size so the extra rows overflow the pre-allocated segment and
-        // force a file extend, which is the P2 durability gap: the new size is never fdatasynced.
+        // force a file extend. With B1 (fsync-on-extend) the new inode size is journaled, so the
+        // crash harness preserves all extended data.
         setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, String.valueOf(MIN_PAGE));
         try {
             // engine.getConfiguration() live-delegates to the property store updated above, so
@@ -68,33 +65,8 @@ public class Phase2DurabilityProbeTest extends AbstractCrashConsistencyTest {
 
                 crashAndReopen();
 
-                boolean lostOrThrew;
-                try {
-                    List<String> actual = readColumn("p", "s");
-                    lostOrThrew = actual.size() < all.size();
-                    // whatever survived must be a correct prefix (no silent garbage)
-                    for (int i = 0; i < actual.size(); i++) {
-                        Assert.assertEquals("surviving row " + i + " wrong", all.get(i), actual.get(i));
-                    }
-                } catch (CairoException | CairoError e) {
-                    lostOrThrew = true; // reopen detected the torn/short files - also "not durable"
-                } catch (InternalError e) {
-                    // JVM converts SIGBUS (mmap access past truncated file end) to InternalError
-                    lostOrThrew = true;
-                } catch (RuntimeException e) {
-                    // readColumn wraps SqlException in RuntimeException; unwrap CairoException/CairoError/InternalError
-                    if (e.getCause() instanceof CairoException || e.getCause() instanceof CairoError
-                            || e.getCause() instanceof InternalError) {
-                        lostOrThrew = true;
-                    } else {
-                        throw e;
-                    }
-                }
-
-                Assert.assertTrue(
-                        "P2 probe: current SYNC must NOT durably keep the grown extent on crash "
-                                + "(SP2 will invert this to zero-loss durability)",
-                        lostOrThrew);
+                // B1 makes the SYNC extend durable: ALL committed rows must survive the crash.
+                assertSyncDurable("p", "s", all);
             });
         } finally {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
