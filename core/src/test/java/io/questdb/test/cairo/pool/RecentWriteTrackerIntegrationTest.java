@@ -34,7 +34,6 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.std.Numbers;
-import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -61,20 +60,19 @@ public class RecentWriteTrackerIntegrationTest extends AbstractCairoTest {
             Assert.assertNotNull(tracker);
 
             // Available methods:
-            // 1. recordWrite(TableToken, timestamp, rowCount) - called automatically by WriterPool
-            // 2. getRecentlyWrittenTables(limit) - get top N recently written TableTokens
-            // 3. getWriteTimestamp(TableToken) - get timestamp for specific table
-            // 4. getRowCount(TableToken) - get row count for specific table
-            // 5. getWriteStats(TableToken) - get WriteStats object with both timestamp and rowCount
-            // 6. removeTable(TableToken) - remove table from tracking
-            // 7. clear() - clear all tracking data
-            // 8. size() - get current number of tracked tables (for testing)
-            // 9. getMaxCapacity() - get configured capacity limit
+            // 1. recordWrite(TableToken, timestamp, rowCount, writerTxn) - called automatically by WriterPool
+            // 2. getWriteTimestamp(TableToken) - get timestamp for specific table
+            // 3. getRowCount(TableToken) - get row count for specific table
+            // 4. getWriteStats(TableToken) - get WriteStats object with both timestamp and rowCount
+            // 5. removeTable(TableToken) - remove table from tracking
+            // 6. clear() - clear all tracking data
+            // 7. size() - get current number of tracked tables (for testing)
+            // 8. getMaxCapacity() - get configured capacity limit
 
             // Benefits of TableToken-based API:
             // - No String allocation on write path (zero-alloc)
-            // - Type-safe: caller gets TableToken back with full metadata
-            // - Rich data: can access tableName, dirName, isWal, tableId from returned tokens
+            // - Type-safe: callers use TableToken keys with full metadata
+            // - Rich data: tableName, dirName, isWal, tableId are available from the key
 
             // Consistency note:
             // WriteStats uses volatile fields for lock-free updates. This means readers may
@@ -95,7 +93,6 @@ public class RecentWriteTrackerIntegrationTest extends AbstractCairoTest {
             int capacity = tracker.getMaxCapacity();
 
             // Capacity is configurable via cairo.recent.write.tracker.capacity
-            // Default is 100
             Assert.assertTrue("Capacity should be positive", capacity > 0);
 
             // The tracker uses lazy eviction at 2x capacity
@@ -278,74 +275,6 @@ public class RecentWriteTrackerIntegrationTest extends AbstractCairoTest {
     }
 
     /**
-     * Demonstrates limiting results to top N tables.
-     * <p>
-     * Use case: UI only needs to show top 10 recently modified tables.
-     */
-    @Test
-    public void testLimitResults() throws Exception {
-        assertMemoryLeak(() -> {
-            // Create many tables
-            for (int i = 0; i < 20; i++) {
-                execute("CREATE TABLE limit_test_" + i + " (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            }
-
-            RecentWriteTracker tracker = engine.getRecentWriteTracker();
-            tracker.clear();
-
-            // Write to all tables
-            for (int i = 0; i < 20; i++) {
-                execute("INSERT INTO limit_test_" + i + " VALUES (now(), " + i + ")");
-            }
-            drainWalQueue();
-
-            // Request only top 5
-            ObjList<TableToken> top5 = tracker.getRecentlyWrittenTables(5);
-            Assert.assertEquals("Should return exactly 5 tables", 5, top5.size());
-
-            // Request all
-            ObjList<TableToken> all = tracker.getRecentlyWrittenTables(100);
-            Assert.assertTrue("Should have at least 20 tables", all.size() >= 20);
-        });
-    }
-
-    /**
-     * Demonstrates ordering: most recently written tables come first.
-     * <p>
-     * Use case: Show "recently modified" tables in UI, sorted by recency.
-     */
-    @Test
-    public void testMostRecentTableFirst() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE first_table (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE TABLE second_table (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE TABLE third_table (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-
-            RecentWriteTracker tracker = engine.getRecentWriteTracker();
-            tracker.clear();
-
-            // Write in sequence with small delays to ensure different timestamps
-            execute("INSERT INTO first_table VALUES (now(), 1)");
-            drainWalQueue();
-
-            execute("INSERT INTO second_table VALUES (now(), 2)");
-            drainWalQueue();
-
-            execute("INSERT INTO third_table VALUES (now(), 3)");
-            drainWalQueue();
-
-            // Query - most recent should be first
-            ObjList<TableToken> recent = tracker.getRecentlyWrittenTables(3);
-
-            Assert.assertEquals("Should have 3 tables", 3, recent.size());
-            // Access table name directly from TableToken
-            Assert.assertEquals("third_table should be first (most recent)", "third_table", recent.get(0).getTableName());
-            Assert.assertEquals("second_table should be second", "second_table", recent.get(1).getTableName());
-            Assert.assertEquals("first_table should be third (oldest)", "first_table", recent.get(2).getTableName());
-        });
-    }
-
-    /**
      * Demonstrates removing a table from tracking (e.g., when table is dropped).
      * <p>
      * Use case: Clean up tracking when table is dropped.
@@ -406,13 +335,9 @@ public class RecentWriteTrackerIntegrationTest extends AbstractCairoTest {
 
             Assert.assertTrue("Second timestamp should be >= first", secondTimestamp >= firstTimestamp);
 
-            // Table should only appear once in the list
-            ObjList<TableToken> recent = tracker.getRecentlyWrittenTables(10);
-            int count = 0;
-            for (int i = 0; i < recent.size(); i++) {
-                if (recent.get(i).getTableName().equals("events")) count++;
-            }
-            Assert.assertEquals("Table should appear exactly once", 1, count);
+            RecentWriteTracker.WriteStats stats = tracker.getWriteStats(eventsToken);
+            Assert.assertNotNull("Table should remain tracked", stats);
+            Assert.assertEquals("Timestamp should match latest write", secondTimestamp, stats.getTimestamp());
         });
     }
 
@@ -456,7 +381,7 @@ public class RecentWriteTrackerIntegrationTest extends AbstractCairoTest {
     }
 
     /**
-     * Demonstrates basic usage: write to WAL tables and track which were modified.
+     * Demonstrates basic usage: write to WAL tables and track table statistics.
      * <p>
      * Use case: UI needs to know which tables changed to update size estimates.
      */
@@ -483,22 +408,14 @@ public class RecentWriteTrackerIntegrationTest extends AbstractCairoTest {
             // Drain WAL to apply changes (this triggers the tracking)
             drainWalQueue();
 
-            // Query recently written tables - returns TableToken objects
-            ObjList<TableToken> recentTables = tracker.getRecentlyWrittenTables(10);
-
-            // Both tables should be tracked (order depends on timing)
-            Assert.assertTrue("Should have tracked at least 2 tables", recentTables.size() >= 2);
-
-            // Verify specific tables are present - can access tableName directly from token
-            boolean foundTrades = false;
-            boolean foundOrders = false;
-            for (int i = 0; i < recentTables.size(); i++) {
-                TableToken token = recentTables.get(i);
-                if (token.getTableName().equals("trades")) foundTrades = true;
-                if (token.getTableName().equals("orders")) foundOrders = true;
-            }
-            Assert.assertTrue("trades table should be tracked", foundTrades);
-            Assert.assertTrue("orders table should be tracked", foundOrders);
+            TableToken tradesToken = engine.verifyTableName("trades");
+            TableToken ordersToken = engine.verifyTableName("orders");
+            TableToken usersToken = engine.verifyTableName("users");
+            Assert.assertNotNull("trades table should be tracked", tracker.getWriteStats(tradesToken));
+            Assert.assertNotNull("orders table should be tracked", tracker.getWriteStats(ordersToken));
+            Assert.assertNull("users table should not be tracked without writes", tracker.getWriteStats(usersToken));
+            Assert.assertEquals("trades row count should be tracked", 1L, tracker.getRowCount(tradesToken));
+            Assert.assertEquals("orders row count should be tracked", 1L, tracker.getRowCount(ordersToken));
         });
     }
 
@@ -604,9 +521,8 @@ public class RecentWriteTrackerIntegrationTest extends AbstractCairoTest {
             Assert.assertTrue("hydrate_test1 should have timestamp", tracker.getWriteTimestamp(token1) > 0);
             Assert.assertTrue("hydrate_test2 should have timestamp", tracker.getWriteTimestamp(token2) > 0);
 
-            // Tables should appear in recent list
-            ObjList<TableToken> recent = tracker.getRecentlyWrittenTables(10);
-            Assert.assertTrue("Should have at least 2 tables", recent.size() >= 2);
+            Assert.assertNotNull("hydrate_test1 should be tracked", tracker.getWriteStats(token1));
+            Assert.assertNotNull("hydrate_test2 should be tracked", tracker.getWriteStats(token2));
         });
     }
 

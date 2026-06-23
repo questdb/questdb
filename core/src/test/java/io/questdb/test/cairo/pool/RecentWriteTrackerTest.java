@@ -27,7 +27,6 @@ package io.questdb.test.cairo.pool;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.pool.RecentWriteTracker;
 import io.questdb.std.Numbers;
-import io.questdb.std.ObjList;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -50,12 +49,12 @@ public class RecentWriteTrackerTest {
 
         Assert.assertEquals(3, tracker.size());
 
-        ObjList<TableToken> recent = tracker.getRecentlyWrittenTables(10);
-        Assert.assertEquals(3, recent.size());
-        // Most recent first
-        Assert.assertEquals("table3", recent.get(0).getTableName());
-        Assert.assertEquals("table2", recent.get(1).getTableName());
-        Assert.assertEquals("table1", recent.get(2).getTableName());
+        Assert.assertEquals(1000L, tracker.getWriteTimestamp(table1));
+        Assert.assertEquals(100L, tracker.getRowCount(table1));
+        Assert.assertEquals(2000L, tracker.getWriteTimestamp(table2));
+        Assert.assertEquals(200L, tracker.getRowCount(table2));
+        Assert.assertEquals(3000L, tracker.getWriteTimestamp(table3));
+        Assert.assertEquals(300L, tracker.getRowCount(table3));
     }
 
     @Test
@@ -73,8 +72,8 @@ public class RecentWriteTrackerTest {
         tracker.clear();
 
         Assert.assertEquals(0, tracker.size());
-        ObjList<TableToken> recent = tracker.getRecentlyWrittenTables(10);
-        Assert.assertEquals(0, recent.size());
+        Assert.assertNull(tracker.getWriteStats(table1));
+        Assert.assertNull(tracker.getWriteStats(table2));
     }
 
     @Test
@@ -123,15 +122,12 @@ public class RecentWriteTrackerTest {
             threads[numWriterThreads + t] = new Thread(() -> {
                 try {
                     barrier.await();
+                    TableToken lookupTable = createTableToken("initial_table0", 0);
                     for (int i = 0; i < operationsPerThread; i++) {
-                        ObjList<TableToken> recent = tracker.getRecentlyWrittenTables(10);
-                        // Just verify it doesn't throw and returns valid data
-                        Assert.assertNotNull(recent);
-                        Assert.assertTrue(recent.size() <= 10);
-
-                        // Also test single table lookup
-                        TableToken lookupTable = createTableToken("initial_table0", 0);
-                        tracker.getWriteTimestamp(lookupTable);
+                        RecentWriteTracker.WriteStats stats = tracker.getWriteStats(lookupTable);
+                        if (stats != null) {
+                            Assert.assertTrue(stats.getTimestamp() >= 0);
+                        }
                     }
                 } catch (Exception e) {
                     errors.incrementAndGet();
@@ -190,9 +186,8 @@ public class RecentWriteTrackerTest {
         // So we might have anywhere from 100 to 200 entries
         Assert.assertTrue("Size should be reasonable", tracker.size() > 0 && tracker.size() <= 200);
 
-        // Verify we can still retrieve results
-        ObjList<TableToken> recent = tracker.getRecentlyWrittenTables(10);
-        Assert.assertTrue(recent.size() > 0 && recent.size() <= 10);
+        // Verify we can still retrieve a known entry directly.
+        Assert.assertNotNull(tracker.getWriteStats(createTableToken("thread0_table0", 0)));
     }
 
     @Test
@@ -200,8 +195,7 @@ public class RecentWriteTrackerTest {
         RecentWriteTracker tracker = new RecentWriteTracker(10);
 
         Assert.assertEquals(0, tracker.size());
-        ObjList<TableToken> recent = tracker.getRecentlyWrittenTables(10);
-        Assert.assertEquals(0, recent.size());
+        Assert.assertNull(tracker.getWriteStats(createTableToken("missing", 1)));
     }
 
     @Test
@@ -220,10 +214,7 @@ public class RecentWriteTrackerTest {
         Assert.assertTrue("Size should be <= capacity after eviction", tracker.size() <= 10);
 
         // The most recent tables should still be present
-        ObjList<TableToken> recent = tracker.getRecentlyWrittenTables(5);
-        Assert.assertTrue(recent.size() > 0);
-        // table14 should be there as it's the most recent
-        Assert.assertEquals("table14", recent.get(0).getTableName());
+        Assert.assertNotNull("table14 should survive as the most recent write", tracker.getWriteStats(createTableToken("table14", 14)));
     }
 
     @Test
@@ -296,28 +287,6 @@ public class RecentWriteTrackerTest {
     }
 
     @Test
-    public void testLimitResults() {
-        RecentWriteTracker tracker = new RecentWriteTracker(100);
-
-        for (int i = 0; i < 50; i++) {
-            TableToken table = createTableToken("table" + i, i);
-            tracker.recordWrite(table, i * 1000L, i * 10L, i);
-        }
-
-        Assert.assertEquals(50, tracker.size());
-
-        // Request only top 5
-        ObjList<TableToken> recent = tracker.getRecentlyWrittenTables(5);
-        Assert.assertEquals(5, recent.size());
-        // Most recent first (highest timestamps)
-        Assert.assertEquals("table49", recent.get(0).getTableName());
-        Assert.assertEquals("table48", recent.get(1).getTableName());
-        Assert.assertEquals("table47", recent.get(2).getTableName());
-        Assert.assertEquals("table46", recent.get(3).getTableName());
-        Assert.assertEquals("table45", recent.get(4).getTableName());
-    }
-
-    @Test
     public void testEvictionUsesActivityTimestamp() {
         // Capacity 2, eviction at 4 (2x)
         RecentWriteTracker tracker = new RecentWriteTracker(2);
@@ -349,51 +318,6 @@ public class RecentWriteTrackerTest {
         Assert.assertEquals(2, tracker.size());
         Assert.assertNotNull("table1 should survive (recent WAL activity)", tracker.getWriteStats(table1));
         Assert.assertNull("table2 should be evicted (oldest)", tracker.getWriteStats(table2));
-    }
-
-    @Test
-    public void testGetMaxTimestamp() {
-        RecentWriteTracker tracker = new RecentWriteTracker(10);
-
-        TableToken table1 = createTableToken("table1", 1);
-
-        // Writer only - maxTimestamp should be writer timestamp
-        tracker.recordWrite(table1, 1000L, 100L, 1L);
-        RecentWriteTracker.WriteStats stats = tracker.getWriteStats(table1);
-        Assert.assertEquals(1000L, stats.getMaxTimestamp());
-
-        // WAL write with higher timestamp - maxTimestamp should be WAL timestamp
-        tracker.recordWalWrite(table1, 5L, 2000L, 0L);
-        Assert.assertEquals(2000L, stats.getLastWalTimestamp());
-        Assert.assertEquals(2000L, stats.getMaxTimestamp());
-    }
-
-    @Test
-    public void testGetMaxTimestampWithNulls() {
-        RecentWriteTracker tracker = new RecentWriteTracker(10);
-
-        TableToken table1 = createTableToken("table1", 1);
-
-        // WAL-only entry (blank writer fields)
-        tracker.recordWalWrite(table1, 5L, 5000L, 0L);
-        RecentWriteTracker.WriteStats stats = tracker.getWriteStats(table1);
-
-        // Writer timestamp is LONG_NULL, maxTimestamp should be WAL timestamp
-        Assert.assertEquals(Numbers.LONG_NULL, stats.getTimestamp());
-        Assert.assertEquals(5000L, stats.getLastWalTimestamp());
-        Assert.assertEquals(5000L, stats.getMaxTimestamp());
-    }
-
-    @Test
-    public void testGetMaxTimestampWithBothNulls() {
-        RecentWriteTracker tracker = new RecentWriteTracker(10);
-
-        TableToken table1 = createTableToken("table1", 1);
-        RecentWriteTracker.WriteStats stats = tracker.getOrCreateStats(table1);
-
-        Assert.assertEquals(Numbers.LONG_NULL, stats.getTimestamp());
-        Assert.assertEquals(Numbers.LONG_NULL, stats.getLastWalTimestamp());
-        Assert.assertEquals(Numbers.LONG_NULL, stats.getMaxTimestamp());
     }
 
     @Test
@@ -487,11 +411,11 @@ public class RecentWriteTrackerTest {
 
         Assert.assertEquals(2, tracker.size());
 
-        ObjList<TableToken> recent = tracker.getRecentlyWrittenTables(10);
-        Assert.assertEquals(2, recent.size());
-        // table1 should now be first (most recent)
-        Assert.assertEquals("table1", recent.get(0).getTableName());
-        Assert.assertEquals("table2", recent.get(1).getTableName());
+        Assert.assertEquals(3000L, tracker.getWriteTimestamp(table1));
+        Assert.assertEquals(150L, tracker.getRowCount(table1));
+        Assert.assertEquals(3L, tracker.getWriterTxn(table1));
+        Assert.assertEquals(2000L, tracker.getWriteTimestamp(table2));
+        Assert.assertEquals(200L, tracker.getRowCount(table2));
     }
 
     @Test
@@ -572,35 +496,6 @@ public class RecentWriteTrackerTest {
         Assert.assertEquals("Writer rowCount should overwrite", 500L, tracker.getRowCount(table1));
         Assert.assertEquals("Writer txn should overwrite", 50L, tracker.getWriterTxn(table1));
         Assert.assertEquals("SequencerTxn should be preserved", 5L, tracker.getSequencerTxn(table1));
-    }
-
-    @Test
-    public void testSortingUsesMaxTimestamp() {
-        RecentWriteTracker tracker = new RecentWriteTracker(10);
-
-        TableToken table1 = createTableToken("table1", 1);
-        TableToken table2 = createTableToken("table2", 2);
-        TableToken table3 = createTableToken("table3", 3);
-
-        // table1: old writer timestamp
-        tracker.recordWrite(table1, 1000L, 100L, 1L);
-        // table2: medium writer timestamp
-        tracker.recordWrite(table2, 2000L, 200L, 2L);
-        // table3: newest writer timestamp
-        tracker.recordWrite(table3, 3000L, 300L, 3L);
-
-        // Before WAL: table3 > table2 > table1
-        ObjList<TableToken> recent = tracker.getRecentlyWrittenTables(10);
-        Assert.assertEquals("table3", recent.get(0).getTableName());
-        Assert.assertEquals("table2", recent.get(1).getTableName());
-        Assert.assertEquals("table1", recent.get(2).getTableName());
-
-        // Give table1 a WAL write with high timestamp (higher than 3000)
-        tracker.recordWalWrite(table1, 5L, 5000L, 0L);
-
-        // After WAL: table1 should be first (highest maxTimestamp)
-        recent = tracker.getRecentlyWrittenTables(10);
-        Assert.assertEquals("table1 should be first after WAL write", "table1", recent.get(0).getTableName());
     }
 
     @Test

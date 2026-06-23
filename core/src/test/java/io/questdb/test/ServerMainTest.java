@@ -343,9 +343,8 @@ public class ServerMainTest extends AbstractBootstrapTest {
                 Assert.assertTrue("tracker_test1 should have timestamp", tracker.getWriteTimestamp(token1) > 0);
                 Assert.assertTrue("tracker_test2 should have timestamp", tracker.getWriteTimestamp(token2) > 0);
 
-                // Verify tables appear in recent list
-                ObjList<TableToken> recent = tracker.getRecentlyWrittenTables(10);
-                Assert.assertTrue("Should have at least 2 tables", recent.size() >= 2);
+                Assert.assertNotNull("tracker_test1 should be tracked", tracker.getWriteStats(token1));
+                Assert.assertNotNull("tracker_test2 should be tracked", tracker.getWriteStats(token2));
             }
         });
     }

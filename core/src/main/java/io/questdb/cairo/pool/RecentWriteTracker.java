@@ -27,9 +27,7 @@ package io.questdb.cairo.pool;
 import io.questdb.cairo.TableToken;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
-import io.questdb.std.ObjList;
 import io.questdb.std.SimpleReadWriteLock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.histogram.org.HdrHistogram.DoubleHistogram;
@@ -42,10 +40,9 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.LongAdder;
-import java.util.concurrent.locks.ReentrantLock;
 
 /**
- * Tracks recently written tables with their last write timestamps and row counts.
+ * Tracks per-table write statistics with their last write timestamps and row counts.
  * <p>
  * This data structure is optimized for concurrent writes with minimal contention.
  * Multiple writers can record writes simultaneously without blocking each other.
@@ -73,20 +70,13 @@ import java.util.concurrent.locks.ReentrantLock;
  *   <li><b>Table drops:</b> Entries for dropped tables remain until evicted.
  *       Call {@link #removeTable(TableToken)} explicitly when dropping tables.</li>
  * </ul>
- *
  * @see #recordWrite(TableToken, long, long, long)
- * @see #getRecentlyWrittenTables(int)
  */
 public class RecentWriteTracker {
     private static final Log LOG = LogFactory.getLog(RecentWriteTracker.class);
 
     private final AtomicBoolean evictionInProgress = new AtomicBoolean(false);
     private final int maxCapacity;
-    private final ObjList<TableToken> readBuffer;
-    // Read path state - protected by readLock
-    // Pre-allocated buffers for getRecentlyWrittenTables() to minimize allocation
-    private final ReentrantLock readLock = new ReentrantLock();
-    private final LongList readTimestamps;
     // ConcurrentHashMap provides lock-free reads and fine-grained locking for writes
     // Different keys can be updated concurrently without contention
     private final ConcurrentHashMap<TableToken, WriteStats> writeStats = new ConcurrentHashMap<>();
@@ -98,9 +88,6 @@ public class RecentWriteTracker {
      */
     public RecentWriteTracker(int maxCapacity) {
         this.maxCapacity = Math.max(1, maxCapacity);
-        // Pre-allocate buffers for read path
-        this.readBuffer = new ObjList<>(this.maxCapacity);
-        this.readTimestamps = new LongList(this.maxCapacity);
     }
 
     /**
@@ -143,65 +130,6 @@ public class RecentWriteTracker {
                 0,
                 true
         );
-    }
-
-    /**
-     * Returns the most recently written tables, sorted by write time (most recent first).
-     * <p>
-     * This method takes a snapshot of the current state and returns a sorted list.
-     * It uses pre-allocated buffers to minimize allocation, but requires a lock
-     * to protect the shared buffers.
-     * <p>
-     * <b>Thread Safety:</b> This method is thread-safe but may block if another
-     * thread is also reading. Writes are not blocked.
-     *
-     * @param limit maximum number of tables to return
-     * @return new list of TableTokens sorted by write time (most recent first)
-     */
-    @NotNull
-    public ObjList<TableToken> getRecentlyWrittenTables(int limit) {
-        int effectiveLimit = Math.min(limit, maxCapacity);
-        ObjList<TableToken> result = new ObjList<>(effectiveLimit);
-
-        if (writeStats.isEmpty()) {
-            return result;
-        }
-
-        readLock.lock();
-        try {
-            // Clear and populate buffers
-            readBuffer.clear();
-            readTimestamps.clear();
-
-            // Collect all entries into buffers
-            // Note: forEach on ConcurrentHashMap has small internal allocations for traversal
-            // Uses max(timestamp, walTimestamp) to consider both writer and WAL activity
-            writeStats.forEach((key, stats) -> {
-                readBuffer.add(key);
-                readTimestamps.add(stats.getMaxTimestamp());
-            });
-
-            int size = readBuffer.size();
-            if (size == 0) {
-                return result;
-            }
-
-            // Sort by timestamp descending using indices
-            // We sort timestamps and reorder tokens accordingly
-            if (size > 1) {
-                quickSortDescending(readBuffer, readTimestamps, 0, size - 1);
-            }
-
-            // Copy top N to result
-            int toCopy = Math.min(effectiveLimit, size);
-            for (int i = 0; i < toCopy; i++) {
-                result.add(readBuffer.getQuick(i));
-            }
-        } finally {
-            readLock.unlock();
-        }
-
-        return result;
     }
 
     /**
@@ -600,6 +528,7 @@ public class RecentWriteTracker {
                     break;
                 }
 
+                // Identity remove: guards recreate, not in-place refresh. Best-effort.
                 if (writeStats.remove(oldestKey, oldestStats)) {
                     removed++;
                 }
@@ -631,47 +560,6 @@ public class RecentWriteTracker {
             stats = existing != null ? existing : newStats;
         }
         return stats;
-    }
-
-    private int partitionDescending(ObjList<TableToken> tokens, LongList timestamps, int lo, int hi) {
-        long pivot = timestamps.getQuick(hi);
-        int i = lo - 1;
-
-        for (int j = lo; j < hi; j++) {
-            // Descending order: greater values come first
-            if (timestamps.getQuick(j) > pivot) {
-                i++;
-                swap(tokens, timestamps, i, j);
-            }
-        }
-
-        swap(tokens, timestamps, i + 1, hi);
-        return i + 1;
-    }
-
-    /**
-     * Quick sort descending by timestamp, reordering tokens accordingly.
-     */
-    private void quickSortDescending(ObjList<TableToken> tokens, LongList timestamps, int lo, int hi) {
-        if (lo >= hi) {
-            return;
-        }
-
-        int p = partitionDescending(tokens, timestamps, lo, hi);
-        quickSortDescending(tokens, timestamps, lo, p - 1);
-        quickSortDescending(tokens, timestamps, p + 1, hi);
-    }
-
-    private void swap(ObjList<TableToken> tokens, LongList timestamps, int i, int j) {
-        if (i != j) {
-            TableToken tmpToken = tokens.getQuick(i);
-            tokens.setQuick(i, tokens.getQuick(j));
-            tokens.setQuick(j, tmpToken);
-
-            long tmpTs = timestamps.getQuick(i);
-            timestamps.setQuick(i, timestamps.getQuick(j));
-            timestamps.setQuick(j, tmpTs);
-        }
     }
 
     /**
@@ -837,22 +725,6 @@ public class RecentWriteTracker {
          */
         public long getLastWalTimestamp() {
             return walTimestamp.get();
-        }
-
-        /**
-         * Returns the maximum of writer timestamp and WAL timestamp.
-         * Used for sorting - considers both writer and WAL data timestamps.
-         * Returns {@link Numbers#LONG_NULL} when neither timestamp is available.
-         *
-         * @return max timestamp in microseconds
-         */
-        public long getMaxTimestamp() {
-            long ts = timestamp;
-            long walTs = walTimestamp.get();
-            if (ts == Numbers.LONG_NULL && walTs == Numbers.LONG_NULL) {
-                return Numbers.LONG_NULL;
-            }
-            return Math.max(ts, walTs);
         }
 
         /**
