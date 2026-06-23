@@ -2266,133 +2266,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         long duplicateCount = 0;
 
         long timestampMergeIndexSize = mergeRowCount * TIMESTAMP_MERGE_ENTRY_BYTES;
-        long timestampMergeIndexAddr;
-        if (!tableWriter.isCommitDedupMode()) {
-            timestampMergeIndexAddr = createMergeIndex(
-                    timestampDataPtr,
-                    sortedTimestampsAddr,
-                    0,
-                    rowGroupSize - 1,
-                    mergeRangeLo,
-                    mergeRangeHi,
-                    timestampMergeIndexSize
-            );
-        } else {
-            final DedupColumnCommitAddresses dedupCommitAddresses = tableWriter.getDedupCommitAddresses();
-            final long dedupRows;
-            timestampMergeIndexAddr = Unsafe.malloc(timestampMergeIndexSize, MemoryTag.NATIVE_O3);
-            try {
-                if (dedupCommitAddresses == null || dedupCommitAddresses.getColumnCount() == 0) {
-                    dedupRows = Vect.mergeDedupTimestampWithLongIndexAsc(
-                            timestampDataPtr,
-                            0,
-                            rowGroupSize - 1,
-                            sortedTimestampsAddr,
-                            mergeRangeLo,
-                            mergeRangeHi,
-                            timestampMergeIndexAddr
-                    );
-                } else {
-                    int dedupColumnIndex = 0;
-                    dedupCommitAddresses.clear(dedupColSinkAddr);
-                    for (int ai = 0; ai < activeColCount; ai++) {
-                        int columnIndex = activeColIndices.getQuick(ai);
-                        int columnType = tableWriterMetadata.getColumnType(columnIndex);
-                        int decodeIdx = activeToDecodeIdx.getQuick(ai);
-                        assert columnIndex >= 0;
-                        assert columnType >= 0;
-                        if (tableWriterMetadata.isDedupKey(columnIndex) && columnIndex != timestampIndex) {
-                            final int columnSize = !ColumnType.isVarSize(columnType) ? ColumnType.sizeOf(columnType) : -1;
-                            final long columnTop = tableWriter.getColumnTop(partitionTimestamp, columnIndex, rowGroupSize);
-                            long addr = DedupColumnCommitAddresses.setColValues(
-                                    dedupColSinkAddr,
-                                    dedupColumnIndex++,
-                                    columnType,
-                                    columnSize,
-                                    columnTop
-                            );
-                            if (columnSize > 0) {
-                                if (decodeIdx >= 0) {
-                                    DedupColumnCommitAddresses.setColAddressValues(addr, rowGroupBuffers.getChunkDataPtr(decodeIdx));
-                                } else {
-                                    // Column missing from parquet (ADD COLUMN after partition
-                                    // was created).  columnTop == rowGroupSize, so the native
-                                    // dedup code treats all parquet values as NULL and will
-                                    // not dereference the data pointer.
-                                    assert columnTop == rowGroupSize : "missing column must have columnTop == rowGroupSize";
-                                    DedupColumnCommitAddresses.setColAddressValues(addr, 0);
-                                }
-                                final long oooColAddress = oooColumns.get(getPrimaryColumnIndex(columnIndex)).addressOf(0);
-                                DedupColumnCommitAddresses.setO3DataAddressValues(addr, oooColAddress);
-                            } else {
-                                if (decodeIdx >= 0) {
-                                    DedupColumnCommitAddresses.setColAddressValues(
-                                            addr,
-                                            rowGroupBuffers.getChunkAuxPtr(decodeIdx),
-                                            rowGroupBuffers.getChunkDataPtr(decodeIdx),
-                                            rowGroupBuffers.getChunkDataSize(decodeIdx)
-                                    );
-                                } else {
-                                    assert columnTop == rowGroupSize : "missing column must have columnTop == rowGroupSize";
-                                    DedupColumnCommitAddresses.setColAddressValues(addr, 0, 0, 0);
-                                }
-                                MemoryCR oooVarCol = oooColumns.get(getPrimaryColumnIndex(columnIndex));
-                                final long oooVarColAddress = oooVarCol.addressOf(0);
-                                final long oooVarColSize = oooVarCol.addressHi() - oooVarColAddress;
-                                final long oooAuxColAddress = oooColumns.get(getSecondaryColumnIndex(columnIndex)).addressOf(0);
-                                DedupColumnCommitAddresses.setO3DataAddressValues(addr, oooAuxColAddress, oooVarColAddress, oooVarColSize);
-                            }
-                        }
-                    }
-
-                    dedupRows = Vect.mergeDedupTimestampWithLongIndexIntKeys(
-                            timestampDataPtr,
-                            0,
-                            rowGroupSize - 1,
-                            sortedTimestampsAddr,
-                            mergeRangeLo,
-                            mergeRangeHi,
-                            timestampMergeIndexAddr,
-                            dedupCommitAddresses.getColumnCount(),
-                            DedupColumnCommitAddresses.getAddress(dedupColSinkAddr)
-                    );
-                }
-
-                timestampMergeIndexAddr = Unsafe.realloc(
-                        timestampMergeIndexAddr,
-                        timestampMergeIndexSize,
-                        dedupRows * TIMESTAMP_MERGE_ENTRY_BYTES,
-                        MemoryTag.NATIVE_O3
-                );
-            } catch (Throwable e) {
-                Unsafe.free(timestampMergeIndexAddr, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
-                throw e;
-            }
-
-            timestampMergeIndexSize = dedupRows * TIMESTAMP_MERGE_ENTRY_BYTES;
-            duplicateCount = mergeRowCount - dedupRows;
-            if (duplicateCount > 0) {
-                tableWriter.addDedupRowsRemoved(duplicateCount);
-            }
-            mergeRowCount = dedupRows;
-        }
-
-        assert timestampMergeIndexAddr != 0;
-
-        // Even-split: when totalRows > 1.5x maxRowGroupSize, split into
-        // ceil(totalRows / maxChunkTarget) chunks so that no chunk exceeds
-        // maxChunkTarget = maxRowGroupSize + maxRowGroupSize / 2.
-        // Integer division of maxRowGroupSize / 2 is intentional: the target
-        // must be representable exactly in integer arithmetic to avoid off-by-one
-        // overflows when distributing remainder rows across chunks.
-        final long maxChunkTarget = (long) maxRowGroupSize + maxRowGroupSize / 2;
-        int numChunks;
-        if (mergeRowCount > maxChunkTarget) {
-            numChunks = (int) ((mergeRowCount + maxChunkTarget - 1) / maxChunkTarget);
-        } else {
-            numChunks = 1;
-        }
-        final long maxChunkSize = (mergeRowCount + numChunks - 1) / numChunks;
+        long timestampMergeIndexAddr = 0;
+        int numChunks = 1;
 
         // Re-zero per-row-group buffers. The getters already zero them for the
         // first call, but mergeRowGroup is called in a loop (once per MERGE action),
@@ -2401,9 +2276,19 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         srcPtrs.fill(0, activeColCount * 2, 0);
 
         try {
-            // Phase 1: Ensure destination buffers in mergeDstBufs are large enough
-            // for this merge. Grow if needed; reuse if already sufficient.
-            // Also set up null source buffers for column-top and missing columns.
+            // Phase 1a: prepare the per-column SOURCE pointers in srcPtrs (data at
+            // slot bi2, aux at bi2+1). When a column's parquet decode type crosses the
+            // fixed<->var/symbol boundary relative to the current (post-ALTER) type,
+            // Rust decoded the row group in the SOURCE representation; this pass
+            // batch-converts it into the target representation in freshly allocated
+            // buffers tracked in nullBufs. Column-top / missing columns get null source
+            // buffers. This MUST run before the dedup compare below: the native dedup
+            // comparer reads these source pointers directly, and if it saw the raw
+            // cross-typed decode buffer it would misread it -- a fixed->var key has a
+            // dangling/empty aux vector (SIGSEGV), and a var/symbol->fixed key would
+            // read VARCHAR_SLICE bytes as fixed values (silent wrong dedup). The
+            // destination sizing (Phase 1b) and merge copy (Phase 2) reuse the same
+            // prepared pointers, so each crossing conversion runs exactly once.
             for (int ai = 0; ai < activeColCount; ai++) {
                 int columnIndex = activeColIndices.getQuick(ai);
                 int columnType = tableWriterMetadata.getColumnType(columnIndex);
@@ -2474,34 +2359,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     }
                     srcPtrs.setQuick(bi2, columnDataPtr);
                     srcPtrs.setQuick(bi2 + 1, columnAuxPtr);
-
-                    final int columnOffset = getPrimaryColumnIndex(columnIndex);
-                    final long srcOooFixAddr = oooColumns.getQuick(columnOffset + 1).addressOf(0);
-
-                    // Aux buffer: bounded by maxChunkSize across all merges.
-                    long neededAuxSize = ctd.getAuxVectorSize(maxChunkSize);
-                    if (neededAuxSize > mergeDstBufs.getQuick(bi4 + 3)) {
-                        if (mergeDstBufs.getQuick(bi4 + 2) != 0) {
-                            Unsafe.free(mergeDstBufs.getQuick(bi4 + 2), mergeDstBufs.getQuick(bi4 + 3), MemoryTag.NATIVE_O3);
-                            mergeDstBufs.setQuick(bi4 + 2, 0);
-                            mergeDstBufs.setQuick(bi4 + 3, 0);
-                        }
-                        mergeDstBufs.setQuick(bi4 + 2, Unsafe.malloc(neededAuxSize, MemoryTag.NATIVE_O3));
-                        mergeDstBufs.setQuick(bi4 + 3, neededAuxSize);
-                    }
-
-                    // Data buffer: overestimate varies per merge, grow if needed.
-                    long neededDataSize = ctd.getDataVectorSize(srcOooFixAddr, mergeRangeLo, mergeRangeHi)
-                            + ctd.getDataVectorSizeAt(columnAuxPtr, rowGroupSize - 1);
-                    if (neededDataSize > mergeDstBufs.getQuick(bi4 + 1)) {
-                        if (mergeDstBufs.getQuick(bi4) != 0) {
-                            Unsafe.free(mergeDstBufs.getQuick(bi4), mergeDstBufs.getQuick(bi4 + 1), MemoryTag.NATIVE_O3);
-                            mergeDstBufs.setQuick(bi4, 0);
-                            mergeDstBufs.setQuick(bi4 + 1, 0);
-                        }
-                        mergeDstBufs.setQuick(bi4, Unsafe.malloc(neededDataSize, MemoryTag.NATIVE_O3));
-                        mergeDstBufs.setQuick(bi4 + 1, neededDataSize);
-                    }
                 } else {
                     long columnDataPtr = decodeIdx >= 0 ? rowGroupBuffers.getChunkDataPtr(decodeIdx) : 0;
                     long columnAuxSize = decodeIdx >= 0 ? rowGroupBuffers.getChunkAuxSize(decodeIdx) : 0;
@@ -2533,7 +2390,185 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         nullBufs.setQuick(bi4 + 1, nullFixSize);
                     }
                     srcPtrs.setQuick(bi2, columnDataPtr);
+                }
+            }
 
+            if (!tableWriter.isCommitDedupMode()) {
+                timestampMergeIndexAddr = createMergeIndex(
+                        timestampDataPtr,
+                        sortedTimestampsAddr,
+                        0,
+                        rowGroupSize - 1,
+                        mergeRangeLo,
+                        mergeRangeHi,
+                        timestampMergeIndexSize
+                );
+            } else {
+                final DedupColumnCommitAddresses dedupCommitAddresses = tableWriter.getDedupCommitAddresses();
+                final long dedupRows;
+                timestampMergeIndexAddr = Unsafe.malloc(timestampMergeIndexSize, MemoryTag.NATIVE_O3);
+                if (dedupCommitAddresses == null || dedupCommitAddresses.getColumnCount() == 0) {
+                    dedupRows = Vect.mergeDedupTimestampWithLongIndexAsc(
+                            timestampDataPtr,
+                            0,
+                            rowGroupSize - 1,
+                            sortedTimestampsAddr,
+                            mergeRangeLo,
+                            mergeRangeHi,
+                            timestampMergeIndexAddr
+                    );
+                } else {
+                    int dedupColumnIndex = 0;
+                    dedupCommitAddresses.clear(dedupColSinkAddr);
+                    for (int ai = 0; ai < activeColCount; ai++) {
+                        int columnIndex = activeColIndices.getQuick(ai);
+                        int columnType = tableWriterMetadata.getColumnType(columnIndex);
+                        int decodeIdx = activeToDecodeIdx.getQuick(ai);
+                        int bi2 = ai * 2;
+                        assert columnIndex >= 0;
+                        assert columnType >= 0;
+                        if (tableWriterMetadata.isDedupKey(columnIndex) && columnIndex != timestampIndex) {
+                            final int columnSize = !ColumnType.isVarSize(columnType) ? ColumnType.sizeOf(columnType) : -1;
+                            final long columnTop = tableWriter.getColumnTop(partitionTimestamp, columnIndex, rowGroupSize);
+                            long addr = DedupColumnCommitAddresses.setColValues(
+                                    dedupColSinkAddr,
+                                    dedupColumnIndex++,
+                                    columnType,
+                                    columnSize,
+                                    columnTop
+                            );
+                            if (columnSize > 0) {
+                                if (decodeIdx >= 0) {
+                                    // Use the Phase-1a prepared source pointer: for a
+                                    // var/symbol->fixed crossing this is the converted fixed
+                                    // buffer, not the raw VARCHAR_SLICE decode the comparer
+                                    // would otherwise misread as fixed values.
+                                    DedupColumnCommitAddresses.setColAddressValues(addr, srcPtrs.getQuick(bi2));
+                                } else {
+                                    // Column missing from parquet (ADD COLUMN after partition
+                                    // was created).  columnTop == rowGroupSize, so the native
+                                    // dedup code treats all parquet values as NULL and will
+                                    // not dereference the data pointer.
+                                    assert columnTop == rowGroupSize : "missing column must have columnTop == rowGroupSize";
+                                    DedupColumnCommitAddresses.setColAddressValues(addr, 0);
+                                }
+                                final long oooColAddress = oooColumns.get(getPrimaryColumnIndex(columnIndex)).addressOf(0);
+                                DedupColumnCommitAddresses.setO3DataAddressValues(addr, oooColAddress);
+                            } else {
+                                if (decodeIdx >= 0) {
+                                    // Use the Phase-1a prepared source pointers: for a
+                                    // fixed->var crossing these are the converted aux/data
+                                    // buffers (the raw decode has a dangling/empty aux). The
+                                    // var data length is the exact extent from the aux
+                                    // vector's last entry (same computation as Phase 1b).
+                                    final long srcAuxPtr = srcPtrs.getQuick(bi2 + 1);
+                                    final long srcDataPtr = srcPtrs.getQuick(bi2);
+                                    final long srcVarDataLen = ColumnType.getDriver(columnType)
+                                            .getDataVectorSizeAt(srcAuxPtr, rowGroupSize - 1);
+                                    DedupColumnCommitAddresses.setColAddressValues(
+                                            addr,
+                                            srcAuxPtr,
+                                            srcDataPtr,
+                                            srcVarDataLen
+                                    );
+                                } else {
+                                    assert columnTop == rowGroupSize : "missing column must have columnTop == rowGroupSize";
+                                    DedupColumnCommitAddresses.setColAddressValues(addr, 0, 0, 0);
+                                }
+                                MemoryCR oooVarCol = oooColumns.get(getPrimaryColumnIndex(columnIndex));
+                                final long oooVarColAddress = oooVarCol.addressOf(0);
+                                final long oooVarColSize = oooVarCol.addressHi() - oooVarColAddress;
+                                final long oooAuxColAddress = oooColumns.get(getSecondaryColumnIndex(columnIndex)).addressOf(0);
+                                DedupColumnCommitAddresses.setO3DataAddressValues(addr, oooAuxColAddress, oooVarColAddress, oooVarColSize);
+                            }
+                        }
+                    }
+
+                    dedupRows = Vect.mergeDedupTimestampWithLongIndexIntKeys(
+                            timestampDataPtr,
+                            0,
+                            rowGroupSize - 1,
+                            sortedTimestampsAddr,
+                            mergeRangeLo,
+                            mergeRangeHi,
+                            timestampMergeIndexAddr,
+                            dedupCommitAddresses.getColumnCount(),
+                            DedupColumnCommitAddresses.getAddress(dedupColSinkAddr)
+                    );
+                }
+
+                timestampMergeIndexAddr = Unsafe.realloc(
+                        timestampMergeIndexAddr,
+                        timestampMergeIndexSize,
+                        dedupRows * TIMESTAMP_MERGE_ENTRY_BYTES,
+                        MemoryTag.NATIVE_O3
+                );
+
+                timestampMergeIndexSize = dedupRows * TIMESTAMP_MERGE_ENTRY_BYTES;
+                duplicateCount = mergeRowCount - dedupRows;
+                if (duplicateCount > 0) {
+                    tableWriter.addDedupRowsRemoved(duplicateCount);
+                }
+                mergeRowCount = dedupRows;
+            }
+
+            assert timestampMergeIndexAddr != 0;
+
+            // Even-split: when totalRows > 1.5x maxRowGroupSize, split into
+            // ceil(totalRows / maxChunkTarget) chunks so that no chunk exceeds
+            // maxChunkTarget = maxRowGroupSize + maxRowGroupSize / 2.
+            // Integer division of maxRowGroupSize / 2 is intentional: the target
+            // must be representable exactly in integer arithmetic to avoid off-by-one
+            // overflows when distributing remainder rows across chunks.
+            final long maxChunkTarget = (long) maxRowGroupSize + maxRowGroupSize / 2;
+            if (mergeRowCount > maxChunkTarget) {
+                numChunks = (int) ((mergeRowCount + maxChunkTarget - 1) / maxChunkTarget);
+            } else {
+                numChunks = 1;
+            }
+            final long maxChunkSize = (mergeRowCount + numChunks - 1) / numChunks;
+
+            // Phase 1b: ensure destination buffers in mergeDstBufs are large enough
+            // for this merge. Grow if needed; reuse if already sufficient. Reads the
+            // Phase-1a prepared source aux pointer from srcPtrs to size var data.
+            for (int ai = 0; ai < activeColCount; ai++) {
+                int columnIndex = activeColIndices.getQuick(ai);
+                int columnType = tableWriterMetadata.getColumnType(columnIndex);
+                int bi4 = ai * 4;
+                int bi2 = ai * 2;
+
+                if (ColumnType.isVarSize(columnType)) {
+                    final ColumnTypeDriver ctd = ColumnType.getDriver(columnType);
+                    final long columnAuxPtr = srcPtrs.getQuick(bi2 + 1);
+
+                    final int columnOffset = getPrimaryColumnIndex(columnIndex);
+                    final long srcOooFixAddr = oooColumns.getQuick(columnOffset + 1).addressOf(0);
+
+                    // Aux buffer: bounded by maxChunkSize across all merges.
+                    long neededAuxSize = ctd.getAuxVectorSize(maxChunkSize);
+                    if (neededAuxSize > mergeDstBufs.getQuick(bi4 + 3)) {
+                        if (mergeDstBufs.getQuick(bi4 + 2) != 0) {
+                            Unsafe.free(mergeDstBufs.getQuick(bi4 + 2), mergeDstBufs.getQuick(bi4 + 3), MemoryTag.NATIVE_O3);
+                            mergeDstBufs.setQuick(bi4 + 2, 0);
+                            mergeDstBufs.setQuick(bi4 + 3, 0);
+                        }
+                        mergeDstBufs.setQuick(bi4 + 2, Unsafe.malloc(neededAuxSize, MemoryTag.NATIVE_O3));
+                        mergeDstBufs.setQuick(bi4 + 3, neededAuxSize);
+                    }
+
+                    // Data buffer: overestimate varies per merge, grow if needed.
+                    long neededDataSize = ctd.getDataVectorSize(srcOooFixAddr, mergeRangeLo, mergeRangeHi)
+                            + ctd.getDataVectorSizeAt(columnAuxPtr, rowGroupSize - 1);
+                    if (neededDataSize > mergeDstBufs.getQuick(bi4 + 1)) {
+                        if (mergeDstBufs.getQuick(bi4) != 0) {
+                            Unsafe.free(mergeDstBufs.getQuick(bi4), mergeDstBufs.getQuick(bi4 + 1), MemoryTag.NATIVE_O3);
+                            mergeDstBufs.setQuick(bi4, 0);
+                            mergeDstBufs.setQuick(bi4 + 1, 0);
+                        }
+                        mergeDstBufs.setQuick(bi4, Unsafe.malloc(neededDataSize, MemoryTag.NATIVE_O3));
+                        mergeDstBufs.setQuick(bi4 + 1, neededDataSize);
+                    }
+                } else {
                     // Fixed-size buffer: bounded by maxChunkSize across all merges.
                     long neededFixSize = maxChunkSize * ColumnType.sizeOf(columnType);
                     if (neededFixSize > mergeDstBufs.getQuick(bi4 + 1)) {
@@ -2702,7 +2737,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     }
                 }
             }
-            Unsafe.free(timestampMergeIndexAddr, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
+            // timestampMergeIndexAddr is 0 if Phase 1a or the merge-index build threw
+            // before it was allocated.
+            if (timestampMergeIndexAddr != 0) {
+                Unsafe.free(timestampMergeIndexAddr, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
+            }
         }
 
         return ((long) numChunks << 32) | (duplicateCount & 0xFFFFFFFFL);

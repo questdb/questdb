@@ -223,16 +223,14 @@ public class ConvertOperatorImpl implements Closeable {
             // Case 1: chained conversion (e.g. INT -> STRING -> DATE) where parquet stores an
             //         older type - convert so the two-step path matches native behavior.
             // Case 2: target type is Symbol - symbol maps cannot be built from parquet.
-            // Case 3: the column is a dedup key and the conversion crosses the fixed vs
-            //         var/symbol boundary. O3PartitionJob.mergeRowGroup reads the parquet decode
-            //         buffer directly when building dedup-compare addresses, before the per-row
-            //         conversion runs. For such a crossing that buffer is still in the source
-            //         representation (VARCHAR_SLICE, or a raw fixed array with a dangling aux
-            //         pointer), so the native dedup comparer would misread it -> SIGSEGV or wrong
-            //         dedup. Materialise those partitions to native up front so the merge runs
-            //         the native dedup path against target-typed data. Same-representation
-            //         conversions (fixed->fixed, var->var) decode straight into the target type
-            //         and stay lazy.
+            //
+            // A dedup-key conversion that crosses the fixed vs var/symbol boundary is NOT a
+            // trigger. O3PartitionJob.mergeRowGroup materialises the parquet decode buffer into
+            // the target representation (its Phase 1a pass) before it builds the dedup-compare
+            // addresses, so the native comparer always sees correctly typed data even while the
+            // partition stays lazy parquet. Eagerly rewriting such partitions here would only
+            // force a full-partition rewrite at ALTER time; the first O3 merge re-encodes them
+            // with the new type anyway.
             //
             // Each per-partition convert is performed without committing; a single batched
             // commit at the end of the loop publishes them atomically. If any partition
@@ -241,9 +239,7 @@ public class ConvertOperatorImpl implements Closeable {
             boolean hasPriorConversion = tableWriter.getMetadata()
                     .getColumnMetadata(existingColIndex).getReplacingIndex() >= 0;
             boolean isTargetSymbol = ColumnType.isSymbol(newType);
-            boolean isDedupKey = tableWriter.isDeduplicationEnabled()
-                    && tableWriter.getMetadata().isDedupKey(existingColIndex);
-            if (hasPriorConversion || isTargetSymbol || isDedupKey) {
+            if (hasPriorConversion || isTargetSymbol) {
                 boolean hasAnyPartitionConverted = false;
                 for (int pi = 0, pn = tableWriter.getPartitionCount(); pi < pn; pi++) {
                     if (tableWriter.getPartitionFormat(pi) != PartitionFormat.PARQUET) {
@@ -252,7 +248,6 @@ public class ConvertOperatorImpl implements Closeable {
                     int parquetColType = tableWriter.getParquetColumnType(pi, existingColIndex);
                     if (!ColumnType.isUndefined(parquetColType)
                             && (isTargetSymbol
-                            || (isDedupKey && isFixedVarSymbolCrossing(parquetColType, newType))
                             || !isParquetStorageCompatible(parquetColType, existingType))) {
                         long pts = tableWriter.getPartitionTimestamp(pi);
                         LOG.info()
@@ -527,22 +522,6 @@ public class ConvertOperatorImpl implements Closeable {
             fixedFd = TableUtils.openRW(ff, dFile(path.trimTo(pathTrimToLen), name, columnNameTxn), LOG, fileOpenOpts);
             varFd = -1;
         }
-    }
-
-    /**
-     * Returns true when converting {@code fromType} to {@code toType} crosses the fixed vs
-     * var/symbol boundary, i.e. the lazy parquet decode buffer would not already be in the
-     * target representation. This mirrors the decode-type selection in
-     * {@link io.questdb.cairo.O3PartitionJob}'s {@code mergeRowGroup}: fixed-&gt;fixed and
-     * var-&gt;var decode straight into the target type, while a fixed&lt;-&gt;var/symbol crossing
-     * leaves the buffer as VARCHAR_SLICE or a raw fixed array. Used to decide whether a
-     * dedup-key column must be eagerly materialised to native before the type change so the O3
-     * dedup compare never reads a half-converted parquet buffer.
-     */
-    private static boolean isFixedVarSymbolCrossing(int fromType, int toType) {
-        boolean fromVarOrSymbol = ColumnType.isVarSize(fromType) || ColumnType.isSymbol(fromType);
-        boolean toVarOrSymbol = ColumnType.isVarSize(toType) || ColumnType.isSymbol(toType);
-        return fromVarOrSymbol != toVarOrSymbol;
     }
 
     /**
