@@ -165,6 +165,7 @@ public final class ConcurrentTimeFrameCursorImpl implements ConcurrentTimeFrameC
         this.sharedState = sharedState;
         this.frameCursor = frameCursor;
         this.timestampIndex = timestampIndex;
+        frameMemoryPool.setMemoryTracker(sharedState.getMemoryTracker());
         frameMemoryPool.of(sharedState.getAddressCache());
         record.of(frameCursor);
         // Initialize timestamp cache (2 entries per frame: tsLo, tsHi)

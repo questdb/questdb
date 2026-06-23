@@ -40,6 +40,7 @@ import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
@@ -58,6 +59,10 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
     private final ObjList<SelectivityStats> perWorkerSelectivityStats;
     private final boolean preTouchEnabled;
     private final double preTouchThreshold;
+    // Per-query native memory tracker captured from SqlExecutionContext on init.
+    // Null when no per-query limit applies. Workers and operator code feed it to
+    // tracker-aware Unsafe overloads to charge allocations to the active workload.
+    private MemoryTracker memoryTracker;
     private IntHashSet lateMatSkipColumnIndexes;
 
     public AsyncFilterAtom(
@@ -91,6 +96,7 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
     public void clear() {
         ownerSelectivityStats.clear();
         Misc.clearObjList(perWorkerSelectivityStats);
+        memoryTracker = null;
         lateMatSkipColumnIndexes = null;
     }
 
@@ -110,6 +116,10 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
         return filterUsedColumnIndexes;
     }
 
+    public MemoryTracker getMemoryTracker() {
+        return memoryTracker;
+    }
+
     public @Nullable IntHashSet getLateMaterializationSkipColumnIndexes() {
         final IntHashSet skipSet = lateMatSkipColumnIndexes;
         return skipSet != null ? skipSet : filterUsedColumnIndexes;
@@ -124,6 +134,7 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
 
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        memoryTracker = executionContext.getMemoryTracker();
         filter.init(symbolTableSource, executionContext);
         if (perWorkerFilters != null) {
             final boolean current = executionContext.getCloneSymbolTables();

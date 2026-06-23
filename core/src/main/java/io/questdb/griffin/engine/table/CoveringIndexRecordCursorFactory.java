@@ -128,17 +128,31 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         this.latestBy = latestBy;
         this.latestByFilter = latestByFilter;
         this.queryColToIncludeIdx = queryColToIncludeIdx;
-        this.keyValueFuncs = keyValueFuncs;
+        // Defensive copy. The caller passes intrinsicModel.keyValueFuncs, which is a
+        // POOLED ObjList owned by the compiler's WhereClauseParser (ObjectPool<IntrinsicModel>).
+        // SqlCompilers are pooled and shared across threads/connections, so when another
+        // thread borrows the same compiler and recompiles, models.next() -> IntrinsicModel.clear()
+        // -> keyValueFuncs.clear() nulls the backing array (Arrays.fill BEFORE pos=0). A concurrent
+        // getCursor() on this still-cached factory would then read a stale size() (> 0) and a null
+        // slot in Function.init(...), producing the intermittent NPE in issue #7294. We keep our own
+        // list of the same Function instances -- which this factory owns and frees in close() (the
+        // pooled model only clears references, never frees) -- to decouple from the model's lifecycle.
+        this.keyValueFuncs = keyValueFuncs != null ? new ObjList<>(keyValueFuncs) : null;
         int[] requiredIncludeIndices = buildRequiredIncludeIndices(queryColToIncludeIdx);
 
         int[] symInclCols = findSymbolIncludeCols(queryColToIncludeIdx, metadata);
-        if (keyValueFuncs != null) {
-            this.resolvedKeys = new IntList(keyValueFuncs.size());
-            int multiKeyCapacity = keyValueFuncs.size();
+        // Read the owned defensive copy (this.keyValueFuncs), never the pooled parameter. The two are
+        // content-identical here (compiling thread owns the model exclusively during construction), but
+        // the copy is the reference this factory owns and frees in close(); using it consistently avoids
+        // a refactor hazard if the defensive copy above is ever changed or removed.
+        final ObjList<Function> keyValueFuncsCopy = this.keyValueFuncs;
+        if (keyValueFuncsCopy != null) {
+            this.resolvedKeys = new IntList(keyValueFuncsCopy.size());
+            int multiKeyCapacity = keyValueFuncsCopy.size();
             if (reader != null) {
                 SymbolMapReader smr = reader.getSymbolMapReader(indexColumnIndex);
-                for (int i = 0, n = keyValueFuncs.size(); i < n; i++) {
-                    Function f = keyValueFuncs.getQuick(i);
+                for (int i = 0, n = keyValueFuncsCopy.size(); i < n; i++) {
+                    Function f = keyValueFuncsCopy.getQuick(i);
                     int key = f.isRuntimeConstant() ? SymbolTable.VALUE_NOT_FOUND : smr.keyOf(f.getStrA(null));
                     resolvedKeys.add(key);
                 }
@@ -498,8 +512,16 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
         @Override
         public void close() {
-            frameCursor = Misc.free(frameCursor);
+            // Free the row cursor BEFORE the frame cursor. The frame cursor owns the
+            // TableReader and Misc.free(frameCursor) returns it to the pool; once pooled,
+            // another thread can acquire+reload the reader and close the per-partition
+            // PostingIndex*Reader that currentRowCursor was checked out from. Closing the
+            // row cursor first guarantees its owning reader is still open (this thread
+            // still holds it), so the cursor re-pools into a live reader rather than a
+            // stale/closed one. Mirrors CoveringPageFrameCursor.close() (closePendingCursor
+            // before freeing frameCursor).
             this.currentRowCursor = Misc.free(currentRowCursor);
+            frameCursor = Misc.free(frameCursor);
         }
 
         @Override

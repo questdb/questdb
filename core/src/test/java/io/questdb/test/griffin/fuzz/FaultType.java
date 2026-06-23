@@ -1,4 +1,4 @@
-/*+*****************************************************************************
+/*******************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -22,30 +22,22 @@
  *
  ******************************************************************************/
 
-package io.questdb.std;
+package io.questdb.test.griffin.fuzz;
 
-import java.io.Closeable;
-
-public class ThreadLocal<T> extends java.lang.ThreadLocal<T> implements Closeable {
-    private final ObjectFactory<T> factory;
-
-    public ThreadLocal(ObjectFactory<T> factory) {
-        this.factory = factory;
-    }
-
-    @Override
-    public void close() {
-        Misc.freeIfCloseable(super.get());
-        remove();
-    }
-
-    @Override
-    public T get() {
-        T val = super.get();
-        if (val == null) {
-            val = factory.newInstance();
-            set(val);
-        }
-        return val;
-    }
+/**
+ * A kind of fault the query fuzzer can inject into a single query run. Each is
+ * armed at a random trigger point, the query is executed once, and the runner
+ * asserts the factory frees its resources on the error path and that the query
+ * recovers once the fault is removed.
+ * <ul>
+ *   <li>{@link #FILE} &mdash; one filesystem operation fails once, via
+ *       {@code FailureFileFacade}.</li>
+ *   <li>{@link #FUNCTION} &mdash; a SQL function emitted into the query throws
+ *       once mid-evaluation.</li>
+ *   <li>{@link #MALLOC} &mdash; a native allocation fails once, via the RSS
+ *       memory limit (the same out-of-memory path production hits).</li>
+ * </ul>
+ */
+public enum FaultType {
+    FILE, FUNCTION, MALLOC
 }

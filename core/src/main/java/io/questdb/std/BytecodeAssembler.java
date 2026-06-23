@@ -887,6 +887,7 @@ public class BytecodeAssembler {
 
     public class Utf8Appender implements Utf8Sink {
         private int lenpos;
+        private int[] ryuE10;
         private int utf8len = 0;
 
         public int $() {
@@ -950,6 +951,14 @@ public class BytecodeAssembler {
                 BytecodeAssembler.this.putByte(Unsafe.getByte(p));
             }
             return this;
+        }
+
+        @Override
+        public int[] ryuScratch() {
+            if (ryuE10 == null) {
+                ryuE10 = new int[1];
+            }
+            return ryuE10;
         }
     }
 }

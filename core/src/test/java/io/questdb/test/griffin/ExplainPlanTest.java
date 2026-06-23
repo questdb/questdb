@@ -765,7 +765,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCachedWindowRecordCursorFactoryWithLimit() throws Exception {
+    public void testCachedWindowLightRecordCursorFactoryWithLimit() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as ( " + "  select " + "    cast(x as int) i, " + "    rnd_symbol('a','b','c') sym, " + "    timestamp_sequence(0, 100000000) ts " + "   from long_sequence(100)" + ") timestamp(ts) partition by hour");
 
@@ -774,7 +774,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             Limit value: 3 skip-rows-max: 0 take-rows-max: 3
-                                CachedWindow
+                                CachedWindowLight
                                   unorderedFunctions: [row_number() over (partition by [sym]),avg(i) over (),sum(i) over (),first_value(i) over ()]
                                     PageFrame
                                         Row forward scan
@@ -1138,7 +1138,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .assertsPlan("""
                             Distinct
                               keys: avg
-                                CachedWindow
+                                CachedWindowLight
                                   unorderedFunctions: [avg(event) over (partition by [1])]
                                     PageFrame
                                         Row forward scan
@@ -1790,7 +1790,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     Frame forward scan on: a
                                 Hash
                                     SelectedRecord
-                                        Sort light
+                                        Encode sort light
                                           keys: [s]
                                             PageFrame
                                                 Row forward scan
@@ -10825,7 +10825,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select x, * from xx where str is not null order by str desc limit 10, 20")
                 .ddl("create table xx ( x long, str varchar ) ")
                 .assertsPlan("""
-                        Sort light lo: 10 hi: 20
+                        Encode sort light lo: 10 hi: 20
                           keys: [str desc]
                             SelectedRecord
                                 Async JIT Filter workers: 1
@@ -12457,7 +12457,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select ts, str,  row_number() over (order by l), row_number() over (partition by l) from t")
                 .ddl("create table t as ( select x l, x::string str, x::timestamp ts from long_sequence(100))")
                 .assertsPlan("""
-                        CachedWindow
+                        CachedWindowLight
                           orderedFunctions: [[l] => [row_number()]]
                           unorderedFunctions: [row_number() over (partition by [l])]
                             PageFrame
@@ -12471,7 +12471,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select str, ts, l, 10, row_number() over ( partition by l order by ts) from t")
                 .ddl("create table t as ( select x l, x::string str, x::timestamp ts from long_sequence(100))")
                 .assertsPlan("""
-                        CachedWindow
+                        CachedWindowLight
                           orderedFunctions: [[ts] => [row_number() over (partition by [l])]]
                             VirtualRecord
                               functions: [str,ts,l,10]
@@ -12486,7 +12486,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select str, ts, l as l1, ts::long+l as tsum, row_number() over ( partition by l, ts order by str) from t")
                 .ddl("create table t as ( select x l, x::string str, x::timestamp ts from long_sequence(100))")
                 .assertsPlan("""
-                        CachedWindow
+                        CachedWindowLight
                           orderedFunctions: [[str] => [row_number() over (partition by [l1,ts])]]
                             VirtualRecord
                               functions: [str,ts,l1,ts::long+l1]
@@ -12505,7 +12505,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertQuery("select ts, i, j, " + "avg(j) over (order by i, j rows unbounded preceding), " + "sum(j) over (order by i, j rows unbounded preceding), " + "first_value(j) over (order by i, j rows unbounded preceding), " + "from tab")
                     .noLeakCheck()
                     .assertsPlan("""
-                            CachedWindow
+                            CachedWindowLight
                               orderedFunctions: [[i, j] => [avg(j) over (rows between unbounded preceding and current row),\
                             sum(j) over (rows between unbounded preceding and current row),first_value(j) over ()]]
                                 PageFrame
@@ -12528,7 +12528,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                CachedWindow
+                                CachedWindowLight
                                   orderedFunctions: [[i desc, j] => [row_number() over (partition by [i])],\
                             [j, i desc] => [avg(j) over (partition by [i] rows between unbounded preceding and current row),\
                             sum(j) over (partition by [i] rows between unbounded preceding and current row),\
@@ -12542,7 +12542,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                CachedWindow
+                                CachedWindowLight
                                   orderedFunctions: [[i desc, j] => [row_number() over (partition by [i]),avg(j) over (partition by [i,j] rows between unbounded preceding and current row),\
                             sum(j) over (partition by [i,j] rows between unbounded preceding and current row),\
                             first_value(j) over (partition by [i,j] rows between unbounded preceding and current row)]]
@@ -12808,7 +12808,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                               keys: [sum desc]
                                 GroupBy vectorized: false
                                   values: [sum(avg),sum(sum),count(first_value)]
-                                    CachedWindow
+                                    CachedWindowLight
                                       orderedFunctions: [[ts desc] => [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]]
                                         PageFrame
                                             Row forward scan
@@ -12871,7 +12871,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertQuery("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by ts desc) " + ") order by ts asc ")
                     .noLeakCheck()
                     .assertsPlan("""
-                            CachedWindow
+                            CachedWindowLight
                               orderedFunctions: [[ts desc] => [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
                             sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
                             first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]]
@@ -12883,7 +12883,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertQuery("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by ts asc) " + ") order by ts desc ")
                     .noLeakCheck()
                     .assertsPlan("""
-                            CachedWindow
+                            CachedWindowLight
                               orderedFunctions: [[ts] => [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
                             sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
                             first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]]
