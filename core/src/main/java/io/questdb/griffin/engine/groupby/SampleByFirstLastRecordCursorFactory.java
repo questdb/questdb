@@ -44,6 +44,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SingleSymbolFilter;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -305,6 +306,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         private final PageFrameAddressCache frameAddressCache;
         private final PageFrameMemoryPool frameMemoryPool;
         private final SampleByFirstLastRecord record = new SampleByFirstLastRecord();
+        private SqlExecutionCircuitBreaker circuitBreaker;
         private int crossRowState;
         private long currentRow;
         private int frameCount = 0;
@@ -652,6 +654,9 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
             rowsFound = 0;
 
             while (state != STATE_DONE) {
+                // The state machine fetches/searches page frames here; observe the breaker on every
+                // transition so a long scan stays cancellable (a cold-open-only check would not).
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 state = getNextState(state);
                 if (state < 0) {
                     state = -state;
@@ -723,6 +728,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         ) throws SqlException {
             this.frameCursor = frameCursor;
             this.groupBySymbolKey = groupBySymbolKey;
+            this.circuitBreaker = sqlExecutionContext.getCircuitBreaker();
             this.memoryTracker = sqlExecutionContext.getMemoryTracker();
             frameAddressCache.of(metadata, frameCursor.getColumnMapping(), frameCursor.isExternal());
             toTop();

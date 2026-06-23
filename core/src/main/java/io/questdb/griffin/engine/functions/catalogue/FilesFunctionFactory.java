@@ -91,7 +91,7 @@ public class FilesFunctionFactory implements FunctionFactory {
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
             executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
-            cursor.toTop();
+            cursor.toTop(executionContext.getCircuitBreaker());
             return cursor;
         }
 
