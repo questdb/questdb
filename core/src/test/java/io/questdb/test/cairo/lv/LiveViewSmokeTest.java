@@ -1610,6 +1610,115 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBackfillCrashBetweenActiveFlipAndCheckpointRetireRecoversActive() throws Exception {
+        // Crash-window atomicity at the BACKFILLING -> ACTIVE boundary. The
+        // completion path (LiveViewRefreshJob.runBackfillSweep) persists
+        // backfillState=ACTIVE durably via advanceLiveViewConsumedSeqTxn BEFORE
+        // it unlinks the rolling .bcp, so a crash in that tiny window leaves an
+        // orphan .bcp on disk next to an already-ACTIVE _lv.s. On restart the
+        // loader must read the durable ACTIVE state, retire the orphan .bcp
+        // (sweepBackfillCheckpoints with isBackfilling=false), and NOT stamp it
+        // as a resume source - the sweep is done, so there must be no re-sweep,
+        // no lost or duplicated rows, and the incremental drain takes over.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base (ts, x) VALUES " +
+                    "('2026-04-01T00:00:00.000000Z', 10), " +
+                    "('2026-04-01T00:00:01.000000Z', 20), " +
+                    "('2026-04-01T00:00:02.000000Z', 30), " +
+                    "('2026-04-01T00:00:03.000000Z', 40)");
+            drainWalQueue();
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms BACKFILL AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            // Capture a rolling .bcp key from a partial sweep, then finish cleanly.
+            final long bcpKey;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                job.run();
+                drainWalQueue();
+                bcpKey = engine.getLiveViewRegistry().getViewInstance("lv").getHeadBackfillCpKey();
+                Assert.assertNotEquals("a .bcp must have been written mid-sweep", Numbers.LONG_NULL, bcpKey);
+                driveBackfillToCompletion(job, "lv");
+            }
+
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertEquals(
+                    LiveViewState.BACKFILL_STATE_ACTIVE,
+                    instance.getStateReader().getBackfillState()
+            );
+            Assert.assertEquals(
+                    "completion clears the in-memory .bcp key",
+                    Numbers.LONG_NULL,
+                    instance.getHeadBackfillCpKey()
+            );
+
+            // Simulate the crash residue: the post-completion .bcp unlink never
+            // ran, so a .bcp lingers in _checkpoints/ even though _lv.s already
+            // reads ACTIVE. Recovery retires .bcp leftovers by name, so an empty
+            // touch reaches the same sweep branch a real leftover would.
+            final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+            try (Path p = new Path()) {
+                p.of(engine.getConfiguration().getDbRoot())
+                        .concat(instance.getLiveViewToken())
+                        .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
+                        .slash();
+                LiveViewCheckpointWriter.appendBcpFileName(p, bcpKey);
+                Assert.assertTrue("recreating the orphan .bcp must succeed", ff.touch(p.$()));
+                Assert.assertTrue("orphan .bcp must exist before restart", ff.exists(p.$()));
+            }
+
+            // Restart: the loader reads ACTIVE from _lv.s and sweeps the orphan.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertEquals(
+                    "the durable ACTIVE flip must survive the crash",
+                    LiveViewState.BACKFILL_STATE_ACTIVE,
+                    reloaded.getStateReader().getBackfillState()
+            );
+            Assert.assertEquals(
+                    "an ACTIVE view must not stamp the orphan .bcp as a resume source",
+                    Numbers.LONG_NULL,
+                    reloaded.getHeadBackfillCpKey()
+            );
+            try (Path p = new Path()) {
+                p.of(engine.getConfiguration().getDbRoot())
+                        .concat(reloaded.getLiveViewToken())
+                        .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
+                        .slash();
+                LiveViewCheckpointWriter.appendBcpFileName(p, bcpKey);
+                Assert.assertFalse("recovery must retire the orphan .bcp", ff.exists(p.$()));
+            }
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // A refresh tick would re-sweep here if recovery had wrongly
+                // treated the ACTIVE view as backfilling; the row count must
+                // stay at the four backfilled rows (no re-emission).
+                drainJob(job);
+                drainWalQueue();
+                assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n4\n");
+
+                // The view is genuinely ACTIVE: a follow-on insert drains
+                // incrementally and continues the row_number sequence.
+                execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:01:00.000000Z', 50)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tx\trn\n" +
+                    "2026-04-01T00:00:00.000000Z\t10\t1\n" +
+                    "2026-04-01T00:00:01.000000Z\t20\t2\n" +
+                    "2026-04-01T00:00:02.000000Z\t30\t3\n" +
+                    "2026-04-01T00:00:03.000000Z\t40\t4\n" +
+                    "2026-04-01T00:01:00.000000Z\t50\t5\n");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testBackfillFilteredViewResumesAcrossRestart() throws Exception {
         // A WHERE filter drops base rows, so the sweep's data-cursor offset
         // outruns the output-row count. The restart must resume at the correct
