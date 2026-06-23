@@ -2231,7 +2231,129 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInMemFootprintPlateausUnderGrowthBudget() throws Exception {
+        // Under a NON-ZERO growth budget the refresh
+        // worker appends to the published slot via the fast-path until that
+        // slot's footprint crosses
+        // cairo.live.view.in.memory.buffer.growth.bytes, then switches to the
+        // slow-path swap (where IN MEMORY eviction runs). footprintBytes() sums
+        // ALLOCATED column pages and reset() retains them, so a slot's footprint
+        // is a monotonic high-water mark: once both N=2 slots have each crossed
+        // the growth budget once, the tier footprint plateaus at ~2 x
+        // growth.bytes and the fast-path self-disables (every later cycle takes
+        // the slow-path, since footprint < budget is never again true). The
+        // footprint is bounded by the growth budget, NOT by IN MEMORY or by the
+        // number of rows ingested: a small IN MEMORY keeps the logical row set
+        // tiny while the RAM still floats at the growth-budget bound.
+        //
+        // The shipped defaults (64 KiB initial page / 16 MiB growth) would need
+        // millions of rows to cross, so this test scales both budgets down to
+        // exercise the same fast-path-fills-then-evicts regime cheaply. Every
+        // other eviction test forces growth.bytes = 0, which takes the slow-path
+        // on every cycle and so never enters this regime.
+        final long initialBytes = 4 * 1024;  // per-column page granule
+        final long growthBytes = 64 * 1024;  // slow-path growth backstop
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_INITIAL_BYTES, initialBytes);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_GROWTH_BYTES, growthBytes);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // Pin the CREATE-moment wall clock at 0 so the view's lower bound
+            // sits well below the data timestamps, keeping every row in-frame.
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+
+            // Data timestamps: a fixed positive epoch (the exact calendar date
+            // is irrelevant, only that it is above the floor of 0). Each cycle's
+            // rows are spaced 2s after the prior cycle's, comfortably beyond the
+            // 1s IN MEMORY window, so the slow-path evicts the previous cycle's
+            // rows and the published slot retains only the current cycle.
+            final long dataStart = 1_700_000_000_000_000L;
+            final long rowsPerCycle = 1024;
+            final long cycleSpanMicros = 2_000_000L;
+
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                long wallMicros = 0L;
+                int cycle = 0;
+
+                // Warm-up: drive enough cycles to push both slots past the
+                // growth budget. Crossing needs ~3 cycles per slot and both
+                // slots saturate by ~cycle 9; 20 cycles clears it with margin.
+                final int warmCycles = 20;
+                for (; cycle < warmCycles; cycle++) {
+                    long base = dataStart + cycle * cycleSpanMicros;
+                    execute("INSERT INTO base SELECT (" + base + " + x)::timestamp, x::int FROM long_sequence(" + rowsPerCycle + ")");
+                    drainWalQueue();
+                    wallMicros += 250_000L; // > FLUSH EVERY 100ms so the flush fires each cycle
+                    setCurrentMicros(wallMicros);
+                    drainJob(job);
+                }
+
+                LiveViewInMemoryTier tier = instance.getInMemoryTier();
+                Assert.assertNotNull("tier must be allocated after refreshes", tier);
+                long warmFootprint = tier.footprintBytes();
+
+                // The fast-path actually filled past the budget (this is NOT the
+                // growth=0 slow-path-only regime), and both slots saturated.
+                Assert.assertTrue(
+                        "footprint must cross the growth budget [footprint=" + warmFootprint + ", growth=" + growthBytes + "]",
+                        warmFootprint >= growthBytes
+                );
+                // Bounded near ~2 x growth.bytes. The generous 8x ceiling still
+                // rules out growth proportional to the ~20k rows ingested, which
+                // with no eviction would exceed 1 MiB.
+                Assert.assertTrue(
+                        "footprint must stay bounded by a small multiple of the growth budget [footprint=" + warmFootprint + "]",
+                        warmFootprint <= 8 * growthBytes
+                );
+
+                // RAM is growth-bound, not IN-MEMORY- or data-volume-bound: the
+                // published slot retains only a small recent window even though
+                // the footprint floats at the growth-budget bound.
+                long publishedRows = tier.getSlot(tier.getPublishedIdx()).rowCount();
+                Assert.assertTrue(
+                        "published slot must retain only a small recent window, not all ingested rows [rows=" + publishedRows + "]",
+                        publishedRows <= 4 * rowsPerCycle
+                );
+
+                // Plateau: many more cycles must NOT grow the footprint. Pages
+                // are a monotonic high-water mark and the slow-path refills
+                // within them, so the value is exactly stable. This is the
+                // no-leak / bounded proof: footprint is decoupled from the
+                // (ever growing) ingested row count.
+                final int plateauCycles = 20;
+                for (int i = 0; i < plateauCycles; i++, cycle++) {
+                    long base = dataStart + cycle * cycleSpanMicros;
+                    execute("INSERT INTO base SELECT (" + base + " + x)::timestamp, x::int FROM long_sequence(" + rowsPerCycle + ")");
+                    drainWalQueue();
+                    wallMicros += 250_000L;
+                    setCurrentMicros(wallMicros);
+                    drainJob(job);
+                }
+
+                long lateFootprint = tier.footprintBytes();
+                Assert.assertEquals(
+                        "footprint must plateau once both slots cross the growth budget (no unbounded growth)",
+                        warmFootprint, lateFootprint
+                );
+
+                // live_views().in_mem_bytes surfaces the same bounded footprint.
+                assertQuery("SELECT in_mem_bytes FROM live_views() WHERE view_name = 'lv'")
+                        .noLeakCheck().noRandomAccess()
+                        .returns("in_mem_bytes\n" + lateFootprint + "\n");
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testLiveViewsExposesInMemBytes() throws Exception {
+        // in_mem_bytes reports the
+        // current footprint of both N=2 slots. Zero before any refresh; > 0
         // in_mem_bytes reports the
         // current footprint of both N=2 slots. Zero before any refresh; > 0
         // once a refresh has populated the tier.
