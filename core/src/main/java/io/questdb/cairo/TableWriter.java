@@ -8779,6 +8779,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 throw CairoException.critical(ff.errno()).put("cannot create directory: ").put(path);
             }
 
+            if (!Os.isWindows() && configuration.getCommitMode() != CommitMode.NOSYNC) {
+                final long partDirFd = TableUtils.openRONoCache(ff, path.slash$(), LOG);
+                if (partDirFd != -1) {
+                    ff.fsyncAndClose(partDirFd);
+                }
+                final long rootDirFd = TableUtils.openRONoCache(ff, path.trimTo(pathSize).$(), LOG);
+                if (rootDirFd != -1) {
+                    ff.fsyncAndClose(rootDirFd);
+                }
+                path.trimTo(plen);
+            }
+
             assert columnCount > 0;
 
             lastOpenPartitionTs = timestamp;
@@ -13964,6 +13976,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             todoMem.putLong(24, txWriter.txn);
             todoMem.jumpTo(56);
             todoMem.sync(false);
+            if (configuration.getCommitMode() != CommitMode.NOSYNC) {
+                path.concat(TODO_FILE_NAME);
+                final long todoFd = TableUtils.openRONoCache(ff, path.$(), LOG);
+                if (todoFd != -1) {
+                    ff.fsyncAndClose(todoFd);
+                }
+                path.trimTo(pathSize);
+            }
         } catch (CairoException e) {
             runFragile(RECOVER_FROM_TODO_WRITE_FAILURE, e);
         }
