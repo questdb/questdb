@@ -161,10 +161,10 @@ public final class ParquetRowGroupFilter {
                 if (resolveByColumnId) {
                     // The Parquet column name is frozen at write time and goes stale on rename,
                     // so map the filtered column to the Parquet column by its stable id instead.
-                    final int writerIndex = condition.getColumnWriterIndex();
-                    columnIndex = legacyMetadata != null
-                            ? legacyMetadata.getColumnIndexById(writerIndex)
-                            : parquetMetaReader.getColumnIndexById(writerIndex);
+                    // Only native-table partitions resolve by id, and they always supply the
+                    // ParquetMetaFileReader; the legacy read_parquet() overload resolves by name.
+                    assert parquetMetaReader != null;
+                    columnIndex = parquetMetaReader.getColumnIndexById(condition.getColumnWriterIndex());
                 } else {
                     columnIndex = legacyMetadata != null
                             ? legacyMetadata.getColumnIndex(condition.getColumnName())
