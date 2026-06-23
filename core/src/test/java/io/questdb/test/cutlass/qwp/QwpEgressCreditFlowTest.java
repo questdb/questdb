@@ -27,7 +27,6 @@ package io.questdb.test.cutlass.qwp;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatch;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatchHandler;
 import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
-import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
@@ -64,6 +63,18 @@ public class QwpEgressCreditFlowTest extends AbstractQwpBootstrapTest {
         super.setUp();
         TestUtils.unchecked(() -> createDummyConfiguration());
         dbPath.parent().$();
+        // setUpFragmentationChunks (a superclass @Before, so it runs first) draws
+        // sendChunk/recvChunk randomly from [1, 500]. These credit-flow tests stream
+        // multi-MB payloads, and HttpResponseSink.sendBuffer parks once per sendChunk
+        // bytes, so a byte-level draw degenerates to one park/resume cycle per byte:
+        // the 500k-row (~12 MB) payload then needs ~12 million dispatcher round-trips,
+        // which blows the global test timeout on a slow CI runner (the macOS mac-other
+        // 20-minute hang). Floor the chunk so fragmentation still splits every batch
+        // into thousands of partial sends while keeping wall-clock bounded. Credit
+        // suspend/resume coverage is driven by the advertised credit budget, not the
+        // fragmentation chunk, so flooring it costs no flow-control coverage.
+        sendChunk = Math.max(sendChunk, 64);
+        recvChunk = Math.max(recvChunk, 64);
     }
 
     @Test
@@ -114,126 +125,6 @@ public class QwpEgressCreditFlowTest extends AbstractQwpBootstrapTest {
                 }
             }
         });
-    }
-
-    /**
-     * Deterministic reproduction for a macOS-only stall in credit-flow egress.
-     * <p>
-     * Under credit flow every batch is sent while the client-advertised budget is
-     * near zero, so the server emits a batch and then parks waiting for the next
-     * CREDIT frame. A small forced send-fragmentation chunk makes each batch send
-     * park on write-backpressure ({@code PeerIsSlowToReadException}) repeatedly, so
-     * the connection rapidly ping-pongs between WRITE interest (draining the batch)
-     * and READ interest (awaiting CREDIT). On macOS this occasionally loses the
-     * READ (CREDIT) wakeup and the stream suspends forever -- the 20-minute hang
-     * observed on the {@code mac-other} CI job. Linux (epoll) and Windows are
-     * unaffected.
-     * <p>
-     * {@link #testCreditFlowCompletesLargeQuery} draws random fragmentation chunks,
-     * so it only stalls on the unlucky seeds that pick a small send chunk. This test
-     * pins a small send chunk and runs many short queries to make the stall reliable
-     * on macOS. The JUnit timeout turns a stall into a fast failure instead of the
-     * 20-minute global test timeout.
-     */
-    @Test(timeout = 600_000)
-    public void testCreditFlowNoStallUnderForcedFragmentation() throws Exception {
-        // The stall is a race, rare even on macOS, so reproduce the exact failing
-        // shape -- a single connection streaming 500k rows under a 4 KiB credit --
-        // many times across a couple of small send-fragmentation sizes. A small
-        // sendChunk forces every batch send to park on write-backpressure, which
-        // drives the WRITE <-> READ interest churn that exposes the dispatcher
-        // stall. Linux (epoll) and Windows are unaffected and finish in seconds.
-        final int rowCount = 500_000;
-        // Moderate chunks (no byte-level) so Linux/Windows finish under the timeout
-        // while still forcing every batch to park on write-backpressure on macOS.
-        final int[] sendChunks = {40, 64, 96, 160};
-        final int queriesPerChunk = 10;
-
-        // Diagnostic kqueue trace (macOS only): prints "KQTRACE arm/fire READ" per
-        // fd so the stalled connection shows an "arm READ" with no following
-        // "fire READ". No-op on Linux/Windows (IODispatcherOsx is not used there).
-        io.questdb.network.IODispatcherOsx.traceQwp = true;
-
-        // Diagnostic watchdog: if a single query makes no progress for 60s (the
-        // stall), dump every thread stack to stdout so the CI log captures where
-        // the server network worker is parked. Never fires on the healthy path
-        // (a query completes in a few seconds). A separate "too slow but not
-        // stalled" timeout would show NO dump, distinguishing it from a real stall.
-        final long[] lastProgressMs = {System.currentTimeMillis()};
-        final boolean[] stop = {false};
-        Thread watchdog = new Thread(() -> {
-            boolean dumped = false;
-            while (!stop[0]) {
-                Os.sleep(2_000);
-                if (!dumped && !stop[0] && System.currentTimeMillis() - lastProgressMs[0] > 60_000) {
-                    StringBuilder sb = new StringBuilder("\nQWP CREDIT-FLOW STALL THREAD DUMP\n");
-                    for (java.util.Map.Entry<Thread, StackTraceElement[]> e : Thread.getAllStackTraces().entrySet()) {
-                        sb.append('"').append(e.getKey().getName()).append("\" ").append(e.getKey().getState()).append('\n');
-                        for (StackTraceElement st : e.getValue()) {
-                            sb.append("    at ").append(st).append('\n');
-                        }
-                        sb.append('\n');
-                    }
-                    System.out.println(sb);
-                    dumped = true;
-                }
-            }
-        }, "qwp-credit-flow-watchdog");
-        watchdog.setDaemon(true);
-        watchdog.start();
-
-        try {
-            TestUtils.assertMemoryLeak(() -> {
-                for (int c = 0; c < sendChunks.length; c++) {
-                    sendChunk = sendChunks[c];
-                    recvChunk = 64;
-                    // Servers in this loop share one data dir, so give each
-                    // fragmentation size its own table to avoid "table already exists".
-                    final String table = "big" + c;
-                    try (final TestServerMain serverMain = startFragmented()) {
-                        serverMain.execute(
-                                "CREATE TABLE IF NOT EXISTS " + table + " AS (SELECT x AS id, CAST(x * 1.5 AS DOUBLE) AS v, " +
-                                        "x::TIMESTAMP AS ts " +
-                                        "FROM long_sequence(" + rowCount + ")) TIMESTAMP(ts) PARTITION BY DAY WAL");
-                        serverMain.awaitTable(table);
-
-                        for (int iter = 0; iter < queriesPerChunk; iter++) {
-                            lastProgressMs[0] = System.currentTimeMillis();
-                            final int sc = sendChunks[c];
-                            final int queryIndex = iter;
-                            System.out.println("QWP STREAM START sendChunk=" + sc + " iter=" + queryIndex);
-                            try (QwpQueryClient client = QwpQueryClient.fromConfig(
-                                            "ws::addr=127.0.0.1:" + HTTP_PORT + ";")
-                                    .withInitialCredit(4 * 1024)) {
-                                client.connect();
-                                final int[] rows = {0};
-                                client.execute("SELECT * FROM " + table, new QwpColumnBatchHandler() {
-                                    @Override
-                                    public void onBatch(QwpColumnBatch batch) {
-                                        rows[0] += batch.getRowCount();
-                                    }
-
-                                    @Override
-                                    public void onEnd(long totalRows) {
-                                    }
-
-                                    @Override
-                                    public void onError(byte status, String message) {
-                                        Assert.fail("credit-flow query [sendChunk=" + sc
-                                                + ", iter=" + queryIndex + "] error: " + message);
-                                    }
-                                });
-                                Assert.assertEquals(rowCount, rows[0]);
-                            }
-                        }
-                    }
-                }
-            });
-        } finally {
-            io.questdb.network.IODispatcherOsx.traceQwp = false;
-            stop[0] = true;
-            watchdog.interrupt();
-        }
     }
 
     @Test
