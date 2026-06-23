@@ -930,6 +930,15 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
         // If we don't have intervals to query, we may still need to bump base table txn or last period hi.
         if (intervalIterator == null) {
+            if (refreshContext.hasTruncateBarrier) {
+                // A truncate sits in the scanned range; the durable INVALIDATE is already enqueued.
+                // Do NOT commit a no-rows watermark advance here -- that would push lastRefreshBaseTxn
+                // past the truncate and blind the load-time backstop if the invalidation is later lost.
+                // Restore the in-memory start timestamp bumped above so the view does not report
+                // "refreshing" forever, and end this run without advancing.
+                viewState.setLastRefreshStartTimestampUs(prevRefreshStartTimestamp);
+                return false;
+            }
             final long commitBaseTxn = refreshContext.toBaseTxn != -1 ? refreshContext.toBaseTxn : viewState.getLastRefreshBaseTxn();
             final long commitPeriodHi = refreshContext.periodHi != Numbers.LONG_NULL ? refreshContext.periodHi : viewState.getLastPeriodHi();
             // Only commit when the watermark actually advances. Committing an unchanged watermark
@@ -1927,6 +1936,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     // releases the lock, going through invalidateView so it inherits the read-only
                     // short-circuit (a replica defers rather than acquiring a writer).
                     stateStore.enqueueInvalidate(viewToken, "truncate operation");
+                    // Signal the surrounding refresh to stop without committing: returning an empty
+                    // interval list otherwise falls through to the no-rows commit, which would persist
+                    // a base-txn watermark past the truncate and hide it from the load-time backstop.
+                    refreshContext.hasTruncateBarrier = true;
                     intervals.clear();
                     return intervals;
                 }
@@ -1997,6 +2010,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private static class RefreshContext implements Mutable {
         public final LongList stepPerInterval = new LongList();
         public long approxBucketSize;
+        public boolean hasTruncateBarrier;
         public SampleByIntervalIterator intervalIterator;
         public long naturalStep;
         public long periodHi = Numbers.LONG_NULL;
@@ -2010,6 +2024,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         @Override
         public void clear() {
             approxBucketSize = 0;
+            hasTruncateBarrier = false;
             intervalIterator = null;
             naturalStep = 0;
             periodHi = Numbers.LONG_NULL;

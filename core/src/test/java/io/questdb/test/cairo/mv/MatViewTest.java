@@ -7957,6 +7957,50 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTruncateBarrierDoesNotAdvanceRefreshBaseTxnPastTruncate() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, val double, ts timestamp) timestamp(ts) partition by DAY WAL");
+            createMatView("mv", "select ts, count() cnt from base sample by 1h");
+            execute("insert into base values ('a', 1.0, '2024-09-10T12:00'), ('a', 2.0, '2024-09-10T12:30')");
+            drainQueues(); // applies base WAL and converges the view
+
+            final TableToken viewToken = engine.verifyTableName("mv");
+            final MatViewStateStoreImpl store = (MatViewStateStoreImpl) engine.getMatViewStateStore();
+            final MatViewState state = store.getViewState(viewToken);
+            Assert.assertNotNull(state);
+            final long baseTxnBeforeTruncate = state.getLastRefreshBaseTxn();
+            Assert.assertTrue(baseTxnBeforeTruncate > -1);
+
+            // Truncate (the barrier) then add a later bucket. Apply only the base WAL so the truncate sits
+            // in the gap the next incremental refresh scans, WITHOUT processing mat-view tasks yet.
+            execute("truncate table base");
+            execute("insert into base values ('a', 9.0, '2024-09-10T20:00')");
+            drainWalQueue();
+
+            // Drain any queued mat-view task (including the apply-time INVALIDATE) before the lone
+            // refresh run, so the refresh run itself -- not a separately-queued INVALIDATE -- is what
+            // must avoid advancing the watermark past the truncate.
+            final MatViewRefreshTask discard = new MatViewRefreshTask();
+            while (store.tryDequeueRefreshTask(discard)) {
+                // drop
+            }
+
+            // Drive ONE fresh incremental refresh. The truncate in the scanned range must NOT let the
+            // no-rows commit advance the persisted base txn past the truncate.
+            store.enqueueIncrementalRefresh(viewToken);
+            try (MatViewRefreshJob job = createMatViewRefreshJob()) {
+                job.run();
+            }
+
+            Assert.assertEquals(
+                    "a truncate-barrier refresh must not advance the persisted base txn past the truncate",
+                    baseTxnBeforeTruncate,
+                    state.getLastRefreshBaseTxn()
+            );
+        });
+    }
+
+    @Test
     public void testTtl() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
