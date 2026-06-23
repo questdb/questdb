@@ -547,13 +547,31 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         final long auxFileOffset = ARRAY_AUX_WIDTH_BYTES * row;
         final long offset = readLong(ff, auxFd, auxFileOffset) & OFFSET_MAX;
         final int size = readInt(ff, auxFd, auxFileOffset + Long.BYTES);
-        if (row > 0 && size > 0 && offset == 0) {
-            throw CairoException.critical(0)
-                    .put("Invalid data offset read from array aux file, possible torn write [auxFd=").put(auxFd)
-                    .put(", row=").put(row).put(", offset=").put(offset).put(", size=").put(size)
-                    .put(", fileSize=").put(ff.length(auxFd)).put(']');
+        // Torn-write guard: data offsets are monotonic. A null entry has size=0 and
+        // offset=current-data-end (same as the previous end), so null-prefix rows
+        // are never flagged. A torn/un-flushed aux entry leaves the offset field
+        // zeroed while the previous row's data end is non-zero → offset < prevEnd.
+        // Do NOT check offset==0: a real array whose offset is 0 is valid when all
+        // preceding entries are null (they write no data bytes, so data-end stays 0).
+        if (row > 0) {
+            final long prevDataEnd = arrayDataEndAtFromFd(ff, auxFd, row - 1);
+            if (offset < prevDataEnd) {
+                throw CairoException.critical(0)
+                        .put("Invalid data offset read from array aux file, possible torn write [auxFd=").put(auxFd)
+                        .put(", row=").put(row).put(", offset=").put(offset).put(", size=").put(size)
+                        .put(", prevDataEnd=").put(prevDataEnd)
+                        .put(", fileSize=").put(ff.length(auxFd)).put(']');
+            }
         }
         return offset + size;
+    }
+
+    // Reads the data-vector END (offset+size) of one aux entry from the fd.
+    // Non-recursive; one entry only. A null entry (size=0) returns its offset,
+    // which equals the previous cumulative end — correct for monotonicity checks.
+    private static long arrayDataEndAtFromFd(FilesFacade ff, long auxFd, long row) {
+        final long auxFileOffset = ARRAY_AUX_WIDTH_BYTES * row;
+        return (readLong(ff, auxFd, auxFileOffset) & OFFSET_MAX) + readInt(ff, auxFd, auxFileOffset + Long.BYTES);
     }
 
     @Override
