@@ -75,8 +75,12 @@ public class SubTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public long getTimestamp(Record rec) {
+            // The right operand is a LONG (signature "-(Nl)"), so read it with getLong().
+            // Calling getTimestamp() here breaks for operands whose getTimestamp() is unsupported,
+            // e.g. a CHAR constant implicitly cast to LONG ("now() - '1'"), which threw
+            // UnsupportedOperationException. This mirrors AddLongToTimestampFunctionFactory.
             long l = left.getTimestamp(rec);
-            long r = right.getTimestamp(rec);
+            long r = right.getLong(rec);
 
             if (l != Numbers.LONG_NULL && r != Numbers.LONG_NULL) {
                 return l - r;
