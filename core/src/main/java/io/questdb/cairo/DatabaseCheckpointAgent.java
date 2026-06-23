@@ -947,6 +947,9 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             // Delete the checkpoint directory to avoid recovery on the next restart.
             srcPath.trimTo(checkpointRootLen).$();
             memFile.close();
+            if (ff.sync() != 0) {
+                LOG.error().$("sync() failed during checkpoint recovery [errno=").$(ff.errno()).I$();
+            }
             if (!ff.rmdir(srcPath)) {
                 throw CairoException.critical(ff.errno())
                         .put("could not remove checkpoint dir [dir=").put(srcPath)
