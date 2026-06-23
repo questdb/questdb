@@ -144,6 +144,7 @@ public class QwpSenderOversizeRowInBatchTest extends AbstractCairoTest {
                 server.stop();
                 drainWalQueue();
                 engine.releaseInactive();
+                engine.getMemoryTrackerProvider().clear();
             }
         });
     }
@@ -206,6 +207,7 @@ public class QwpSenderOversizeRowInBatchTest extends AbstractCairoTest {
                 server.stop();
                 drainWalQueue();
                 engine.releaseInactive();
+                engine.getMemoryTrackerProvider().clear();
             }
         });
     }

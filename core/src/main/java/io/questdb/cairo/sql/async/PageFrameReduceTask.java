@@ -35,6 +35,7 @@ import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.IntHashSet;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.NumericException;
@@ -198,6 +199,15 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         return frameSequenceId;
     }
 
+    /**
+     * Returns the per-query memory tracker captured by the owning frame sequence
+     * at workload start, or {@code null} between workloads / when no per-query
+     * limit is configured. Workers feed this to tracker-aware allocation paths.
+     */
+    public MemoryTracker getMemoryTracker() {
+        return frameSequence != null ? frameSequence.getMemoryTracker() : null;
+    }
+
     public byte getTaskType() {
         return taskType;
     }
@@ -229,6 +239,10 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         this.taskType = frameSequence.getTaskType();
         this.frameIndex = frameIndex;
         this.isCountOnly = countOnly;
+        // Rebind the per-query tracker on every frame: clear() nulls it on the
+        // pool between frames, and the pool.of() below only re-runs on a fresh
+        // query. Top K uses its own frame memory pool, so this is a no-op there.
+        frameMemoryPool.setMemoryTracker(frameSequence.getMemoryTracker());
         // Initialize the memory pool if the task wasn't previously initialized for the same query,
         // or it belongs to top K. Top K uses its own frame memory pool.
         if (!sameQueryExecution && taskType != TYPE_TOP_K) {

@@ -141,8 +141,15 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final int order = base.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
         frameSequence.of(base, executionContext, order);
-        cursor.of(frameSequence);
-        return cursor;
+        try {
+            cursor.of(frameSequence);
+            return cursor;
+        } catch (Throwable th) {
+            // On a mid-reopen breach, close() drains the partially reopened atom and resets isOpen
+            // so the cached factory stays reusable.
+            cursor.close();
+            throw th;
+        }
     }
 
     @Override
@@ -245,13 +252,7 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
                 }
                 final SortKeyEncoder encoder = atom.getEncoder(slotId);
                 final EncodedTopKBuffer topK = atom.getTopK(slotId);
-                if (!encoder.encodeFixed8Frame(frameMemory, frameIndex, rows, topK)) {
-                    for (long p = 0, n = rows.size(); p < n; p++) {
-                        record.setRowIndex(rows.get(p));
-                        encoder.encode(record, topK.beginAppend(), record.getRowId());
-                        topK.endAppend();
-                    }
-                }
+                encoder.encodeFrame(frameMemory, frameIndex, rows, frameRowCount, topK, record);
             } else {
                 if (useLateMaterialization && frameMemory.populateRemainingColumns(filterCtx.getFilterUsedColumnIndexes(), rows, true)) {
                     record.init(frameMemory);
@@ -301,13 +302,7 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
                 record.init(frameMemory);
                 final SortKeyEncoder encoder = atom.getEncoder(slotId);
                 final EncodedTopKBuffer topK = atom.getTopK(slotId);
-                if (!encoder.encodeFixed8Frame(frameMemory, frameIndex, frameRowCount, topK)) {
-                    for (long r = 0; r < frameRowCount; r++) {
-                        record.setRowIndex(r);
-                        encoder.encode(record, topK.beginAppend(), record.getRowId());
-                        topK.endAppend();
-                    }
-                }
+                encoder.encodeFrame(frameMemory, frameIndex, null, frameRowCount, topK, record);
             } else {
                 final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
                 record.init(frameMemory);

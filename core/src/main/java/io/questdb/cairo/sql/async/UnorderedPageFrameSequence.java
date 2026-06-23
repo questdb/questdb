@@ -49,6 +49,7 @@ import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
 import io.questdb.std.Os;
@@ -95,6 +96,11 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
     private boolean isReadyToDispatch;
     private boolean isUninterruptible;
     private PageFrameMemoryRecord localRecord;
+    // Per-query native memory tracker captured from the owning SqlExecutionContext
+    // at workload start. Null when no per-query limit is configured. Workers read
+    // this off the task via task.getFrameSequence().getMemoryTracker() to charge
+    // their allocations to the active workload.
+    private MemoryTracker memoryTracker;
     private int queuedCount;
     private SqlExecutionContext sqlExecutionContext;
     private long startTime;
@@ -292,6 +298,10 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
         return id;
     }
 
+    public MemoryTracker getMemoryTracker() {
+        return memoryTracker;
+    }
+
     public PageFrameAddressCache getPageFrameAddressCache() {
         return frameAddressCache;
     }
@@ -330,6 +340,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
             int order
     ) throws SqlException {
         sqlExecutionContext = executionContext;
+        memoryTracker = executionContext.getMemoryTracker();
         startTime = clock.getTicks();
         isUninterruptible = executionContext.isUninterruptible();
 
@@ -382,6 +393,8 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
         frameCount = 0;
         queuedCount = 0;
         isReadyToDispatch = false;
+        // Drop the borrowed tracker reference; the provider owns the native block.
+        memoryTracker = null;
         frameRowCounts.clear();
         atom.clear();
         Misc.free(frameAddressCache);

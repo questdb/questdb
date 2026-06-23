@@ -237,6 +237,7 @@ public class Decimal256 implements Sinkable, Decimal {
     private long hl;    // High 64 bits (bits 128-191)
     private long lh;    // Mid 64 bits (bits 64-127)
     private long ll;    // Low 64 bits (bits 0-63)
+    private int[] ryuE10;
     private int scale;  // Number of decimal places
     // @formatter:on
 
@@ -905,6 +906,43 @@ public class Decimal256 implements Sinkable, Decimal {
 
     public static void uncheckedAdd(Decimal256 result, Decimal256 b) {
         uncheckedAdd(result, b.hh, b.hl, b.lh, b.ll);
+    }
+
+    /**
+     * Subtracts the raw 256-bit value of {@code b} from {@code result} in place, ignoring scale.
+     * <p>
+     * This is the subtraction counterpart of {@link #uncheckedAdd(Decimal256, Decimal256)}: both operands
+     * must already share the same scale, neither may be null, and the difference must fit within a
+     * {@link Decimal256}. No scale alignment, null handling, or overflow validation happens here, so callers
+     * must enforce those preconditions. Window sum/avg accumulators rely on this raw behaviour so that a value
+     * removed from a sliding frame cancels exactly the limbs that {@code uncheckedAdd} contributed.
+     *
+     * @param result the accumulator that receives the difference (updated in place)
+     * @param b      the value to subtract, interpreted using two's-complement semantics
+     */
+    public static void uncheckedSubtract(Decimal256 result, Decimal256 b) {
+        // Raw 256-bit subtract with borrow: result -= b, limb by limb. This mirrors the
+        // uncheckedAdd carry chain (a borrow where uncheckedAdd has a carry), so a value
+        // removed from a sliding frame cancels exactly the limbs uncheckedAdd contributed,
+        // without first negating all four limbs of b. hasCarry(a, sum) reports sum < a
+        // unsigned, so hasCarry(subtrahend, minuend) detects the borrow out of each limb.
+        long r = result.ll - b.ll;
+        long borrow = hasCarry(b.ll, result.ll) ? 1L : 0L;
+        result.ll = r;
+
+        long t = result.lh - borrow;
+        borrow = hasCarry(borrow, result.lh) ? 1L : 0L;
+        r = t - b.lh;
+        borrow |= hasCarry(b.lh, t) ? 1L : 0L;
+        result.lh = r;
+
+        t = result.hl - borrow;
+        borrow = hasCarry(borrow, result.hl) ? 1L : 0L;
+        r = t - b.hl;
+        borrow |= hasCarry(b.hl, t) ? 1L : 0L;
+        result.hl = r;
+
+        result.hh = result.hh - borrow - b.hh;
     }
 
     /**
@@ -1699,6 +1737,14 @@ public class Decimal256 implements Sinkable, Decimal {
             of(hh, hl, lh, ll, scale);
             throw e;
         }
+    }
+
+    @Override
+    public int[] ryuScratch() {
+        if (ryuE10 == null) {
+            ryuE10 = new int[1];
+        }
+        return ryuE10;
     }
 
     /**

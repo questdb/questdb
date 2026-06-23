@@ -34,6 +34,10 @@ public class NullMetricsRegistry implements MetricsRegistry {
     }
 
     @Override
+    public void removeTarget(Target target) {
+    }
+
+    @Override
     public AtomicLongGauge newAtomicLongGauge(CharSequence name) {
         return NullLongGauge.INSTANCE;
     }

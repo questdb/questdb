@@ -33,7 +33,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.Socket;
 import io.questdb.std.MemoryTag;
-import io.questdb.std.ThreadLocal;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8s;
@@ -44,7 +44,7 @@ import java.security.SecureRandom;
 public class EllipticCurveAuthenticator implements SocketAuthenticator {
     private static final Log LOG = LogFactory.getLog(EllipticCurveAuthenticator.class);
 
-    private static final ThreadLocal<SecureRandom> tlSrand = new ThreadLocal<>(SecureRandom::new);
+    private static final CarrierLocal<SecureRandom> tlSrand = new CarrierLocal<>(SecureRandom::new);
     private final ChallengeResponseMatcher challengeResponseMatcher;
     private final DirectUtf8String userNameFlyweight = new DirectUtf8String();
     protected long recvBufPseudoStart;

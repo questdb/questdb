@@ -34,7 +34,7 @@ import io.questdb.std.Mutable;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.ReadOnlyObjList;
-import io.questdb.std.ThreadLocal;
+import io.questdb.std.CarrierLocal;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
@@ -47,9 +47,9 @@ import java.util.function.Function;
  * This object is always in-use, even when mat views are disabled or the node is a read-only replica.
  */
 public class MatViewGraph implements Mutable {
-    private static final java.lang.ThreadLocal<MatViewDefinition> tlDefinitionTask = new java.lang.ThreadLocal<>();
-    private static final ThreadLocal<LowerCaseCharSequenceHashSet> tlSeen = new ThreadLocal<>(LowerCaseCharSequenceHashSet::new);
-    private static final ThreadLocal<ArrayDeque<CharSequence>> tlStack = new ThreadLocal<>(ArrayDeque::new);
+    private static final CarrierLocal<MatViewDefinition> tlDefinitionTask = new CarrierLocal<>();
+    private static final CarrierLocal<LowerCaseCharSequenceHashSet> tlSeen = new CarrierLocal<>(LowerCaseCharSequenceHashSet::new);
+    private static final CarrierLocal<ArrayDeque<CharSequence>> tlStack = new CarrierLocal<>(ArrayDeque::new);
     private final Function<CharSequence, ViewDependencyList> createDependencyList;
     private final ConcurrentHashMap<MatViewDefinition> definitionsByTableDirName = new ConcurrentHashMap<>();
     // Note: this map is grow-only, i.e. keys are never removed.

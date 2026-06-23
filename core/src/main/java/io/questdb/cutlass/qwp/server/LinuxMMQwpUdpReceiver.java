@@ -29,6 +29,8 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.network.Net;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.concurrent.atomic.AtomicBoolean;
+
 public class LinuxMMQwpUdpReceiver extends QwpUdpReceiver {
     private final int msgCount;
     private long msgVec;
@@ -38,7 +40,11 @@ public class LinuxMMQwpUdpReceiver extends QwpUdpReceiver {
     }
 
     public LinuxMMQwpUdpReceiver(QwpUdpReceiverConfiguration configuration, CairoEngine engine, @Nullable WorkerPool workerPool) {
-        super(configuration, engine, workerPool);
+        this(configuration, engine, workerPool, new AtomicBoolean(true));
+    }
+
+    public LinuxMMQwpUdpReceiver(QwpUdpReceiverConfiguration configuration, CairoEngine engine, @Nullable WorkerPool workerPool, AtomicBoolean acceptOpen) {
+        super(configuration, engine, workerPool, acceptOpen);
         this.msgCount = configuration.getMsgCount();
         try {
             this.msgVec = nf.msgHeaders(bufLen, msgCount);
@@ -62,9 +68,20 @@ public class LinuxMMQwpUdpReceiver extends QwpUdpReceiver {
         if (checkClosed()) {
             return false;
         }
+        if (!acceptOpen.get()) {
+            // Mirror the worker-path acceptOpen gate so the own-thread driver
+            // also quiesces after switchRole publishes acceptOpen=false. Placed
+            // AFTER checkClosed() so close()'s acknowledgment spin (which sets
+            // closedAcknowledged inside checkClosed()) can still progress.
+            return false;
+        }
         boolean ran = false;
         int count;
         while ((count = nf.recvmmsgRaw(fd, msgVec, msgCount)) > 0) {
+            ran = true;
+            if (!acceptOpen.get()) {
+                return true;
+            }
             long p = msgVec;
             for (int i = 0; i < count; i++) {
                 int datagramState = processDatagram(nf.getMMsgBuf(p), (int) nf.getMMsgBufLen(p));
@@ -80,7 +97,6 @@ public class LinuxMMQwpUdpReceiver extends QwpUdpReceiver {
                 p += Net.MMSGHDR_SIZE;
             }
 
-            ran = true;
             if (totalCount >= maxUncommittedDatagrams) {
                 totalCount = 0;
                 forceCommitAll();

@@ -361,6 +361,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private boolean o3FinishInFlight = false;
     private boolean o3InError = false;
     private long o3MasterRef = -1L;
+    // Max timestamp of committed data left on disk by o3MoveUncommitted() that is NOT part of the
+    // sorted O3 batch (set only when uncommitted rows span more than the active partition).
+    private long o3MoveUncommittedMaxTimestamp = Long.MIN_VALUE;
     private ObjList<MemoryCARW> o3MemColumns1;
     private ObjList<MemoryCARW> o3MemColumns2;
     private ObjList<Runnable> o3NullSetters1;
@@ -6228,6 +6231,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void doClose(boolean truncate) {
+        // Run the lifecycle manager's pre-free hook before freeing anything. The writer pool
+        // drains in-flight async-command publishers here so a direct destroy() (the WAL
+        // drop-table purge path) cannot free the command queue underneath a publisher
+        // mid-serialize and crash the JVM with a SIGSEGV. The default hook is a no-op.
+        lifecycleManager.onBeforeClose();
         // destroy() may have already closed everything
         boolean tx = inTransaction();
         // Best-effort cleanup that now does I/O: a spill mmap, and a direct
@@ -7203,18 +7211,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final long partitionSize = txWriter.getPartitionRowCountByTimestamp(timestamp);
         final long columnTop = columnVersionWriter.getColumnTop(timestamp, columnIndex);
 
-        // Invariant: on a parquet partition the indexed SYMBOL's columnTop
-        // is either 0 (column has data from row 0) or partitionSize (column
-        // is all-NULL in this partition). zeroColumnTopsAfterParquetRewrite
-        // collapses every intermediate 0 < columnTop < partitionSize down
-        // to 0 at convert time, so the merged decode below can rely on
-        // columnTop == 0 whenever it executes. A future ATTACH PARQUET /
-        // restore path that bypasses that routine must restore this
-        // invariant before reaching here, or the rowLo formula at the
-        // decodeRowGroup call would truncate the covered columns.
-        assert columnTop == 0 || columnTop == partitionSize
+        // Invariant: on a parquet partition the indexed SYMBOL's columnTop is
+        // one of three values. 0 (column has data from row 0):
+        // zeroColumnTopsAfterParquetRewrite collapses every intermediate
+        // 0 < columnTop < partitionSize down to 0 at convert time, so the merged
+        // decode below can rely on columnTop == 0 whenever it executes.
+        // partitionSize (an explicit column-version record marks the column
+        // all-NULL in this partition). -1 (getColumnTop's "column does not exist
+        // in this partition" sentinel, returned when the column was added in a
+        // later partition and has no record here). The guard below skips both -1
+        // and partitionSize -- there is nothing to index -- so only 0 reaches the
+        // decode. A future ATTACH PARQUET / restore path that bypasses
+        // zeroColumnTopsAfterParquetRewrite must restore this invariant before
+        // reaching here, or the rowLo formula at the decodeRowGroup call would
+        // truncate the covered columns.
+        assert columnTop == -1 || columnTop == 0 || columnTop == partitionSize
                 : "parquet partition indexed SYMBOL columnTop=" + columnTop
-                + " is neither 0 nor partitionSize=" + partitionSize
+                + " is none of -1, 0 or partitionSize=" + partitionSize
                 + " (timestamp=" + timestamp + ", columnIndex=" + columnIndex + ")";
 
         if (columnTop > -1 && partitionSize > columnTop) {
@@ -7913,7 +7926,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     o3TimestampMax,
                     true,
                     0L,
-                    TableWriterPressureControl.EMPTY
+                    TableWriterPressureControl.EMPTY,
+                    o3MoveUncommittedMaxTimestamp
             );
         } finally {
             finishO3Append(o3LagRowCount);
@@ -8531,6 +8545,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private long o3MoveUncommitted() {
+        o3MoveUncommittedMaxTimestamp = Long.MIN_VALUE;
         final long committedRowCount = txWriter.unsafeCommittedFixedRowCount() + txWriter.unsafeCommittedTransientRowCount();
         final long rowsAdded = txWriter.getRowCount() - committedRowCount;
         final long transientRowCount = txWriter.getTransientRowCount();
@@ -8541,6 +8556,30 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .$(", transientRowsAdded=").$(transientRowsAdded)
                     .I$();
             final long committedTransientRowCount = transientRowCount - transientRowsAdded;
+            // When the uncommitted rows span more than the active partition (rowsAdded > transientRowCount),
+            // o3MoveUncommitted only pulls the active partition's rows into O3 memory and empties it; the
+            // data left on disk in the previous (now last) partition stays committed but is NOT part of the
+            // sorted O3 batch. As a result o3TimestampMax (the O3 batch commit boundary) can be lower than
+            // the true max committed timestamp. Capture the previous partition's actual max timestamp so
+            // o3Commit keeps the writer's maxTimestamp correct; otherwise a later O3 commit merges the last
+            // partition against a too-low boundary and reorders rows (a single timestamp inversion).
+            if (rowsAdded > transientRowCount) {
+                final int prevIndex = txWriter.getPartitionCount() - 2;
+                if (prevIndex >= 0) {
+                    final long prevSize = txWriter.getPartitionSize(prevIndex);
+                    if (prevSize > 0) {
+                        final long prevTimestamp = txWriter.getPartitionTimestampByIndex(prevIndex);
+                        final long parquetFileSize = txWriter.getPartitionParquetFileSize(prevIndex);
+                        try {
+                            setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, prevTimestamp, txWriter.getPartitionNameTxn(prevIndex));
+                            readPartitionMinMaxTimestamps(prevTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), parquetFileSize, prevSize);
+                            o3MoveUncommittedMaxTimestamp = attachMaxTimestamp;
+                        } finally {
+                            path.trimTo(pathSize);
+                        }
+                    }
+                }
+            }
             dispatchColumnTasks(
                     committedTransientRowCount,
                     IGNORE,
@@ -9122,7 +9161,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final long o3TimestampMax,
             boolean flattenTimestamp,
             long rowLo,
-            TableWriterPressureControl pressureControl
+            TableWriterPressureControl pressureControl,
+            // Max timestamp of already-committed data that is not part of the sorted O3 batch (see
+            // o3MoveUncommitted). Long.MIN_VALUE when there is no such data.
+            long committedDataMaxTimestamp
     ) {
         o3ErrorCount.set(0);
         o3oomObserved = false;
@@ -9492,11 +9534,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             } // end while(srcOoo < srcOooMax)
 
             // at this point we should know the last partition row count
-            partitionTimestampHi = Math.max(partitionTimestampHi, txWriter.getCurrentPartitionMaxTimestamp(o3TimestampMax));
-
             if (!isCommitReplaceMode()) {
-                txWriter.updateMaxTimestamp(Math.max(txWriter.getMaxTimestamp(), o3TimestampMax));
+                partitionTimestampHi = Math.max(partitionTimestampHi, txWriter.getCurrentPartitionMaxTimestamp(o3TimestampMax));
+                long committedMaxTimestamp = Math.max(txWriter.getMaxTimestamp(), o3TimestampMax);
+                // Committed data left on disk outside the O3 batch may have a higher timestamp than the
+                // O3 batch commit boundary; keep the writer's maxTimestamp consistent with what is on disk.
+                committedMaxTimestamp = Math.max(committedMaxTimestamp, committedDataMaxTimestamp);
+                txWriter.updateMaxTimestamp(committedMaxTimestamp);
             } else if (replaceMaxTimestamp != Long.MIN_VALUE) {
+                // Derive partitionTimestampHi from the actual highest written timestamp, not
+                // o3TimestampMax (the replace-range high boundary, which is Long.MAX_VALUE - 1 for
+                // an open-ended range and overflows getCurrentPartitionMaxTimestamp). Otherwise a
+                // replace that appends partitions above the previous last partition leaves
+                // partitionTimestampHi stale, finishO3Commit skips switching the active partition,
+                // and the next commit reuses the previous partition's column descriptors.
+                partitionTimestampHi = Math.max(partitionTimestampHi, txWriter.getCurrentPartitionMaxTimestamp(replaceMaxTimestamp));
                 txWriter.updateMaxTimestamp(replaceMaxTimestamp);
             }
         } catch (Throwable th) {
@@ -10761,7 +10813,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     commitMaxTimestamp,
                     copiedToMemory,
                     o3Lo,
-                    pressureControl
+                    pressureControl,
+                    Long.MIN_VALUE
             );
 
             finishO3Commit(initialPartitionTimestampHi);
@@ -11166,25 +11219,40 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // so the chain walk is not the recovery path here.
                         indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn());
                         indexer.getWriter().commit();
-                        indexer.publishPendingPurges(messageBus, tableToken, partitionBy, timestampType, txWriter.getTxn());
                     } finally {
-                        unmapCoveringColumns(coverCount);
-                        // Same pattern as sealPostingIndexesForO3Partitions: drop
-                        // the borrowed read-side mappings but keep the covering
-                        // schema (coverCount, sidecarMems) so the next commit on
-                        // this writer still publishes a chain entry with a
-                        // correct cover footer. clearCovering() would zero
-                        // coverCount and the next captureCoverEndOffsets would
-                        // short-circuit, dropping the footer.
-                        indexer.releaseCoveredColumnReadMappings();
+                        // Publish staged seal-purge entries even when commit()'s
+                        // MAX_GEN_COUNT auto-seal threw post-switch (poisoning the
+                        // writer and staging an orphan purge): the distress close
+                        // drops an unpublished outbox, leaking the staged .pv/.pc.
+                        // Idempotent no-op on an empty outbox. Nested so the
+                        // covering-column unmap still runs if the publish throws.
+                        try {
+                            indexer.publishPendingPurges(messageBus, tableToken, partitionBy, timestampType, txWriter.getTxn());
+                        } finally {
+                            unmapCoveringColumns(coverCount);
+                            // Same pattern as sealPostingIndexesForO3Partitions: drop
+                            // the borrowed read-side mappings but keep the covering
+                            // schema (coverCount, sidecarMems) so the next commit on
+                            // this writer still publishes a chain entry with a
+                            // correct cover footer. clearCovering() would zero
+                            // coverCount and the next captureCoverEndOffsets would
+                            // short-circuit, dropping the footer.
+                            indexer.releaseCoveredColumnReadMappings();
+                        }
                     }
                     continue;
                 }
                 // Non-covering branch of the WAL fast-lag path. See the
                 // covering branch above for why getTxn() (not getTxn()+1L).
                 indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn());
-                indexer.getWriter().commit();
-                indexer.publishPendingPurges(messageBus, tableToken, partitionBy, timestampType, txWriter.getTxn());
+                try {
+                    indexer.getWriter().commit();
+                } finally {
+                    // Publish staged seal-purge entries even when commit()'s
+                    // MAX_GEN_COUNT auto-seal threw post-switch; see the covering
+                    // branch. Idempotent no-op on an empty outbox.
+                    indexer.publishPendingPurges(messageBus, tableToken, partitionBy, timestampType, txWriter.getTxn());
+                }
             }
         } finally {
             if (coveringPathLen != -1) {
@@ -12787,19 +12855,28 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // remains available to T-pinned readers and recovery.
                         indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn() + 1L);
                         indexer.rebuildSidecars();
-                        deferPendingPostingSealPurges(indexer, txWriter.getTxn());
                     } finally {
-                        unmapCoveringColumns(coverCount);
-                        // Drop the writer's reference to o3SealAddrs so that
-                        // a subsequent close() -> seal() cannot dereference the
-                        // unmapped addresses. Keep the covering schema
-                        // (coverCount, sidecarMems) intact so a subsequent
-                        // commit() between seals still publishes a chain
-                        // entry with a correct cover footer; clearCovering()
-                        // would zero coverCount and the next
-                        // captureCoverEndOffsets would short-circuit, dropping
-                        // the footer.
-                        indexer.releaseCoveredColumnReadMappings();
+                        // Publish staged seal-purge entries even when the reseal
+                        // above threw post-switch (poisoning the writer and staging
+                        // an orphan purge): the distress close drops an unpublished
+                        // outbox, leaking the staged .pv/.pc. Idempotent no-op on an
+                        // empty outbox. Mirrors the O3/parquet finally. Nested so the
+                        // covering-column unmap still runs if the publish throws.
+                        try {
+                            deferPendingPostingSealPurges(indexer, txWriter.getTxn());
+                        } finally {
+                            unmapCoveringColumns(coverCount);
+                            // Drop the writer's reference to o3SealAddrs so that
+                            // a subsequent close() -> seal() cannot dereference the
+                            // unmapped addresses. Keep the covering schema
+                            // (coverCount, sidecarMems) intact so a subsequent
+                            // commit() between seals still publishes a chain
+                            // entry with a correct cover footer; clearCovering()
+                            // would zero coverCount and the next
+                            // captureCoverEndOffsets would short-circuit, dropping
+                            // the footer.
+                            indexer.releaseCoveredColumnReadMappings();
+                        }
                     }
                 } else {
                     indexer.configureFollowerAndWriter(
@@ -12807,28 +12884,34 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             getPrimaryColumn(colIdx), columnTop,
                             partitionTimestamp, partitionNameTxn
                     );
-                    // Same getTxn()+1 convention as O3CopyJob and the
-                    // covering branch above. See comment there.
-                    indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn() + 1L);
-                    indexer.mergeTentativeIntoActiveIfAny();
-                    if (canSkipRebuild) {
-                        // See pure-append fast-path comment in the covering branch above.
-                        indexer.getWriter().rollbackConditionally(partitionSize);
-                        // Defer compaction to switchPartition's threshold rather than seal eagerly:
-                        // pool writer's sparse gens are already the correct final state for a pure-append O3.
-                        indexer.getWriter().sealIfMultiGen(configuration.getPostingSealGenThreshold());
-                    } else {
-                        // See rebuild-from-data comment in the covering branch.
-                        indexer.getWriter().discardForRebuild();
-                        long dataFd = openRO(ff, dFile(path.trimTo(plen), colName, colNameTxn), LOG);
-                        try {
-                            indexer.index(ff, dataFd, columnTop, partitionSize);
-                        } finally {
-                            ff.close(dataFd);
+                    try {
+                        // Same getTxn()+1 convention as O3CopyJob and the
+                        // covering branch above. See comment there.
+                        indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn() + 1L);
+                        indexer.mergeTentativeIntoActiveIfAny();
+                        if (canSkipRebuild) {
+                            // See pure-append fast-path comment in the covering branch above.
+                            indexer.getWriter().rollbackConditionally(partitionSize);
+                            // Defer compaction to switchPartition's threshold rather than seal eagerly:
+                            // pool writer's sparse gens are already the correct final state for a pure-append O3.
+                            indexer.getWriter().sealIfMultiGen(configuration.getPostingSealGenThreshold());
+                        } else {
+                            // See rebuild-from-data comment in the covering branch.
+                            indexer.getWriter().discardForRebuild();
+                            long dataFd = openRO(ff, dFile(path.trimTo(plen), colName, colNameTxn), LOG);
+                            try {
+                                indexer.index(ff, dataFd, columnTop, partitionSize);
+                            } finally {
+                                ff.close(dataFd);
+                            }
+                            indexer.getWriter().commitDense();
                         }
-                        indexer.getWriter().commitDense();
+                    } finally {
+                        // Publish staged seal-purge entries even on a post-switch
+                        // throw; see the covering branch / O3 path. Idempotent no-op
+                        // on an empty outbox.
+                        deferPendingPostingSealPurges(indexer, txWriter.getTxn());
                     }
-                    deferPendingPostingSealPurges(indexer, txWriter.getTxn());
                 }
             }
         } finally {
@@ -13437,9 +13520,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 writer.setNextTxnAtSeal(publishTxn);
                 writer.commit();
                 writer.sealIfMultiGen(sealThreshold);
-                deferPendingPostingSealPurges(indexer, txWriter.getTxn());
             } catch (CairoException e) {
                 throwDistressException(e);
+            } finally {
+                // Publish staged seal-purge entries even when commit()/sealIfMultiGen()
+                // threw post-switch (poisoning the writer and staging an orphan purge):
+                // the distress close drops an unpublished outbox, leaking the staged
+                // .pv/.pc. Idempotent no-op on an empty outbox. Mirrors the O3 path.
+                deferPendingPostingSealPurges(indexer, txWriter.getTxn());
             }
         }
         txWriter.switchPartitions(timestamp);

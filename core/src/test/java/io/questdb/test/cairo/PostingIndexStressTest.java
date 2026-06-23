@@ -1840,6 +1840,57 @@ public class PostingIndexStressTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRollbackKeepsSurvivorsInGenAboveGlobalStraddle() throws Exception {
+        // Regression guard (reverted gen-skip): the rollback must NOT use a
+        // generation's GLOBAL max value (GEN_DIR_OFFSET_MAX_VALUE, the max across
+        // ALL keys) to skip generations per key. A low-row-id key can have
+        // survivors in a generation whose global max -- driven by a different,
+        // high-row-id key -- exceeds the cutoff. Here key 0's surviving rows
+        // straddle two generations whose global max is pinned high by key 1.
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                String name = "rb_interleaved_gens";
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                    // gen 0: key 0 -> [1, 2]; key 1 -> [1000, 1001] (global max 1001).
+                    writer.add(0, 1);
+                    writer.add(0, 2);
+                    writer.add(1, 1000);
+                    writer.add(1, 1001);
+                    writer.setMaxValue(1001);
+                    writer.commit();
+                    // gen 1: key 0 -> [3, 4]; key 1 -> [1002] (global max 1002).
+                    writer.add(0, 3);
+                    writer.add(0, 4);
+                    writer.add(1, 1002);
+                    writer.setMaxValue(1002);
+                    writer.commit();
+                    // Roll back rows > 3. Survivors: key 0 -> [1, 2, 3] (row 3 lives in
+                    // gen 1, whose global max 1002 > 3); key 1 -> [] (all > 3). The
+                    // gen-skip bug made gen 0 the straddle gen (its global max 1001 > 3),
+                    // decoded only it for key 0 -> [1, 2], and dropped row 3.
+                    writer.rollbackValues(3);
+                }
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                    long[][] expected = {{1, 2, 3}, {}};
+                    for (int k = 0; k < expected.length; k++) {
+                        RowCursor cursor = reader.getCursor(k, 0, Long.MAX_VALUE);
+                        int idx = 0;
+                        while (cursor.hasNext()) {
+                            Assert.assertTrue("key=" + k + " unexpected extra row at idx=" + idx, idx < expected[k].length);
+                            Assert.assertEquals("key=" + k + " idx=" + idx, expected[k][idx], cursor.next());
+                            idx++;
+                        }
+                        Assert.assertEquals("key=" + k + " survivor count", expected[k].length, idx);
+                        Misc.free(cursor);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testFuzzRollback() throws Exception {
         assertMemoryLeak(() -> {
             // Randomized rollback points with oracle verification.
@@ -2963,6 +3014,13 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                     RowCursor cursor = writer.getCursor(0);
                     Assert.assertFalse(cursor.hasNext());
                     Misc.free(cursor);
+
+                    // The truncate-to-empty path inside reencodeAllGenerations already
+                    // records the superseded sealTxn's purge; rollbackToMaxValue's
+                    // genCount>0 guard must then suppress a redundant second record.
+                    // Without the guard this is 2 (a no-op duplicate for the same .pv).
+                    Assert.assertEquals("truncate-to-empty rollback must record exactly one purge for the superseded file",
+                            1, writer.getPendingPurgesSizeForTesting());
                 }
             }
         });

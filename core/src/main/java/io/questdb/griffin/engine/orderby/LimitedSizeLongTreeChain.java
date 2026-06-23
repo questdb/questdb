@@ -106,17 +106,36 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
             String keyHeapConfigKey,
             String valueHeapConfigKey
     ) {
-        super(keyPageSize, maxKeyHeapBytes, keyHeapConfigKey);
+        this(keyPageSize, maxKeyHeapBytes, valuePageSize, maxValueHeapBytes, keyHeapConfigKey, valueHeapConfigKey, true);
+    }
+
+    public LimitedSizeLongTreeChain(
+            long keyPageSize,
+            long maxKeyHeapBytes,
+            long valuePageSize,
+            long maxValueHeapBytes,
+            String keyHeapConfigKey,
+            String valueHeapConfigKey,
+            boolean openOnInit
+    ) {
+        super(keyPageSize, maxKeyHeapBytes, keyHeapConfigKey, openOnInit);
         try {
+            // DirectIntList freelists are small (64 bytes apiece) and stay on the global
+            // counter only; this PR wires the tree's key and value heaps, not the
+            // auxiliary freelists.
             freeList = new DirectIntList(16, MemoryTag.NATIVE_TREE_CHAIN);
             chainFreeList = new DirectIntList(16, MemoryTag.NATIVE_TREE_CHAIN);
             // value page must hold at least one chain entry (config rejects sub-block sizes).
             assert valuePageSize >= CHAIN_VALUE_SIZE;
             valueHeapSize = initialValueHeapSize = valuePageSize;
-            valueHeapStart = valueHeapPos = Unsafe.malloc(valueHeapSize, MemoryTag.NATIVE_TREE_CHAIN);
-            valueHeapLimit = valueHeapStart + valueHeapSize;
             maxValueHeapSize = Math.min(Math.max(maxValueHeapBytes, valuePageSize), MAX_VALUE_HEAP_SIZE_LIMIT);
             this.valueHeapConfigKey = valueHeapConfigKey;
+            if (openOnInit) {
+                valueHeapStart = valueHeapPos = Unsafe.malloc(valueHeapSize, MemoryTag.NATIVE_TREE_CHAIN, memoryTracker);
+                valueHeapLimit = valueHeapStart + valueHeapSize;
+            }
+            // else: valueHeapStart stays 0; first reopen() allocates initial backing
+            // under whatever MemoryTracker is bound at that time.
         } catch (Throwable th) {
             close();
             throw th;
@@ -139,11 +158,18 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
     @Override
     public void close() {
         super.close();
-        clear();
+        // Reset state inline instead of routing through clear(): a malloc fault in the constructor
+        // calls close() with freeList/chainFreeList still null, which clear() would dereference.
+        // Misc.free() is null-safe.
+        comparatorLeftSideValidForFrame = -1;
+        minMaxRowId = -1;
+        minMaxNode = -1;
+        currentValues = 0;
+        cursor.clear();
         Misc.free(freeList);
         Misc.free(chainFreeList);
         if (valueHeapStart != 0) {
-            valueHeapStart = Unsafe.free(valueHeapStart, valueHeapSize, MemoryTag.NATIVE_TREE_CHAIN);
+            valueHeapStart = Unsafe.free(valueHeapStart, valueHeapSize, MemoryTag.NATIVE_TREE_CHAIN, memoryTracker);
             valueHeapLimit = valueHeapPos = 0;
             valueHeapSize = 0;
         }
@@ -326,7 +352,7 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
         chainFreeList.reopen();
         if (valueHeapStart == 0) {
             valueHeapSize = initialValueHeapSize;
-            valueHeapStart = valueHeapPos = Unsafe.malloc(valueHeapSize, MemoryTag.NATIVE_TREE_CHAIN);
+            valueHeapStart = valueHeapPos = Unsafe.malloc(valueHeapSize, MemoryTag.NATIVE_TREE_CHAIN, memoryTracker);
             valueHeapLimit = valueHeapStart + valueHeapSize;
         }
     }
@@ -369,7 +395,7 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
                 }
                 throw ex;
             }
-            long newHeapPos = Unsafe.realloc(valueHeapStart, valueHeapSize, newHeapSize, MemoryTag.NATIVE_TREE_CHAIN);
+            long newHeapPos = Unsafe.realloc(valueHeapStart, valueHeapSize, newHeapSize, MemoryTag.NATIVE_TREE_CHAIN, memoryTracker);
 
             valueHeapSize = newHeapSize;
             long delta = newHeapPos - valueHeapStart;
