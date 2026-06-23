@@ -2708,11 +2708,28 @@ public class CairoEngine implements Closeable, WriterSource {
                 // tables.d, so startup's reloadFromRootDirectory adopts it (without the empty seeds below).
                 // Acceptable for this rare admin op - the table comes back, just unseeded.
                 if (!tableNameRegistry.dropTable(oldToken)) {
-                    throw CairoException.nonCritical().put("could not drop old table from registry [table=").put(oldToken.getTableName()).put(']');
+                    throw CairoException.nonCritical()
+                            .put("could not drop old table from registry [table=").put(oldToken.getTableName()).put(']');
                 }
                 oldTableDropped = true;
-                newToken = tableNameRegistry.lockTableName(tableName, newDirName, newTableId, oldToken.isView(), oldToken.isMatView(), true);
-                tableNameRegistry.registerName(newToken);
+                final TableToken lockedToken = tableNameRegistry.lockTableName(
+                        tableName,
+                        newDirName,
+                        newTableId,
+                        oldToken.isView(),
+                        oldToken.isMatView(),
+                        true
+                );
+                if (lockedToken == null) {
+                    throw CairoException.nonCritical()
+                            .put("rebase target name was taken concurrently [table=").put(tableName).put(']');
+                }
+                newToken = lockedToken;
+                try {
+                    tableNameRegistry.registerName(newToken);
+                } finally {
+                    tableNameRegistry.unlockTableName(newToken);
+                }
 
                 // Seed two empty transactions so real data starts at seqTxn 3 (the uploader skips seqTxn 1
                 // and records seqTxn 2 as first_txn=2). The second seed is what stops an idle rebased table
