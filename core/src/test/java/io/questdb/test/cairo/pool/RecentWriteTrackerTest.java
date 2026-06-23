@@ -218,6 +218,39 @@ public class RecentWriteTrackerTest {
     }
 
     @Test
+    public void testRecordMergeStatsEvictsWhenCreatingEntries() {
+        RecentWriteTracker tracker = new RecentWriteTracker(2);
+
+        for (int i = 0; i < 5; i++) {
+            tracker.recordMergeStats(createTableToken("merge" + i, i), 1.0, 10L, i, i + 100L);
+        }
+
+        Assert.assertEquals("recordMergeStats should apply lazy eviction", 2, tracker.size());
+    }
+
+    @Test
+    public void testRecordWalProcessedEvictsWhenCreatingEntries() {
+        RecentWriteTracker tracker = new RecentWriteTracker(2);
+
+        for (int i = 0; i < 5; i++) {
+            tracker.recordWalProcessed(createTableToken("wal_processed" + i, i), i, 1L, 0L);
+        }
+
+        Assert.assertEquals("recordWalProcessed should apply lazy eviction", 2, tracker.size());
+    }
+
+    @Test
+    public void testSetFloorSeqTxnEvictsWhenCreatingEntries() {
+        RecentWriteTracker tracker = new RecentWriteTracker(2);
+
+        for (int i = 0; i < 5; i++) {
+            tracker.setFloorSeqTxn(createTableToken("floor" + i, i), i);
+        }
+
+        Assert.assertEquals("setFloorSeqTxn should apply lazy eviction", 2, tracker.size());
+    }
+
+    @Test
     public void testGetMaxCapacity() {
         RecentWriteTracker tracker = new RecentWriteTracker(42);
         Assert.assertEquals(42, tracker.getMaxCapacity());

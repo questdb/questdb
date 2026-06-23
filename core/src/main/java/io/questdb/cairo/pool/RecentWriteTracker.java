@@ -221,6 +221,7 @@ public class RecentWriteTracker {
             WriteStats stats = getOrCreateStats(tableToken);
             stats.touchActivity();
             stats.recordMergeStats(amplification, throughput, tableMinTimestamp, tableMaxTimestamp);
+            evictIfNeeded();
         } catch (Throwable th) {
             LOG.error().$("could not record merge stats [table=").$(tableToken).$(", error=").$(th).I$();
         }
@@ -259,10 +260,7 @@ public class RecentWriteTracker {
             )
                     .updateReplicaDownload(sequencerTxn, walTimestamp, batchRowCount, morePending);
 
-            // Lazy eviction
-            if (writeStats.size() > maxCapacity * 2) {
-                evictOldest();
-            }
+            evictIfNeeded();
         } catch (Throwable th) {
             LOG.error().$("could not record replica download [table=").$(tableToken).$(", error=").$(th).I$();
         }
@@ -291,6 +289,7 @@ public class RecentWriteTracker {
             if (dedupRowsRemoved > 0) {
                 stats.dedupRowCount.add(dedupRowsRemoved);
             }
+            evictIfNeeded();
         } catch (Throwable th) {
             LOG.error().$("could not record WAL processed [table=").$(tableToken).$(", error=").$(th).I$();
         }
@@ -326,10 +325,7 @@ public class RecentWriteTracker {
             )
                     .updateWal(sequencerTxn, walTimestamp, txnRowCount);
 
-            // Lazy eviction
-            if (writeStats.size() > maxCapacity * 2) {
-                evictOldest();
-            }
+            evictIfNeeded();
         } catch (Throwable th) {
             LOG.error().$("could not record WAL write [table=").$(tableToken).$(", error=").$(th).I$();
         }
@@ -364,11 +360,7 @@ public class RecentWriteTracker {
             )
                     .updateWriter(writeTimestamp, rowCount, writerTxn);
 
-            // Lazy eviction: only clean up when we exceed 2x capacity
-            // This amortizes the cleanup cost and reduces contention
-            if (writeStats.size() > maxCapacity * 2) {
-                evictOldest();
-            }
+            evictIfNeeded();
         } catch (Throwable th) {
             LOG.error().$("could not record write [table=").$(tableToken).$(", error=").$(th).I$();
         }
@@ -426,10 +418,7 @@ public class RecentWriteTracker {
                 return false;
             }
 
-            // Lazy eviction
-            if (writeStats.size() > maxCapacity * 2) {
-                evictOldest();
-            }
+            evictIfNeeded();
             return true;
         } catch (Throwable th) {
             LOG.error().$("could not record write if absent [table=").$(tableToken).$(", error=").$(th).I$();
@@ -461,6 +450,7 @@ public class RecentWriteTracker {
         WriteStats stats = getOrCreateStats(tableToken);
         stats.touchActivity();
         stats.setFloorSeqTxn(floorSeqTxn);
+        evictIfNeeded();
     }
 
     /**
@@ -477,6 +467,14 @@ public class RecentWriteTracker {
         }
         // Hydration has no live activity time, so seed activity from persisted data timestamps.
         return Math.max(timestamp, walTimestamp);
+    }
+
+    private void evictIfNeeded() {
+        // Lazy eviction: only clean up when we exceed 2x capacity.
+        // This amortizes the cleanup cost and reduces contention.
+        if (writeStats.size() > maxCapacity * 2) {
+            evictOldest();
+        }
     }
 
     /**
