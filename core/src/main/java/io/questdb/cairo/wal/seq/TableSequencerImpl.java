@@ -507,8 +507,12 @@ public class TableSequencerImpl implements TableSequencer {
     private void checkHardSuspended() {
         // A hard-suspended table denies commits like a dropped table, but with a distinct
         // exception. Gated by cairo.wal.apply.suspended.write.denied so suspension can instead
-        // keep buffering WAL writes for later apply.
-        if (seqTxnTracker.isHardSuspended() && engine.getConfiguration().isWalApplySuspendedWriteDenied()) {
+        // keep buffering WAL writes for later apply. Mirrors the writer-pool gate in
+        // CairoEngine.getWalWriter()/getTableWriterAPI(): consult isWalApplySuspended() so the
+        // runtime SUSPEND WAL flag and the cairo.wal.apply.suspended.tables config list are both
+        // honoured here, otherwise a config-listed table is denied a writer at the pool yet still
+        // commits at the sequencer.
+        if (engine.getConfiguration().isWalApplySuspendedWriteDenied() && engine.isWalApplySuspended(tableToken)) {
             throw CairoException.tableSuspended(tableToken);
         }
     }
