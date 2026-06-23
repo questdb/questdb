@@ -186,6 +186,7 @@ public class WorkerPoolBootFailureTest {
         final AtomicReference<Throwable> haltError = new AtomicReference<>();
         final CountDownLatch haltSetClosed = new CountDownLatch(1);
         final CountDownLatch haltReturned = new CountDownLatch(1);
+        pool.setAfterClosedSignalForTesting(haltSetClosed::countDown);
 
         final Thread starter = new Thread(() -> {
             try {
@@ -197,12 +198,11 @@ public class WorkerPoolBootFailureTest {
         starter.setDaemon(true);
 
         final Thread halter = new Thread(() -> {
-            haltSetClosed.countDown();
             try {
                 // halt(long) flips closed via a plain CAS (outside the monitor) immediately, then blocks
                 // on the monitor the parked add holds. Once the park releases it proceeds to free
                 // freeOnExit.
-                pool.halt(TimeUnit.SECONDS.toNanos(10));
+                pool.haltAndAssertCleanForTest(TimeUnit.SECONDS.toNanos(10));
             } catch (Throwable t) {
                 haltError.set(t);
             } finally {
@@ -227,8 +227,9 @@ public class WorkerPoolBootFailureTest {
             // Fire the concurrent halt while start() is parked mid-add. It sets closed immediately, then
             // blocks on the monitor held by the parked add.
             halter.start();
-            Assert.assertTrue("halt thread must start", haltSetClosed.await(10, TimeUnit.SECONDS));
-            // Give the halter time to flip closed and reach the monitor it must wait on.
+            Assert.assertTrue("halt() must set closed before start() resumes",
+                    haltSetClosed.await(10, TimeUnit.SECONDS));
+            // Give the halter time to reach the monitor it must wait on.
             Thread.sleep(200);
 
             // Release the parked add: start() resumes INSIDE the monitor with closed already set by the
@@ -243,6 +244,7 @@ public class WorkerPoolBootFailureTest {
             releaseStartPark.countDown();
             starter.join(TimeUnit.SECONDS.toMillis(10));
             halter.join(TimeUnit.SECONDS.toMillis(10));
+            pool.setAfterClosedSignalForTesting(null);
             pool.setBeforeWorkerAddedForTesting(null);
             pool.halt();
         }
@@ -365,7 +367,7 @@ public class WorkerPoolBootFailureTest {
         final AtomicLong jobTicks = new AtomicLong();
         pool.assign(workerContext -> {
             jobTicks.incrementAndGet();
-            return false;
+            return true;
         });
 
         // Track that freeOnExit is released by halt(): a worker still looping after halt against a
@@ -481,7 +483,7 @@ public class WorkerPoolBootFailureTest {
         final AtomicLong jobTicks = new AtomicLong();
         pool.assign(workerContext -> {
             jobTicks.incrementAndGet();
-            return false;
+            return true;
         });
 
         final AtomicBoolean resourceFreed = new AtomicBoolean(false);
@@ -509,8 +511,10 @@ public class WorkerPoolBootFailureTest {
 
         final AtomicReference<Throwable> startError = new AtomicReference<>();
         final AtomicReference<Throwable> haltError = new AtomicReference<>();
+        final CountDownLatch haltSetClosed = new CountDownLatch(1);
         final CountDownLatch haltStarted = new CountDownLatch(1);
         final CountDownLatch haltReturned = new CountDownLatch(1);
+        pool.setAfterClosedSignalForTesting(haltSetClosed::countDown);
 
         final Thread starter = new Thread(() -> {
             try {
@@ -524,7 +528,7 @@ public class WorkerPoolBootFailureTest {
         final Thread halter = new Thread(() -> {
             haltStarted.countDown();
             try {
-                pool.halt(TimeUnit.SECONDS.toNanos(10));
+                pool.haltAndAssertCleanForTest(TimeUnit.SECONDS.toNanos(10));
             } catch (Throwable t) {
                 haltError.set(t);
             } finally {
@@ -550,10 +554,12 @@ public class WorkerPoolBootFailureTest {
             // Launch the concurrent halt() while start() is parked inside the add critical section.
             halter.start();
             Assert.assertTrue("halt thread must start", haltStarted.await(10, TimeUnit.SECONDS));
+            Assert.assertTrue("halt() must set closed before start() resumes",
+                    haltSetClosed.await(10, TimeUnit.SECONDS));
 
             // Observable proxy for the torn read: halt()'s unconditional first pass would signal worker 0
             // and stop its ticks. On the fixed tree that first pass blocks on workersLock (held by the
-            // parked add), so worker 0 stays RUNNING and free-runs its no-work job loop (thousands of
+            // parked add), so worker 0 stays RUNNING and free-runs its hot job loop (thousands of
             // ticks per 500ms). On the un-fixed tree the first pass reads the partial list immediately and
             // signals worker 0 -- it stops after at most one in-flight tick. A large delta means halt was
             // held off; a near-zero delta (<= a couple of in-flight ticks) means it signalled worker 0.
@@ -572,6 +578,7 @@ public class WorkerPoolBootFailureTest {
             releaseStartPark.countDown();
             starter.join(TimeUnit.SECONDS.toMillis(10));
             halter.join(TimeUnit.SECONDS.toMillis(10));
+            pool.setAfterClosedSignalForTesting(null);
             pool.setBeforeWorkerAddedForTesting(null);
             pool.halt();
         }
