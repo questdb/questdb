@@ -37,23 +37,20 @@ import org.junit.Test;
 /**
  * Coverage for credit-based flow control on QWP egress.
  * <p>
- * The feature is byte-budgeted: the client advertises {@code initial_credit}
- * in its QUERY_REQUEST, the server streams at most that many result-payload
- * bytes before parking, and the client's I/O thread auto-replenishes by the
- * size of each batch after the user's handler releases it.
+ * The feature is byte-budgeted: the client advertises {@code initial_credit} in
+ * its QUERY_REQUEST, the server streams at most that many result-payload bytes
+ * before parking, and the client's I/O thread auto-replenishes by each batch's
+ * size after the handler releases it.
  * <p>
  * Tests cover:
  * <ul>
- *   <li>Credit = 0 (default, unbounded) -- Phase-1 back-compat;
- *       the existing {@code QwpEgressFuzzTest} + exhaustive suite already pin
- *       this. A dedicated sanity check lives here for completeness.</li>
- *   <li>Small credit that spans many batches -- the query must still complete
- *       correctly under client-driven replenishment, and every row must arrive.</li>
- *   <li>Credit = exactly one batch -- forces at least one suspend/resume
- *       round per batch, exercising the full credit-suspended -> CREDIT -> resume
- *       loop on the server.</li>
- *   <li>CREDIT for an unknown request -- logged and dropped, doesn't disrupt
- *       the stream.</li>
+ *   <li>Credit = 0 (default) - unbounded back-compat path.</li>
+ *   <li>Tiny credit over many batches - the query still completes and every row
+ *       arrives under client-driven replenishment.</li>
+ *   <li>Credit below one batch - forces a suspend/resume round per batch,
+ *       exercising the suspend -> CREDIT -> resume loop on the server.</li>
+ *   <li>Mixed credit across queries on one connection - credit state resets
+ *       between queries.</li>
  * </ul>
  */
 public class QwpEgressCreditFlowTest extends AbstractQwpBootstrapTest {
@@ -64,11 +61,10 @@ public class QwpEgressCreditFlowTest extends AbstractQwpBootstrapTest {
         TestUtils.unchecked(() -> createDummyConfiguration());
         dbPath.parent().$();
         // setUpFragmentationChunks (superclass @Before) draws sendChunk/recvChunk from
-        // [1, 500]. sendBuffer parks once per sendChunk bytes, so a byte-level draw
-        // streams this class's multi-MB payloads one byte per dispatcher round-trip -
-        // millions of them, blowing the global timeout on slow CI (the mac-other hang).
-        // Floor it: still fragments every batch, and credit cycling tracks the credit
-        // budget not the chunk size, so no coverage is lost.
+        // [1, 500]. A 1-byte draw streams this class's multi-MB payloads one byte per
+        // dispatcher round-trip - millions of them, blowing the global timeout on slow
+        // CI (the mac-other hang). Floor it: still fragments every batch, and credit
+        // cycling tracks the credit budget not chunk size, so no coverage is lost.
         sendChunk = Math.max(sendChunk, 64);
         recvChunk = Math.max(recvChunk, 64);
     }
@@ -125,9 +121,9 @@ public class QwpEgressCreditFlowTest extends AbstractQwpBootstrapTest {
 
     @Test
     public void testCreditFlowTinyCreditLotsOfRoundTrips() throws Exception {
-        // Credit sized below the smallest batch -- forces the server to
-        // suspend after every batch and wait for the client to replenish.
-        // This exercises the CREDIT -> wake -> emit -> suspend cycle hardest.
+        // Credit below the smallest batch - the server suspends after every batch
+        // and waits for the client to replenish, exercising the CREDIT -> wake ->
+        // emit -> suspend cycle hardest.
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute(
@@ -200,9 +196,8 @@ public class QwpEgressCreditFlowTest extends AbstractQwpBootstrapTest {
 
     @Test
     public void testMultipleQueriesOnSameConnectionMixedCredit() throws Exception {
-        // Connection must keep working across queries with different credit
-        // configs -- this exercises state reset in beginStreaming/endStreaming
-        // for the credit fields.
+        // The connection must keep working across queries with different credit
+        // configs - exercises credit-field reset in beginStreaming/endStreaming.
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE a(id LONG, ts TIMESTAMP) "
