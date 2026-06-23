@@ -1430,6 +1430,12 @@ public class TableReader implements Closeable, SymbolTableSource {
                         final long parquetFileSize = openParquetMetadata(partitionIndex, partitionNameTxn);
                         path.trimTo(rootLen);
                         pathGenParquetPartition(partitionIndex, partitionNameTxn);
+                        final long parquetActualLength = ff.length(path.$());
+                        if (parquetFileSize > parquetActualLength) {
+                            throw CairoException.critical(0)
+                                    .put("parquet partition file too short [expected=").put(parquetFileSize)
+                                    .put(", actual=").put(parquetActualLength).put(", path=").put(path).put(']');
+                        }
                         MemoryCMR parquetMem = parquetPartitions.getQuick(partitionIndex);
                         if (parquetMem != null && parquetMem != NullMemoryCMR.INSTANCE) {
                             parquetMem.of(ff, path.$(), parquetFileSize, parquetFileSize, MemoryTag.MMAP_TABLE_READER);

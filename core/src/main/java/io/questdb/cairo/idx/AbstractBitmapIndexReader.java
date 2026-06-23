@@ -150,6 +150,16 @@ public abstract class AbstractBitmapIndexReader implements IndexReader {
 
             readIndexMetadataAtomically();
 
+            if (valueMemSize > 0) {
+                LPSZ vName = BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName, columnNameTxn);
+                long vActual = ff.length(vName);
+                if (valueMemSize > vActual) {
+                    throw CairoException.critical(0)
+                            .put("bitmap index value file too short [expected=").put(valueMemSize)
+                            .put(", actual=").put(vActual).put(", path=").put(vName).put(']');
+                }
+            }
+
             this.valueMem.of(
                     configuration.getFilesFacade(),
                     BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName, columnNameTxn),

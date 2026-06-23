@@ -1119,6 +1119,15 @@ public class PostingIndexWriter implements IndexWriter {
                 }
             }
 
+            if (!isInit && valueMemSize > 0) {
+                LPSZ pvName = PostingIndexUtils.valueFileName(path.trimTo(plen), name, postingColumnNameTxn, this.sealTxn);
+                long pvActual = ff.length(pvName);
+                if (valueMemSize > pvActual) {
+                    throw CairoException.critical(0)
+                            .put("posting index value file too short [expected=").put(valueMemSize)
+                            .put(", actual=").put(pvActual).put(", path=").put(pvName).put(']');
+                }
+            }
             valueMem.of(
                     ff,
                     PostingIndexUtils.valueFileName(path.trimTo(plen), name, postingColumnNameTxn, this.sealTxn),

@@ -794,9 +794,18 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     private void mapValueMem(Path basePath, CharSequence columnName, long columnNameTxn) {
         int pLen = basePath.size();
         try {
+            LPSZ pvName = PostingIndexUtils.valueFileName(basePath, columnName, columnNameTxn, valueFileTxn);
+            if (valueMemSize > 0) {
+                long pvActual = ff.length(pvName);
+                if (valueMemSize > pvActual) {
+                    throw CairoException.critical(0)
+                            .put("posting index value file too short [expected=").put(valueMemSize)
+                            .put(", actual=").put(pvActual).put(", path=").put(pvName).put(']');
+                }
+            }
             valueMem.of(
                     ff,
-                    PostingIndexUtils.valueFileName(basePath, columnName, columnNameTxn, valueFileTxn),
+                    pvName,
                     valueMemSize,
                     valueMemSize,
                     MemoryTag.MMAP_INDEX_READER

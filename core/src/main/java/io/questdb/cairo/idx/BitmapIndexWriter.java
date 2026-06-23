@@ -261,6 +261,14 @@ public class BitmapIndexWriter implements IndexWriter {
                     throw CairoException.critical(ff.errno()).put("Could not truncate [fd=").put(valueFd).put(']');
                 }
             } else {
+                if (this.valueMemSize > 0) {
+                    long vActual = ff.length(valueFd);
+                    if (this.valueMemSize > vActual) {
+                        throw CairoException.critical(0)
+                                .put("bitmap index value file too short [expected=").put(this.valueMemSize)
+                                .put(", actual=").put(vActual).put(", fd=").put(valueFd).put(']');
+                    }
+                }
                 vFdUnassigned = false;
                 valueMem.of(ff, valueFd, false, null, valueAppendPageSize, valueMemSize, MemoryTag.MMAP_INDEX_WRITER);
             }
@@ -333,6 +341,15 @@ public class BitmapIndexWriter implements IndexWriter {
             }
 
             this.valueMemSize = keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
+            if (this.valueMemSize > 0) {
+                LPSZ vName = BitmapIndexUtils.valueFileName(path.trimTo(plen), name, columnNameTxn);
+                long vActual = ff.length(vName);
+                if (this.valueMemSize > vActual) {
+                    throw CairoException.critical(0)
+                            .put("bitmap index value file too short [expected=").put(this.valueMemSize)
+                            .put(", actual=").put(vActual).put(", path=").put(vName).put(']');
+                }
+            }
             valueMem.of(
                     ff,
                     BitmapIndexUtils.valueFileName(path.trimTo(plen), name, columnNameTxn),
