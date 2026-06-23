@@ -63,16 +63,12 @@ public class QwpEgressCreditFlowTest extends AbstractQwpBootstrapTest {
         super.setUp();
         TestUtils.unchecked(() -> createDummyConfiguration());
         dbPath.parent().$();
-        // setUpFragmentationChunks (a superclass @Before, so it runs first) draws
-        // sendChunk/recvChunk randomly from [1, 500]. These credit-flow tests stream
-        // multi-MB payloads, and HttpResponseSink.sendBuffer parks once per sendChunk
-        // bytes, so a byte-level draw degenerates to one park/resume cycle per byte:
-        // the 500k-row (~12 MB) payload then needs ~12 million dispatcher round-trips,
-        // which blows the global test timeout on a slow CI runner (the macOS mac-other
-        // 20-minute hang). Floor the chunk so fragmentation still splits every batch
-        // into thousands of partial sends while keeping wall-clock bounded. Credit
-        // suspend/resume coverage is driven by the advertised credit budget, not the
-        // fragmentation chunk, so flooring it costs no flow-control coverage.
+        // setUpFragmentationChunks (superclass @Before) draws sendChunk/recvChunk from
+        // [1, 500]. sendBuffer parks once per sendChunk bytes, so a byte-level draw
+        // streams this class's multi-MB payloads one byte per dispatcher round-trip --
+        // millions of them, blowing the global timeout on slow CI (the mac-other hang).
+        // Floor it: still fragments every batch, and credit cycling tracks the credit
+        // budget not the chunk size, so no coverage is lost.
         sendChunk = Math.max(sendChunk, 64);
         recvChunk = Math.max(recvChunk, 64);
     }
