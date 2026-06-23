@@ -9862,7 +9862,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 assertQuery("SELECT * FROM live_views() WHERE 1 = 0").noLeakCheck().returns("view_name\tview_table_dir_name\tbase_table_name\tview_sql\tview_status\t"
                                 + "invalidation_reason\tflush_every_interval\tflush_every_interval_unit\t"
                                 + "in_memory_interval\tin_memory_interval_unit\tin_mem_bytes\t"
-                                + "symbol_translation_size\to3_rejected_count\tlag_seqtxn\tlag_micros\t"
+                                + "o3_rejected_count\tlag_seqtxn\tlag_micros\t"
                                 + "last_processed_seqtxn\tapplied_watermark\tlv_consumed_seqtxn\t"
                                 + "view_lower_bound_timestamp\twriter_stall_micros\tbackfill_target_seqtxn\t"
                                 + "head_checkpoint_lv_seqtxn\thead_checkpoint_max_ts\thead_checkpoint_state_bytes\n");
