@@ -215,6 +215,127 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSuspendedMatViewFullRefreshNotInvalidatedWhenWriteDenied() throws Exception {
+        // With cairo.wal.apply.suspended.write.denied=true, CairoEngine.getWalWriter refuses a hard-suspended
+        // view with CairoException.tableSuspended. REFRESH ... FULL on such a view must skip, not invalidate.
+        // Without the fix the refusal marks the view invalid in memory (the persisted state file, hence
+        // view_status, is untouched -- silent), which then blocks the post-resume incremental refresh.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "create materialized view price_1h as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h"
+            );
+            execute(
+                    "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')"
+            );
+            drainQueues();
+            assertQuery("price_1h")
+                    .noLeakCheck().expectSize().timestamp("ts")
+                    .returns("sym\tprice\tts\ngbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n");
+
+            // Suspend, then ask for a full refresh. The job picks up the FULL_REFRESH task and must skip it
+            // (the getWalWriter refusal under write-denied) instead of failing into invalidation.
+            execute("alter materialized view price_1h suspend wal");
+            execute("refresh materialized view price_1h full;");
+            drainQueues();
+
+            // Resume and drive a normal incremental refresh with a new base row. This only catches up if the
+            // suspended full refresh left the view valid in memory; otherwise the in-memory invalidation
+            // blocks it and the 13:00 bucket never appears.
+            execute("alter materialized view price_1h resume wal");
+            execute("insert into base_price values('gbpusd', 1.500, '2024-09-10T13:01')");
+            drainQueues();
+
+            assertQuery("select view_status from materialized_views")
+                    .noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary()
+                    .returns("view_status\nvalid\n");
+            assertQuery("price_1h order by ts")
+                    .noLeakCheck().expectSize().timestamp("ts")
+                    .returns("sym\tprice\tts\n" +
+                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                            "gbpusd\t1.5\t2024-09-10T13:00:00.000000Z\n");
+        });
+    }
+
+    @Test
+    public void testSuspendedMatViewNotInvalidatedOnBaseCommitWhenWriteDenied() throws Exception {
+        // M1 regression: with cairo.wal.apply.suspended.write.denied=true, CairoEngine.getWalWriter refuses a
+        // hard-suspended view with CairoException.tableSuspended. A base-table commit enqueues an incremental
+        // refresh of the suspended view; the refresh job must skip it rather than route the refusal through
+        // refreshFailState, which would mark the view sticky-invalid (recoverable only by REFRESH ... FULL)
+        // and cascade-invalidate its dependents.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "create materialized view price_1h as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h"
+            );
+            execute(
+                    "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')"
+            );
+            drainQueues();
+            assertQuery("select view_status from materialized_views")
+                    .noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary()
+                    .returns("view_status\nvalid\n");
+            assertQuery("price_1h")
+                    .noLeakCheck().expectSize().timestamp("ts")
+                    .returns("sym\tprice\tts\ngbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n");
+
+            // Suspend the view, then write to the base table. The base commit enqueues an incremental refresh
+            // of the now-suspended view -- the exact path that used to invalidate it.
+            execute("alter materialized view price_1h suspend wal");
+            execute("insert into base_price values('gbpusd', 1.500, '2024-09-10T13:01')");
+            drainQueues();
+
+            // While suspended, monitoring still reads view_status=valid: it comes from the persisted state
+            // file, which the refused invalid-state mint never rewrites -- the "silent" half of M1. The data
+            // is unchanged too (write-denied suspension buffers nothing). The fix is proven by the correct,
+            // complete catch-up after resume below; without it, the failed refresh corrupts the view (a
+            // duplicated bucket) instead of cleanly skipping.
+            assertQuery("select view_status from materialized_views")
+                    .noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary()
+                    .returns("view_status\nvalid\n");
+            assertQuery("select suspended from wal_tables() where name = 'price_1h'")
+                    .noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary()
+                    .returns("suspended\ntrue\n");
+            assertQuery("price_1h")
+                    .noLeakCheck().expectSize().timestamp("ts")
+                    .returns("sym\tprice\tts\ngbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n");
+
+            // Resume the view. The next base-table commit re-triggers the refresh, which catches up across the
+            // row written while suspended (13:01) and the new one (14:01): WAL purge retained the base WAL the
+            // skipped view still needed (it clamps retention to the view's own lastRefreshBaseTxn), so no data
+            // is lost.
+            execute("alter materialized view price_1h resume wal");
+            execute("insert into base_price values('gbpusd', 1.700, '2024-09-10T14:01')");
+            drainQueues();
+
+            assertQuery("select view_status from materialized_views")
+                    .noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary()
+                    .returns("view_status\nvalid\n");
+            assertQuery("price_1h order by ts")
+                    .noLeakCheck().expectSize().timestamp("ts")
+                    .returns("sym\tprice\tts\n" +
+                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                            "gbpusd\t1.5\t2024-09-10T13:00:00.000000Z\n" +
+                            "gbpusd\t1.7\t2024-09-10T14:00:00.000000Z\n");
+        });
+    }
+
+    @Test
     public void testAlterAddIndexInvalidStatement() throws Exception {
         assertMemoryLeak(() -> {
             execute(

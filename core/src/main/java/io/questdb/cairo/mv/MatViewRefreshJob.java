@@ -333,6 +333,16 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         }
     }
 
+    // Recognizes the "table is suspended" refusal that CairoEngine.getWalWriter raises for a hard-suspended
+    // view when cairo.wal.apply.suspended.write.denied is on. It backstops the up-front isViewWriteSuspended
+    // gate: a view can be suspended in the narrow window between that gate and the getWalWriter acquire, in
+    // which case the throw lands in the refresh path's outer catch. The refresh job must treat it as a skip
+    // (leave the view valid, do not re-enqueue) rather than a refresh failure -- invalidating a suspended
+    // view is wrong (resume recovers it) and re-enqueueing would busy-loop the worker until resume.
+    private static boolean isTableSuspendedError(Throwable th) {
+        return th instanceof CairoException ce && ce.isTableSuspended();
+    }
+
     private static void unionIntervals(LongList intervals, long lo, long hi) {
         if (intervals != null) {
             intervals.add(lo, hi);
@@ -740,6 +750,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             return false;
         }
 
+        if (isViewWriteSuspended(viewToken)) {
+            LOG.debug().$("skipping full refresh, materialized view is suspended [view=").$(viewToken).I$();
+            return false;
+        }
+
         if (!viewState.tryLock()) {
             // Someone is refreshing the view, so we're going for another attempt.
             // Just mark the view invalid to prevent intermediate incremental refreshes and republish the task.
@@ -796,6 +811,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 return false;
             }
         } catch (Throwable th) {
+            if (isTableSuspendedError(th)) {
+                LOG.info().$("skipping full refresh, materialized view is suspended [view=").$(viewToken).I$();
+                return false;
+            }
             if (handleErrorRetryRefresh(th, viewToken, stateStore, refreshTask)) {
                 // Full refresh is re-scheduled.
                 return false;
@@ -1388,6 +1407,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         }
     }
 
+    private boolean isViewWriteSuspended(TableToken viewToken) {
+        return configuration.isWalApplySuspendedWriteDenied() && engine.isWalApplySuspended(viewToken);
+    }
+
     private boolean processNotifications() {
         boolean refreshed = false;
         while (stateStore.tryDequeueRefreshTask(refreshTask)) {
@@ -1428,6 +1451,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
         final MatViewState viewState = stateStore.getViewState(viewToken);
         if (viewState == null || viewState.isPendingInvalidation() || viewState.isInvalid() || viewState.isDropped()) {
+            return false;
+        }
+
+        if (isViewWriteSuspended(viewToken)) {
+            LOG.debug().$("skipping range refresh, materialized view is suspended [view=").$(viewToken).I$();
             return false;
         }
 
@@ -1500,6 +1528,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 return false;
             }
         } catch (Throwable th) {
+            if (isTableSuspendedError(th)) {
+                LOG.info().$("skipping range refresh, materialized view is suspended [view=").$(viewToken).I$();
+                return false;
+            }
             if (handleErrorRetryRefresh(th, viewToken, stateStore, refreshTask)) {
                 // Range refresh is re-scheduled.
                 return false;
@@ -1545,6 +1577,14 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             final TableToken viewToken = childViewSink.get(v);
             final MatViewState viewState = stateStore.getViewState(viewToken);
             if (viewState != null && !viewState.isPendingInvalidation() && !viewState.isInvalid() && !viewState.isDropped()) {
+                if (isViewWriteSuspended(viewToken)) {
+                    // The view is hard-suspended and writes are denied. Skip it instead of failing into
+                    // invalidation (which would also cascade-invalidate its dependents). Leaving the view's
+                    // lastRefreshBaseTxn untouched keeps the base WAL it still needs from being purged; the
+                    // refresh resumes on the next base-table commit after RESUME WAL.
+                    LOG.debug().$("skipping incremental refresh, materialized view is suspended [view=").$(viewToken).I$();
+                    continue;
+                }
                 final MatViewDefinition viewDefinition = viewState.getViewDefinition();
                 if (viewDefinition.getRefreshType() != MatViewDefinition.REFRESH_TYPE_IMMEDIATE) {
                     // The refresh is not immediate, i.e. it's either manual or timer.
@@ -1576,6 +1616,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         refreshFailState(viewDefinition, viewState, walWriter, th);
                     }
                 } catch (Throwable th) {
+                    if (isTableSuspendedError(th)) {
+                        // The view was suspended between the isViewWriteSuspended gate and the getWalWriter
+                        // acquire. Skip without invalidating; resume re-triggers the refresh.
+                        LOG.info().$("skipping incremental refresh, materialized view is suspended [view=").$(viewToken).I$();
+                        continue;
+                    }
                     if (handleErrorRetryRefresh(th, viewToken, stateStore, null)) {
                         // Incremental refresh is re-scheduled.
                         continue;
@@ -1667,6 +1713,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             return false;
         }
 
+        if (isViewWriteSuspended(viewToken)) {
+            // The view is hard-suspended and writes are denied. Skip rather than fail into invalidation;
+            // the refresh resumes on the next base-table commit after RESUME WAL.
+            LOG.debug().$("skipping incremental refresh, materialized view is suspended [view=").$(viewToken).I$();
+            return false;
+        }
+
         if (!viewState.tryLock()) {
             LOG.debug().$("could not lock materialized view for incremental refresh, will retry [view=").$(viewToken).I$();
             stateStore.enqueueIncrementalRefresh(viewToken);
@@ -1703,6 +1756,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 return false;
             }
         } catch (Throwable th) {
+            if (isTableSuspendedError(th)) {
+                // The view was suspended between the isViewWriteSuspended gate and the getWalWriter acquire.
+                // Skip without invalidating; resume re-triggers the refresh.
+                LOG.info().$("skipping incremental refresh, materialized view is suspended [view=").$(viewToken).I$();
+                return false;
+            }
             if (handleErrorRetryRefresh(th, viewToken, stateStore, null)) {
                 // Incremental refresh is re-scheduled.
                 return false;
@@ -1857,6 +1916,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         final TableToken viewToken = refreshTask.matViewToken;
         final MatViewState viewState = stateStore.getViewState(viewToken);
         if (viewState != null && !viewState.isPendingInvalidation() && !viewState.isInvalid() && !viewState.isDropped()) {
+            if (isViewWriteSuspended(viewToken)) {
+                // The view is hard-suspended and writes are denied. Skip the cached-interval update (which
+                // persists via a WAL state mint) rather than fail into invalidation; the intervals refresh
+                // on the next base-table commit after RESUME WAL.
+                LOG.debug().$("skipping refresh intervals update, materialized view is suspended [view=").$(viewToken).I$();
+                return;
+            }
             if (!viewState.tryLock()) {
                 LOG.debug().$("skipping refresh intervals update, locked by a refresh run [view=").$(viewToken).I$();
                 stateStore.enqueueUpdateRefreshIntervals(viewToken);
@@ -1874,6 +1940,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 final long lastTxn = baseSeqTracker.getWriterTxn();
                 updateRefreshIntervals0(lastTxn, baseTableToken, viewDefinition, viewState, walWriter);
             } catch (Throwable th) {
+                if (isTableSuspendedError(th)) {
+                    // The view was suspended between the isViewWriteSuspended gate and the getWalWriter
+                    // acquire. Skip without invalidating; resume re-triggers the interval update.
+                    LOG.info().$("skipping refresh intervals update, materialized view is suspended [view=").$(viewToken).I$();
+                    return;
+                }
                 // If we're here, we couldn't obtain the WAL writer.
                 // Update the in-memory state and call it a day.
                 LOG.error()
