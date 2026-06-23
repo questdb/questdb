@@ -153,6 +153,10 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
                     return entryIds.getQuick(entryIndex);
                 } else if (col == 1) {
                     return entry.getWorkerId();
+                } else if (col == 9) {
+                    return entry.getMemoryUsed();
+                } else if (col == 10) {
+                    return entry.getMemoryLimit();
                 }
 
                 return Record.super.getLong(col);
@@ -233,6 +237,8 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
         metadata.add(new TableColumnMetadata("state", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("is_wal", ColumnType.BOOLEAN));
         metadata.add(new TableColumnMetadata("query", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("memory_used", ColumnType.LONG));
+        metadata.add(new TableColumnMetadata("memory_limit", ColumnType.LONG));
         METADATA = metadata;
     }
 }

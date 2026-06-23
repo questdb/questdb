@@ -88,7 +88,9 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
             joinKeyMap = MapFactory.createUnorderedMap(
                     cairoConfiguration,
                     joinColumnTypes,
-                    valueTypes
+                    valueTypes,
+                    false,
+                    false
             );
             cursor = new SpliceJoinLightRecordCursor(
                     joinKeyMap,
@@ -119,11 +121,14 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
         try {
             slaveCursor = slaveFactory.getCursor(executionContext);
             slaveCursor.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
-            cursor.of(masterCursor, slaveCursor, executionContext.getCircuitBreaker());
+            cursor.of(masterCursor, slaveCursor, executionContext);
             return cursor;
         } catch (Throwable e) {
             Misc.free(slaveCursor);
             Misc.free(masterCursor);
+            // of() binds the per-query tracker and reopens the join map before it can throw;
+            // close() frees it under that tracker and resets isOpen so the factory is reusable.
+            Misc.free(cursor);
             throw e;
         }
     }
@@ -200,7 +205,7 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
             this.slaveTimestampIndex = slaveTimestampIndex;
             this.nullMasterRecord = nullMasterRecord;
             this.nullSlaveRecord = nullSlaveRecord;
-            isOpen = true;
+            isOpen = false;
             if (masterTimestampType == slaveTimestampType) {
                 masterTimestampScale = slaveTimestampScale = 1L;
             } else {
@@ -361,10 +366,11 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
             }
         }
 
-        void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
-            this.circuitBreaker = circuitBreaker;
+        void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext executionContext) {
+            this.circuitBreaker = executionContext.getCircuitBreaker();
             if (!isOpen) {
                 isOpen = true;
+                joinKeyMap.setMemoryTracker(executionContext.getMemoryTracker());
                 joinKeyMap.reopen();
             }
             // avoid resetting these

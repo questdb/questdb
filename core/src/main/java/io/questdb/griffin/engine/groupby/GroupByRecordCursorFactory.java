@@ -49,6 +49,7 @@ import io.questdb.griffin.engine.AbstractVirtualFunctionRecordCursor;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectLongLongSortedList;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -274,11 +275,18 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         ) {
             super(functions);
             try {
-                this.isOpen = true;
-                this.dataMap = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes, true);
+                // Lazy variant: the map skeleton is constructed but the native heap and
+                // hash directory are not allocated until the first cursor's of() binds a
+                // MemoryTracker and calls reopen(). This keeps malloc/free symmetric on
+                // the per-query counter from the very first cursor.
+                this.dataMap = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes, true, false);
                 this.groupByFunctionsUpdater = groupByFunctionsUpdater;
-                this.allocator = GroupByAllocatorFactory.createAllocator(configuration);
+                // Lazy variant: the allocator's chunk index is not allocated until the
+                // first cursor's of() binds a MemoryTracker and calls reopen(), keeping
+                // per-query alloc/free accounting symmetric from the very first cursor.
+                this.allocator = GroupByAllocatorFactory.createAllocator(configuration, false);
                 GroupByUtils.setAllocator(groupByFunctions, allocator);
+                this.isOpen = false;
             } catch (Throwable th) {
                 close();
                 throw th;
@@ -318,7 +326,10 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             this.managedCursor = managedCursor;
             if (!isOpen) {
                 isOpen = true;
+                final MemoryTracker memoryTracker = executionContext.getMemoryTracker();
+                dataMap.setMemoryTracker(memoryTracker);
                 dataMap.reopen();
+                allocator.setMemoryTracker(memoryTracker);
                 allocator.reopen();
             }
             this.circuitBreaker = executionContext.getCircuitBreaker();

@@ -76,10 +76,11 @@ public class TestOs {
             } catch (URISyntaxException e) {
                 throw new RuntimeException(e);
             }
-            // When the resource lives inside a jar (e.g. questdb test-jar consumed from a dependent
-            // project), the URL is `jar:file:.../questdb-tests.jar!/io/questdb/bin/...` and
-            // toURI().getPath() returns null. In that case skip the dev-path lookup and stream the
-            // library straight out of the jar.
+            // toURI().getPath() returns null for jar:file:... URIs - happens when
+            // the test runs against the OSS test-jar pulled from the local m2 cache
+            // (as every Enterprise test does). The dev-path overwrite probe below
+            // is for source-tree iteration; with no on-disk path to compare against,
+            // load the precompiled lib straight from the classpath resource stream.
             if (absolutePathPreCompiled == null) {
                 try (InputStream is = resource.openStream()) {
                     Os.loadLib(rustLibName, is);

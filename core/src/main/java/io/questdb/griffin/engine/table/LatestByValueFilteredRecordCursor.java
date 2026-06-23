@@ -73,7 +73,7 @@ class LatestByValueFilteredRecordCursor extends AbstractLatestByValueRecordCurso
         isRecordFound = false;
         isFindPending = false;
         // prepare for page frame iteration
-        super.init();
+        super.init(executionContext.getMemoryTracker());
     }
 
     @Override

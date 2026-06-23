@@ -117,7 +117,9 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
             this.ff = ff;
             this.metadata = metadata;
             this.decoder = new ParquetFileDecoder();
-            this.rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+            // keepClosed: defer the native allocation to the first reopen() in
+            // of() so it lands under the per-query tracker bound there.
+            this.rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER, true);
             this.columns = new DirectIntList(32, MemoryTag.NATIVE_DEFAULT);
             this.record = new ParquetRecord(metadata.getColumnCount());
             this.pushdownFilterConditions = pushdownFilterConditions;
@@ -275,7 +277,10 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
             // isCancellation(): that flag is sticky on the reused thread-local CairoException flyweight
             // (clear() does not reset it), so a stale cancellation from an earlier CANCEL QUERY on this
             // worker thread would misclassify a genuinely corrupt decode error as a cancellation.
-            if (ex.isInterruption()) {
+            // Likewise, a memory-limit breach (per-query or global RSS) is not corruption:
+            // surface it unchanged so isOutOfMemory() and the limit message reach
+            // the caller instead of a misleading "corrupted file" message.
+            if (ex.isInterruption() || ex.isOutOfMemory()) {
                 throw ex;
             }
             // Preserve the underlying decode error (e.g. the native parquet guard message)
@@ -296,6 +301,7 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         this.fileSize = ff.length(fd);
         this.addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
         decoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+        rowGroupBuffers.setMemoryTracker(executionContext.getMemoryTracker());
         rowGroupBuffers.reopen();
         columns.reopen();
         columns.clear();

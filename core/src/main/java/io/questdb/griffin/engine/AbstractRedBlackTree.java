@@ -26,8 +26,10 @@ package io.questdb.griffin.engine;
 
 import io.questdb.cairo.Reopenable;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * A native memory heap-based red-black tree. Used in ORDER BY factories.
@@ -55,6 +57,11 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
     private final long initialKeyHeapSize;
     private final String keyHeapConfigKey;
     private final long maxKeyHeapSize;
+    // Per-query native memory tracker bound by the owning factory at cursor start.
+    // Null when no per-query limit applies; all Unsafe.{malloc,realloc,free} calls
+    // degrade to the global-only overloads in that case.
+    @Nullable
+    protected MemoryTracker memoryTracker;
     protected int root = -1;
     private long keyHeapLimit;
     private long keyHeapPos;
@@ -62,12 +69,20 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
     private long keyHeapStart;
 
     public AbstractRedBlackTree(long keyPageSize, long maxKeyHeapBytes, String keyHeapConfigKey) {
+        this(keyPageSize, maxKeyHeapBytes, keyHeapConfigKey, true);
+    }
+
+    public AbstractRedBlackTree(long keyPageSize, long maxKeyHeapBytes, String keyHeapConfigKey, boolean openOnInit) {
         assert keyPageSize >= BLOCK_SIZE;
         keyHeapSize = initialKeyHeapSize = keyPageSize;
-        keyHeapStart = keyHeapPos = Unsafe.malloc(keyHeapSize, MemoryTag.NATIVE_TREE_CHAIN);
-        keyHeapLimit = keyHeapStart + keyHeapSize;
         maxKeyHeapSize = Math.min(Math.max(maxKeyHeapBytes, keyPageSize), MAX_KEY_HEAP_SIZE_LIMIT);
         this.keyHeapConfigKey = keyHeapConfigKey;
+        if (openOnInit) {
+            keyHeapStart = keyHeapPos = Unsafe.malloc(keyHeapSize, MemoryTag.NATIVE_TREE_CHAIN, memoryTracker);
+            keyHeapLimit = keyHeapStart + keyHeapSize;
+        }
+        // else: keyHeapStart stays 0; first reopen() allocates initial backing under
+        // whatever MemoryTracker is bound at that time.
     }
 
     @Override
@@ -80,7 +95,7 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
     public void close() {
         root = -1;
         if (keyHeapStart != 0) {
-            keyHeapStart = Unsafe.free(keyHeapStart, keyHeapSize, MemoryTag.NATIVE_TREE_CHAIN);
+            keyHeapStart = Unsafe.free(keyHeapStart, keyHeapSize, MemoryTag.NATIVE_TREE_CHAIN, memoryTracker);
             keyHeapLimit = keyHeapPos = 0;
             keyHeapSize = 0;
         }
@@ -90,9 +105,13 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
     public void reopen() {
         if (keyHeapStart == 0) {
             keyHeapSize = initialKeyHeapSize;
-            keyHeapStart = keyHeapPos = Unsafe.malloc(keyHeapSize, MemoryTag.NATIVE_TREE_CHAIN);
+            keyHeapStart = keyHeapPos = Unsafe.malloc(keyHeapSize, MemoryTag.NATIVE_TREE_CHAIN, memoryTracker);
             keyHeapLimit = keyHeapStart + keyHeapSize;
         }
+    }
+
+    public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        this.memoryTracker = tracker;
     }
 
     public long size() {
@@ -118,7 +137,7 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
                 }
                 throw ex;
             }
-            long newHeapPos = Unsafe.realloc(keyHeapStart, keyHeapSize, newHeapSize, MemoryTag.NATIVE_TREE_CHAIN);
+            long newHeapPos = Unsafe.realloc(keyHeapStart, keyHeapSize, newHeapSize, MemoryTag.NATIVE_TREE_CHAIN, memoryTracker);
 
             keyHeapSize = newHeapSize;
             long delta = newHeapPos - keyHeapStart;

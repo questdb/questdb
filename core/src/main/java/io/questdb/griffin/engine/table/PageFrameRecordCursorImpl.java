@@ -183,7 +183,7 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         maxRowsAfterSkip = RecordCursor.UNBOUNDED_ROW_COUNT;
         rowsProducedSinceSkip = 0;
         // prepare for page frame iteration
-        super.init();
+        super.init(sqlExecutionContext.getMemoryTracker());
     }
 
     @Override

@@ -28,6 +28,8 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.Net;
 
+import java.util.concurrent.atomic.AtomicBoolean;
+
 public class LinuxMMLineUdpReceiver extends AbstractLineProtoUdpReceiver {
     private final int msgCount;
     private long msgVec;
@@ -37,10 +39,31 @@ public class LinuxMMLineUdpReceiver extends AbstractLineProtoUdpReceiver {
             CairoEngine engine,
             WorkerPool workerPool
     ) {
-        super(configuration, engine, workerPool);
+        this(configuration, engine, workerPool, new AtomicBoolean(true));
+    }
+
+    public LinuxMMLineUdpReceiver(
+            LineUdpReceiverConfiguration configuration,
+            CairoEngine engine,
+            WorkerPool workerPool,
+            AtomicBoolean acceptOpen
+    ) {
+        super(configuration, engine, workerPool, acceptOpen);
         this.msgCount = configuration.getMsgCount();
-        msgVec = nf.msgHeaders(configuration.getMsgBufferSize(), msgCount);
-        start();
+        // Wrap the post-super native allocation and start() in try/catch so a failure
+        // (msgHeaders OOM, thread alloc, affinity bind) releases what the super already opened.
+        // close() releases the fd and any allocated msgVec; matches the LineTcpReceiver pattern.
+        try {
+            msgVec = nf.msgHeaders(configuration.getMsgBufferSize(), msgCount);
+            start();
+        } catch (Throwable t) {
+            try {
+                close();
+            } catch (Throwable s) {
+                t.addSuppressed(s);
+            }
+            throw t;
+        }
     }
 
     @Override
@@ -54,6 +77,13 @@ public class LinuxMMLineUdpReceiver extends AbstractLineProtoUdpReceiver {
 
     @Override
     protected boolean runSerially() {
+        if (!acceptOpen.get()) {
+            // Mirror the worker-path acceptOpen gate (AbstractLineProtoUdpReceiver.run)
+            // so the own-thread driver also quiesces after switchRole publishes
+            // acceptOpen=false. close() does not depend on runSerially() flowing
+            // post-close, so placement at the top is safe.
+            return false;
+        }
         boolean ran = false;
         int count;
         while ((count = nf.recvmmsgRaw(fd, msgVec, msgCount)) > 0) {

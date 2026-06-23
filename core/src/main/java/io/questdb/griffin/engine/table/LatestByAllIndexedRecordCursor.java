@@ -81,6 +81,14 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
     }
 
     @Override
+    public void close() {
+        // The shared rows list is freed here, under the per-query tracker bound in of();
+        // prefixes is bounded and stays factory-owned (freed at factory close).
+        rows.close();
+        super.close();
+    }
+
+    @Override
     public boolean hasNext() {
         circuitBreaker.statefulThrowExceptionIfTripped();
         if (!isTreeMapBuilt) {
@@ -108,13 +116,14 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         bus = executionContext.getMessageBus();
         // If the worker count is 0
         sharedQueryWorkerCount = executionContext.getSharedQueryWorkerCount();
-        rows.clear();
+        rows.setMemoryTracker(executionContext.getMemoryTracker());
+        rows.reopen();
         keyCount = -1;
         argumentsAddress = 0;
         isFrameCacheBuilt = false;
         isTreeMapBuilt = false;
         // prepare for page frame iteration
-        super.init();
+        super.init(executionContext.getMemoryTracker());
     }
 
     @Override

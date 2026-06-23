@@ -72,6 +72,13 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractPageFrameRecordC
     }
 
     @Override
+    public void close() {
+        // Free the shared rows list under the per-query tracker bound in of().
+        rows.close();
+        super.close();
+    }
+
+    @Override
     public boolean hasNext() {
         circuitBreaker.statefulThrowExceptionIfTripped();
         if (!isTreeMapBuilt) {
@@ -96,12 +103,13 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractPageFrameRecordC
         recordB.of(pageFrameCursor);
         filter.init(pageFrameCursor, executionContext);
         circuitBreaker = executionContext.getCircuitBreaker();
-        rows.clear();
+        rows.setMemoryTracker(executionContext.getMemoryTracker());
+        rows.reopen();
         found.clear();
         keyCount = -1;
         isTreeMapBuilt = false;
         // prepare for page frame iteration
-        super.init();
+        super.init(executionContext.getMemoryTracker());
     }
 
     @Override

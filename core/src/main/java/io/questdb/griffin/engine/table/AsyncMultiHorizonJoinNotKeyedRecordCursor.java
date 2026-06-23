@@ -70,6 +70,8 @@ class AsyncMultiHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordC
             ObjList<RecordCursorFactory> slaveFactories
     ) {
         try {
+            // True during construction so the catch below can close() a partially built
+            // cursor and free what was already allocated.
             this.isOpen = true;
             this.groupByFunctions = groupByFunctions;
             this.slaveFactories = slaveFactories;
@@ -84,6 +86,11 @@ class AsyncMultiHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordC
             for (int s = 0; s < slaveCount; s++) {
                 slaveTimeFrameStates.add(new ConcurrentTimeFrameState());
             }
+            // Construction succeeded: start closed so the first of() runs atom.reopen(),
+            // which opens the lazy (openOnInit=false) allocators and ASOF maps and binds the
+            // per-query tracker before any allocation. Skipping reopen() on the first cursor
+            // would leave the allocator's chunk index unallocated and the tracker unbound.
+            this.isOpen = false;
         } catch (Throwable th) {
             close();
             throw th;
@@ -108,7 +115,8 @@ class AsyncMultiHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordC
                 }
             } finally {
                 Misc.clearObjList(groupByFunctions);
-                Misc.freeObjListAndKeepObjects(slaveFrameCursors);
+                // freeObjList nulls the freed slots, so a reopen-breach re-close finds null instead of a stale freed cursor.
+                Misc.freeObjList(slaveFrameCursors);
                 Misc.freeObjListAndKeepObjects(slaveTimeFrameStates);
                 isOpen = false;
             }
@@ -176,7 +184,8 @@ class AsyncMultiHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordC
                         cursor.isExternal(),
                         executionContext.getPageFrameMinRows(),
                         executionContext.getPageFrameMaxRows(),
-                        executionContext.getSharedQueryWorkerCount()
+                        executionContext.getSharedQueryWorkerCount(),
+                        executionContext.getMemoryTracker()
                 );
                 try {
                     atom.initSlaveTimeFrameCursors(
@@ -206,7 +215,7 @@ class AsyncMultiHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordC
         // frames and runs no per-frame worker checks) still observes cancellation.
         executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
         frameSequence.prepareForDispatch();
-        frameSequence.getAtom().getFilterContext().initMemoryPools(frameSequence.getPageFrameAddressCache());
+        frameSequence.getAtom().getFilterContext().initMemoryPools(frameSequence.getPageFrameAddressCache(), frameSequence.getMemoryTracker());
         frameSequence.dispatchAndAwait();
 
         final AsyncMultiHorizonJoinNotKeyedAtom atom = frameSequence.getAtom();
@@ -231,11 +240,12 @@ class AsyncMultiHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordC
 
     void of(UnorderedPageFrameSequence<AsyncMultiHorizonJoinNotKeyedAtom> frameSequence, SqlExecutionContext executionContext) throws SqlException {
         final AsyncMultiHorizonJoinNotKeyedAtom atom = frameSequence.getAtom();
+        // Assign before reopen() so close() can drain a partially reopened atom on a breach.
+        this.frameSequence = frameSequence;
         if (!isOpen) {
             isOpen = true;
             atom.reopen();
         }
-        this.frameSequence = frameSequence;
         this.executionContext = executionContext;
 
         try {
