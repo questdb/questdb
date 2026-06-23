@@ -55,6 +55,28 @@ public class CrashFaultFilesFacadeTest extends AbstractTest {
     }
 
     @Test
+    public void testOpenAppendIsTrackedForDurability() throws Exception {
+        final CrashFaultFilesFacade ff = new CrashFaultFilesFacade();
+        final String dir = temp.newFolder("crashroot4").getAbsolutePath();
+        try (Path path = new Path().of(dir).concat("e.d")) {
+            long fd = ff.openAppend(path.$());
+            Assert.assertTrue(fd > -1);
+            long buf = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
+            try {
+                Unsafe.getUnsafe().setMemory(buf, 8, (byte) 9);
+                Assert.assertEquals(8, ff.append(fd, buf, 8));
+                ff.fsync(fd); // durable = 8
+                Assert.assertEquals(8, ff.append(fd, buf, 8)); // grow to 16, not fsynced
+            } finally {
+                Unsafe.free(buf, 8, MemoryTag.NATIVE_DEFAULT);
+                ff.close(fd);
+            }
+            ff.crash(dir);
+            Assert.assertEquals("append-opened file must roll back to fsync'd size", 8, ff.length(path.$()));
+        }
+    }
+
+    @Test
     public void testBaselineKeepsPriorDataAndTornTailZeroesRange() throws Exception {
         final CrashFaultFilesFacade ff = new CrashFaultFilesFacade();
         final String dir = temp.newFolder("crashroot2").getAbsolutePath();

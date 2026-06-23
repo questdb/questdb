@@ -32,7 +32,24 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     private int durabilityOps = 0;
     private int crashAtOp = -1; // -1 = disarmed
 
-    // openCleanRW and openAppend are intentionally not overridden; they are not used on the commit path this harness exercises.
+    @Override
+    public long openAppend(LPSZ name) {
+        long fd = super.openAppend(name);
+        if (fd > -1) {
+            fdToPath.put(fd, toAbsPath(name));
+        }
+        return fd;
+    }
+
+    @Override
+    public long openCleanRW(LPSZ name, long size) {
+        long fd = super.openCleanRW(name, size);
+        if (fd > -1) {
+            fdToPath.put(fd, toAbsPath(name));
+        }
+        return fd;
+    }
+
     @Override
     public long openRW(LPSZ name, int opts) {
         long fd = super.openRW(name, opts);
