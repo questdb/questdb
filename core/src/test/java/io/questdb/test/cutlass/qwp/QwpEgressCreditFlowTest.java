@@ -65,7 +65,7 @@ public class QwpEgressCreditFlowTest extends AbstractQwpBootstrapTest {
         dbPath.parent().$();
         // setUpFragmentationChunks (superclass @Before) draws sendChunk/recvChunk from
         // [1, 500]. sendBuffer parks once per sendChunk bytes, so a byte-level draw
-        // streams this class's multi-MB payloads one byte per dispatcher round-trip --
+        // streams this class's multi-MB payloads one byte per dispatcher round-trip -
         // millions of them, blowing the global timeout on slow CI (the mac-other hang).
         // Floor it: still fragments every batch, and credit cycling tracks the credit
         // budget not the chunk size, so no coverage is lost.
