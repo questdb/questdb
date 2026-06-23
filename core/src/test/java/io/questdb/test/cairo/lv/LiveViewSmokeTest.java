@@ -3442,6 +3442,84 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBaseTableTtlIsTransparentToLiveView() throws Exception {
+        // A base-table TTL that evicts old partitions is transparent to the LV,
+        // exactly like an explicit DROP PARTITION
+        // (testDropPartitionOnBaseIsTransparentToLiveView): the view stays ACTIVE,
+        // its already-derived rows below the evicted range are preserved (frozen,
+        // not retracted), and the refresh worker walks past the eviction without
+        // rewriting LV state. TTL differs only in its trigger - it fires
+        // automatically at apply time when a later commit advances the base max
+        // timestamp past the retention window - so it exercises the automatic
+        // retention path the explicit-DROP test does not. The LV consumes the base
+        // WAL stream incrementally, not base partitions, so physical partition
+        // eviction never reaches the LV's read path.
+        assertMemoryLeak(() -> {
+            // Data sits in 2020, well before the real wall clock, so TTL's
+            // wall-clock protection (it evicts relative to min(maxTimestamp,
+            // wallClock)) keys off the data max and the eviction is deterministic.
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY TTL 1 DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 200ms AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            execute(
+                    "INSERT INTO base (ts, x) VALUES " +
+                            "('2020-01-01T12:00:00.000000Z', 1)," +
+                            "('2020-01-02T12:00:00.000000Z', 2)"
+            );
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            // Both partitions are within 1 day of the max (2020-01-02T12:00), so
+            // nothing is evicted yet: base and LV both hold the two rows.
+            assertQuery("SELECT count() FROM base").noLeakCheck().noRandomAccess().expectSize().returns("count\n2\n");
+            assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n2\n");
+            long preFloor = instance.getStateReader().getLvConsumedSeqTxn();
+
+            // A later commit advances the base max to 2020-01-10, pushing both
+            // earlier partitions outside the 1-day window: TTL evicts them at apply
+            // time, leaving only the new row in the base table.
+            execute("INSERT INTO base (ts, x) VALUES ('2020-01-10T12:00:00.000000Z', 3)");
+            drainWalQueue();
+            assertQuery("SELECT ts, x FROM base").noLeakCheck().timestamp("ts").expectSize().returns("ts\tx\n" +
+                            "2020-01-10T12:00:00.000000Z\t3\n");
+
+            // FLUSH EVERY 200ms would otherwise rate-limit the back-to-back refresh.
+            instance.setLastFlushTimeUs(Numbers.LONG_NULL);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            Assert.assertFalse(
+                    "LV must stay valid after base TTL eviction",
+                    instance.isInvalid()
+            );
+            assertQuery("SELECT view_status FROM live_views() WHERE view_name = 'lv'").noLeakCheck().noRandomAccess().returns("view_status\nactive\n");
+            // The TTL-evicted base partitions do not retract the already-derived LV
+            // rows; the new row forward-appends with the next row number.
+            assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tx\trn\n" +
+                            "2020-01-01T12:00:00.000000Z\t1\t1\n" +
+                            "2020-01-02T12:00:00.000000Z\t2\t2\n" +
+                            "2020-01-10T12:00:00.000000Z\t3\t3\n");
+
+            long postFloor = instance.getStateReader().getLvConsumedSeqTxn();
+            Assert.assertTrue(
+                    "lv_consumed_seqTxn must advance past the new commit [pre=" + preFloor
+                            + ", post=" + postFloor + ']',
+                    postFloor > preFloor
+            );
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testApplyPersistFailureDoesNotAdvanceFloor() throws Exception {
         // Regression: pre-fix, advanceLiveViewConsumedSeqTxn mutated the in-memory
         // floor before persisting _lv.s and silently swallowed any persist error,
@@ -9586,6 +9664,74 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             Assert.assertEquals(
                     "invalidation reason must round-trip via _lv.s",
                     "base table drop",
+                    reloaded.getInvalidationReason().toString()
+            );
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testBaseTableRenameInvalidatesLiveView() throws Exception {
+        // Renaming the base table is allowed, but it invalidates every dependent
+        // LV as a synchronous side effect (CairoEngine.rename ->
+        // invalidateLiveViewsForBaseTable, reason "base table rename") - the same
+        // contract a base DROP takes (testInvalidationSurvivesRestart). The LV
+        // stays queryable from its own on-disk tier (it materializes to its own
+        // table, independent of the base name) and the invalidation persists
+        // across a restart. Contrast LiveViewTest.testRejectRename, which covers
+        // renaming the LV itself (rejected outright, never reaching this path).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            execute("INSERT INTO base (ts, x) VALUES " +
+                    "('2026-05-01T00:00:00.000000Z', 1), " +
+                    "('2026-05-02T00:00:00.000000Z', 2)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            Assert.assertFalse("LV must start valid", instance.isInvalid());
+            assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tx\trn\n" +
+                            "2026-05-01T00:00:00.000000Z\t1\t1\n" +
+                            "2026-05-02T00:00:00.000000Z\t2\t2\n");
+
+            // Rename the base. The LV flips INVALID immediately.
+            execute("RENAME TABLE base TO base2");
+            drainWalQueue();
+
+            Assert.assertTrue("LV must be invalid after base rename", instance.isInvalid());
+            Assert.assertEquals(
+                    "invalidation reason must record the trigger",
+                    "base table rename",
+                    instance.getInvalidationReason().toString()
+            );
+            assertQuery("SELECT view_status, invalidation_reason FROM live_views() WHERE view_name = 'lv'").noLeakCheck().noRandomAccess().returns("view_status\tinvalidation_reason\n" +
+                            "invalid\tbase table rename\n");
+
+            // The invalid view stays queryable from its own on-disk tier - the
+            // base rename does not touch the LV's materialized data.
+            assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tx\trn\n" +
+                            "2026-05-01T00:00:00.000000Z\t1\t1\n" +
+                            "2026-05-02T00:00:00.000000Z\t2\t2\n");
+
+            // The invalidation round-trips through _lv.s across a restart.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(reloaded);
+            Assert.assertTrue(
+                    "invalidation must round-trip via _lv.s",
+                    reloaded.isInvalid()
+            );
+            Assert.assertEquals(
+                    "invalidation reason must round-trip via _lv.s",
+                    "base table rename",
                     reloaded.getInvalidationReason().toString()
             );
 

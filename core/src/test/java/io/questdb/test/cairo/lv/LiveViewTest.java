@@ -464,6 +464,29 @@ public class LiveViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExplainLiveViewQueryShowsLiveViewPlan() throws Exception {
+        // Reading from a live view at SELECT time is a plain forward scan of the
+        // LV's own materialized table, wrapped in a thin LiveView node - there is
+        // no in-memory-tier merge node in the plan. The V1 tier is read-inert and
+        // reads route by maxDiskTs at cursor iteration time, which EXPLAIN does not
+        // surface. The window function that defines the view runs only in the
+        // refresh job, never at read time, so it is absent from the read plan too.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (sym SYMBOL, price DOUBLE, ts TIMESTAMP) " +
+                    "TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT sym, price, ts, row_number() OVER w AS rn FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')");
+            assertQuery("SELECT * FROM lv").noLeakCheck().assertsPlan("LiveView\n" +
+                    "  view: lv\n" +
+                    "    PageFrame\n" +
+                    "        Row forward scan\n" +
+                    "        Frame forward scan on: lv\n");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testShowColumnsReflectsLiveViewSchema() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (sym SYMBOL, price DOUBLE, ts TIMESTAMP) " +
