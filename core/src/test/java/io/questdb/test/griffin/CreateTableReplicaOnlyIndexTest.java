@@ -65,6 +65,18 @@ public class CreateTableReplicaOnlyIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreatePostingNoIncludeReplicaOnly() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table p (s symbol index type posting replica only, ts timestamp) timestamp(ts) partition by day wal");
+            try (TableMetadata m = engine.getTableMetadata(engine.verifyTableName("p"))) {
+                int i = m.getColumnIndex("s");
+                Assert.assertEquals(IndexType.POSTING, m.getColumnIndexType(i));
+                Assert.assertTrue(m.isColumnReplicaOnlyIndex(i));
+            }
+        });
+    }
+
+    @Test
     public void testCreatePostingReplicaOnly() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table z (s symbol index type posting include (p) replica only, p double, ts timestamp) timestamp(ts) partition by day wal");
@@ -74,5 +86,14 @@ public class CreateTableReplicaOnlyIndexTest extends AbstractCairoTest {
                 Assert.assertTrue(m.isColumnReplicaOnlyIndex(i));
             }
         });
+    }
+
+    @Test
+    public void testReplicaWithoutOnlyErrors() throws Exception {
+        assertException(
+                "create table e (s symbol index replica, ts timestamp) timestamp(ts) partition by day wal",
+                38,
+                "'only' expected"
+        );
     }
 }

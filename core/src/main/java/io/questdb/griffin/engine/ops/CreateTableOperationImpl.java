@@ -563,13 +563,13 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     }
 
     @Override
-    public boolean isReplicaOnlyIndex(int index) {
-        return (getLowAt(index * 2 + 1) & COLUMN_FLAG_REPLICA_ONLY) != 0;
+    public boolean isDedupKey(int index) {
+        return (getLowAt(index * 2 + 1) & COLUMN_FLAG_DEDUP_KEY) != 0;
     }
 
     @Override
-    public boolean isDedupKey(int index) {
-        return (getLowAt(index * 2 + 1) & COLUMN_FLAG_DEDUP_KEY) != 0;
+    public boolean isReplicaOnlyIndex(int index) {
+        return (getLowAt(index * 2 + 1) & COLUMN_FLAG_REPLICA_ONLY) != 0;
     }
 
     @Override
