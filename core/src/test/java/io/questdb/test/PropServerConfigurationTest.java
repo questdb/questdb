@@ -760,6 +760,28 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testDeprecatedMatViewOomRetryTimeoutKey() throws Exception {
+        // cairo.mat.view.refresh.oom.retry.timeout is a removed live setting kept as a deprecated no-op
+        // so that an existing server.conf carrying it still validates and starts, even under strict
+        // validation. It must not throw and must not affect the live busy-retry backoff that supersedes it.
+        Properties properties = new Properties();
+        properties.setProperty("config.validation.strict", "true");
+        properties.setProperty("cairo.mat.view.refresh.oom.retry.timeout", "200");
+        properties.setProperty("cairo.mat.view.refresh.busy.retry.timeout", "5000");
+
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        // The deprecated key is inert: only the live busy-retry timeout takes effect.
+        Assert.assertEquals(5000, configuration.getCairoConfiguration().getMatViewRefreshBusyRetryTimeout());
+
+        PropServerConfiguration.ValidationResult result = validate(properties);
+        Assert.assertNotNull(result);
+        Assert.assertFalse(result.isError());
+        Assert.assertNotEquals(-1, result.message().indexOf("Deprecated settings"));
+        Assert.assertNotEquals(-1, result.message().indexOf("cairo.mat.view.refresh.oom.retry.timeout"));
+        Assert.assertNotEquals(-1, result.message().indexOf("`cairo.mat.view.refresh.busy.retry.timeout`"));
+    }
+
+    @Test
     public void testDeprecatedValidationResult() {
         Properties properties = new Properties();
         properties.setProperty("http.net.rcv.buf.size", "10000");
