@@ -513,6 +513,83 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinRuntimeConstantWhere() throws Exception {
+        // A runtime-constant WHERE term (e.g. a bind variable behind a cast, as the query fuzzer's
+        // bind-variant oracle produces) references no columns, so the optimiser routes it through
+        // mergeConstIntoPostJoinWhereClause. It must land on the master model rather than the
+        // synthetic offset pseudo-table, which rejects any WHERE clause. The compile-time-constant
+        // literal variant (true IS NOT NULL) folds away and never exercised this path; the
+        // bind-variant did, and tripped "WHERE clause of HORIZON JOIN can only reference left-hand
+        // side columns" on HEAD without the fix. With b0 set to true the term is a runtime no-op,
+        // so the bind-variant must match the same query without it.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts) PARTITION BY DAY", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY", rightTableTimestampType.getTypeName());
+
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('1970-01-01T00:00:00.000000Z', 'AX', 10),
+                                ('1970-01-01T00:00:00.000000Z', 'BX', 30),
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 20)
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 100),
+                                ('1970-01-01T00:00:01.000000Z', 'BX', 200),
+                                ('1970-01-01T00:00:02.000000Z', 'AX', 5)
+                            """
+            );
+
+            bindVariableService.clear();
+            bindVariableService.setBoolean("b0", true);
+
+            // Keyed (GROUP BY) shape with both a runtime-constant term and a master-only predicate,
+            // mirroring the fuzzer repro.
+            String keyedBind = "SELECT t.sym AS s, h.offset / " + getSecondsDivisor() + " AS sec_offs, sum(p.price) AS a0 " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "RANGE FROM 0s TO 1s STEP 1s AS h " +
+                    "WHERE (:b0::BOOLEAN IS NOT NULL AND t.qty > 10) " +
+                    "GROUP BY s, sec_offs " +
+                    "ORDER BY s, sec_offs";
+            String keyedRef = "SELECT t.sym AS s, h.offset / " + getSecondsDivisor() + " AS sec_offs, sum(p.price) AS a0 " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "RANGE FROM 0s TO 1s STEP 1s AS h " +
+                    "WHERE t.qty > 10 " +
+                    "GROUP BY s, sec_offs " +
+                    "ORDER BY s, sec_offs";
+            assertSqlCursors(keyedRef, keyedBind);
+
+            // Non-keyed shape exercises the implicit single-row aggregate path.
+            String notKeyedBind = "SELECT sum(p.price) AS a0 " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "RANGE FROM 0s TO 0s STEP 1s AS h " +
+                    "WHERE (:b0::BOOLEAN IS NOT NULL AND t.qty > 10)";
+            String notKeyedRef = "SELECT sum(p.price) AS a0 " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "RANGE FROM 0s TO 0s STEP 1s AS h " +
+                    "WHERE t.qty > 10";
+            assertSqlCursors(notKeyedRef, notKeyedBind);
+
+            // Sanity check the reference output is non-empty, so the comparison above is meaningful.
+            assertQuery(notKeyedRef)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            a0
+                            50.0
+                            """);
+        });
+    }
+
+    @Test
     public void testHorizonJoinFilterPreservedOnParallelismDowngrade() throws Exception {
         // When parallel HORIZON JOIN steals a filter from the master factory,
         // but then parallelism is downgraded (e.g., due to count_distinct(varchar)

@@ -5251,15 +5251,31 @@ public class SqlOptimiser implements Mutable {
         }
         model.setConstWhereClause(compileTimeTerms);
         if (runtimeTerms != null) {
-            IntList ordered = model.getOrderedJoinModels();
-            int lastIndex = ordered.getQuick(ordered.size() - 1);
-            IQueryModel lastModel = model.getJoinModels().getQuick(lastIndex);
-            lastModel.setPostJoinWhereClause(concatFilters(
-                    legacy,
-                    expressionNodePool,
-                    lastModel.getPostJoinWhereClause(),
-                    runtimeTerms
-            ));
+            if (isHorizonJoin(model)) {
+                // A HORIZON JOIN's last ordered join model is the synthetic offset pseudo-table
+                // (a CROSS join the parser appends for the RANGE/LIST clause), and its slave models
+                // reject any WHERE clause too; only the master may carry a filter. A runtime-constant
+                // term references no columns, so anchor it on the master model's WHERE clause, exactly
+                // where assignFilters puts every other master-only HORIZON JOIN predicate. Pushing it
+                // onto the offset model would otherwise trip validateHorizonJoinFilter.
+                IQueryModel masterModel = model.getJoinModels().getQuick(0);
+                masterModel.setWhereClause(concatFilters(
+                        legacy,
+                        expressionNodePool,
+                        masterModel.getWhereClause(),
+                        runtimeTerms
+                ));
+            } else {
+                IntList ordered = model.getOrderedJoinModels();
+                int lastIndex = ordered.getQuick(ordered.size() - 1);
+                IQueryModel lastModel = model.getJoinModels().getQuick(lastIndex);
+                lastModel.setPostJoinWhereClause(concatFilters(
+                        legacy,
+                        expressionNodePool,
+                        lastModel.getPostJoinWhereClause(),
+                        runtimeTerms
+                ));
+            }
         }
     }
 
