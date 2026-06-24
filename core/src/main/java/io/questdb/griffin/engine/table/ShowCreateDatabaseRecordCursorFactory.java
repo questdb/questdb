@@ -74,10 +74,13 @@ import java.util.Comparator;
  * {@code SHOW CREATE ...} factory, so the dump stays in lock-step with those
  * commands without duplicating their formatting logic. Objects the caller is not
  * authorized to read are skipped, so the dump never discloses DDL the caller
- * could not otherwise see. An object dropped, renamed or recreated after the
- * initial token snapshot but before its DDL is produced is likewise skipped (with
- * a logged warning) rather than failing the whole dump; cancellation, timeouts and
- * genuine errors still abort it.
+ * could not otherwise see. The token set is snapshotted up front, but each object's
+ * liveness is re-checked just before its DDL is produced: an object dropped, renamed
+ * or recreated in that window is skipped (with a logged warning) for every object
+ * type alike, so the dump reflects the schema as of emit time rather than failing or
+ * emitting stale DDL. This is best-effort, not a consistent snapshot - a skipped
+ * object simply does not appear, and a later object that depended on it may then not
+ * replay cleanly. Cancellation, timeouts and genuine errors still abort the dump.
  */
 public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorFactory {
     public static final int N_DDL_COL = 0;
@@ -209,14 +212,21 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
     }
 
     // Produces one object's DDL by delegating to its per-object SHOW CREATE factory. The token set was
-    // snapshotted earlier (see appendObjects), but each object is resolved afresh here, so a concurrent
-    // DROP/RENAME/recreate can make the delegate throw. Skip such a vanished object with a logged warning
-    // instead of aborting the whole dump; still rethrow cancellation/interruption and genuine errors.
+    // snapshotted earlier (see appendObjects), so an object can be dropped, renamed or recreated before we
+    // reach it. A positive liveness pre-check skips a vanished object up front, keeping the dump consistent
+    // across object types and reflecting the schema as of emit time: in particular a dropped view, whose
+    // on-disk definition can linger and still be readable, would otherwise emit stale DDL. The delegate can
+    // still fail in the residual race between the pre-check and getCursor; the catch blocks skip that too,
+    // while always rethrowing cancellation/interruption and genuine errors for a still-present object.
     private void appendObjectDdl(
             ObjList<CharSequence> out,
             TableToken token,
             SqlExecutionContext executionContext
     ) throws SqlException {
+        if (vanishedBetweenSnapshotAndEmit(token, executionContext)) {
+            logSkippedObject(token, "object no longer present at emit time");
+            return;
+        }
         final RecordCursorFactory factory = objectFactory(token);
         try {
             try (RecordCursor cursor = factory.getCursor(executionContext)) {

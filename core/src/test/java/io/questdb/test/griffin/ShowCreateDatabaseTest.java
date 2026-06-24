@@ -587,19 +587,17 @@ public class ShowCreateDatabaseTest extends AbstractCairoTest {
             execute("create view v_drop as (select ts, s from base)");
             drainWalQueue();
 
-            // Unlike a table, a view reads its DDL from an on-disk definition, so a concurrent DROP throws
-            // "could not read view definition" only once that file is gone (until then the dump emits the
-            // last-known DDL, an accepted best-effort outcome). Reproduce the throw while the view is
-            // genuinely dropped from the registry, so the re-check confirms the vanish and the dump skips it.
+            // A view reads its DDL from an on-disk definition that lingers briefly after a DROP, so the view
+            // factory would not throw and the dump would emit stale DDL. The pre-emit liveness check skips the
+            // view as soon as it leaves the registry. Drop v_drop while the earlier 'base' object is emitting,
+            // so the liveness check (not the per-object factory) is what catches the vanish.
             final boolean[] fired = {false};
             final ObjList<String> statements = drive(new HookedDatabaseFactory(
                     ShowCreateDatabaseRecordCursorFactory.INCLUDE_SCHEMA,
                     token -> {
-                        if (!fired[0] && "v_drop".contentEquals(token.getTableName())) {
+                        if (!fired[0] && "base".contentEquals(token.getTableName())) {
                             fired[0] = true;
                             executeQuietly("drop view v_drop");
-                            return new ThrowingObjectFactory(
-                                    SqlException.$(0, "could not read view definition [table=v_drop]"), null);
                         }
                         return null;
                     }
@@ -610,6 +608,35 @@ public class ShowCreateDatabaseTest extends AbstractCairoTest {
             Assert.assertEquals(dump, 1, statements.size());
             Assert.assertTrue(dump, dump.contains("CREATE TABLE 'base'"));
             Assert.assertFalse("dropped view must be skipped", dump.contains("v_drop"));
+        });
+    }
+
+    @Test
+    public void testPreEmitLivenessCheckSkipsTableDroppedBeforeEmit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table aaa_keep (ts timestamp, v double) timestamp(ts) partition by day bypass wal");
+            execute("create table zzz_victim (ts timestamp, v double) timestamp(ts) partition by day bypass wal");
+
+            // Drop the later object while the earlier one is emitting: the victim never reaches its per-object
+            // factory because the pre-emit liveness check skips it first. Distinct from the backstop tests,
+            // where the drop lands inside the victim's own factory and the catch path handles it.
+            final boolean[] fired = {false};
+            final ObjList<String> statements = drive(new HookedDatabaseFactory(
+                    ShowCreateDatabaseRecordCursorFactory.INCLUDE_TABLES,
+                    token -> {
+                        if (!fired[0] && "aaa_keep".contentEquals(token.getTableName())) {
+                            fired[0] = true;
+                            executeQuietly("drop table zzz_victim");
+                        }
+                        return null;
+                    }
+            ));
+
+            Assert.assertTrue("drop hook must have fired", fired[0]);
+            final String dump = statements.toString();
+            Assert.assertEquals(dump, 1, statements.size());
+            Assert.assertTrue(dump, dump.contains("CREATE TABLE 'aaa_keep'"));
+            Assert.assertFalse("object dropped before its emit must be skipped", dump.contains("zzz_victim"));
         });
     }
 
