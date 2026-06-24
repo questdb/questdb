@@ -1491,6 +1491,17 @@ public class SqlUtil {
             @NotNull IQueryModel model,
             @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> depMap
     ) {
+        // A sub-query embedded in an expression (e.g. WHERE col IN (SELECT ... FROM t),
+        // EXISTS (SELECT ... FROM t), or a scalar sub-select) carries its own table and
+        // column references. These models hang off the expression, not off the
+        // nested/join/union links that collectTableAndColumnReferences() walks, so descend
+        // into them here. Otherwise a base table reachable only through such a sub-query is
+        // left out of the dependency map, and a later read of the view trips on the missing
+        // entry while authorizing the scan.
+        if (expr.queryModel != null) {
+            collectTableAndColumnReferences(engine, expr.queryModel, depMap);
+        }
+
         // Handle column literals (e.g., table.column or column)
         if (expr.type == ExpressionNode.LITERAL) {
             CharSequence token = expr.token;
