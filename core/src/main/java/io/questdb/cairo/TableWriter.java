@@ -11443,7 +11443,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // reads from _pm metadata - does NOT mmap the parquet file
     // returns the partition size
     private long readParquetMetaMinMaxTimestamps(Path filePath, long parquetFileSize) {
-        assert parquetFileSize > 0;
+        if (parquetFileSize < 0) {
+            throw CairoException.critical(ff.errno()).put("could not access parquet data file for _pm metadata [path=").put(filePath).put(']');
+        }
         try {
             int partitionDirLen = filePath.size() - PARQUET_METADATA_FILE_NAME.length() - 1;
             openParquetMetadataOrThrow(filePath, partitionDirLen, parquetFileSize);
@@ -11491,12 +11493,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void readPartitionMinMaxTimestamps(long partitionTimestamp, Path path, CharSequence columnName, long parquetFileSize, long partitionSize) {
         int partitionLen = path.size();
         try {
-            // Parquet partition with _pm file (data.parquet might be absent)
+            // Parquet partition with a _pm file.
             LPSZ filePath = path.concat(PARQUET_METADATA_FILE_NAME).$();
             if (ff.exists(filePath)) {
-                // When parquetFileSize is -1, use Long.MAX_VALUE to select the latest footer
-                if (parquetFileSize == -1) {
-                    parquetFileSize = Long.MAX_VALUE;
+                if (parquetFileSize < 0) {
+                    // No committed size to match on (attach, or a partition-drop
+                    // boundary recompute): derive the MVCC token from the on-disk
+                    // data.parquet length so resolveFooter skips any dead tail.
+                    parquetFileSize = ff.length(path.trimTo(partitionLen).concat(PARQUET_PARTITION_NAME).$());
+                    path.trimTo(partitionLen).concat(PARQUET_METADATA_FILE_NAME).$();
                 }
                 readParquetMetaMinMaxTimestamps(path, parquetFileSize);
             } else {
@@ -11535,10 +11540,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private long readPartitionSizeMinMaxTimestamps(long partitionTimestamp, Path path, CharSequence columnName) {
         int partitionLen = path.size();
         try {
-            // Parquet partition with _pm file (data.parquet might be absent)
+            // Parquet partition with a _pm file.
             LPSZ filePath = path.concat(PARQUET_METADATA_FILE_NAME).$();
             if (ff.exists(filePath)) {
-                return readParquetMetaMinMaxTimestamps(path, Long.MAX_VALUE);
+                // The partition is not in _txn here, so derive the MVCC token from
+                // the data.parquet length: resolveFooter then skips any dead tail.
+                final long parquetFileSize = ff.length(path.trimTo(partitionLen).concat(PARQUET_PARTITION_NAME).$());
+                path.trimTo(partitionLen).concat(PARQUET_METADATA_FILE_NAME).$();
+                return readParquetMetaMinMaxTimestamps(path, parquetFileSize);
             }
 
             // Parquet partition without _pm file
