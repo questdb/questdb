@@ -24,6 +24,7 @@
 
 package io.questdb.test.mp;
 
+import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.mp.continuation.WorkerContinuation;
 import org.junit.Assert;
 import org.junit.Test;
@@ -33,6 +34,60 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class WorkerContinuationTest {
+
+    @Test
+    public void testHaltDrainsContinuationScheduledJustBeforeHalt() throws Exception {
+        // Regression: a continuation scheduled for resume just before the pool halts must
+        // still be resumed so its body can unwind and release any checked-out resource,
+        // instead of being stranded in the resume queue. This is the worker-level shape of
+        // the sleep()-at-shutdown server socket leak: the parked query continuation was
+        // scheduleResume()'d by engine close but the worker exited without draining it.
+        for (int i = 0; i < 5; i++) {
+            // Single worker that drops into a long backoff sleep after one idle iteration,
+            // so when we schedule the resume it is asleep (past its last empty dequeue) and
+            // exits its RUNNING loop on halt without a further dequeue -- isolating the
+            // shutdown drain from the normal in-loop dequeue.
+            TestWorkerPool pool = new TestWorkerPool(new WorkerPoolConfiguration() {
+                @Override
+                public String getPoolName() {
+                    return "halt-drain-test";
+                }
+
+                @Override
+                public long getSleepThreshold() {
+                    return 0;
+                }
+
+                @Override
+                public long getSleepTimeout() {
+                    return 100;
+                }
+
+                @Override
+                public int getWorkerCount() {
+                    return 1;
+                }
+            });
+            CountDownLatch resumed = new CountDownLatch(1);
+            WorkerContinuation cont = new WorkerContinuation(() -> {
+                WorkerContinuation.suspend();
+                resumed.countDown();
+            }, pool.getContinuationSink());
+
+            cont.run();
+            Assert.assertFalse("continuation must be parked, not done (iter " + i + ")", cont.isDone());
+
+            pool.start();
+            Thread.sleep(50); // let the worker reach its backoff sleep
+            cont.scheduleResume();
+            pool.halt(); // synchronous: returns only after the worker has exited (and drained)
+
+            Assert.assertTrue(
+                    "continuation scheduled before halt was stranded, not drained (iter " + i + ")",
+                    resumed.await(10, TimeUnit.SECONDS)
+            );
+        }
+    }
 
     @Test
     public void testIsMountedFalseOutsideRun() {

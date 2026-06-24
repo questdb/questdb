@@ -250,9 +250,10 @@ public class Worker extends Thread {
                     cont.run();
                     if (cont.isDone()) {
                         // loopBody returned, which only happens when this worker
-                        // observed lifecycle HALTED. Exit the pool.
+                        // observed lifecycle HALTED. Break to drain any parked conts
+                        // before exiting the pool.
                         recycleJobList(cont);
-                        return;
+                        break;
                     }
                     // Walk the handoff chain. Each parked body, just before yielding,
                     // may have stashed a dequeued foreign cont in its handoff slot.
@@ -300,6 +301,12 @@ public class Worker extends Thread {
                     // next cont runs shares no live state with any parked or spent cont.
                     currentJobsGen = mintNextGen(currentJobsGen);
                 }
+                // Lifecycle flipped to HALTED. signalClose() may have scheduled resumes for
+                // continuations parked on suspending queries (e.g. sleep) so their bodies
+                // observe isShuttingDown() and unwind on a live carrier, releasing checked-out
+                // resources such as connection contexts. The RUNNING loop can exit before
+                // draining them; finish here so they are not stranded with resources unreleased.
+                drainShutdownContinuations();
             }
         } catch (Throwable e) {
             ex = e;
@@ -323,6 +330,38 @@ public class Worker extends Thread {
             // does not survive across engine restarts in long-running JVMs.
             // No-op if bind() was never reached (lifecycle CAS failed).
             CarrierIdentity.unbind();
+        }
+    }
+
+    /**
+     * Drains continuations scheduled for resume during shutdown, run after the worker's
+     * RUNNING loop exits. Mirrors the outer driver's handoff walk: each parked cont is
+     * remounted and run to completion so its body observes {@code isShuttingDown()} and
+     * unwinds, releasing any checked-out resource (e.g. a connection context). A cont
+     * parked long enough to reach here is past the benign mount-race window, so
+     * {@link #mountForeignCont} runs it rather than abandoning it.
+     */
+    private void drainShutdownContinuations() {
+        if (continuationQueue == null) {
+            return;
+        }
+        final ContinuationQueue.ResumeTask scratch = new ContinuationQueue.ResumeTask();
+        WorkerContinuation cont;
+        while ((cont = continuationQueue.tryDequeue(scratch)) != null) {
+            mountForeignCont(cont);
+            while (!cont.isDone()) {
+                WorkerContinuation handoff = cont.takeHandoff();
+                if (handoff == null) {
+                    // Parked deep without a handoff; leave it for the halt-timeout backstop.
+                    break;
+                }
+                recycleJobList(cont);
+                cont = handoff;
+                mountForeignCont(cont);
+            }
+            if (cont.isDone()) {
+                recycleJobList(cont);
+            }
         }
     }
 
