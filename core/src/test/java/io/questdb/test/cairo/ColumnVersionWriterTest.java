@@ -24,18 +24,23 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.ColumnVersionWriter;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -48,11 +53,331 @@ import org.junit.Test;
 import java.util.Formatter;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
+import static io.questdb.cairo.ColumnVersionReader.BLOCK_SIZE_BYTES;
 import static io.questdb.cairo.ColumnVersionReader.HEADER_SIZE;
+import static io.questdb.cairo.ColumnVersionReader.OFFSET_OFFSET_A_64;
+import static io.questdb.cairo.ColumnVersionReader.OFFSET_OFFSET_B_64;
+import static io.questdb.cairo.ColumnVersionReader.OFFSET_SIZE_A_64;
+import static io.questdb.cairo.ColumnVersionReader.OFFSET_SIZE_B_64;
+import static io.questdb.cairo.ColumnVersionReader.OFFSET_VERSION_64;
 
 public class ColumnVersionWriterTest extends AbstractCairoTest {
+
+    // Representative area for the helper unit tests: 3 entries * 32 bytes = 96 bytes.
+    private static final long CV_AREA_SIZE = 3L * BLOCK_SIZE_BYTES;
+
+    // ---- _cv body-checksum unit tests (mirror the _txn helper tests) ----
+
+    @Test
+    public void testCvAreaChecksumChangesWhenAnyByteChanges() {
+        long addr = Unsafe.malloc(CV_AREA_SIZE, MemoryTag.NATIVE_DEFAULT);
+        try {
+            fillPattern(addr, CV_AREA_SIZE, 0x1234);
+            long base = TableUtils.calculateCvAreaChecksum(addr, CV_AREA_SIZE);
+            // Every byte of the whole area is covered (zero exclusions): flipping any one must change it.
+            for (long off = 0; off < CV_AREA_SIZE; off++) {
+                byte orig = Unsafe.getByte(addr + off);
+                Unsafe.putByte(addr + off, (byte) (orig ^ 0x5a));
+                Assert.assertNotEquals("checksum did not change for covered byte offset " + off, base, TableUtils.calculateCvAreaChecksum(addr, CV_AREA_SIZE));
+                Unsafe.putByte(addr + off, orig);
+            }
+        } finally {
+            Unsafe.free(addr, CV_AREA_SIZE, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testCvAreaChecksumIsDeterministicAndNeverZero() {
+        long addr = Unsafe.malloc(CV_AREA_SIZE, MemoryTag.NATIVE_DEFAULT);
+        try {
+            for (int seed = 0; seed < 100_000; seed++) {
+                fillPattern(addr, CV_AREA_SIZE, seed);
+                long c1 = TableUtils.calculateCvAreaChecksum(addr, CV_AREA_SIZE);
+                long c2 = TableUtils.calculateCvAreaChecksum(addr, CV_AREA_SIZE);
+                Assert.assertEquals("checksum must be deterministic for seed " + seed, c1, c2);
+                Assert.assertNotEquals("checksum returned 0 for seed " + seed, 0L, c1);
+            }
+            // The all-zero area (avalanche of 0) must still be remapped away from the 0 = "absent" sentinel.
+            for (long off = 0; off < CV_AREA_SIZE; off++) {
+                Unsafe.putByte(addr + off, (byte) 0);
+            }
+            Assert.assertNotEquals("all-zero area must not collide with the absent sentinel", 0L, TableUtils.calculateCvAreaChecksum(addr, CV_AREA_SIZE));
+        } finally {
+            Unsafe.free(addr, CV_AREA_SIZE, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testCvChecksumAbsentOldFormat() throws Exception {
+        // An old-format _cv with a 40-byte header and NO trailing checksum long (file ends exactly at
+        // offset+size). readSafe() must succeed and must NOT SIGBUS or throw or fall back: the EOF guard
+        // sees the file is too short for a trailing long and skips the verify.
+        assertMemoryLeak(() -> {
+            final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+            try (Path path = new Path()) {
+                LPSZ cvPath = path.of(root).concat("_cv").$();
+                long liveOffset;
+                long liveSize;
+                try (ColumnVersionWriter w = new ColumnVersionWriter(configuration, cvPath, true)) {
+                    for (int i = 0; i < 5; i++) {
+                        w.upsert(i, i, i + 1, i * 10L);
+                    }
+                    w.commit();
+                    long version = peekLong(ff, cvPath, OFFSET_VERSION_64);
+                    boolean areaA = (version & 1L) == 0;
+                    liveOffset = peekLong(ff, cvPath, areaA ? OFFSET_OFFSET_A_64 : OFFSET_OFFSET_B_64);
+                    liveSize = peekLong(ff, cvPath, areaA ? OFFSET_SIZE_A_64 : OFFSET_SIZE_B_64);
+                }
+
+                // Truncate the file to exactly offset+size, removing the trailing checksum long entirely:
+                // this is byte-for-byte an old-format _cv (no trailing bytes after the last block).
+                truncateFile(ff, cvPath, liveOffset + liveSize);
+                Assert.assertEquals(liveOffset + liveSize, ff.length(cvPath));
+
+                ColumnVersionReader.resetBodyChecksumFallbackCount();
+                try (ColumnVersionReader r = new ColumnVersionReader().ofRO(ff, cvPath)) {
+                    // Must not SIGBUS / throw, and must read the data back correctly.
+                    r.readSafe(configuration.getMillisecondClock(), 1);
+                    for (int i = 0; i < 5; i++) {
+                        Assert.assertEquals(i * 10L, r.getColumnTopQuick(i, i));
+                    }
+                    Assert.assertEquals("absent checksum must not trigger fallback", 0L, ColumnVersionReader.getBodyChecksumFallbackCount());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCvChecksumDetectsCorruption() throws Exception {
+        // Single commit => only the live area is valid (the other area was never written / is empty).
+        // Corrupting a covered byte of the live area, leaving its checksum stale, must NOT silently return
+        // the wrong value: with no valid other area, readSafe() must throw.
+        assertMemoryLeak(() -> {
+            final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+            try (Path path = new Path()) {
+                LPSZ cvPath = path.of(root).concat("_cv").$();
+                long liveOffset;
+                try (ColumnVersionWriter w = new ColumnVersionWriter(configuration, cvPath, true)) {
+                    for (int i = 0; i < 4; i++) {
+                        w.upsert(i, i, i + 1, i * 100L);
+                    }
+                    w.commit();
+                    long version = peekLong(ff, cvPath, OFFSET_VERSION_64);
+                    boolean areaA = (version & 1L) == 0;
+                    liveOffset = peekLong(ff, cvPath, areaA ? OFFSET_OFFSET_A_64 : OFFSET_OFFSET_B_64);
+                }
+
+                // Flip the first block's partition timestamp WITHOUT recomputing the trailing checksum.
+                long orig = peekLong(ff, cvPath, liveOffset);
+                pokeLong(ff, cvPath, liveOffset, orig ^ 0x5a5a_5a5aL);
+
+                ColumnVersionReader.resetBodyChecksumFallbackCount();
+                try (ColumnVersionReader r = new ColumnVersionReader().ofRO(ff, cvPath)) {
+                    try {
+                        r.readSafe(configuration.getMillisecondClock(), 1);
+                        Assert.fail("expected CairoException - corrupt live area with no valid fallback");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "_cv checksum mismatch in both A and B areas");
+                    }
+                    Assert.assertEquals("exactly one fallback attempt expected", 1L, ColumnVersionReader.getBodyChecksumFallbackCount());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCvChecksumFallbackAfterManyCommits() throws Exception {
+        // THE KEY PLACEMENT TEST. Many commits with VARYING entry counts (grow then shrink, repeatedly) so
+        // calculateWriteOffset both APPENDS new areas after the current one AND REUSES freed front space -
+        // exercising the +8 footprint reservation in BOTH branches. After all that, corrupt ONLY the current
+        // area; readSafe() must fall back to the OTHER (prior) area and return its exact, valid content. A
+        // wrong +8 reservation would have let some commit clobber the prior area's data OR its trailing
+        // checksum, so either the fallback content would be wrong or its checksum would fail (=> both-areas
+        // throw). We assert the fallback content equals the prior area read straight off disk.
+        assertMemoryLeak(() -> {
+            final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+            try (Path path = new Path()) {
+                LPSZ cvPath = path.of(root).concat("_cv").$();
+
+                final int cycles = 60;
+                long priorOffset;
+                long priorSize;
+                long currentOffset;
+                long currentSize;
+
+                try (ColumnVersionWriter w = new ColumnVersionWriter(configuration, cvPath, true)) {
+                    // Repeatedly grow the entry set up to a peak then shrink back down, committing on every
+                    // step. The oscillating size makes calculateWriteOffset alternate between front-reuse
+                    // (when the new, smaller area fits before the current one) and append (when it doesn't).
+                    int gen = 0;
+                    for (int cycle = 0; cycle < cycles; cycle++) {
+                        int peak = 4 + (cycle % 13); // varies the peak so offsets don't settle into a pattern
+                        // grow
+                        for (int n = 1; n <= peak; n++) {
+                            w.upsert(n, 0, gen++, n * 3L);
+                            w.commit();
+                        }
+                        // shrink (keep partition 1 so the area never becomes empty - we want pure size
+                        // oscillation between front-reuse and append, not the empty-area edge case)
+                        for (int n = peak; n >= 2; n--) {
+                            w.removePartition(n);
+                            w.commit();
+                        }
+                    }
+                    // A final pair of distinct commits so both A and B hold a real, checksummed area.
+                    w.upsert(1, 0, gen++, 11L);
+                    w.upsert(2, 0, gen++, 22L);
+                    w.commit();
+                    w.upsert(3, 0, gen++, 33L);
+                    w.commit();
+
+                    long version = peekLong(ff, cvPath, OFFSET_VERSION_64);
+                    boolean areaA = (version & 1L) == 0;
+                    currentOffset = peekLong(ff, cvPath, areaA ? OFFSET_OFFSET_A_64 : OFFSET_OFFSET_B_64);
+                    currentSize = peekLong(ff, cvPath, areaA ? OFFSET_SIZE_A_64 : OFFSET_SIZE_B_64);
+                    priorOffset = peekLong(ff, cvPath, areaA ? OFFSET_OFFSET_B_64 : OFFSET_OFFSET_A_64);
+                    priorSize = peekLong(ff, cvPath, areaA ? OFFSET_SIZE_B_64 : OFFSET_SIZE_A_64);
+                }
+
+                // Invariant guaranteed by the +8 reservation: the two areas' full footprints
+                // [offset, offset+size+8) must be disjoint. If this fails, the placement math is wrong.
+                assertNoAreaOverlap(currentOffset, currentSize, priorOffset, priorSize);
+
+                // Corrupt the current/live area's first block, leaving its trailing checksum stale.
+                long origFirst = peekLong(ff, cvPath, currentOffset);
+                pokeLong(ff, cvPath, currentOffset, origFirst ^ 0x33);
+
+                ColumnVersionReader.resetBodyChecksumFallbackCount();
+                try (ColumnVersionReader r = new ColumnVersionReader().ofRO(ff, cvPath)) {
+                    r.readSafe(configuration.getMillisecondClock(), 1);
+                    Assert.assertEquals("must fall back to the prior area exactly once", 1L, ColumnVersionReader.getBodyChecksumFallbackCount());
+                    // The fallback exposed the prior area: its block count and exact content must equal the
+                    // prior area read straight off disk (proving it was neither clobbered nor mis-sized).
+                    Assert.assertEquals(
+                            "fallback must expose the prior area's full block set",
+                            (int) (priorSize / BLOCK_SIZE_BYTES) * ColumnVersionWriter.BLOCK_SIZE,
+                            r.getCachedColumnVersionList().size()
+                    );
+                    assertReaderMatchesArea(ff, cvPath, priorOffset, priorSize, r);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCvNoFalsePositiveUnderConcurrentCommits() throws Exception {
+        // Concurrent writer (thousands of commits) + a reader looping readSafe(). Because the whole _cv area
+        // is commit-immutable, the reader must NEVER see a stable-version checksum mismatch: the fallback
+        // counter must stay 0 across the entire run.
+        assertMemoryLeak(() -> {
+            final int N = 10_000;
+            final FilesFacade ff = configuration.getFilesFacade();
+            try (
+                    Path path = new Path();
+                    ColumnVersionWriter w = new ColumnVersionWriter(configuration, path.of(root).concat("_cv").$(), true);
+                    ColumnVersionReader r = new ColumnVersionReader().ofRO(ff, path.$())
+            ) {
+                ColumnVersionReader.resetBodyChecksumFallbackCount();
+                final CyclicBarrier barrier = new CyclicBarrier(2);
+                final ConcurrentLinkedQueue<Throwable> exceptions = new ConcurrentLinkedQueue<>();
+                final AtomicInteger done = new AtomicInteger();
+
+                Thread writer = new Thread(() -> {
+                    final Rnd rnd = new Rnd();
+                    try {
+                        barrier.await();
+                        for (int txn = 0; txn < N; txn++) {
+                            int increment = rnd.nextInt(32);
+                            for (int j = 0; j < increment; j++) {
+                                w.upsert(rnd.nextLong(20), rnd.nextInt(10), txn, -1);
+                            }
+                            w.commit();
+                        }
+                    } catch (Throwable th) {
+                        exceptions.add(th);
+                    } finally {
+                        done.incrementAndGet();
+                    }
+                });
+
+                Thread reader = new Thread(() -> {
+                    try {
+                        barrier.await();
+                        while (done.get() == 0) {
+                            try {
+                                // A generous timeout: we are not testing liveness here, only that a healthy
+                                // concurrent commit never trips a body-checksum fallback.
+                                r.readSafe(configuration.getMillisecondClock(), 5_000);
+                            } catch (CairoException ex) {
+                                if (Chars.contains(ex.getFlyweightMessage(), "timeout")) {
+                                    continue;
+                                }
+                                throw ex;
+                            }
+                            Os.pause();
+                        }
+                    } catch (Throwable th) {
+                        exceptions.add(th);
+                    }
+                });
+
+                writer.start();
+                reader.start();
+                writer.join();
+                reader.join();
+
+                if (!exceptions.isEmpty()) {
+                    Assert.fail(exceptions.poll().toString());
+                }
+                Assert.assertEquals("no false-positive fallback under healthy concurrent commits", 0L, ColumnVersionReader.getBodyChecksumFallbackCount());
+            }
+        });
+    }
+
+    @Test
+    public void testCvRollbackVerifies() throws Exception {
+        // rollback() re-exposes the prior area (version - 1). Its trailing checksum must still verify - proof
+        // that the latest commit's placement did NOT clobber the prior area's data or checksum.
+        assertMemoryLeak(() -> {
+            final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+            try (Path path = new Path()) {
+                LPSZ cvPath = path.of(root).concat("_cv").$();
+                try (ColumnVersionWriter w = new ColumnVersionWriter(configuration, cvPath, true)) {
+                    // First committed state.
+                    for (int i = 0; i < 6; i++) {
+                        w.upsert(i + 1, i, 10 + i, 100L + i);
+                    }
+                    w.commit();
+                    StringSink before = new StringSink();
+                    before.put(w.toString());
+
+                    // Second commit with a different shape (so the area placement actually moves).
+                    w.upsert(99, 0, 999, 9999);
+                    w.upsert(100, 1, 1000, 10000);
+                    w.commit();
+
+                    // Roll back to the prior committed area. readUnsafe() inside rollback() verifies-or-skips;
+                    // a clobbered prior checksum would log an error but to be strict we re-verify via a fresh
+                    // reader's readSafe() (which does the real checksum check) below.
+                    w.rollback();
+                    Assert.assertEquals("rollback must restore the prior committed state", before.toString(), w.toString());
+                }
+
+                // Independently confirm the now-current (post-rollback) area passes the strict readSafe check.
+                ColumnVersionReader.resetBodyChecksumFallbackCount();
+                try (ColumnVersionReader r = new ColumnVersionReader().ofRO(ff, cvPath)) {
+                    r.readSafe(configuration.getMillisecondClock(), 1);
+                    Assert.assertEquals("rollback area must verify cleanly (no fallback)", 0L, ColumnVersionReader.getBodyChecksumFallbackCount());
+                    for (int i = 0; i < 6; i++) {
+                        Assert.assertEquals(100L + i, r.getColumnTopQuick(i + 1, i));
+                    }
+                }
+            }
+        });
+    }
 
     @Test
     public void testColumnAddRemove() throws Exception {
@@ -640,6 +965,87 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    // Deterministic, seed-dependent pseudo-random byte fill (xorshift): every byte position carries
+    // entropy and distinct seeds produce distinct content. Mirrors TxnTest.fillPattern.
+    private static void fillPattern(long addr, long size, int seed) {
+        int x = seed | 1; // avoid the zero-stuck xorshift state
+        for (long i = 0; i < size; i++) {
+            x ^= x << 13;
+            x ^= x >>> 17;
+            x ^= x << 5;
+            Unsafe.putByte(addr + i, (byte) x);
+        }
+    }
+
+    // Asserts the two areas' FULL on-disk footprints [offset, offset+size+8) (data + trailing checksum
+    // long) are disjoint - the invariant the +8 placement reservation must guarantee.
+    private static void assertNoAreaOverlap(long offsetA, long sizeA, long offsetB, long sizeB) {
+        long endA = offsetA + sizeA + Long.BYTES; // exclusive end including the trailing checksum
+        long endB = offsetB + sizeB + Long.BYTES;
+        boolean disjoint = endA <= offsetB || endB <= offsetA;
+        Assert.assertTrue(
+                "area footprints overlap: A=[" + offsetA + "," + endA + ") B=[" + offsetB + "," + endB + ")",
+                disjoint
+        );
+    }
+
+    // Reads `size` bytes of blocks from the on-disk area at `offset` and asserts they equal what the reader
+    // loaded into its cached list (same order). Proves the fallback exposed the prior area byte-for-byte.
+    private static void assertReaderMatchesArea(FilesFacade ff, LPSZ path, long offset, long size, ColumnVersionReader r) {
+        int blocks = (int) (size / BLOCK_SIZE_BYTES);
+        LongList list = r.getCachedColumnVersionList();
+        Assert.assertEquals(blocks * ColumnVersionWriter.BLOCK_SIZE, list.size());
+        for (int b = 0; b < blocks; b++) {
+            long base = offset + (long) b * BLOCK_SIZE_BYTES;
+            for (int w = 0; w < ColumnVersionWriter.BLOCK_SIZE; w++) {
+                long onDisk = peekLong(ff, path, base + (long) w * Long.BYTES);
+                long inReader = list.getQuick(b * ColumnVersionWriter.BLOCK_SIZE + w);
+                Assert.assertEquals("block " + b + " word " + w + " mismatch vs prior area on disk", onDisk, inReader);
+            }
+        }
+    }
+
+    // Positional 8-byte read of the _cv file (no mmap, so it cannot truncate the file on close).
+    private static long peekLong(FilesFacade ff, LPSZ path, long offset) {
+        long fd = ff.openRO(path);
+        Assert.assertTrue(fd > -1);
+        long buf = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+        try {
+            Assert.assertEquals(Long.BYTES, ff.read(fd, buf, Long.BYTES, offset));
+            return Unsafe.getLong(buf);
+        } finally {
+            Unsafe.free(buf, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            ff.close(fd);
+        }
+    }
+
+    // Positional 8-byte write of the _cv file. Used to corrupt a committed area on disk WITHOUT recomputing
+    // its trailing checksum and WITHOUT truncating the file (a writable mmap would truncate). Mirrors TxnTest.
+    private static void pokeLong(FilesFacade ff, LPSZ path, long offset, long value) {
+        long fd = ff.openRW(path, CairoConfiguration.O_NONE);
+        Assert.assertTrue(fd > -1);
+        long buf = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+        try {
+            Unsafe.putLong(buf, value);
+            Assert.assertEquals(Long.BYTES, ff.write(fd, buf, Long.BYTES, offset));
+            ff.fsync(fd);
+        } finally {
+            Unsafe.free(buf, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            ff.close(fd);
+        }
+    }
+
+    // Truncates the _cv file to exactly `len` bytes (used to forge an old-format file with no trailing long).
+    private static void truncateFile(FilesFacade ff, LPSZ path, long len) {
+        long fd = ff.openRW(path, CairoConfiguration.O_NONE);
+        Assert.assertTrue(fd > -1);
+        try {
+            Assert.assertTrue(ff.truncate(fd, len));
+        } finally {
+            ff.close(fd);
+        }
     }
 
     private static abstract class CVStringTable {

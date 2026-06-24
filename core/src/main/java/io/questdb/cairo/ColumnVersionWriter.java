@@ -328,14 +328,28 @@ public class ColumnVersionWriter extends ColumnVersionReader {
     }
 
     private long calculateWriteOffset(long areaSize) {
+        // CRITICAL (body-checksum placement): each area's REAL on-disk footprint is its data
+        // (areaSize) PLUS the trailing 8-byte checksum long written immediately after it by
+        // doCommit() at [offset + size, offset + size + 8). The new area we are about to place must
+        // never land on the CURRENT (live) area's data OR on that area's trailing checksum, otherwise
+        // after the version flip the now-"other" area would fail its checksum verify and the A/B
+        // fallback / rollback would see a false corruption on a healthy table. So every placement
+        // computation below treats a footprint as (size + Long.BYTES). The OFFSET_SIZE_{A,B} header
+        // field still stores areaSize only (data length, a multiple of BLOCK_SIZE_BYTES) so old
+        // readers parse blocks unchanged; only this placement math uses the +8 footprint.
         boolean currentIsA = isCurrentA();
         long currentOffset = currentIsA ? getOffsetA() : getOffsetB();
         currentOffset = Math.max(currentOffset, HEADER_SIZE);
-        if (HEADER_SIZE + areaSize <= currentOffset) {
+        // Fits-before: reuse the freed space between the header and the current area only if the new
+        // area AND its trailing checksum both fit strictly before the current area's data start.
+        if (HEADER_SIZE + areaSize + Long.BYTES <= currentOffset) {
             return HEADER_SIZE;
         }
+        // Append-after: place the new area past the current area's full footprint (data + checksum),
+        // so writing the new area (and later its own trailing checksum) cannot clobber the current
+        // area's data or its trailing checksum long at currentOffset + currentSize.
         long currentSize = currentIsA ? getSizeA() : getSizeB();
-        return currentOffset + currentSize;
+        return currentOffset + currentSize + Long.BYTES;
     }
 
     private int copyColumnVersions(long srcTimestamp, long dstTimestamp, LongList srcColumnVersionList) {
@@ -366,8 +380,16 @@ public class ColumnVersionWriter extends ColumnVersionReader {
         int entryCount = cachedColumnVersionList.size() / BLOCK_SIZE;
         long areaSize = calculateSize(entryCount);
         long writeOffset = calculateWriteOffset(areaSize);
-        bumpFileSize(writeOffset + areaSize);
+        // Reserve the data area PLUS its trailing 8-byte body checksum. calculateWriteOffset already
+        // reserved this footprint for placement, so the area + checksum never overlap the other area.
+        bumpFileSize(writeOffset + areaSize + Long.BYTES);
         store(entryCount, writeOffset);
+        // Body checksum over the whole freshly-written area [writeOffset, writeOffset + areaSize),
+        // stored immediately after it. Written AFTER store() (the bytes it covers) and BEFORE the
+        // storeFence()/version bump, so a torn area can never hide behind an already-published version.
+        storeAreaChecksum(writeOffset, areaSize);
+        // OFFSET_SIZE_{A,B} records the DATA length only (areaSize, a multiple of BLOCK_SIZE_BYTES);
+        // the trailing checksum is found by the reader at offset + size.
         if (isCurrentA()) {
             updateB(writeOffset, areaSize);
         } else {
@@ -404,6 +426,15 @@ public class ColumnVersionWriter extends ColumnVersionReader {
             mem.putLong(offset + 24, cachedColumnVersionList.getQuick(x + COLUMN_TOP_OFFSET));
             offset += BLOCK_SIZE * 8;
         }
+    }
+
+    // Computes the body checksum over the area [areaOffset, areaOffset + areaSize) and stores it as a
+    // trailing long at [areaOffset + areaSize]. The caller MUST have already written the area's data
+    // (store()) and bumped the file size to at least areaOffset + areaSize + Long.BYTES, and MUST call
+    // this BEFORE the storeFence()/version bump so a torn area is never reachable under a valid version.
+    private void storeAreaChecksum(long areaOffset, long areaSize) {
+        long checksum = TableUtils.calculateCvAreaChecksum(mem.addressOf(areaOffset), areaSize);
+        mem.putLong(areaOffset + areaSize, checksum);
     }
 
     private void storeNewVersion() {

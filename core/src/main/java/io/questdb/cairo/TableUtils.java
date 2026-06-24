@@ -363,6 +363,41 @@ public final class TableUtils {
         return h != 0 ? h : 1L;
     }
 
+    /**
+     * Computes a 64-bit checksum over the ENTIRE committed {@code _cv} (column-version) area
+     * {@code [0, size)}, used to detect a torn/partially-written area (e.g. a reordered or partial msync
+     * under NOSYNC) that the existing A/B version protocol alone cannot catch. Unlike {@code _txn}, the
+     * {@code _cv} area is ALWAYS fully rewritten per commit (see {@link ColumnVersionWriter#doCommit()} -
+     * the whole area is written to a fresh {@code writeOffset}, then the header offset/size is updated and
+     * the version bumped); there is NO in-place stable-version mutation of a published area, so the whole
+     * contiguous area is commit-immutable and can be covered with zero exclusions. The checksum long is
+     * stored on disk immediately AFTER the area, at {@code [offset + size, offset + size + 8)}; the
+     * {@code OFFSET_SIZE_{A,B}} header field continues to record {@code size} (the data length only, a
+     * multiple of {@code BLOCK_SIZE_BYTES}) so older readers still parse the blocks unchanged.
+     * <p>
+     * Uses the SAME polynomial-over-little-endian-words + avalanche as
+     * {@link #calculateTxnBodyChecksum(long, long, long)} ({@code hashTxnBodyRange} / {@code xxh3Avalanche64}),
+     * applied to the single contiguous range {@code [0, size)} (any alignment is handled by the helper, so
+     * the write and read sides agree as long as they pass the same {@code size}).
+     * <p>
+     * SENTINEL: a stored value of {@code 0} means "absent / skip the check" (old-format files with no
+     * trailing long, or a freshly-created/empty area). A genuine result of {@code 0} is remapped to
+     * {@code 1} so a real area never collides with the sentinel.
+     *
+     * @param areaBaseAddr native address of the area body (offset 0 of the active A/B area, i.e. the
+     *                     mapped address of the on-disk {@code offset})
+     * @param size         the committed area length in bytes ({@code OFFSET_SIZE_{A,B}}; a multiple of 32)
+     * @return a non-zero 64-bit checksum
+     */
+    public static long calculateCvAreaChecksum(long areaBaseAddr, long size) {
+        // The whole area is commit-immutable (fully rewritten each commit, never mutated in place under a
+        // stable version), so cover [0, size) with no exclusions.
+        long h = hashTxnBodyRange(areaBaseAddr, 0, size, 0);
+        h = xxh3Avalanche64(h);
+        // 0 is the "absent" sentinel; never emit it for a real area.
+        return h != 0 ? h : 1L;
+    }
+
     // the mig methods are deliberately standalone so that between old versions
     // does not regress if the main code changes
     public static int calculateTxnLagChecksum(long txn, long seqTxn, int lagRowCount, long lagMinTimestamp, long lagMaxTimestamp, int lagTxnCount) {
