@@ -170,6 +170,60 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRebaseWalBaseTableInvalidatingSuspendedDependentDoesNotEscapeRefreshWorker() throws Exception {
+        // C2 fix. testRebaseWalBaseTableInvalidatesDependentMatView with the dependent view ALSO hard-suspended
+        // before the base is rebased. The rebase enqueues an INVALIDATE of the suspended dependent;
+        // invalidateView must NOT acquire its WAL writer -- under cairo.wal.apply.suspended.write.denied=true
+        // that throws CairoException.tableSuspended, which handleErrorRetryRefresh does not recognize, so
+        // before the fix it rethrew out of MatViewRefreshJob.run() (the drain, which runs the refresh job on
+        // this thread, would throw) and the invalidation was silently dropped. The fix adds the
+        // isViewWriteSuspended up-front gate plus an isTableSuspendedError backstop (mirroring the five refresh
+        // paths): the worker survives, the view is left valid while suspended (its data is unchanged), and the
+        // operator recovers it with a full refresh after RESUME WAL -- a rebased base is not picked up by a
+        // plain incremental refresh.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "create materialized view price_1h as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h"
+            );
+            execute(
+                    "insert into base_price (sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')"
+            );
+            drainQueues();
+            // The view is valid and previously refreshed (lastRefreshBaseTxn != -1), so the cascade reaches
+            // the getWalWriter acquire rather than short-circuiting.
+            assertQuery("select view_status from materialized_views").noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns("view_status\nvalid\n");
+
+            // Hard-suspend the DEPENDENT view itself, so invalidating it would need its WAL writer.
+            execute("alter materialized view price_1h suspend wal");
+
+            // Rebase the base table: enqueues an INVALIDATE of the now-suspended dependent price_1h.
+            execute("alter table base_price suspend wal");
+            execute("alter table base_price rebase wal");
+
+            // The refresh job skips the suspended view's invalidation instead of escaping run(): the drain
+            // completes without throwing. The view is left valid (its data is unchanged while suspended).
+            drainQueues();
+            assertQuery("select view_status from materialized_views").noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns("view_status\nvalid\n");
+            assertQuery("select suspended from wal_tables() where name = 'price_1h'").noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns("suspended\ntrue\n");
+
+            // Resume and recover with a full refresh against the rebased base; the worker stays healthy.
+            execute("alter materialized view price_1h resume wal");
+            execute("refresh materialized view price_1h full");
+            drainQueues();
+            assertQuery("select view_status from materialized_views").noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns("view_status\nvalid\n");
+            assertQuery("select count() from price_1h").noLeakCheck().expectSize().noRandomAccess().returns("count\n1\n");
+        });
+    }
+
+    @Test
     public void testRebaseWalMaterializedView() throws Exception {
         // REBASE WAL requires suspension to block writes.
         setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
@@ -211,6 +265,102 @@ public class MatViewTest extends AbstractCairoTest {
             execute("insert into base_price (sym, price, ts) values('gbpusd', 1.500, '2024-09-10T13:01')");
             drainWalAndMatViewQueues();
             assertQuery("select count() from price_1h").noLeakCheck().expectSize().noRandomAccess().returns("count\n2\n");
+        });
+    }
+
+    @Test
+    public void testRebaseWalMaterializedViewInvalidatesDependentMatViews() throws Exception {
+        // REBASE WAL requires suspension to block writes.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            // A chain rooted at the mat view that gets rebased:
+            //   base_price -> price_1h -> price_1d -> price_1w
+            //                          \-> price_1d_2
+            execute(
+                    "create materialized view price_1h as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h"
+            );
+            execute(
+                    "create materialized view price_1d as " +
+                            "select sym, last(price) as price, ts from price_1h sample by 1d"
+            );
+            execute(
+                    "create materialized view price_1d_2 as " +
+                            "select sym, last(price) as price, ts from price_1h sample by 1d"
+            );
+            execute(
+                    "create materialized view price_1w as " +
+                            "select sym, last(price) as price, ts from price_1d sample by 7d"
+            );
+            execute(
+                    "insert into base_price (sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')"
+            );
+            drainQueues();
+
+            // The whole chain refreshes clean before the rebase.
+            assertQuery("select view_name, base_table_name, view_status, invalidation_reason from materialized_views order by view_name")
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tbase_table_name\tview_status\tinvalidation_reason
+                            price_1d\tprice_1h\tvalid\t
+                            price_1d_2\tprice_1h\tvalid\t
+                            price_1h\tbase_price\tvalid\t
+                            price_1w\tprice_1d\tvalid\t
+                            """);
+
+            final TableToken oldView = engine.verifyTableName("price_1h");
+            final int oldId = oldView.getTableId();
+            Assert.assertTrue(oldView.isMatView());
+
+            // Rebase the MIDDLE mat view (price_1h), which is itself the base of price_1d / price_1d_2.
+            execute("alter materialized view price_1h suspend wal");
+            execute("alter materialized view price_1h rebase wal");
+            drainQueues();
+
+            // New identity for the rebased view, still a registered mat view.
+            final TableToken newView = engine.verifyTableName("price_1h");
+            Assert.assertTrue(newView.isMatView());
+            Assert.assertNotEquals(oldView.getDirName(), newView.getDirName());
+            Assert.assertNotEquals(oldId, newView.getTableId());
+
+            // The rebase replaced price_1h's target token (old dir dropped, new dir created) and reset its
+            // sequencer, so its dependents' watermarks no longer map onto it: both direct dependents are
+            // invalidated, and the cascade carries the invalidation down to the grandchild (price_1w). The
+            // reason the direct dependents see is "base table is dropped or renamed" (the only source of that
+            // string is MatViewRefreshJob.checkIfBaseTableDropped, which fires when the base token fails
+            // verification during the rebase teardown) rather than the "base table rebase" reason CairoEngine
+            // enqueues -- accurate either way, since a rebase drops and recreates the target token. The
+            // rebased price_1h itself comes back valid (fresh default state, data preserved via hard links).
+            assertQuery("select view_name, base_table_name, view_status, invalidation_reason from materialized_views order by view_name")
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tbase_table_name\tview_status\tinvalidation_reason
+                            price_1d\tprice_1h\tinvalid\tbase table is dropped or renamed
+                            price_1d_2\tprice_1h\tinvalid\tbase table is dropped or renamed
+                            price_1h\tbase_price\tvalid\t
+                            price_1w\tprice_1d\tinvalid\tbase materialized view is invalidated
+                            """);
+
+            // A full refresh of the dependents recovers them against the rebased price_1h.
+            execute("refresh materialized view price_1d full");
+            execute("refresh materialized view price_1d_2 full");
+            execute("refresh materialized view price_1w full");
+            drainQueues();
+            assertQuery("select view_name, view_status, invalidation_reason from materialized_views order by view_name")
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_status\tinvalidation_reason
+                            price_1d\tvalid\t
+                            price_1d_2\tvalid\t
+                            price_1h\tvalid\t
+                            price_1w\tvalid\t
+                            """);
         });
     }
 

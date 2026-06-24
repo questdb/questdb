@@ -1368,6 +1368,15 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 stateStore.enqueueInvalidate(viewToken, invalidationReason);
                 return;
             }
+            if (isViewWriteSuspended(viewToken)) {
+                // The view is hard-suspended and writes are denied. Acquiring its WAL writer to mint the
+                // invalid state would throw tableSuspended and escape run() (handleErrorRetryRefresh does not
+                // recognize it). Skip instead, mirroring the refresh paths: leave the view valid and do not
+                // cascade -- the view's data is unchanged. Recovery is REFRESH ... FULL after RESUME WAL; a
+                // rebased or dropped base is not picked up by a plain post-resume incremental refresh.
+                LOG.debug().$("skipping materialized view invalidation, view is suspended [view=").$(viewToken).I$();
+                return;
+            }
             if (!viewState.tryLock()) {
                 LOG.debug().$("skipping materialized view invalidation, locked by another refresh run [view=").$(viewToken).I$();
                 viewState.markAsPendingInvalidation();
@@ -1391,6 +1400,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                             setInvalidState(viewState, walWriter, invalidationReason, invalidationTimestamp);
                             break;
                         } catch (CairoException ex) {
+                            if (isTableSuspendedError(ex)) {
+                                // The view was suspended between the isViewWriteSuspended gate and the
+                                // getWalWriter acquire. Skip without invalidating or cascading; RESUME WAL
+                                // plus REFRESH ... FULL recovers it.
+                                LOG.info().$("skipping materialized view invalidation, view is suspended [view=").$(viewToken).I$();
+                                return;
+                            }
                             if (!handleErrorRetryRefresh(ex, viewToken, null, null)) {
                                 throw ex;
                             }
