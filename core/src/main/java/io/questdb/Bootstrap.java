@@ -26,8 +26,10 @@ package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.WriteBarrierCheck;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
@@ -573,6 +575,7 @@ public class Bootstrap {
                 verifyFileSystem(path, cairoConfig.getSqlCopyInputRoot(), "sql copy input", false, false);
                 verifyFileSystem(path, cairoConfig.getSqlCopyInputWorkRoot(), "sql copy input worker", true, false);
                 verifyFileOpts(path, cairoConfig);
+                verifyWriteBarriers(cairoConfig);
                 cairoConfig.getVolumeDefinitions().forEach((alias, volumePath) -> verifyFileSystem(path, volumePath, "create table allowed volume [" + alias + ']', true, false));
             }
             if (JitUtil.isJitSupported()) {
@@ -639,6 +642,24 @@ public class Bootstrap {
         if (insufficientLimits) {
             log.advisoryW().$("make sure to increase fs.file-max and vm.max_map_count limits:\n" +
                     "https://questdb.io/docs/deployment/capacity-planning/#os-configuration").$();
+        }
+    }
+
+    private void verifyWriteBarriers(CairoConfiguration cairoConfig) {
+        if (cairoConfig.getCommitMode() != CommitMode.SYNC) {
+            return;
+        }
+        final CharSequence dbRoot = cairoConfig.getDbRoot();
+        if (dbRoot == null) {
+            return;
+        }
+        final int result = WriteBarrierCheck.classifyDbRoot(cairoConfig.getFilesFacade(), dbRoot);
+        if (result == WriteBarrierCheck.BARRIERS_DISABLED) {
+            log.advisoryW().$("WARNING: db root filesystem is mounted WITHOUT write barriers (nobarrier/barrier=0)")
+                    .$(": with cairo.commit.mode=sync this does NOT provide power-loss durability")
+                    .$((" -- committed data may be LOST on power failure;"))
+                    .$(" remount the filesystem with write barriers enabled (the default)")
+                    .$(" [dbRoot=").$(dbRoot).$(']').$();
         }
     }
 
