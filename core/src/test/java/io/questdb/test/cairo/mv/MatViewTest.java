@@ -8094,6 +8094,71 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRefreshIntervalsAdvanceOnlyAfterFirstDataRefresh() throws Exception {
+        // Pins the bootstrap invariant behind the truncate-barrier's never-refreshed guard in
+        // updateRefreshIntervals0: refreshIntervalsBaseTxn advances (the setRefreshIntervalsBaseTxn call)
+        // only inside if (lastRefreshTxn > -1), where lastRefreshTxn = max(lastRefreshBaseTxn,
+        // refreshIntervalsBaseTxn). With both at the -1 default that block is skipped, so the first advance
+        // requires lastRefreshBaseTxn already > -1 -- a never-data-refreshed view can never reach
+        // refreshIntervalsBaseTxn > -1. That makes the never-refreshed side of the truncate barrier
+        // (lastRefreshBaseTxn == -1) unreachable: an external review argued it stalls a view forever, but
+        // the precondition cannot form.
+        //
+        // A built-in positive control keeps the no-advance assertion honest: the SAME
+        // UPDATE_REFRESH_INTERVALS pass DOES advance refreshIntervalsBaseTxn once the view has refreshed, so
+        // the no-advance below is the bootstrap invariant, not an inert job.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, val double, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("create materialized view mv refresh manual as select ts, count() cnt from base sample by 1h");
+            execute("insert into base values ('a', 1.0, '2024-09-10T12:00'), ('a', 2.0, '2024-09-10T12:30')");
+            drainWalQueue(); // apply the base WAL only; the manual view is not refreshed yet
+
+            final TableToken viewToken = engine.verifyTableName("mv");
+            final MatViewStateStoreImpl store = (MatViewStateStoreImpl) engine.getMatViewStateStore();
+            final MatViewState state = store.getViewState(viewToken);
+            Assert.assertNotNull(state);
+            Assert.assertEquals("precondition: the view has never refreshed data", -1, state.getLastRefreshBaseTxn());
+            Assert.assertEquals("precondition: no intervals tracked yet", -1, state.getRefreshIntervalsBaseTxn());
+
+            // Drop the queued initial-population refresh so the view stays never-refreshed
+            // (lastRefreshBaseTxn == -1) and ONLY the interval pass below runs -- draining it instead would
+            // run the first refresh and set lastRefreshBaseTxn, defeating the invariant check.
+            final MatViewRefreshTask discard = new MatViewRefreshTask();
+            while (store.tryDequeueRefreshTask(discard)) {
+                // drop
+            }
+
+            // Invariant: a standalone UPDATE_REFRESH_INTERVALS pass on a never-data-refreshed view must NOT
+            // bootstrap refreshIntervalsBaseTxn (updateRefreshIntervals0 short-circuits at lastRefreshTxn > -1).
+            store.enqueueUpdateRefreshIntervals(viewToken);
+            drainMatViewQueue(engine);
+            Assert.assertEquals(
+                    "an UPDATE_REFRESH_INTERVALS pass must not advance refreshIntervalsBaseTxn before the first data refresh",
+                    -1,
+                    state.getRefreshIntervalsBaseTxn()
+            );
+            Assert.assertEquals("the interval pass must not have refreshed data", -1, state.getLastRefreshBaseTxn());
+
+            // Positive control, step 1: the first data refresh sets lastRefreshBaseTxn > -1.
+            store.enqueueIncrementalRefresh(viewToken);
+            drainMatViewQueue(engine);
+            Assert.assertTrue("control: a data refresh must set lastRefreshBaseTxn", state.getLastRefreshBaseTxn() > -1);
+
+            // Positive control, step 2: with the view now refreshed, the SAME interval pass over a fresh gap
+            // DOES advance refreshIntervalsBaseTxn -- proving the no-advance above was the bootstrap
+            // invariant, not an inert job.
+            execute("insert into base values ('a', 3.0, '2024-09-10T13:00')");
+            drainWalQueue();
+            store.enqueueUpdateRefreshIntervals(viewToken);
+            drainMatViewQueue(engine);
+            Assert.assertTrue(
+                    "control: once refreshed, an UPDATE_REFRESH_INTERVALS pass advances refreshIntervalsBaseTxn",
+                    state.getRefreshIntervalsBaseTxn() > -1
+            );
+        });
+    }
+
+    @Test
     public void testTruncateBarrierInvalidatesChainedMatView() throws Exception {
         // A truncate barrier that invalidates a mat-view must cascade to mat-views chained on top of it.
         // The refresh-path barrier invalidates view A inline; A's dependent view B (built on A) is then

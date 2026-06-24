@@ -2008,31 +2008,34 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     // the view as pending-invalidation -- a state the queued task can no longer clear,
                     // leaving the view silently valid with stale rows. Minting inline avoids that race.
                     // Mirror invalidateView's never-refreshed guard: only mint invalid for a view that has
-                    // actually refreshed before (lastRefreshBaseTxn != -1). A view that only ever tracked
-                    // intervals has no materialized rows to go stale; holding the watermark is enough.
+                    // actually refreshed before (lastRefreshBaseTxn != -1). This guard is effectively always
+                    // true at the barrier: refreshIntervalsBaseTxn only advances after a data refresh sets
+                    // lastRefreshBaseTxn (set solely below, gated by lastRefreshTxn > -1), and
+                    // MatViewStateReader resets it when a legacy state file omits the intervals block. Kept
+                    // defensively; the invariant is pinned by testRefreshIntervalsDoNotAdvanceBeforeFirstDataRefresh
+                    // and testReusedReaderResetsStaleStateWhenLaterBlocksAbsent. A never-materialized view has
+                    // no stale rows anyway, so holding the watermark suffices.
                     if (viewState.getLastRefreshBaseTxn() != -1) {
                         final long prevRefreshStartTimestampUs = viewState.getLastRefreshStartTimestampUs();
                         final long invalidationTimestamp = microsecondClock.getTicks();
-                        LOG.error().$("marking materialized view as invalid [view=").$(viewToken)
+                        LOG.info().$("marking materialized view as invalid [view=").$(viewToken)
                                 .$(", reason=truncate operation, ts=").$ts(invalidationTimestamp)
                                 .I$();
                         try {
                             setInvalidState(viewState, walWriter, "truncate operation", invalidationTimestamp);
                         } catch (CairoException ex) {
-                            if (ex.isAuthorizationError()) {
-                                // A demote flipped the node read-only after the writer acquire but before the
-                                // commit fence, so setInvalidState minted nothing yet flipped the in-memory
-                                // invalid flag first. Roll that flag back so the in-memory state matches the
-                                // unchanged on-disk state, then re-throw: the refresh's outer read-only
-                                // handler defers (retry-later) and the load-time backstop re-detects the
-                                // truncate on the next promote (the watermark never advanced past it).
-                                // setInvalidState also bumped the in-memory start timestamp before the fence
-                                // refused; restore it so the catalogue does not report this valid view as
-                                // "refreshing" (its in-memory start would otherwise sit ahead of the
-                                // persisted finish).
-                                viewState.markAsValid();
-                                viewState.setLastRefreshStartTimestampUs(prevRefreshStartTimestampUs);
-                            }
+                            // setInvalidState flips the in-memory invalid flag and bumps the in-memory start
+                            // timestamp BEFORE the fenced commit. If that commit then fails -- a read-only
+                            // fence refusal (a demote flipped the node read-only after the writer acquire) or a
+                            // genuine WAL/IO write failure -- nothing was persisted, so roll both back so the
+                            // in-memory state matches the unchanged on-disk state before re-throwing. The
+                            // refresh's outer handler then decides: a read-only refusal defers (retry-later)
+                            // and the load-time backstop re-detects the truncate on the next promote (the
+                            // watermark never advanced past it); a non-auth failure falls back to a full
+                            // refresh. Restoring the start timestamp keeps the catalogue from reporting this
+                            // still-valid view as "refreshing".
+                            viewState.markAsValid();
+                            viewState.setLastRefreshStartTimestampUs(prevRefreshStartTimestampUs);
                             throw ex;
                         }
                         // Cascade to chained views the same way invalidateView does on a successful mint:
