@@ -188,6 +188,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
                     TableUtils.getReplacingColumnIndex(metaMem, i),
                     TableUtils.isSymbolCached(metaMem, i)
             );
+            colMeta.setReplicaOnlyIndex(TableUtils.isColumnReplicaOnlyIndex(metaMem, i));
             colMeta.setParquetEncodingConfig(hasParquetEncodingConfig ? TableUtils.getParquetEncodingConfig(metaMem, i) : 0);
             columnMetadata.add(colMeta);
             if (type > -1) {
