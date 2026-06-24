@@ -311,7 +311,9 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
             isFilterListPrepared = filterList != null && ParquetRowGroupFilter.prepareFilterList(
                     decoder.metadata(),
                     pushdownFilterConditions,
-                    filterList, filterValues
+                    filterList, filterValues,
+                    // read_parquet() projects external files by name; resolve by name too.
+                    false
             );
             if (isFilterListPrepared) {
                 filterBufEnd = filterValues.getAddress() + filterValues.getAppendOffset();

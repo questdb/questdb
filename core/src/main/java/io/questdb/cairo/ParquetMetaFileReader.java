@@ -384,6 +384,23 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
     }
 
     /**
+     * Finds a column by its stable id (the table writer index). Mirrors
+     * {@code PageFrameMemoryPool.buildColumnIdMap}: external Parquet files without
+     * QuestDB field ids (all -1) fall back to positional indexing. Returns -1 if
+     * no column matches. Unlike {@link #getColumnIndex(CharSequence)}, this stays
+     * correct across column renames because the id never changes.
+     */
+    public int getColumnIndexById(int columnId) {
+        for (int i = 0; i < columnCount; i++) {
+            final int id = getColumnId(i);
+            if ((id < 0 ? i : id) == columnId) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
      * Returns the column name for the given column index as a flyweight
      * over the mmaped _pm data. The returned reference is reused across
      * calls — callers must not hold it past the next call.
