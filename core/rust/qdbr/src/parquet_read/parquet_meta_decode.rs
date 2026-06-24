@@ -6,12 +6,10 @@ use crate::parquet_read::decode_column::{
     decode_column_chunk_filtered_with_params, decode_column_chunk_with_params,
     reconstruct_descriptor,
 };
-use crate::parquet_read::row_groups::{
-    plan_decode_conversion, post_convert, scale_i64_in_place, DecodeAs,
-};
+use crate::parquet_read::row_groups::{plan_decode_conversion, post_convert, DecodeAs};
 use crate::parquet_read::{DecodeContext, RowGroupBuffers, VarcharSliceBufGuard};
 use parquet2::schema::Repetition;
-use qdb_core::col_type::{ColumnType, ColumnTypeTag, QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG};
+use qdb_core::col_type::{ColumnType, ColumnTypeTag};
 
 use crate::parquet_read::row_groups::ParquetColumnIndex;
 
@@ -68,31 +66,6 @@ fn resolve_decode_column_type(
     }
 
     Ok((column_type, original_column_type))
-}
-
-/// Apply post-decode timestamp nano scaling between Timestamp/Date when one
-/// side is nano-precision. Mirrors the legacy file-decoder path.
-fn apply_timestamp_nano_scaling(
-    original_column_type: ColumnType,
-    to_column_type: ColumnType,
-    column_chunk_bufs: &mut crate::parquet_read::ColumnChunkBuffers,
-) {
-    if original_column_type == to_column_type {
-        return;
-    }
-    let src_tag = original_column_type.tag();
-    let dst_tag = to_column_type.tag();
-    let src_is_time = matches!(src_tag, ColumnTypeTag::Timestamp | ColumnTypeTag::Date);
-    let dst_is_time = matches!(dst_tag, ColumnTypeTag::Timestamp | ColumnTypeTag::Date);
-    if src_is_time && dst_is_time {
-        let src_nano = src_tag == ColumnTypeTag::Timestamp
-            && original_column_type.has_flag(QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG);
-        let dst_nano = dst_tag == ColumnTypeTag::Timestamp
-            && to_column_type.has_flag(QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG);
-        if src_nano != dst_nano {
-            scale_i64_in_place(&mut column_chunk_bufs.data_vec, 1000, src_nano);
-        }
-    }
 }
 
 /// Count of column-top (def-level 0) rows that fall inside the decoded window.
@@ -258,7 +231,6 @@ pub fn decode_row_group(
             leading_nulls,
             column_chunk_bufs,
         )?;
-        apply_timestamp_nano_scaling(original_column_type, to_column_type, column_chunk_bufs);
     }
 
     Ok(decoded)
@@ -552,7 +524,6 @@ pub fn decode_row_group_filtered<const FILL_NULLS: bool>(
             leading_nulls,
             column_chunk_bufs,
         )?;
-        apply_timestamp_nano_scaling(original_column_type, to_column_type, column_chunk_bufs);
     }
 
     Ok(decoded)

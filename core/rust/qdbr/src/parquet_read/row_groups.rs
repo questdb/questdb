@@ -165,13 +165,24 @@ pub(super) fn post_convert(
         (ColumnTypeTag::Double, ColumnTypeTag::Boolean) => {
             contract_to_bool::<f64>(&mut bufs.data_vec, |v| v.is_nan());
         }
-        (ColumnTypeTag::Date, ColumnTypeTag::Timestamp) => {
-            // Date milliseconds → Timestamp microseconds: multiply by 1000.
-            scale_i64_in_place(&mut bufs.data_vec, 1000, false);
-        }
-        (ColumnTypeTag::Timestamp, ColumnTypeTag::Date) => {
-            // Timestamp microseconds → Date milliseconds: divide by 1000.
-            scale_i64_in_place(&mut bufs.data_vec, 1000, true);
+        // DATE (ms), TIMESTAMP (μs) and TIMESTAMP_NS (ns) differ only in time-unit
+        // resolution, so a cross between any two is a single power-of-1000 rescale.
+        // Folding the net factor here keeps the conversion one pass: DATE → TIMESTAMP_NS
+        // scales ×1_000_000 directly instead of ×1000 (ms→μs) then ×1000 (μs→ns).
+        // Matches the native converters (e.g. convert_ms_to_ns), which scale with a
+        // single unchecked multiply; scale_i64_in_place mirrors that via wrapping_mul
+        // and preserves the LONG null sentinel.
+        (
+            ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
+            ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
+        ) => {
+            let src_pow = time_unit_pow10(from_type);
+            let dst_pow = time_unit_pow10(to_type);
+            if dst_pow > src_pow {
+                scale_i64_in_place(&mut bufs.data_vec, 10i64.pow(dst_pow - src_pow), false);
+            } else if dst_pow < src_pow {
+                scale_i64_in_place(&mut bufs.data_vec, 10i64.pow(src_pow - dst_pow), true);
+            }
         }
         // Fixed → Varchar: Java handles batch conversion after decode.
         (src, ColumnTypeTag::Varchar) if is_fixed_to_var_source(src) => {}
@@ -557,6 +568,20 @@ pub(super) fn scale_i64_in_place(data: &mut AcVec<u8>, factor: i64, divide: bool
             val.wrapping_mul(factor)
         };
         unsafe { ptr.add(i).write_unaligned(converted) };
+    }
+}
+
+/// Power-of-ten resolution of a DATE / TIMESTAMP value relative to seconds: DATE
+/// counts milliseconds (10^3), microsecond TIMESTAMP counts 10^6, and nanosecond
+/// TIMESTAMP (the QDB_TIMESTAMP_NS flag) counts 10^9. The gap between two of these
+/// exponents is the single power-of-1000 factor that converts one representation
+/// to the other. Only DATE and TIMESTAMP column types reach this helper.
+fn time_unit_pow10(col_type: ColumnType) -> u32 {
+    match col_type.tag() {
+        ColumnTypeTag::Date => 3,
+        ColumnTypeTag::Timestamp if col_type.has_flag(QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG) => 9,
+        // Microsecond TIMESTAMP.
+        _ => 6,
     }
 }
 
@@ -1792,25 +1817,6 @@ impl ParquetDecoder {
                 leading_nulls,
                 column_chunk_bufs,
             )?;
-
-            // Timestamp nano additional scaling after post_convert.
-            // post_convert handles μs↔ms (×/÷1000) for Timestamp↔Date.
-            // When the Timestamp side is nano, an additional ×/÷1000 is needed
-            // (TIMESTAMP_NANO↔TIMESTAMP or TIMESTAMP_NANO↔DATE).
-            if original_column_type != to_column_type {
-                let src_is_time = matches!(src_tag, ColumnTypeTag::Timestamp | ColumnTypeTag::Date);
-                let dst_tag = to_column_type.tag();
-                let dst_is_time = matches!(dst_tag, ColumnTypeTag::Timestamp | ColumnTypeTag::Date);
-                if src_is_time && dst_is_time {
-                    let src_nano = src_tag == ColumnTypeTag::Timestamp
-                        && original_column_type.has_flag(QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG);
-                    let dst_nano = dst_tag == ColumnTypeTag::Timestamp
-                        && to_column_type.has_flag(QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG);
-                    if src_nano != dst_nano {
-                        scale_i64_in_place(&mut column_chunk_bufs.data_vec, 1000, src_nano);
-                    }
-                }
-            }
         }
 
         Ok(decoded)
@@ -1984,25 +1990,6 @@ impl ParquetDecoder {
                 leading_nulls,
                 column_chunk_bufs,
             )?;
-
-            // Timestamp nano additional scaling after post_convert.
-            // post_convert handles μs↔ms (×/÷1000) for Timestamp↔Date.
-            // When the Timestamp side is nano, an additional ×/÷1000 is needed
-            // (TIMESTAMP_NANO↔TIMESTAMP or TIMESTAMP_NANO↔DATE).
-            if original_column_type != to_column_type {
-                let src_is_time = matches!(src_tag, ColumnTypeTag::Timestamp | ColumnTypeTag::Date);
-                let dst_tag = to_column_type.tag();
-                let dst_is_time = matches!(dst_tag, ColumnTypeTag::Timestamp | ColumnTypeTag::Date);
-                if src_is_time && dst_is_time {
-                    let src_nano = src_tag == ColumnTypeTag::Timestamp
-                        && original_column_type.has_flag(QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG);
-                    let dst_nano = dst_tag == ColumnTypeTag::Timestamp
-                        && to_column_type.has_flag(QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG);
-                    if src_nano != dst_nano {
-                        scale_i64_in_place(&mut column_chunk_bufs.data_vec, 1000, src_nano);
-                    }
-                }
-            }
         }
 
         Ok(output_count)
@@ -4040,6 +4027,99 @@ mod multi_dict_tests {
             post_convert(src.into_type(), dst.into_type(), 0, &mut bufs)
                 .unwrap_or_else(|e| panic!("expected no-op for {src:?} -> {dst:?}, got {e}"));
         }
+    }
+
+    /// DATE (ms), TIMESTAMP (μs) and TIMESTAMP_NS (ns) conversions are pure
+    /// power-of-1000 rescales. post_convert folds the cross-unit factor into a
+    /// single pass (DATE → TIMESTAMP_NS is ×1_000_000, not ×1000 then ×1000) while
+    /// preserving the LONG null sentinel and wrapping on i64 overflow like the
+    /// native converters. Each non-null result is cross-checked against the prior
+    /// two-pass formula to prove the fold is behaviour-preserving.
+    #[test]
+    fn post_convert_scales_time_units_in_one_pass() {
+        use crate::allocator::{AcVec, TestAllocatorState};
+
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
+        const NULL: i64 = i64::MIN;
+        let date = ColumnType::new(ColumnTypeTag::Date, 0);
+        let ts_us = ColumnType::new(ColumnTypeTag::Timestamp, 0);
+        let ts_ns = ColumnType::new(ColumnTypeTag::Timestamp, QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG);
+
+        let make = |vals: &[i64]| -> ColumnChunkBuffers {
+            let mut data_vec = AcVec::new_in(allocator.clone());
+            for &v in vals {
+                data_vec.extend_from_slice(&v.to_ne_bytes()).unwrap();
+            }
+            ColumnChunkBuffers {
+                data_size: 0,
+                data_ptr: std::ptr::null_mut(),
+                data_vec,
+                aux_size: 0,
+                aux_ptr: std::ptr::null_mut(),
+                aux_vec: AcVec::new_in(allocator.clone()),
+                page_buffers_size: 0,
+                page_buffers: Vec::new(),
+                column_top: 0,
+                page_buffers_charged: 0,
+                page_buffers_counted: 0,
+            }
+        };
+        let read = |bufs: &ColumnChunkBuffers| -> Vec<i64> {
+            bufs.data_vec
+                .as_slice()
+                .chunks_exact(8)
+                .map(|c| i64::from_ne_bytes(c.try_into().unwrap()))
+                .collect()
+        };
+
+        // DATE -> TIMESTAMP_NS: ×1_000_000 in one pass. Includes a value whose
+        // ×1_000_000 overflows i64 (must wrap, not null) and the NULL sentinel.
+        let ms = [1_592_222_400_000i64, 0, 253_402_300_799_999, NULL];
+        let mut b = make(&ms);
+        post_convert(date, ts_ns, 0, &mut b).unwrap();
+        let got = read(&b);
+        for (i, &v) in ms.iter().enumerate() {
+            // Prior behaviour: ×1000 (ms->μs) then ×1000 (μs->ns).
+            let expected = if v == NULL {
+                NULL
+            } else {
+                v.wrapping_mul(1000).wrapping_mul(1000)
+            };
+            assert_eq!(got[i], expected, "DATE->TIMESTAMP_NS row {i} (v={v})");
+        }
+        // The overflowing row wraps to the native ×1_000_000 product, not NULL.
+        assert_eq!(got[2], 253_402_300_799_999i64.wrapping_mul(1_000_000));
+        assert_ne!(got[2], NULL);
+
+        // TIMESTAMP_NS -> DATE: ÷1_000_000 in one pass, truncating toward zero.
+        let ns = [1_592_222_400_123_456_789i64, 1_999_999, -1_999_999, NULL];
+        let mut b = make(&ns);
+        post_convert(ts_ns, date, 0, &mut b).unwrap();
+        let got = read(&b);
+        for (i, &v) in ns.iter().enumerate() {
+            // Prior behaviour: ÷1000 (ns->μs) then ÷1000 (μs->ms).
+            let expected = if v == NULL { NULL } else { v / 1000 / 1000 };
+            assert_eq!(got[i], expected, "TIMESTAMP_NS->DATE row {i} (v={v})");
+        }
+        assert_eq!(got[0], 1_592_222_400_123); // sub-ms truncated
+        assert_eq!(got[1], 1);
+        assert_eq!(got[2], -1);
+
+        // Single-step crosses (already one pass) keep scaling through the same arm.
+        let mut b = make(&[5, NULL]); // DATE -> TIMESTAMP (μs): ×1000
+        post_convert(date, ts_us, 0, &mut b).unwrap();
+        assert_eq!(read(&b), vec![5000, NULL]);
+        let mut b = make(&[7, NULL]); // TIMESTAMP (μs) -> TIMESTAMP_NS: ×1000
+        post_convert(ts_us, ts_ns, 0, &mut b).unwrap();
+        assert_eq!(read(&b), vec![7000, NULL]);
+        let mut b = make(&[7654, NULL]); // TIMESTAMP_NS -> TIMESTAMP (μs): ÷1000
+        post_convert(ts_ns, ts_us, 0, &mut b).unwrap();
+        assert_eq!(read(&b), vec![7, NULL]);
+        let mut b = make(&[42, NULL]); // same unit: no-op
+        post_convert(ts_us, ts_us, 0, &mut b).unwrap();
+        assert_eq!(read(&b), vec![42, NULL]);
     }
 
     /// Uncompressed dict pages reuse the input mmap slice directly, but the buffer pointer
