@@ -391,9 +391,11 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
         Misc.free(ownerWindowLoFunc);
         Misc.freeObjList(perWorkerWindowHiFuncs);
         Misc.freeObjList(perWorkerWindowLoFuncs);
-        // The chunk index is retained across queries (restoreInitialCapacity() in clear()) and
-        // freed here after the last query's tracker was pooled. Null the tracker so this final
-        // free charges the global counter only and does not underflow the released block.
+        // clear() releases the chunk index and data chunks every cursor under the then-bound
+        // per-query tracker, so normal teardown frees nothing here. Null the tracker first only
+        // as a guard for a close() that still holds live allocations (a factory torn down
+        // mid-query): their bytes belong to an already-pooled tracker, so the frees below charge
+        // the global counter only and cannot underflow the recycled block.
         if (ownerFunctionAllocator != null) {
             ownerFunctionAllocator.setMemoryTracker(null);
         }

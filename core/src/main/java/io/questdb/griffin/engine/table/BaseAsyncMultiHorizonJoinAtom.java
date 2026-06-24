@@ -307,9 +307,9 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
                 }
             }
 
-            // Allocators (shared across slaves). Lazy variant (openOnInit=false): the chunk
-            // index is allocated by the first reopen() under the bound per-query tracker,
-            // keeping malloc/free symmetric on the per-query counter from the first cursor.
+            // Allocators (shared across slaves). Lazy variant (openOnInit=false): each cursor's
+            // reopen() allocates the chunk index under that cursor's per-query tracker and
+            // clear() frees it at cursor close, keeping malloc/free symmetric every cursor.
             this.ownerAllocator = GroupByAllocatorFactory.createAllocator(configuration, false);
             GroupByUtils.setAllocator(ownerGroupByFunctions, ownerAllocator);
             if (perWorkerGroupByFunctions != null) {
@@ -389,11 +389,12 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
 
     @Override
     public void close() {
-        // The allocators' chunk index is retained across queries (restoreInitialCapacity()
-        // in clear()); its final free happens here, after the last query's tracker was
-        // released to the pool. Null the tracker so this free charges the global counter
-        // only and does not underflow the released per-query block. The ASOF maps are freed
-        // per query in clear() under the still-bound tracker, so they are left alone here.
+        // clear() releases the allocators' chunk index and data chunks every cursor under the
+        // then-bound per-query tracker (the ASOF maps the same way), so normal teardown frees
+        // nothing here. Null the tracker first only as a guard for a close() that still holds
+        // live allocations (e.g. a factory torn down mid-query): their bytes belong to an
+        // already-pooled tracker, so the frees below charge the global counter only and cannot
+        // underflow the recycled block.
         if (ownerAllocator != null) {
             ownerAllocator.setMemoryTracker(null);
         }

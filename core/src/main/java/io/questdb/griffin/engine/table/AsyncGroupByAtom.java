@@ -200,9 +200,9 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
                 );
             }
 
-            // Lazy variant: the allocator's chunk index is allocated by the first
-            // reopen() under the bound per-query tracker, keeping malloc/free symmetric
-            // on the per-query counter from the first cursor.
+            // Lazy variant (openOnInit=false): each cursor's reopen() allocates the chunk
+            // index under that cursor's per-query tracker and clear() frees it at cursor close,
+            // so the index's malloc/free stays symmetric on the per-query counter every cursor.
             ownerAllocator = GroupByAllocatorFactory.createAllocator(configuration, false);
             // Make sure to set worker-local allocator for the group by functions.
             GroupByUtils.setAllocator(ownerGroupByFunctions, ownerAllocator);
@@ -260,10 +260,11 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     public void close() {
         Misc.free(shardingCtx);
         Misc.freeObjList(ownerKeyFunctions);
-        // The allocators' chunk index is retained across queries (restoreInitialCapacity()
-        // in clear()); its final free happens here, after the last query's tracker was
-        // released to the pool. Null the tracker so this free charges the global counter
-        // only and does not underflow the released per-query block.
+        // clear() releases the allocators' chunk index and data chunks every cursor under the
+        // then-bound per-query tracker, so normal teardown frees nothing here. Null the tracker
+        // first only as a guard for a close() that still holds live allocations (e.g. a factory
+        // torn down mid-query): their bytes belong to an already-pooled tracker, so the frees
+        // below charge the global counter only and cannot underflow the recycled block.
         if (ownerAllocator != null) {
             ownerAllocator.setMemoryTracker(null);
         }
