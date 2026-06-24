@@ -244,6 +244,71 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinNonKeyedConstantWhereFalse() throws Exception {
+        // A non-keyed HORIZON JOIN aggregate with a compile-time constant-FALSE WHERE must still emit
+        // exactly one row with null aggregates, just like a plain non-keyed aggregate over empty input.
+        // On HEAD without the fix the constant-fold path in generateJoins replaced the whole HORIZON
+        // JOIN factory with an EmptyTableRecordCursorFactory and dropped the mandatory single row, so
+        // it returned 0 rows. The runtime-constant (bind-variable) variant stays a runtime no-op and
+        // returned the single row, so the query fuzzer's bind pass flagged the divergence.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts) PARTITION BY DAY", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY", rightTableTimestampType.getTypeName());
+
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 10)
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 5)
+                            """
+            );
+
+            // Non-keyed: a single null-aggregate row regardless of the constant-false WHERE.
+            String notKeyed = "SELECT avg(p.price) AS a0, sum(t.qty) AS a1 " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "RANGE FROM 0s TO 0s STEP 1s AS h " +
+                    "WHERE FALSE";
+            assertQuery(notKeyed)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            a0\ta1
+                            null\tnull
+                            """);
+
+            // The runtime-constant (bind-variable) form must agree with the literal form.
+            bindVariableService.clear();
+            bindVariableService.setBoolean("b0", false);
+            String notKeyedBind = "SELECT avg(p.price) AS a0, sum(t.qty) AS a1 " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "RANGE FROM 0s TO 0s STEP 1s AS h " +
+                    "WHERE :b0::BOOLEAN";
+            assertSqlCursors(notKeyed, notKeyedBind);
+
+            // Keyed shape is unchanged: an empty grouping key set yields 0 rows.
+            String keyed = "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(p.price) AS a0 " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "RANGE FROM 0s TO 0s STEP 1s AS h " +
+                    "WHERE FALSE";
+            assertQuery(keyed)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            sec_offs\ta0
+                            """);
+        });
+    }
+
+    @Test
     public void testHorizonJoinEmptyList() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
