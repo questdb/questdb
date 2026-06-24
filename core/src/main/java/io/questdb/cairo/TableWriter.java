@@ -853,9 +853,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // configureCoveringIfNeeded can find them during index rebuild.
         columnMetadata.setCoveringColumnIndices(coveringColumnIndices);
 
-        final SymbolColumnIndexer indexer = new SymbolColumnIndexer(configuration, indexType);
+        // On a skipping primary, persist the replica-only flag + index type in
+        // metadata but do not build or wire the bitmap index. A replica or a
+        // promoted node (skipReplicaOnlyIndexes() == false) will build it.
+        final boolean skipBuild = replicaOnly && configuration.skipReplicaOnlyIndexes();
+        final SymbolColumnIndexer indexer = skipBuild ? null : new SymbolColumnIndexer(configuration, indexType);
         try {
-            writeIndex(columnName, indexValueBlockSize, indexType, columnIndex, indexer);
+            if (!skipBuild) {
+                writeIndex(columnName, indexValueBlockSize, indexType, columnIndex, indexer);
+            }
 
             columnMetadata.setIndexType(indexType);
             columnMetadata.setReplicaOnlyIndex(replicaOnly);
@@ -865,8 +871,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             rewriteAndSwapMetadata(metadata);
             clearTodoAndCommitMeta();
 
-            indexers.extendAndSet(columnIndex, indexer);
-            populateDenseIndexerList();
+            if (!skipBuild) {
+                indexers.extendAndSet(columnIndex, indexer);
+                populateDenseIndexerList();
+            }
         } catch (Throwable th) {
             Misc.free(indexer);
             throw th;
@@ -4918,7 +4926,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         configureNullSetters(o3NullSetters1, type, o3DataMem1, o3AuxMem1, index, symbolMapWriters);
         configureNullSetters(o3NullSetters2, type, o3DataMem2, o3AuxMem2, index, symbolMapWriters);
 
-        if (IndexType.isIndexed(indexType) && type > 0) {
+        if (IndexType.isIndexed(indexType) && type > 0
+                && !(metadata.isColumnReplicaOnlyIndex(index) && configuration.skipReplicaOnlyIndexes())) {
             indexers.extendAndSet(index, new SymbolColumnIndexer(configuration, indexType));
         }
         rowValueIsNotNull.add(0);
