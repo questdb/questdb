@@ -65,7 +65,9 @@ import java.util.concurrent.atomic.LongAdder;
  *       It may become stale if rows are deleted without subsequent writes.</li>
  *   <li><b>WAL row accuracy:</b> Pending WAL row counts are accumulated only while
  *       an entry remains tracked. If eviction removes an entry, later observations
- *       resume from the recreated entry and may undercount previously pending rows.</li>
+ *       resume from the recreated entry and may undercount previously pending rows.
+ *       WAL rows already pending at startup are never counted but get subtracted on
+ *       first apply, undercounting once per table.</li>
  *   <li><b>Eventual consistency:</b> Readers may momentarily see inconsistent state
  *       where timestamp and rowCount are from different writes.</li>
  *   <li><b>Table drops:</b> Entries for dropped tables remain until evicted.
@@ -943,9 +945,11 @@ public class RecentWriteTracker {
         /**
          * Returns the pending WAL row count observed by the tracker.
          * <p>
-         * WAL apply can be observed before the matching WAL write is recorded, so
-         * the internal counter is allowed to go negative temporarily and self-correct
-         * when the delayed write observation arrives.
+         * WAL apply observed before the matching WAL write lets the internal counter
+         * go negative temporarily; it self-corrects when the write observation arrives.
+         * Exception: WAL rows already pending at startup are never counted, yet the
+         * first apply batch can subtract them together with newer rows, undercounting
+         * once per table.
          *
          * @return pending WAL row count, clamped to zero for readers
          */
