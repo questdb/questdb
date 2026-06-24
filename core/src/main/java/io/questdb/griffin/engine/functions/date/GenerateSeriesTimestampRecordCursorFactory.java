@@ -91,6 +91,7 @@ public class GenerateSeriesTimestampRecordCursorFactory extends AbstractGenerate
 
         @Override
         public boolean hasNext() {
+            circuitBreaker.statefulThrowExceptionIfTripped();
             recordA.curr += step;
             if (step >= 0) {
                 return recordA.curr <= end;

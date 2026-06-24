@@ -26,13 +26,25 @@ package io.questdb.griffin.engine;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 
 public class SingleValueRecordCursor implements RecordCursor {
     private final Record record;
+    private SqlExecutionCircuitBreaker circuitBreaker = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
     private int remaining = 1;
 
     public SingleValueRecordCursor(Record record) {
         this.record = record;
+    }
+
+    /**
+     * Installs the execution context's circuit breaker so the cursor honors cancellation. Callers that
+     * leave it unset fall back to the no-op breaker.
+     */
+    public SingleValueRecordCursor of(SqlExecutionCircuitBreaker circuitBreaker) {
+        this.circuitBreaker = circuitBreaker;
+        this.remaining = 1;
+        return this;
     }
 
     @Override
@@ -51,6 +63,7 @@ public class SingleValueRecordCursor implements RecordCursor {
 
     @Override
     public boolean hasNext() {
+        circuitBreaker.statefulThrowExceptionIfTripped();
         return remaining-- > 0;
     }
 
