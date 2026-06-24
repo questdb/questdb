@@ -391,6 +391,29 @@ public class RecentWriteTrackerTest {
     }
 
     @Test
+    public void testRecordWalProcessedBeforeWalWriteDoesNotLoseDecrement() {
+        RecentWriteTracker tracker = new RecentWriteTracker(10);
+        TableToken table = createTableToken("apply_before_wal_write", 1);
+
+        tracker.recordWalProcessed(table, 10L, 5L, 0L);
+        Assert.assertEquals(0L, tracker.getWriteStats(table).getWalRowCount());
+
+        tracker.recordWalWrite(table, 10L, 1_000L, 5L);
+        Assert.assertEquals(0L, tracker.getWriteStats(table).getWalRowCount());
+    }
+
+    @Test
+    public void testWalProcessedOverApplyIsClampedForReaders() {
+        RecentWriteTracker tracker = new RecentWriteTracker(10);
+        TableToken table = createTableToken("over_apply", 1);
+
+        tracker.recordWalWrite(table, 5L, 100L, 3L);
+        tracker.recordWalProcessed(table, 10L, 5L, 0L);
+
+        Assert.assertEquals(0L, tracker.getWriteStats(table).getWalRowCount());
+    }
+
+    @Test
     public void testWalWriteWithOldDataTimestampSurvivesEviction() {
         RecentWriteTracker tracker = new RecentWriteTracker(2);
 

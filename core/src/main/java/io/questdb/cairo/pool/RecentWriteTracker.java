@@ -286,9 +286,8 @@ public class RecentWriteTracker {
             WriteStats stats = getOrCreateStats(tableToken, activityTimestamp);
             stats.touchActivity(activityTimestamp);
             // Only subtract if seqTxn is above the floor (rows added after tracking started)
-            long pendingWalRows = stats.getWalRowCount();
-            if (seqTxn > stats.getFloorSeqTxn() && pendingWalRows > 0) {
-                stats.walRowCount.add(-Math.min(walRowCount, pendingWalRows));
+            if (seqTxn > stats.getFloorSeqTxn()) {
+                stats.walRowCount.add(-walRowCount);
             }
             if (dedupRowsRemoved > 0) {
                 stats.dedupRowCount.add(dedupRowsRemoved);
@@ -592,7 +591,7 @@ public class RecentWriteTracker {
         private final Histogram txnSizeHistogram = new Histogram(2);
         // Lock for transaction size histogram access
         private final SimpleReadWriteLock txnSizeHistogramLock = new SimpleReadWriteLock();
-        // WAL row count - incremented by WalWriters, contention-free via LongAdder
+        // Pending WAL row count - incremented by WAL/replica observations and decremented on WAL apply
         private final LongAdder walRowCount = new LongAdder();
         private final AtomicLong walTimestamp;
         // Write amplification histogram - tracks ratio of physical rows written to logical rows
@@ -942,16 +941,16 @@ public class RecentWriteTracker {
         }
 
         /**
-         * Returns the cumulative row count from all WAL segments written to this table.
+         * Returns the pending WAL row count observed by the tracker.
          * <p>
-         * This counter is incremented each time a WAL segment is written, and never reset.
-         * It represents the total number of rows written via WAL since the tracker started
-         * tracking this table.
+         * WAL apply can be observed before the matching WAL write is recorded, so
+         * the internal counter is allowed to go negative temporarily and self-correct
+         * when the delayed write observation arrives.
          *
-         * @return cumulative WAL row count (always >= 0)
+         * @return pending WAL row count, clamped to zero for readers
          */
         public long getWalRowCount() {
-            return walRowCount.sum();
+            return Math.max(0, walRowCount.sum());
         }
 
         /**
