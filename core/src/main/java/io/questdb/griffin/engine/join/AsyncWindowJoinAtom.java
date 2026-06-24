@@ -235,8 +235,8 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
 
             this.perWorkerLocks = new PerWorkerLocks(configuration, slotCount);
 
-            // Lazy allocators (openOnInit=false): reopen() allocates the chunk index under the
-            // per-query tracker it binds there, keeping malloc/free symmetric on that counter.
+            // Lazy allocators (openOnInit=false): the chunk index is global-counter bookkeeping;
+            // only the data chunks the allocators hand out are charged to the per-query tracker.
             this.ownerFunctionAllocator = GroupByAllocatorFactory.createAllocator(configuration, false);
             // Make sure to set worker-local allocator for the group by functions.
             GroupByUtils.setAllocator(ownerGroupByFunctions, ownerFunctionAllocator);
@@ -391,11 +391,9 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
         Misc.free(ownerWindowLoFunc);
         Misc.freeObjList(perWorkerWindowHiFuncs);
         Misc.freeObjList(perWorkerWindowLoFuncs);
-        // clear() releases the chunk index and data chunks every cursor under the then-bound
-        // per-query tracker, so normal teardown frees nothing here. Null the tracker first only
-        // as a guard for a close() that still holds live allocations (a factory torn down
-        // mid-query): their bytes belong to an already-pooled tracker, so the frees below charge
-        // the global counter only and cannot underflow the recycled block.
+        // clear() frees the data chunks per cursor while the tracker is bound (the index stays on
+        // the global counter), so teardown frees nothing tracked here. Null the tracker first to
+        // guard a mid-query teardown of live chunks, so those frees hit the global counter only.
         if (ownerFunctionAllocator != null) {
             ownerFunctionAllocator.setMemoryTracker(null);
         }
@@ -734,8 +732,9 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
 
     @Override
     public void reopen() {
-        // init() runs before reopen(), so memoryTracker is bound here before the lazy chunk index
-        // is allocated, charging function state and the temporary lists to the per-query limit.
+        // init() runs before reopen(), so memoryTracker is bound here before any data chunk is
+        // allocated, charging function state and the temporary lists to the per-query limit (the
+        // chunk index itself stays on the global counter).
         ownerFunctionAllocator.setMemoryTracker(memoryTracker);
         ownerFunctionAllocator.reopen();
         if (perWorkerFunctionAllocators != null) {

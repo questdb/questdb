@@ -93,12 +93,9 @@ public final class PerQueryMemoryTracker extends MemoryTracker {
      * native counter to {@code 0} and stores the workload-appropriate limit.
      */
     void init(long queryId, MemoryTrackerWorkload workload, long limit) {
-        // A pooled tracker must come back clean: every native allocation charged
-        // to its {used} word has to be credited before the owning query releases
-        // it. A non-zero used here means an earlier query released this tracker
-        // while a native allocation bound to it was still live, so its charge will
-        // land on whichever query next recycles this block -- a per-query
-        // attribution error. Guard the invariant at the recycle boundary.
+        // A pooled tracker must come back clean: a non-zero used means a prior query released it
+        // with a native allocation still bound, so that charge would misattribute to the next
+        // query that recycles this block. Guard the invariant at the recycle boundary.
         assert getUsed() == 0 : "tracker recycled with used=" + getUsed();
         this.queryId = queryId;
         this.workload = workload;

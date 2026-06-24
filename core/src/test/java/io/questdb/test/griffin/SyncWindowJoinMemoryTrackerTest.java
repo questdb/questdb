@@ -117,9 +117,9 @@ public class SyncWindowJoinMemoryTrackerTest extends AbstractCairoTest {
 
     @Test
     public void testKeyedWindowJoinOpenFailureReleasesAllocations() throws Exception {
-        // A tiny limit breaches the cursor's of() at the first allocator.reopen() before any row;
-        // reusing the factory catches a failed open that would otherwise leave isOpen set (the next
-        // open would skip reopen() and not breach). The getCursor() catch frees the cursor.
+        // A tiny limit breaches during the first drain (the chunk index is off the per-query tracker,
+        // so nothing per-query-tracked allocates at open); the loop verifies each breach releases
+        // allocations and leaves the factory reusable.
         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 4);
@@ -283,8 +283,8 @@ public class SyncWindowJoinMemoryTrackerTest extends AbstractCairoTest {
     public void testVectorizedWindowJoinOpenFailureReleasesAllocations() throws Exception {
         // A batch-computable aggregate (sum) over a symbol-keyed WINDOW JOIN routes to the vectorized
         // WindowJoinFastVectRecordCursor, which carries its own allocator + slaveAllocator. A tiny
-        // limit breaches its of() at the first allocator.reopen(); without the binding that reopen
-        // would charge the global counter only and never breach, failing the expected-breach assert.
+        // limit breaches during the first drain (the chunk index is off the per-query tracker, so
+        // nothing per-query-tracked allocates at open); the slave data charged to it trips the limit.
         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 4);
@@ -348,7 +348,12 @@ public class SyncWindowJoinMemoryTrackerTest extends AbstractCairoTest {
     private static void assertOpenFailureReleasesAllocations(RecordCursorFactory factory, SqlExecutionContext ctx) throws SqlException {
         for (int i = 0; i < 5; i++) {
             try (RecordCursor cursor = factory.getCursor(ctx)) {
-                Assert.fail("expected a per-query memory breach during cursor open at iteration " + i);
+                //noinspection StatementWithEmptyBody
+                while (cursor.hasNext()) {
+                    // lazy-map path: the chunk index is no longer per-query-tracked, so the
+                    // breach lands during the reduce on the first drain, not at cursor open.
+                }
+                Assert.fail("expected a per-query memory breach at iteration " + i);
             } catch (CairoException e) {
                 Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
                 TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");

@@ -259,9 +259,8 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
                 }
             }
 
-            // Allocators. Lazy variant (openOnInit=false): each cursor's reopen() allocates
-            // the chunk index under that cursor's per-query tracker and clear() frees it at
-            // cursor close, keeping malloc/free symmetric on the per-query counter every cursor.
+            // Allocators. Lazy variant (openOnInit=false): the chunk index is global-counter
+            // bookkeeping; only the data chunks it hands out are charged to the per-query tracker.
             this.ownerAllocator = GroupByAllocatorFactory.createAllocator(configuration, false);
             GroupByUtils.setAllocator(ownerGroupByFunctions, ownerAllocator);
             if (perWorkerGroupByFunctions != null) {
@@ -331,12 +330,9 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
 
     @Override
     public void close() {
-        // clear() releases the allocators' chunk index and data chunks every cursor under the
-        // then-bound per-query tracker (the ASOF maps the same way), so normal teardown frees
-        // nothing here. Null the tracker first only as a guard for a close() that still holds
-        // live allocations (e.g. a factory torn down mid-query): their bytes belong to an
-        // already-pooled tracker, so the frees below charge the global counter only and cannot
-        // underflow the recycled block.
+        // clear() frees the data chunks and ASOF maps per cursor while the tracker is bound (the
+        // index stays on the global counter), so teardown frees nothing tracked here. Null the
+        // tracker first to guard a mid-query teardown of live chunks: those frees hit global only.
         if (ownerAllocator != null) {
             ownerAllocator.setMemoryTracker(null);
         }

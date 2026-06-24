@@ -83,15 +83,12 @@ public class FastGroupByAllocator implements GroupByAllocator {
     @Override
     public void clear() {
         _close();
-        // Release the chunk index too instead of retaining it across queries. The index is
-        // charged to the per-query memory tracker bound at reopen(); clear() runs at
-        // end-of-query while that tracker is still bound, so freeing the index here credits
-        // it and leaves the tracker at zero before it is recycled to the pool. Retaining it
-        // (the old restoreInitialCapacity) left the index charged to the recycled tracker,
-        // corrupting the accounting of the next query that acquired that block. The next
-        // reopen() -- or malloc(), see its lazy reopen -- reallocates the index under the
-        // next query's tracker, so the per-query charge/credit stays symmetric every cursor.
-        Misc.free(chunks);
+        // The chunk index is fixed-size bookkeeping kept on the global counter, never the
+        // per-query tracker, so retaining it across cursors does not leave the per-query
+        // counter dirty at recycle. A never-reopened lazy index has nothing to retain.
+        if (chunks.isOpen()) {
+            chunks.restoreInitialCapacity();
+        }
     }
 
     @Override
@@ -104,10 +101,6 @@ public class FastGroupByAllocator implements GroupByAllocator {
     public void free(long ptr, long size) {
         if (size < defaultChunkSize) {
             // We don't free small allocations.
-            return;
-        }
-        if (!chunks.isOpen()) {
-            // clear() already released every chunk and the index; nothing to free.
             return;
         }
         long index = chunks.keyIndex(ptr);
@@ -137,12 +130,6 @@ public class FastGroupByAllocator implements GroupByAllocator {
             return allocatedPtr;
         }
 
-        // clear() releases the chunk index; lazily reopen it so the allocator stays usable
-        // after a clear() without an intervening reopen() (the canonical reuse pattern still
-        // reopens, but a few callers malloc straight after clear()).
-        if (!chunks.isOpen()) {
-            chunks.reopen();
-        }
         long chunkSize = Math.max(size, defaultChunkSize);
         long allocatedPtr = Unsafe.malloc(chunkSize, MemoryTag.NATIVE_GROUP_BY_FUNCTION, memoryTracker);
         chunks.put(allocatedPtr, chunkSize);
@@ -203,8 +190,10 @@ public class FastGroupByAllocator implements GroupByAllocator {
 
     @Override
     public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        // Only the data chunks (query-proportional) are charged to the per-query tracker;
+        // the chunk index stays fixed-size bookkeeping on the global counter, so it is never
+        // bound here and can be retained across cursors without dirtying the per-query counter.
         this.memoryTracker = tracker;
-        chunks.setMemoryTracker(tracker);
     }
 
     private void _close() {
