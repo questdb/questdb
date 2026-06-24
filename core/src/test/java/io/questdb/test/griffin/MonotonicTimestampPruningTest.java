@@ -820,12 +820,15 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testToTimezoneNamedZoneSuperset() throws Exception {
+    public void testToTimezoneNamedZoneWinterExact() throws Exception {
         assertMemoryLeak(() -> {
             createTrades();
+            // January is far from any London DST transition, so the offset is provably constant
+            // (0) across the preimage: the inversion is exact and the row filter is dropped
             assertQuery("SELECT * FROM trades WHERE to_timezone(timestamp, 'Europe/London') >= '2022-01-03T12:00:00.000000Z'")
                     .timestamp("timestamp")
                     .withPlanContaining("Interval forward scan on: trades")
+                    .withPlanNotContaining("filter:")
                     .returns("""
                             price\ttimestamp
                             200.0\t2022-01-03T12:00:00.000000Z
@@ -850,16 +853,133 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testToUtcNamedZoneSuperset() throws Exception {
+    public void testToUtcNamedZoneWinterExact() throws Exception {
         assertMemoryLeak(() -> {
             createTrades();
+            // January is far from any London DST transition, so the offset is provably constant
+            // (0) across the preimage: the inversion is exact and the row filter is dropped
             assertQuery("SELECT * FROM trades WHERE to_utc(timestamp, 'Europe/London') >= '2022-01-03T12:00:00.000000Z'")
                     .timestamp("timestamp")
                     .withPlanContaining("Interval forward scan on: trades")
+                    .withPlanNotContaining("filter:")
                     .returns("""
                             price\ttimestamp
                             200.0\t2022-01-03T12:00:00.000000Z
                             250.0\t2022-01-04T12:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testToTimezoneFallBackOverlapSuperset() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tz (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            // London falls back at 2022-10-30T01:00Z: local 01:30 occurs twice (BST then GMT),
+            // so both rows map to the same wall-clock value. A wrong EXACT would keep only one;
+            // the transition inside the window forces SUPERSET, the filter stays, both rows match
+            execute("INSERT INTO tz VALUES " +
+                    "(1, '2022-10-30T00:30:00.000000Z')," +
+                    "(2, '2022-10-30T01:30:00.000000Z');");
+            assertQuery("SELECT * FROM tz WHERE to_timezone(timestamp, 'Europe/London') = '2022-10-30T01:30:00.000000Z'")
+                    .timestamp("timestamp")
+                    .withPlanContaining("filter:")
+                    .returns("""
+                            price\ttimestamp
+                            1.0\t2022-10-30T00:30:00.000000Z
+                            2.0\t2022-10-30T01:30:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testToTimezoneNanoSummerExact() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tzn (price DOUBLE, timestamp TIMESTAMP_NS) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("INSERT INTO tzn VALUES " +
+                    "(1, '2022-07-15T10:00:00.000000000Z')," +
+                    "(2, '2022-07-15T12:30:00.000000000Z')," +
+                    "(3, '2022-07-15T20:00:00.000000000Z');");
+            // BST is +1h and July is far from any transition, so the inverse is exact
+            assertQuery("SELECT * FROM tzn WHERE to_timezone(timestamp, 'Europe/London') >= '2022-07-15T13:30:00.000000000Z'")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Interval forward scan on: tzn")
+                    .withPlanNotContaining("filter:")
+                    .returns("""
+                            price\ttimestamp
+                            2.0\t2022-07-15T12:30:00.000000000Z
+                            3.0\t2022-07-15T20:00:00.000000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testToTimezoneSpringForwardSuperset() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tz (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            // London springs forward at 2022-03-27T01:00Z; the bound's window straddles it, so the
+            // offset is not constant and the inversion must stay SUPERSET with the filter retained
+            execute("INSERT INTO tz VALUES " +
+                    "(1, '2022-03-27T00:30:00.000000Z')," +
+                    "(2, '2022-03-27T01:30:00.000000Z');");
+            assertQuery("SELECT * FROM tz WHERE to_timezone(timestamp, 'Europe/London') >= '2022-03-27T02:00:00.000000Z'")
+                    .timestamp("timestamp")
+                    .withPlanContaining("filter:")
+                    .returns("""
+                            price\ttimestamp
+                            2.0\t2022-03-27T01:30:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testToTimezoneSummerBetweenExact() throws Exception {
+        assertMemoryLeak(() -> {
+            createTzSummer();
+            // BST +1h, far from any transition: two-sided bound inverts exactly, filter dropped
+            assertQuery("SELECT * FROM tz WHERE to_timezone(timestamp, 'Europe/London') BETWEEN '2022-07-15T13:00:00.000000Z' AND '2022-07-15T22:00:00.000000Z'")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Interval forward scan on: tz")
+                    .withPlanNotContaining("filter:")
+                    .returns("""
+                            price\ttimestamp
+                            2.0\t2022-07-15T12:30:00.000000Z
+                            3.0\t2022-07-15T20:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testToTimezoneSummerEqualsExact() throws Exception {
+        assertMemoryLeak(() -> {
+            createTzSummer();
+            // ts 12:30Z maps to 13:30 BST; the exact inverse pins exactly that row, filter dropped
+            assertQuery("SELECT * FROM tz WHERE to_timezone(timestamp, 'Europe/London') = '2022-07-15T13:30:00.000000Z'")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Interval forward scan on: tz")
+                    .withPlanNotContaining("filter:")
+                    .returns("""
+                            price\ttimestamp
+                            2.0\t2022-07-15T12:30:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testToUtcSummerEqualsExact() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tzu (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            // to_utc treats the column as local time; BST 13:30 maps to 12:30Z
+            execute("INSERT INTO tzu VALUES " +
+                    "(1, '2022-07-15T11:00:00.000000Z')," +
+                    "(2, '2022-07-15T13:30:00.000000Z')," +
+                    "(3, '2022-07-15T21:00:00.000000Z');");
+            assertQuery("SELECT * FROM tzu WHERE to_utc(timestamp, 'Europe/London') = '2022-07-15T12:30:00.000000Z'")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Interval forward scan on: tzu")
+                    .withPlanNotContaining("filter:")
+                    .returns("""
+                            price\ttimestamp
+                            2.0\t2022-07-15T13:30:00.000000Z
                             """);
         });
     }
@@ -968,6 +1088,14 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
                 "(150, '2022-01-02T12:00:00.000000Z')," +
                 "(200, '2022-01-03T12:00:00.000000Z')," +
                 "(250, '2022-01-04T12:00:00.000000Z');");
+    }
+
+    private static void createTzSummer() throws Exception {
+        execute("CREATE TABLE tz (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
+        execute("INSERT INTO tz VALUES " +
+                "(1, '2022-07-15T10:00:00.000000Z')," +
+                "(2, '2022-07-15T12:30:00.000000Z')," +
+                "(3, '2022-07-15T20:00:00.000000Z');");
     }
 
     private static void createYears() throws Exception {

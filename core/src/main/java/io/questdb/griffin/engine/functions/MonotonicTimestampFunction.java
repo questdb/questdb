@@ -24,8 +24,11 @@
 
 package io.questdb.griffin.engine.functions;
 
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.std.Interval;
+import io.questdb.std.Numbers;
+import io.questdb.std.datetime.TimeZoneRules;
 
 /**
  * Implemented by functions that are monotonic in their single designated-timestamp
@@ -54,6 +57,89 @@ public interface MonotonicTimestampFunction {
     int EXACT = 2;
 
     /**
+     * Inverts {@code [lo, hi]} for a named-zone function whose result is
+     * {@code arg + shiftSign * offset(arg)} ({@code to_timezone} uses {@code -1},
+     * {@code to_utc} uses {@code +1}). Grades {@link #EXACT} when the zone offset is
+     * provably constant across the preimage, otherwise {@link #SUPERSET} (a symmetric
+     * 24h widening that bounds any real offset), or {@link #NONE} when widening overflows.
+     */
+    static int invertZoneOffsetShift(Interval io, TimeZoneRules tzRules, TimestampDriver timestampDriver, int shiftSign) {
+        final long margin = timestampDriver.fromHours(24);
+        final long lo = io.getLo();
+        final long hi = io.getHi();
+        final boolean isLoFinite = lo != Numbers.LONG_NULL;
+        final boolean isHiFinite = hi != Long.MAX_VALUE;
+
+        if ((isLoFinite || isHiFinite) && tryZoneOffsetExact(io, tzRules, margin, shiftSign, lo, hi, isLoFinite, isHiFinite)) {
+            return EXACT;
+        }
+
+        long widenedLo = lo;
+        long widenedHi = hi;
+        if (isLoFinite) {
+            if (lo < Long.MIN_VALUE + margin) {
+                return NONE;
+            }
+            widenedLo = lo - margin;
+        }
+        if (isHiFinite) {
+            if (hi > Long.MAX_VALUE - margin) {
+                return NONE;
+            }
+            widenedHi = hi + margin;
+        }
+        io.of(widenedLo, widenedHi);
+        return SUPERSET;
+    }
+
+    private static boolean tryZoneOffsetExact(
+            Interval io,
+            TimeZoneRules tzRules,
+            long margin,
+            int shiftSign,
+            long lo,
+            long hi,
+            boolean isLoFinite,
+            boolean isHiFinite
+    ) {
+        final long windowLo;
+        final long windowHi;
+        final long ref;
+        if (isLoFinite && isHiFinite) {
+            if (lo < Long.MIN_VALUE + margin || hi > Long.MAX_VALUE - margin) {
+                return false;
+            }
+            windowLo = lo - margin;
+            windowHi = hi + margin;
+            ref = lo;
+        } else if (isLoFinite) {
+            if (lo < Long.MIN_VALUE + margin || lo > Long.MAX_VALUE - margin) {
+                return false;
+            }
+            windowLo = lo - margin;
+            windowHi = lo + margin;
+            ref = lo;
+        } else {
+            if (hi < Long.MIN_VALUE + margin || hi > Long.MAX_VALUE - margin) {
+                return false;
+            }
+            windowLo = hi - margin;
+            windowHi = hi + margin;
+            ref = hi;
+        }
+        // A transition inside the +/-24h window means the offset is not constant across the preimage.
+        if (tzRules.getNextDST(windowLo) <= windowHi) {
+            return false;
+        }
+        final long offset = shiftSign * tzRules.getOffset(ref);
+        io.of(
+                isLoFinite ? lo + offset : Numbers.LONG_NULL,
+                isHiFinite ? hi + offset : Long.MAX_VALUE
+        );
+        return true;
+    }
+
+    /**
      * Returns the argument that carries the timestamp. Every other argument must
      * be constant or runtime-constant.
      */
@@ -70,9 +156,11 @@ public interface MonotonicTimestampFunction {
      * {@link Long#MAX_VALUE} the open upper bound; an empty result is encoded as
      * {@code lo > hi}.
      * <p>
-     * The returned grade ({@link #EXACT}, {@link #SUPERSET} or {@link #NONE}) is
-     * determined by this function's own constant arguments and does not depend on
-     * the bound values, so it can be probed with an unbounded interval.
+     * The returned grade ({@link #EXACT}, {@link #SUPERSET} or {@link #NONE}) may
+     * depend on the bound values (a named-zone function is EXACT only for bounds that
+     * fall within a single DST segment). Probing with an unbounded interval must yield
+     * a sound, conservative grade -- never more optimistic than any bounded interval --
+     * which is what the runtime-deferred path relies on.
      */
     int invertTimestampInterval(Interval io);
 }

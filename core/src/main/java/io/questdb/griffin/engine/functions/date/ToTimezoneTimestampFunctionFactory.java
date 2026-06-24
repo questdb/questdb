@@ -146,24 +146,7 @@ public class ToTimezoneTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public int invertTimestampInterval(Interval io) {
-            // DST makes the offset non-monotonic; 24h exceeds any real UTC offset.
-            final long margin = timestampDriver.fromHours(24);
-            long lo = io.getLo();
-            long hi = io.getHi();
-            if (lo != Numbers.LONG_NULL) {
-                if (lo < Long.MIN_VALUE + margin) {
-                    return NONE;
-                }
-                lo -= margin;
-            }
-            if (hi != Long.MAX_VALUE) {
-                if (hi > Long.MAX_VALUE - margin) {
-                    return NONE;
-                }
-                hi += margin;
-            }
-            io.of(lo, hi);
-            return SUPERSET;
+            return MonotonicTimestampFunction.invertZoneOffsetShift(io, tzRules, timestampDriver, -1);
         }
     }
 
