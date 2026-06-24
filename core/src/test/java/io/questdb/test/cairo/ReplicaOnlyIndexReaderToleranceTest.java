@@ -31,13 +31,17 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Verifies the reader-side robustness of Task 13. This test runs with the DEFAULT configuration
@@ -120,6 +124,89 @@ public class ReplicaOnlyIndexReaderToleranceTest extends AbstractCairoTest {
             sink.clear();
             printSql("select count(*) from x", sink);
             TestUtils.assertEquals("count\n3\n", sink);
+        });
+    }
+
+    @Test
+    public void testReplicaOnlyIndexOpenRaceIsRecoverable() throws Exception {
+        // Race backstop for createIndexReaderAt: the cheap pre-check (ff.exists on the key file)
+        // can PASS and then the file be unlinked by a concurrent reconcile-purge before the reader
+        // ctor opens it, so the open itself fails with a critical "file does not exist" error.
+        // For a replica-only column that must still degrade gracefully (non-critical), exactly like
+        // the pre-check path. We simulate the race deterministically: the key file genuinely stays
+        // on disk (so ff.exists() -> true, pre-check passes), but the FilesFacade is armed to fail
+        // the open of that key file with ENOENT (so the ctor open fails). This drives the catch.
+        final AtomicBoolean armed = new AtomicBoolean(false);
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public int errno() {
+                // When armed and we just forced an open to fail, report "file does not exist" so
+                // Files.isErrnoFileCannotRead() is true and the catch converts it to non-critical.
+                return armed.get() ? CairoException.ERRNO_FILE_DOES_NOT_EXIST : super.errno();
+            }
+
+            @Override
+            public long openRO(LPSZ name) {
+                if (armed.get() && isReplicaOnlyKeyFile(name)) {
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+
+            @Override
+            public long openRONoCache(LPSZ path) {
+                if (armed.get() && isReplicaOnlyKeyFile(path)) {
+                    return -1;
+                }
+                return super.openRONoCache(path);
+            }
+
+            // Match the bitmap index KEY file for column "s" ("s.k", optionally txn-suffixed).
+            // The symbol dictionary's own root-level "s.k" is excluded because we only arm during
+            // the per-partition index reader open, and matching the basename is sufficient here.
+            private boolean isReplicaOnlyKeyFile(LPSZ name) {
+                final String s = Utf8s.stringFromUtf8Bytes(name);
+                final int slash = Math.max(s.lastIndexOf('/'), s.lastIndexOf('\\'));
+                final String base = slash >= 0 ? s.substring(slash + 1) : s;
+                return base.equals("s.k") || base.startsWith("s.k.");
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            execute("create table x (s symbol index capacity 256 replica only, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into x values ('a',1,0),('b',2,1000000),('a',3,2000000)");
+            drainWalQueue();
+
+            // sanity: the planner picks a symbol index scan, so the reader is opened on this query.
+            assertQuery("select s, v, ts from x where s = 'a'")
+                    .noLeakCheck()
+                    .assertsPlanContaining("DeferredSingleSymbolFilterPageFrame");
+
+            // The key files are present on disk: the cheap pre-check WILL pass.
+            Assert.assertTrue("replica-only index key file must exist on disk", indexFilesExist("x", "s"));
+
+            // Arm: pre-check still sees the file (exists==true), but the ctor open is forced to fail
+            // with ENOENT -- the exact TOCTOU the catch must absorb.
+            armed.set(true);
+            boolean threw = false;
+            try {
+                runQuery("select s, v, ts from x where s = 'a'");
+                Assert.fail("expected a recoverable error when the index open loses the unlink race");
+            } catch (CairoException e) {
+                threw = true;
+                Assert.assertFalse("open-race failure must be recoverable (non-critical), not corruption", e.isCritical());
+                TestUtils.assertContains(e.getFlyweightMessage(), "replica-only index not materialized");
+            } finally {
+                armed.set(false);
+            }
+            Assert.assertTrue(threw);
+
+            // The table must not be suspended: non-index queries still work, and once disarmed the
+            // index query succeeds again (the file was never actually removed).
+            sink.clear();
+            printSql("select count(*) from x", sink);
+            TestUtils.assertEquals("count\n3\n", sink);
+            runQuery("select s, v, ts from x where s = 'a'");
         });
     }
 

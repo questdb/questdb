@@ -11870,8 +11870,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 final ColumnIndexer stale = i < indexers.size() ? indexers.getQuick(i) : null;
                 if (stale != null) {
                     stale.discardAndClose();
+                    // No populateDenseIndexerList() here: the intermediate null slot is never
+                    // observed -- this is straight-line, single-threaded code under the writer lock,
+                    // and the dense list is rebuilt below after the new indexer is set. writeIndex
+                    // (and its indexHistoric/LastPartition helpers) operate on the passed-in indexer
+                    // and never read denseIndexers/indexCount, so rebuilding once is sufficient.
                     indexers.extendAndSet(i, null);
-                    populateDenseIndexerList();
                 }
                 final byte indexType = metadata.getColumnIndexType(i);
                 final int indexValueBlockCapacity = metadata.getIndexValueBlockCapacity(i);

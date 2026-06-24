@@ -1074,20 +1074,39 @@ public class TableReader implements Closeable, SymbolTableSource {
                             .put(']');
                 }
                 path.trimTo(partitionPathLen);
-                reader = IndexFactory.createReader(
-                        indexType,
-                        direction,
-                        configuration,
-                        path,
-                        metadata.getColumnName(columnIndex),
-                        columnNameTxn,
-                        partitionTxn,
-                        getColumnTop(columnBase, columnIndex),
-                        metadata,
-                        columnVersionReader,
-                        partitionTimestamp,
-                        txn
-                );
+                try {
+                    reader = IndexFactory.createReader(
+                            indexType,
+                            direction,
+                            configuration,
+                            path,
+                            metadata.getColumnName(columnIndex),
+                            columnNameTxn,
+                            partitionTxn,
+                            getColumnTop(columnBase, columnIndex),
+                            metadata,
+                            columnVersionReader,
+                            partitionTimestamp,
+                            txn
+                    );
+                } catch (CairoException e) {
+                    // Race backstop for the pre-check above: the key file can pass ff.exists() and
+                    // then be unlinked (by a concurrent reconcile-purge on promote) before the reader
+                    // ctor opens it, in which case the open fails with a critical "file does not exist"
+                    // error. For a replica-only column that is NOT corruption, just "not materialized
+                    // here yet", so convert the file-not-found open failure to the same recoverable
+                    // (non-critical) error as the pre-check. Normal indexed columns are left untouched:
+                    // a missing index file there remains genuine corruption (critical), as does any
+                    // non-file-not-found failure (e.g. unknown format) on a replica-only column.
+                    if (metadata.isColumnReplicaOnlyIndex(columnIndex) && Files.isErrnoFileCannotRead(e.getErrno())) {
+                        throw CairoException.nonCritical()
+                                .put("replica-only index not materialized on this node [column=")
+                                .put(metadata.getColumnName(columnIndex))
+                                .put(", partitionTimestamp=").put(partitionTimestamp)
+                                .put(']');
+                    }
+                    throw e;
+                }
                 if (direction == IndexReader.DIR_BACKWARD) {
                     indexes.setQuick(globalIndex, reader);
                 } else {
