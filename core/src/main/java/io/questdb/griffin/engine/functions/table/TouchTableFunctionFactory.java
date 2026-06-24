@@ -75,7 +75,7 @@ public class TouchTableFunctionFactory implements FunctionFactory {
             throw SqlException.$(pos, "query does not support framing execution and cannot be pre-touched");
         }
 
-        return new TouchTableFunc(function);
+        return new TouchTableFunc(function, configuration.skipReplicaOnlyIndexes());
     }
 
     private static class TouchTableFunc extends StrFunction implements UnaryFunction {
@@ -84,13 +84,15 @@ public class TouchTableFunctionFactory implements FunctionFactory {
         private final Function arg;
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
+        private final boolean skipReplicaOnlyIndexes;
         private long dataPages = 0;
         private long indexKeyPages = 0;
         private long indexValuePages = 0;
         private SqlExecutionContext sqlExecutionContext;
 
-        public TouchTableFunc(Function arg) {
+        public TouchTableFunc(Function arg, boolean skipReplicaOnlyIndexes) {
             this.arg = arg;
+            this.skipReplicaOnlyIndexes = skipReplicaOnlyIndexes;
         }
 
         @Override
@@ -174,7 +176,7 @@ public class TouchTableFunctionFactory implements FunctionFactory {
                         final long columnBaseAddress = frame.getPageAddress(columnIndex);
                         dataPages += touchMemory(pageSize, columnBaseAddress, columnMemorySize);
 
-                        if (metadata.isColumnIndexed(columnIndex)) {
+                        if (metadata.isColumnIndexActive(columnIndex, skipReplicaOnlyIndexes)) {
                             final IndexReader indexReader = frame.getIndexReader(columnIndex, IndexReader.DIR_BACKWARD);
 
                             final long keyBaseAddress = indexReader.getKeyBaseAddress();

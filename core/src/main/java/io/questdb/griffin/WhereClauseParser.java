@@ -113,6 +113,7 @@ public final class WhereClauseParser implements Mutable {
     private boolean isConstFunction;
     private boolean noIndex;
     private CharSequence preferredKeyColumn;
+    private boolean skipReplicaOnlyIndexes;
     private CharSequence timestamp;
 
     @Override
@@ -159,6 +160,7 @@ public final class WhereClauseParser implements Mutable {
         this.timestamp = timestampIndex < 0 ? null : m.getColumnName(timestampIndex);
         this.noIndex = noIndex;
         this.preferredKeyColumn = preferredKeyColumn;
+        this.skipReplicaOnlyIndexes = executionContext.getCairoEngine().getConfiguration().skipReplicaOnlyIndexes();
 
         // Extracts designated timestamp argument from dateadd predicates, if any.
         rewriteDateaddTimestamp(expressionNodePool, node);
@@ -1913,7 +1915,7 @@ public final class WhereClauseParser implements Mutable {
         return !latestByMultiColumn &&
                 (
                         Chars.equalsIgnoreCaseNc(columnName, preferredKeyColumn)
-                                || (preferredKeyColumn == null && !noIndex && m.isColumnIndexed(m.getColumnIndex(columnName)))
+                                || (preferredKeyColumn == null && !noIndex && m.isColumnIndexActive(m.getColumnIndex(columnName), skipReplicaOnlyIndexes))
                 );
     }
 

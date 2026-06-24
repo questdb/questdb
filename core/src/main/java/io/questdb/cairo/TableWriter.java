@@ -8798,7 +8798,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (metadata.getColumnType(i) > 0) {
                     final CharSequence name = metadata.getColumnName(i);
                     long columnNameTxn = columnVersionWriter.getColumnNameTxn(lastOpenPartitionTs, i);
-                    final ColumnIndexer indexer = metadata.isColumnIndexed(i) ? indexers.getQuick(i) : null;
+                    // On a skipping primary the bitmap/posting index for a replica-only column is never
+                    // materialized and no indexer is configured (see configureColumn), so the indexers
+                    // list has no entry for it -- treat it as un-indexed here to avoid an OOB access.
+                    final ColumnIndexer indexer = metadata.isColumnIndexActive(i, configuration.skipReplicaOnlyIndexes()) ? indexers.getQuick(i) : null;
 
                     // prepare index writer if column requires indexing
                     if (indexer != null) {
