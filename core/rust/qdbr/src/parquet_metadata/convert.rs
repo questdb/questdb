@@ -1105,20 +1105,20 @@ mod tests {
         bad_meta
             .schema
             .push(crate::parquet::qdb_metadata::QdbMetaCol {
-                id: None,
                 column_type: ColumnTypeTag::Int.into_type(),
                 column_top: 0,
                 format: None,
                 ascii: None,
+                id: None,
             });
         bad_meta
             .schema
             .push(crate::parquet::qdb_metadata::QdbMetaCol {
-                id: None,
                 column_type: ColumnTypeTag::Long.into_type(),
                 column_top: 0,
                 format: None,
                 ascii: None,
+                id: None,
             });
 
         let result = convert_from_parquet(&metadata, Some(&bad_meta), 0, 0, None, None);
@@ -1784,11 +1784,11 @@ mod tests {
         // Build QdbMeta with LocalKeyIsGlobal and ascii flags.
         let mut meta = QdbMeta::new(1);
         meta.schema.push(crate::parquet::qdb_metadata::QdbMetaCol {
-            id: None,
             column_type: ColumnTypeTag::Symbol.into_type(),
             column_top: 42,
             format: Some(QdbMetaColFormat::LocalKeyIsGlobal),
             ascii: Some(true),
+            id: None,
         });
 
         let (parquet_meta_bytes, parquet_meta_file_size) =
@@ -3365,7 +3365,6 @@ mod tests {
 
         let mut qdb_meta = QdbMeta::new(1);
         qdb_meta.schema.push(QdbMetaCol {
-            id: None,
             column_type: ColumnTypeTag::Timestamp
                 .into_type()
                 .into_designated()
@@ -3373,6 +3372,7 @@ mod tests {
             column_top: 0,
             format: None,
             ascii: None,
+            id: None,
         });
         let qdb_meta_json = qdb_meta.serialize().unwrap();
         chunked

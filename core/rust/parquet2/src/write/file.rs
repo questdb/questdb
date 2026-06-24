@@ -1024,6 +1024,9 @@ impl<W: Write> ParquetFile<W> {
                 // Cached groups keep their original page index. Index the new
                 // groups only when the source is fully offset-indexed, else the
                 // file would be mixed. An empty source is trivially indexed.
+                // Assumes a uniform source (every column indexed, or none): QuestDB's
+                // writer always emits one, so a per-column-mixed source means a corrupt
+                // file, in which case the all() below conservatively reports false.
                 let source_offset_indexed = metadata
                     .row_groups
                     .iter()

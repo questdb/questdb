@@ -2624,11 +2624,11 @@ mod tests {
         for column_index in 0..column_count {
             let column_type = decoder.columns[column_index].column_type.unwrap();
             let col_info = QdbMetaCol {
-                id: None,
                 column_type,
                 column_top: 0,
                 format: None,
                 ascii: None,
+                id: None,
             };
             for row_group_index in 0..row_group_count {
                 decoder
@@ -2684,11 +2684,11 @@ mod tests {
                 for column_index in 0..column_count {
                     let column_type = decoder.columns[column_index].column_type.unwrap();
                     let col_info = QdbMetaCol {
-                        id: None,
                         column_type,
                         column_top: 0,
                         format: None,
                         ascii: None,
+                        id: None,
                     };
                     for row_group_index in 0..row_group_count {
                         decoder
@@ -2757,11 +2757,11 @@ mod tests {
                             row_hi,
                             0,
                             QdbMetaCol {
-                                id: None,
                                 column_type: ColumnTypeTag::Boolean.into_type(),
                                 column_top: 0,
                                 format: None,
                                 ascii: None,
+                                id: None,
                             },
                         )
                         .unwrap();
@@ -2997,11 +2997,11 @@ mod tests {
                         row_group_size,
                         column_index,
                         QdbMetaCol {
-                            id: None,
                             column_type,
                             column_top: 0,
                             format,
                             ascii: None,
+                            id: None,
                         },
                     )
                     .unwrap();
@@ -4188,11 +4188,11 @@ mod tests {
 
         let mut bufs = ColumnChunkBuffers::new(allocator);
         let col_info = QdbMetaCol {
-            id: None,
             column_type: ColumnTypeTag::Decimal64.into_type(),
             column_top: 0,
             format: None,
             ascii: None,
+            id: None,
         };
 
         decode_page(&page, None, &mut bufs, col_info, 0, values.len()).unwrap();
@@ -4254,11 +4254,11 @@ mod tests {
 
         let mut bufs = ColumnChunkBuffers::new(allocator);
         let col_info = QdbMetaCol {
-            id: None,
             column_type,
             column_top: 0,
             format: None,
             ascii: None,
+            id: None,
         };
 
         decode_page(&page, None, &mut bufs, col_info, 0, n).unwrap();
@@ -4335,11 +4335,11 @@ mod tests {
 
         let mut bufs = ColumnChunkBuffers::new(allocator);
         let col_info = QdbMetaCol {
-            id: None,
             column_type,
             column_top: 0,
             format: None,
             ascii: None,
+            id: None,
         };
 
         decode_page(&page, None, &mut bufs, col_info, 0, n).unwrap();
@@ -4509,11 +4509,11 @@ mod tests {
 
         let mut bufs = ColumnChunkBuffers::new(allocator);
         let col_info = QdbMetaCol {
-            id: None,
             column_type: ColumnTypeTag::String.into_type(),
             column_top: 0,
             format: None,
             ascii: None,
+            id: None,
         };
 
         let err = decode_page(&page, None, &mut bufs, col_info, 0, n)
@@ -4592,11 +4592,11 @@ mod tests {
 
         let mut bufs = ColumnChunkBuffers::new(allocator);
         let col_info = QdbMetaCol {
-            id: None,
             column_type,
             column_top: 0,
             format: None,
             ascii: None,
+            id: None,
         };
 
         decode_page(&page, None, &mut bufs, col_info, 0, row_hi).unwrap();
@@ -4723,11 +4723,11 @@ mod tests {
 
         let mut bufs = ColumnChunkBuffers::new(allocator);
         let col_info = QdbMetaCol {
-            id: None,
             column_type: ColumnTypeTag::String.into_type(),
             column_top: 0,
             format: None,
             ascii: None,
+            id: None,
         };
 
         decode_page(&page, None, &mut bufs, col_info, 0, row_hi).unwrap();
@@ -4806,11 +4806,11 @@ mod tests {
 
         let mut bufs = ColumnChunkBuffers::new(allocator);
         let col_info = QdbMetaCol {
-            id: None,
             column_type: ColumnTypeTag::Varchar.into_type(),
             column_top: 0,
             format: None,
             ascii: None,
+            id: None,
         };
 
         let err = decode_page(
@@ -4856,11 +4856,11 @@ mod tests {
 
         let mut bufs = ColumnChunkBuffers::new(allocator);
         let col_info = QdbMetaCol {
-            id: None,
             column_type: ColumnTypeTag::String.into_type(),
             column_top: 0,
             format: None,
             ascii: None,
+            id: None,
         };
 
         let err = decode_page(&page, Some(&dict_page), &mut bufs, col_info, 0, 8)
@@ -5453,11 +5453,11 @@ mod tests {
 
         let mut bufs = ColumnChunkBuffers::new(allocator);
         let col_info = QdbMetaCol {
-            id: None,
             column_type: ColumnTypeTag::Decimal64.into_type(),
             column_top: 0,
             format: None,
             ascii: None,
+            id: None,
         };
 
         let rows_filter = vec![1i64];
@@ -5504,11 +5504,11 @@ mod tests {
 
         let mut bufs = ColumnChunkBuffers::new(allocator);
         let col_info = QdbMetaCol {
-            id: None,
             column_type: ColumnTypeTag::Decimal64.into_type(),
             column_top: 0,
             format: None,
             ascii: None,
+            id: None,
         };
 
         decode_page(&page, None, &mut bufs, col_info, 0, 1).unwrap();
@@ -5549,11 +5549,11 @@ mod tests {
             let page = page.as_page();
             let mut bufs = ColumnChunkBuffers::new(allocator.clone());
             let col_info = QdbMetaCol {
-                id: None,
                 column_type: ColumnType::new(ColumnTypeTag::Decimal64, 0),
                 column_top: 0,
                 format: None,
                 ascii: None,
+                id: None,
             };
             decode_page(
                 &page,
@@ -5606,11 +5606,11 @@ mod tests {
             let page = page.as_page();
             let mut bufs = ColumnChunkBuffers::new(allocator.clone());
             let col_info = QdbMetaCol {
-                id: None,
                 column_type: ColumnType::new(ColumnTypeTag::Decimal64, 0),
                 column_top: 0,
                 format: None,
                 ascii: None,
+                id: None,
             };
             decode_page_filtered::<true>(
                 &page,
@@ -5653,11 +5653,11 @@ mod tests {
 
         let mut bufs = ColumnChunkBuffers::new(allocator);
         let col_info = QdbMetaCol {
-            id: None,
             column_type: ColumnType::new(ColumnTypeTag::Decimal64, 0),
             column_top: 0,
             format: None,
             ascii: None,
+            id: None,
         };
 
         decode_page(&page, None, &mut bufs, col_info, 0, values.len()).unwrap();
@@ -5701,11 +5701,11 @@ mod tests {
             let page = page.as_page();
             let mut bufs = ColumnChunkBuffers::new(allocator.clone());
             let col_info = QdbMetaCol {
-                id: None,
                 column_type: ColumnType::new(ColumnTypeTag::Decimal64, 0),
                 column_top: 0,
                 format: None,
                 ascii: None,
+                id: None,
             };
             decode_page_filtered::<true>(
                 &page,
@@ -5740,11 +5740,11 @@ mod tests {
 
         let mut bufs = ColumnChunkBuffers::new(allocator);
         let col_info = QdbMetaCol {
-            id: None,
             column_type: ColumnType::new(ColumnTypeTag::Decimal64, 0),
             column_top: 0,
             format: None,
             ascii: None,
+            id: None,
         };
 
         decode_page(&page, None, &mut bufs, col_info, 0, values.len()).unwrap();
@@ -5780,11 +5780,11 @@ mod tests {
         for (tag, target_size) in decimal_target_cases() {
             let mut bufs = ColumnChunkBuffers::new(allocator.clone());
             let col_info = QdbMetaCol {
-                id: None,
                 column_type: ColumnType::new(tag, 0),
                 column_top: 0,
                 format: None,
                 ascii: None,
+                id: None,
             };
 
             decode_page(&page, None, &mut bufs, col_info, 0, values.len()).unwrap();
@@ -5831,11 +5831,11 @@ mod tests {
                 let page = page.as_page();
                 let mut bufs = ColumnChunkBuffers::new(allocator.clone());
                 let col_info = QdbMetaCol {
-                    id: None,
                     column_type: ColumnType::new(tag, 0),
                     column_top: 0,
                     format: None,
                     ascii: None,
+                    id: None,
                 };
 
                 decode_page_filtered::<false>(
@@ -5890,11 +5890,11 @@ mod tests {
                 let page = page.as_page();
                 let mut bufs = ColumnChunkBuffers::new(allocator.clone());
                 let col_info = QdbMetaCol {
-                    id: None,
                     column_type: ColumnType::new(tag, 0),
                     column_top: 0,
                     format: None,
                     ascii: None,
+                    id: None,
                 };
                 decode_page(
                     &page,
@@ -5945,11 +5945,11 @@ mod tests {
                 let page = page.as_page();
                 let mut bufs = ColumnChunkBuffers::new(allocator.clone());
                 let col_info = QdbMetaCol {
-                    id: None,
                     column_type: ColumnType::new(tag, 0),
                     column_top: 0,
                     format: None,
                     ascii: None,
+                    id: None,
                 };
                 decode_page_filtered::<true>(
                     &page,
@@ -6010,11 +6010,11 @@ mod tests {
             let page = page.as_page();
             let mut bufs = ColumnChunkBuffers::new(allocator.clone());
             let col_info = QdbMetaCol {
-                id: None,
                 column_type: ColumnTypeTag::Date.into_type(),
                 column_top: 0,
                 format: None,
                 ascii: None,
+                id: None,
             };
 
             decode_page(
@@ -6062,11 +6062,11 @@ mod tests {
             let page = page.as_page();
             let mut bufs = ColumnChunkBuffers::new(allocator.clone());
             let col_info = QdbMetaCol {
-                id: None,
                 column_type: ColumnTypeTag::Date.into_type(),
                 column_top: 0,
                 format: None,
                 ascii: None,
+                id: None,
             };
 
             decode_page_filtered::<false>(
@@ -6121,11 +6121,11 @@ mod tests {
             let page = page.as_page();
             let mut bufs = ColumnChunkBuffers::new(allocator.clone());
             let col_info = QdbMetaCol {
-                id: None,
                 column_type: ColumnTypeTag::Date.into_type(),
                 column_top: 0,
                 format: None,
                 ascii: None,
+                id: None,
             };
 
             decode_page_filtered::<true>(

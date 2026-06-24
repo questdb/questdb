@@ -158,14 +158,19 @@ impl BinaryMaxMinStats {
                 // be inexact (truncated prefix / rounded-up ceiling), so flag them like the
                 // text path. update() clamps both to <=9 bytes, so len > 8 means len == 9.
                 let min_clamped = min_value.as_ref().is_some_and(|min| min.len() > SIZEOF_I64);
-                let max_rounded = max_value.as_ref().is_some_and(|max| max.len() > SIZEOF_I64);
-                let max_value = max_value.map(|max_value| {
-                    if max_value.len() <= SIZEOF_I64 {
-                        max_value
-                    } else {
-                        binary_upper_bound(max_value)
-                    }
-                });
+                let (max_value, max_rounded) = match max_value {
+                    Some(max) if max.len() > SIZEOF_I64 => match binary_upper_bound(max) {
+                        // Rounded the 8-byte prefix up to a valid ceiling: inexact.
+                        Some(bound) => (Some(bound), true),
+                        // The 8-byte prefix is all 0xFF and has no short upper bound, so
+                        // omit max_value: a missing max reads as "unbounded" (readers won't
+                        // prune), whereas emitting the clamped prefix would be byte-wise <
+                        // a longer all-0xFF value -- an invalid bound that drops live rows.
+                        None => (None, false),
+                    },
+                    // Short (<= 8 bytes) or absent: stored verbatim and exact.
+                    other => (other, false),
+                };
                 (
                     min_value,
                     max_value,
@@ -320,20 +325,17 @@ fn next_char(c: char) -> Option<char> {
     char::from_u32(code)
 }
 
-pub(crate) fn binary_upper_bound(max_value: Vec<u8>) -> Vec<u8> {
-    // We only keep 8 initial bytes for the min and max values.
-    // Semantics of these Parquet fields are "lower and upper bound".
-    // If max_value is longer than 8 bytes, we must choose an 8-byte value that
-    // comes just after actual max_value in sort order. We achieve this by
-    // converting to integer, incrementing, and converting back to bytes.
-    // If the first 8 bytes are all 0xFF, we can't increment the prefix, so we
-    // fall back to the untruncated value (up to 9 bytes from update()).
+/// Smallest 8-byte upper bound for an opaque-Binary max whose `update()`-clamped
+/// prefix exceeds 8 bytes: read the leading 8 bytes big-endian, increment, write
+/// back. Returns `None` when the prefix is all `0xFF` -- it can't be incremented,
+/// and there is no short value that bounds a longer all-`0xFF`-prefixed value from
+/// above. The caller then omits `max_value` (unbounded) rather than emit the
+/// clamped prefix, which would be byte-wise *less* than such a value and so an
+/// invalid upper bound that makes conformant readers prune the row group holding it.
+pub(crate) fn binary_upper_bound(max_value: Vec<u8>) -> Option<Vec<u8>> {
     let val_slice_be: [u8; SIZEOF_I64] = max_value[..SIZEOF_I64].try_into().unwrap();
     let as_u64 = u64::from_be_bytes(val_slice_be);
-    match as_u64.checked_add(1) {
-        Some(inc) => inc.to_be_bytes().to_vec(),
-        None => max_value,
-    }
+    as_u64.checked_add(1).map(|inc| inc.to_be_bytes().to_vec())
 }
 
 pub struct ArrayStats {
@@ -738,15 +740,20 @@ mod tests {
     fn test_binary_upper_bound_normal() {
         let input = vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0xAB];
         let result = binary_upper_bound(input);
-        assert_eq!(result, vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02]);
+        assert_eq!(
+            result,
+            Some(vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02])
+        );
     }
 
     #[test]
     fn test_binary_upper_bound_all_ff() {
         let input = vec![0xFF; 9];
         let result = binary_upper_bound(input);
-        // Can't increment [0xFF; 8], falls back to keeping the 9-byte value
-        assert_eq!(result, vec![0xFF; 9]);
+        // The 8-byte prefix is all 0xFF and can't be incremented; there is no short
+        // upper bound, so the caller must omit max rather than emit a prefix that
+        // would understate a longer all-0xFF value.
+        assert_eq!(result, None);
     }
 
     #[test]
@@ -754,32 +761,61 @@ mod tests {
         let mut input = vec![0xFF; 9];
         input[7] = 0xFE;
         let result = binary_upper_bound(input);
-        assert_eq!(result, vec![0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]);
+        assert_eq!(
+            result,
+            Some(vec![0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF])
+        );
     }
 
     #[test]
     fn test_binary_upper_bound_high_bit() {
-        // 0x80_00_00_00_00_00_00_00 — would be i64::MIN in signed, but should work correctly
-        // with unsigned arithmetic: result should be 0x80_00_00_00_00_00_00_01
+        // 0x80_00_00_00_00_00_00_00 -- would be i64::MIN in signed, but unsigned
+        // arithmetic gives the correct 0x80_00_00_00_00_00_00_01.
         let input = vec![0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x42];
         let result = binary_upper_bound(input);
-        assert_eq!(result, vec![0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01]);
+        assert_eq!(
+            result,
+            Some(vec![0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01])
+        );
     }
 
     #[test]
-    fn test_binary_stats_all_ff_keeps_max() {
+    fn test_binary_stats_all_ff_omits_max() {
         let primitive_type =
             PrimitiveType::from_physical("test".to_string(), PhysicalType::ByteArray);
         let mut stats = BinaryMaxMinStats::new(&primitive_type);
         stats.update(&[0xFF; 9]);
 
         let parquet_stats = stats.into_parquet_stats(0);
-        // Can't increment [0xFF; 8], falls back to 9-byte value
-        assert!(parquet_stats.max_value.is_some());
+        // The 8-byte prefix is all 0xFF, so there is no representable short ceiling:
+        // max is omitted (reads as unbounded) and its exactness flag is cleared too.
+        assert_eq!(parquet_stats.max_value, None);
+        assert_eq!(parquet_stats.is_max_value_exact, None);
+        // The min is still the 9-byte clamped prefix: a valid, inexact floor.
         assert!(parquet_stats.min_value.is_some());
-        // Both bounds are 9-byte clamped prefixes, hence inexact.
         assert_eq!(parquet_stats.is_min_value_exact, Some(false));
-        assert_eq!(parquet_stats.is_max_value_exact, Some(false));
+    }
+
+    #[test]
+    fn test_binary_stats_all_ff_max_never_understates_real_value() {
+        // Regression guard for a silent-wrong-results bound: an opaque-Binary max
+        // longer than 9 bytes whose first 8 bytes are all 0xFF was clamped to a
+        // 9-byte prefix and emitted as-is -- byte-wise LESS than the real value, an
+        // invalid upper bound that makes conformant readers prune the row group
+        // holding it. The emitted max must be absent or >= the real value.
+        let real_max = [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xAA, 0xBB];
+        let primitive_type = PrimitiveType::from_physical("b".to_string(), PhysicalType::ByteArray);
+        let mut stats = BinaryMaxMinStats::new(&primitive_type);
+        stats.update(&real_max);
+
+        let parquet_stats = stats.into_parquet_stats(0);
+        match &parquet_stats.max_value {
+            None => {} // unbounded: safe, never prunes
+            Some(max) => assert!(
+                max.as_slice() >= real_max.as_slice(),
+                "emitted max {max:?} understates the real value {real_max:?}"
+            ),
+        }
     }
 
     fn utf8_primitive_type() -> PrimitiveType {

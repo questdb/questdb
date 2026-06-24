@@ -213,25 +213,25 @@ mod tests {
             version: U32Const,
             schema: vec![
                 QdbMetaCol {
-                    id: None,
                     column_type: ColumnTypeTag::Symbol.into_type(),
                     column_top: 0,
                     format: Some(QdbMetaColFormat::LocalKeyIsGlobal),
                     ascii: None,
+                    id: None,
                 },
                 QdbMetaCol {
-                    id: None,
                     column_type: ColumnTypeTag::Int.into_type(),
                     column_top: 256,
                     format: None,
                     ascii: None,
+                    id: None,
                 },
                 QdbMetaCol {
-                    id: None,
                     column_type: ColumnTypeTag::Varchar.into_type(),
                     column_top: 0,
                     format: None,
                     ascii: Some(true),
+                    id: None,
                 },
             ],
             unused_bytes: 0,
@@ -322,11 +322,11 @@ mod tests {
         let metadata = QdbMeta {
             version: U32Const,
             schema: vec![QdbMetaCol {
-                id: None,
                 column_type: ColumnTypeTag::Int.into_type(),
                 column_top: 0,
                 format: None,
                 ascii: None,
+                id: None,
             }],
             unused_bytes: 4096,
             squash_tracker: -1,
@@ -370,11 +370,11 @@ mod tests {
         let metadata = QdbMeta {
             version: U32Const,
             schema: vec![QdbMetaCol {
-                id: None,
                 column_type: ColumnTypeTag::Int.into_type(),
                 column_top: 0,
                 format: None,
                 ascii: None,
+                id: None,
             }],
             unused_bytes: 0,
             squash_tracker: -1,
@@ -397,11 +397,11 @@ mod tests {
         let metadata = QdbMeta {
             version: U32Const,
             schema: vec![QdbMetaCol {
-                id: None,
                 column_type: ColumnTypeTag::Int.into_type(),
                 column_top: 0,
                 format: None,
                 ascii: None,
+                id: None,
             }],
             unused_bytes: 0,
             squash_tracker: 42,

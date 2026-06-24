@@ -3091,7 +3091,7 @@ mod tests {
         use std::io::{Read as _, Seek, SeekFrom};
 
         // Create a parquet file with 2 row groups.
-        // Bloom filter on col1 (index 1) — the LAST column.
+        // Bloom filter on col1 (index 1) -- the LAST column.
         let col0_rg0 = [1i32, 2, 3, 4];
         let col1_rg0 = [0.5f32, 0.001, 3.15, 2.72];
         let col0_rg1 = [5i32, 6, 7, 8];
@@ -3176,20 +3176,20 @@ mod tests {
         qdb_meta
             .schema
             .push(crate::parquet::qdb_metadata::QdbMetaCol {
-                id: None,
                 column_type: ColumnTypeTag::Int.into_type(),
                 column_top: 0,
                 format: None,
                 ascii: None,
+                id: None,
             });
         qdb_meta
             .schema
             .push(crate::parquet::qdb_metadata::QdbMetaCol {
-                id: None,
                 column_type: ColumnTypeTag::Float.into_type(),
                 column_top: 0,
                 format: None,
                 ascii: None,
+                id: None,
             });
         let qdb_json = qdb_meta.serialize().expect("serialize qdb meta");
         let kv = parquet2::metadata::KeyValue {

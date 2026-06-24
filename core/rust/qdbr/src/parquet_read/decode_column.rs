@@ -71,11 +71,11 @@ pub fn decode_single_timestamp_value(
     row_hi: usize,
 ) -> ParquetResult<i64> {
     let col_info = QdbMetaCol {
-        id: None,
         column_type: ColumnType::new(ColumnTypeTag::Timestamp, 0),
         column_top: 0,
         format: None,
         ascii: None,
+        id: None,
     };
     let mut ctx = DecodeContext::new(file_data.as_ptr(), file_data.len() as u64);
     // Safety: caller guarantees `allocator` points to a valid QdbAllocator
@@ -692,11 +692,11 @@ mod tests {
         let num_values = chunk.num_values();
 
         let col_info = QdbMetaCol {
-            id: None,
             column_type: ColumnType::new(ColumnTypeTag::Long, 0),
             column_top: 0,
             format: None,
             ascii: None,
+            id: None,
         };
 
         let mut ctx = DecodeContext::new(buf.as_ptr(), buf_len);
@@ -937,11 +937,11 @@ mod tests {
         let num_values = chunk.num_values();
 
         let col_info = QdbMetaCol {
-            id: None,
             column_type: ColumnType::new(ColumnTypeTag::Long, 0),
             column_top: 0,
             format: None,
             ascii: None,
+            id: None,
         };
 
         // Truncate the buffer so col_start + col_len > truncated.len()

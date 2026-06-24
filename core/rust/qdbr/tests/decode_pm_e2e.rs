@@ -236,11 +236,11 @@ fn run_e2e_pipeline(parquet_bytes: &[u8]) {
             let compression: parquet2::compression::Compression = codec.into();
 
             let col_info = QdbMetaCol {
-                id: None,
                 column_type: col_types[col_idx],
                 column_top: 0,
                 format: if col_idx == 0 { format } else { None },
                 ascii: if col_idx == 0 { ascii } else { None },
+                id: None,
             };
 
             let descriptor = reconstruct_descriptor(
@@ -382,11 +382,11 @@ fn run_e2e_pipeline_multi(parquet_bytes: &[u8]) -> (Vec<Vec<u8>>, Vec<Vec<u8>>) 
             let compression: parquet2::compression::Compression = codec.into();
 
             let col_info = QdbMetaCol {
-                id: None,
                 column_type: col_types[col_idx],
                 column_top: 0,
                 format: None,
                 ascii: None,
+                id: None,
             };
 
             let descriptor = reconstruct_descriptor(
@@ -1004,11 +1004,11 @@ fn e2e_multiple_row_groups() {
     let repetition: P2Repetition = flags.repetition().expect("repetition").into();
 
     let col_info = QdbMetaCol {
-        id: None,
         column_type: col_type,
         column_top: 0,
         format: None,
         ascii: None,
+        id: None,
     };
 
     let mut pm_all_data = Vec::new();
@@ -1121,11 +1121,11 @@ fn run_e2e_filtered<const FILL_NULLS: bool>(parquet_bytes: &[u8], rows_filter: &
     let compression: parquet2::compression::Compression = chunk.codec().expect("codec").into();
 
     let col_info = QdbMetaCol {
-        id: None,
         column_type: col_type,
         column_top: 0,
         format,
         ascii,
+        id: None,
     };
 
     let descriptor = reconstruct_descriptor(

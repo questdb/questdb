@@ -101,11 +101,11 @@ pub fn decode_row_group(
 
         let column_chunk_bufs = &mut row_group_bufs.column_bufs[dest_col_idx];
         let col_info = QdbMetaCol {
-            id: None,
             column_type,
             column_top: 0,
             format,
             ascii,
+            id: None,
         };
 
         let chunk = rg_block.column_chunk(column_idx)?;
@@ -246,11 +246,11 @@ pub fn decode_row_group_range(
         };
         let ascii = if flags.is_ascii() { Some(true) } else { None };
         let col_info = QdbMetaCol {
-            id: None,
             column_type,
             column_top: 0,
             format,
             ascii,
+            id: None,
         };
         let descriptor = reconstruct_descriptor(
             col_desc.physical_type,
@@ -386,11 +386,11 @@ pub fn decode_row_group_filtered<const FILL_NULLS: bool>(
         let buf_idx = column_offset + dest_col_idx;
         let column_chunk_bufs = &mut row_group_bufs.column_bufs[buf_idx];
         let col_info = QdbMetaCol {
-            id: None,
             column_type,
             column_top: 0,
             format,
             ascii,
+            id: None,
         };
         let stat_flags = StatFlags(chunk.stat_flags);
         if stat_flags.has_null_count() && chunk.null_count == chunk.num_values {
