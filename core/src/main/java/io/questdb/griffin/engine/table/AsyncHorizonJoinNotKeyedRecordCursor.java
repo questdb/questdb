@@ -182,6 +182,8 @@ class AsyncHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordCursor
     }
 
     private void buildValue() {
+        // Consult the breaker before dispatching frames, so an empty base scan still observes cancellation.
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
         frameSequence.prepareForDispatch();
         frameSequence.getAtom().getFilterContext().initMemoryPools(frameSequence.getPageFrameAddressCache(), frameSequence.getMemoryTracker());
         frameSequence.dispatchAndAwait();
