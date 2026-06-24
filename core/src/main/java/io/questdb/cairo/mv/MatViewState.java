@@ -666,6 +666,12 @@ public class MatViewState implements QuietCloseable {
         assert latch.get();
         this.lastRefreshFinishTimestampUs = refreshTimestamp;
         markAsInvalid(errorMessage);
+        // Drop any pending transient-refresh backoff and the consecutive-failure counter: a view that
+        // a non-retriable failure has just invalidated must not keep a stale retry deadline or count.
+        // The view may have been deferred before this failure (e.g. it was re-driven by a base commit
+        // through the isRefreshDue gate, which does not pre-clear the deadline), so the fields are not
+        // necessarily already cleared here. markAsValid clears them again on recovery.
+        resetRefreshRetry();
         telemetryFacade.store(MAT_VIEW_REFRESH_FAIL, viewDefinition.getMatViewToken(), Numbers.LONG_NULL, errorMessage, 0);
     }
 

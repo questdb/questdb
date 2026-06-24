@@ -922,6 +922,100 @@ public class MatViewRefreshBusyRetryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInvalidatingFailureClearsPriorDeferredRetryState() throws Exception {
+        // m1 regression - stale retry state surviving invalidation. A view that was already deferred
+        // once (refreshRetryAfterMicros=d1, refreshRetryCount=1) gets re-driven by a BASE COMMIT once
+        // d1 elapses. The base-commit incremental path gates on isRefreshDue, which -- unlike the
+        // timer's clearRefreshRetry CAS -- does NOT pre-clear the deadline. If that re-drive then
+        // fails NON-retriably, the inner catch's tryScheduleRetry returns false without touching the
+        // fields and refreshFailState marks the view invalid, leaving the stale deadline and counter
+        // behind. The earlier reset-state/insert-failure tests only cover the never-deferred case, so
+        // they pass even without the clear.
+        //
+        // RED before the fix (the invalid view still carries refreshRetryAfterMicros=d1, count=1);
+        // GREEN once refreshFail clears the retry state.
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_BUSY_RETRY_TIMEOUT, 1000);
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_BUSY_RETRY_LIMIT, 10);
+        failBaseReader.set(false);
+        failBaseReaderNonRetriable.set(false);
+        failViewWalWriter.set(false);
+        baseTableName = "base_price";
+        assertMemoryLeak(() -> {
+            try {
+                execute(
+                        "create table base_price (" +
+                                "sym varchar, price double, ts timestamp" +
+                                ") timestamp(ts) partition by DAY WAL;"
+                );
+                execute("insert into base_price values('a', 1.0, '2020-01-01T00:00:00.000000Z')");
+                drainWalAndMatViewQueues();
+
+                execute(
+                        "create materialized view price_1h as (" +
+                                "  select ts, avg(price) as avg_price from base_price sample by 1h" +
+                                ") partition by day"
+                );
+                drainWalAndMatViewQueues();
+                assertViewStatus("valid");
+                assertViewRowCount(1);
+
+                // Pin the clock so the retry deadline (now + 1s) is deterministic.
+                final long t0 = 1_700_000_000_000_000L;
+                setCurrentMicros(t0);
+
+                // A second bucket lands; its refresh hits "table busy" and gets deferred with a 1s
+                // backoff, arming refreshRetryAfterMicros=t0+1s and bumping the counter to 1.
+                execute("insert into base_price values('a', 2.0, '2020-01-01T01:00:00.000000Z')");
+                drainWalQueue();
+                failBaseReader.set(true);
+                drainMatViewQueue(engine);
+                assertViewStatus("retrying");
+                assertViewRowCount(1);
+
+                final TableToken viewToken = engine.getTableTokenIfExists("price_1h");
+                Assert.assertNotNull(viewToken);
+                final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
+                Assert.assertNotNull(state);
+                Assert.assertEquals(
+                        "the deferred view must carry its retry deadline",
+                        t0 + 1_000_000L,
+                        state.getRefreshRetryAfterMicros()
+                );
+                Assert.assertEquals("the deferred view must carry a bumped retry count", 1, state.getRefreshRetryCount());
+
+                // Advance past the deadline so the isRefreshDue gate lets a base commit re-drive the
+                // view, and switch the injected fault to a NON-retriable one so the re-drive
+                // invalidates instead of deferring again.
+                setCurrentMicros(t0 + 1_000_000L);
+                failBaseReader.set(false);
+                failBaseReaderNonRetriable.set(true);
+
+                // A third bucket commit re-drives the dependent view through the base-commit
+                // incremental path; the re-drive fails non-retriably and invalidates the view.
+                execute("insert into base_price values('a', 3.0, '2020-01-01T02:00:00.000000Z')");
+                drainWalQueue();
+                drainMatViewQueue(engine);
+
+                // The view is now invalid and must NOT carry the stale retry deadline/counter from the
+                // earlier deferral.
+                Assert.assertTrue("view must be invalid after the non-retriable failure", state.isInvalid());
+                Assert.assertEquals(
+                        "an invalid view must not carry a stale refresh-retry deadline",
+                        Numbers.LONG_NULL,
+                        state.getRefreshRetryAfterMicros()
+                );
+                Assert.assertEquals(
+                        "an invalid view must not carry a stale refresh-retry count",
+                        0,
+                        state.getRefreshRetryCount()
+                );
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
     public void testPeriodRangeRefreshOutOfMemoryDefersInsteadOfInvalidating() throws Exception {
         // A period mat view's scheduled refresh runs through the range path. An out-of-memory error
         // there must defer (not invalidate), exactly like the incremental path.
