@@ -191,6 +191,13 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             // Store symbol counts. Unfortunately we cannot skip it in here
             storeSymbolCounts(symbolCountProviders);
 
+            // Body checksum over the commit-immutable fields. The fast path reuses the previous record's
+            // structure (same symbol count + partition-table layout), so its committed size equals
+            // readRecordSize and the partition table starts at getPartitionTableSizeOffset(symbolColumnCount)
+            // - the exact range the reader re-derives. Must be written after the body and before the
+            // fence/version bump.
+            storeBodyChecksum(writeBaseOffset, readRecordSize, getPartitionTableSizeOffset(symbolColumnCount));
+
             Unsafe.storeFence();
             txMemBase.putLong(TX_BASE_OFFSET_VERSION_64, ++baseVersion);
 
@@ -364,6 +371,9 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         txMemBase.putLong(readBaseOffset + TX_OFFSET_LAG_MIN_TIMESTAMP_64, Long.MAX_VALUE);
         txMemBase.putLong(readBaseOffset + TX_OFFSET_LAG_MAX_TIMESTAMP_64, Long.MIN_VALUE);
         txMemBase.putLong(readBaseOffset + TX_OFFSET_CHECKSUM_32, calculateTxnLagChecksum(txn, 0, 0, Long.MAX_VALUE, Long.MIN_VALUE, 0));
+        // No body-checksum refresh here: every field written above lives in [80,116) (seqTxn + lag fields +
+        // the offset-88 lag checksum), which is DELIBERATELY EXCLUDED from the body checksum. The checksum
+        // stays valid across this in-place mutation, which is exactly why it is race-free with readers.
     }
 
     public void resetLagValuesUnsafe() {
@@ -387,6 +397,11 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
     public void resetStructureVersionUnsafe() {
         txMemBase.putLong(readBaseOffset + TX_OFFSET_STRUCT_VERSION_64, 0);
+        // struct_version lives in [0,80), which IS covered by the body checksum, and this is an in-place
+        // edit WITHOUT a version bump - so the stored checksum would otherwise go stale and the very next
+        // open would falsely fall back / fail. Refresh it. This path runs only offline (TableConverter at
+        // engine startup, single-threaded, no concurrent readers), so recomputing here is race-free.
+        storeBodyChecksum(readBaseOffset, readRecordSize, getPartitionTableSizeOffset(symbolColumnCount));
     }
 
     public void resetTimestamp() {
@@ -694,10 +709,18 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         txMemBase.putInt(symbolSizeOffset, bytesSymbols);
         txMemBase.putInt(partitionsSizeOffset, bytesPartitions);
 
+        // Body checksum over the commit-immutable fields. Derive the size from the SAME helper the reader
+        // uses (calculateTxRecordSize) and the partition-table start the SAME way the reader does
+        // (TX_RECORD_HEADER_SIZE + symbolBytes == getPartitionTableSizeOffset(symbolCount)) so the covered
+        // range is identical. Must be written before the fence and version bump so a torn body never hides
+        // behind a valid version word.
+        long recordSize = calculateTxRecordSize(bytesSymbols, bytesPartitions);
+        storeBodyChecksum(areaOffset, recordSize, TX_RECORD_HEADER_SIZE + bytesSymbols);
+
         Unsafe.storeFence();
         txMemBase.putLong(TX_BASE_OFFSET_VERSION_64, ++baseVersion);
 
-        readRecordSize = calculateTxRecordSize(bytesSymbols, bytesPartitions);
+        readRecordSize = recordSize;
         readBaseOffset = areaOffset;
 
         assert readBaseOffset + readRecordSize <= txMemBase.size();
@@ -777,6 +800,18 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         // Set the new squash counter value
         partitionSizeMasked |= ((long) (partitionSquashCounter & PARTITION_SQUASH_COUNTER_MAX) << PARTITION_SQUASH_COUNTER_BIT_OFFSET);
         attachedPartitions.setQuick(rawIndex, partitionSizeMasked);
+    }
+
+    // Computes and stores the commit-immutable body checksum at [baseOffset + TX_OFFSET_BODY_CHECKSUM_64].
+    // MUST be called after the covered fields ([0,80) scalars + the partition table) have been written and
+    // BEFORE the storeFence()/version bump, so that a torn body under a valid version word is detectable by
+    // the reader. recordSize MUST equal what was actually committed (calculateTxRecordSize(...)) and
+    // partitionTableStart MUST equal getPartitionTableSizeOffset(symbolCount) - both identical to what the
+    // reader derives, or every verify mismatches. The excluded middle (lag, symbol counts, the checksum/gap)
+    // is NOT covered, so the in-place mutations to those regions never invalidate this checksum.
+    private void storeBodyChecksum(int baseOffset, long recordSize, long partitionTableStart) {
+        long checksum = calculateTxnBodyChecksum(txMemBase.addressOf(baseOffset), recordSize, partitionTableStart);
+        txMemBase.putLong(baseOffset + TX_OFFSET_BODY_CHECKSUM_64, checksum);
     }
 
     private void storeSymbolCounts(ObjList<? extends SymbolCountProvider> symbolCountProviders) {

@@ -210,6 +210,12 @@ public final class TableUtils {
     public static final long TX_OFFSET_LAG_ROW_COUNT_32 = TX_OFFSET_LAG_TXN_COUNT_32 + 4;
     public static final long TX_OFFSET_LAG_MIN_TIMESTAMP_64 = TX_OFFSET_LAG_ROW_COUNT_32 + 4;
     public static final long TX_OFFSET_LAG_MAX_TIMESTAMP_64 = TX_OFFSET_LAG_MIN_TIMESTAMP_64 + 8;
+    // Body checksum over the commit-immutable fields only (see calculateTxnBodyChecksum: [0,80) plus the
+    // partition table). Occupies 8 of the 12 previously-unused gap bytes between the last lag field
+    // (TX_OFFSET_LAG_MAX_TIMESTAMP_64, ends at 116) and TX_OFFSET_MAP_WRITER_COUNT_32 (128).
+    // Bytes [124,128) are left reserved and zero. A stored value of 0 means "absent" (old/empty file): readers skip the
+    // check, preserving back-compatibility (no format-version bump).
+    public static final long TX_OFFSET_BODY_CHECKSUM_64 = 116;
     // @formatter:on
     public static final int TX_RECORD_HEADER_SIZE = (int) TX_OFFSET_MAP_WRITER_COUNT_32 + Integer.BYTES;
     public static final String UPGRADE_FILE_NAME = "_upgrade.d";
@@ -247,6 +253,10 @@ public final class TableUtils {
     static final byte TODO_RESTORE_META = 2;
     static final byte TODO_TRUNCATE = 1;
     private static final int EMPTY_TABLE_LAG_CHECKSUM = calculateTxnLagChecksum(0, 0, 0, Long.MAX_VALUE, Long.MIN_VALUE, 0);
+    // Polynomial multiplier and avalanche prime for the _txn body checksum. Kept standalone here
+    // (mirroring Hash.hashMem64 / Hash.xxh3Avalanche64) so the on-disk checksum algorithm is stable
+    // and self-contained, independent of any future change to the std Hash helpers.
+    private static final long HASH_MEM_M2 = 0x517cc1b727220a95L;
     private static final Log LOG = LogFactory.getLog(TableUtils.class);
     private static final int MAX_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(8 * 1024 * 1024);
     private static final int MAX_SYMBOL_CAPACITY = Numbers.ceilPow2(Integer.MAX_VALUE);
@@ -261,6 +271,7 @@ public final class TableUtils {
     private static final int PARQUET_CONFIG_EXPLICIT_FLAG = 1 << 24;
     private static final int PARQUET_CONFIG_LEVEL_MASK = 0xFF;
     private static final int PARQUET_CONFIG_LEVEL_SHIFT = 16;
+    private static final long XXH3_PRIME_MX1 = 0x165667919E3779F9L;
 
     private TableUtils() {
     }
@@ -294,6 +305,64 @@ public final class TableUtils {
         return TX_RECORD_HEADER_SIZE + bytesSymbols + Integer.BYTES + bytesPartitions;
     }
 
+    /**
+     * Computes a 64-bit checksum over ONLY the commit-immutable bytes of a committed {@code _txn}
+     * record body, so the value is race-free against lock-free readers: every byte it covers changes
+     * exclusively during a version-bumped commit, never in place under a stable version. The covered
+     * region is the union of two non-contiguous sub-ranges:
+     * <ul>
+     *   <li>{@code [0, 80)} &mdash; the 10 catastrophic scalars (txn, transient/fixed row counts,
+     *       min/max timestamp, struct/data/partition-table/column/truncate versions). Commit-only.</li>
+     *   <li>{@code [partitionTableStart, recordSize)} &mdash; the partition-table length int followed by
+     *       the partition records. Commit-only (the partition table is rewritten under a version bump,
+     *       never mutated in place under a stable version).</li>
+     * </ul>
+     * Everything in between is DELIBERATELY EXCLUDED because it is mutated in place WITHOUT a version
+     * bump, concurrent with readers:
+     * <ul>
+     *   <li>{@code [80, 116)} &mdash; seqTxn + the lag fields + the offset-88 lag checksum, overwritten
+     *       by {@link TxWriter#resetLagAppliedRows()} / {@link TxWriter#resetLagValuesUnsafe()}.</li>
+     *   <li>{@code [116, 128)} &mdash; the 8 checksum bytes themselves plus a 4-byte reserved gap.</li>
+     *   <li>{@code [128, partitionTableStart)} &mdash; the symbol count int and the per-symbol count
+     *       pairs, whose transient halves are overwritten by {@link TxWriter#writeTransientSymbolCount}
+     *       per new distinct symbol during ingestion.</li>
+     * </ul>
+     * Because the covered bytes are fixed for any stable version, a lock-free reader that re-reads the
+     * version after loading (the existing protocol) can verify on EVERY load with no false positives:
+     * it can never observe a covered-byte change without also observing a version change.
+     * <p>
+     * {@code recordSize} is the full committed record length and {@code partitionTableStart} is
+     * {@code getPartitionTableSizeOffset(symbolColumnCount)} ({@code 132 + symbolColumnCount * 8}); both
+     * the write side ({@code TxWriter}) and the read side ({@code TxReader}) derive them from the same
+     * shared helpers ({@link #calculateTxRecordSize(int, int)} /
+     * {@link #getPartitionTableSizeOffset(int)}), guaranteeing an identical covered range on both sides.
+     * <p>
+     * The hash is a polynomial over little-endian 8-byte words (mirroring {@code Hash.hashMem64})
+     * finalized with an avalanche, which gives strong tear detection (any changed covered byte flips
+     * many output bits).
+     * <p>
+     * SENTINEL: a stored value of {@code 0} means "absent / skip the check" (old or freshly-reset
+     * files). To avoid ever emitting that sentinel for a real record, a genuine result of {@code 0}
+     * is remapped to {@code 1}.
+     *
+     * @param recordBaseAddr      native address of the record body (offset 0 of the active A/B area)
+     * @param recordSize          full committed record length in bytes
+     * @param partitionTableStart offset of the partition-table length int ({@code 132 + symbolCount*8})
+     * @return a non-zero 64-bit checksum
+     */
+    public static long calculateTxnBodyChecksum(long recordBaseAddr, long recordSize, long partitionTableStart) {
+        // [0, 80): the 10 catastrophic, commit-only scalars.
+        long h = hashTxnBodyRange(recordBaseAddr, 0, TX_OFFSET_SEQ_TXN_64, 0);
+        // [partitionTableStart, recordSize): the commit-only partition table (length int + records).
+        // Guard against a malformed/empty record where the partition table does not extend past its start.
+        if (partitionTableStart < recordSize) {
+            h = hashTxnBodyRange(recordBaseAddr, partitionTableStart, recordSize, h);
+        }
+        h = xxh3Avalanche64(h);
+        // 0 is the "absent" sentinel; never emit it for a real record.
+        return h != 0 ? h : 1L;
+    }
+
     // the mig methods are deliberately standalone so that between old versions
     // does not regress if the main code changes
     public static int calculateTxnLagChecksum(long txn, long seqTxn, int lagRowCount, long lagMinTimestamp, long lagMaxTimestamp, int lagTxnCount) {
@@ -305,6 +374,39 @@ public final class TableUtils {
         checkSum = checkSum * 31 + lagTxnCount;
         //noinspection UseHashCodeMethodInspection
         return (int) (checkSum ^ (checkSum >>> 32));
+    }
+
+    /**
+     * Folds the contiguous byte range {@code [lo, hi)} at {@code addr} into the running polynomial hash
+     * {@code h} (mirroring {@code Hash.hashMem64}). Handles any alignment: 8-byte words, then a trailing
+     * 4-byte int, then trailing bytes. The byte sequence &mdash; hence the result &mdash; is identical
+     * for the same content regardless of {@code lo}'s alignment, so the write and read sides agree as
+     * long as they pass the same {@code [lo, hi)}.
+     */
+    private static long hashTxnBodyRange(long addr, long lo, long hi, long h) {
+        final long m = HASH_MEM_M2;
+        long i = lo;
+        for (; i + Long.BYTES <= hi; i += Long.BYTES) {
+            h = h * m + Unsafe.getLong(addr + i);
+        }
+        if (i + Integer.BYTES <= hi) {
+            h = h * m + Unsafe.getInt(addr + i);
+            i += Integer.BYTES;
+        }
+        for (; i < hi; i++) {
+            h = h * m + Unsafe.getByte(addr + i);
+        }
+        return h;
+    }
+
+    /**
+     * xxh3 64-bit avalanche finalizer (copy of {@code Hash}'s private variant, kept standalone so the
+     * on-disk {@code _txn} body checksum stays stable regardless of changes to std Hash).
+     */
+    private static long xxh3Avalanche64(long h) {
+        h ^= h >>> 37;
+        h *= XXH3_PRIME_MX1;
+        return h ^ (h >>> 32);
     }
 
     public static int changeColumnTypeInMetadata(
@@ -2226,6 +2328,13 @@ public final class TableUtils {
         txMem.putInt(baseOffset + TX_OFFSET_LAG_ROW_COUNT_32, 0);
         txMem.putInt(baseOffset + TX_OFFSET_LAG_TXN_COUNT_32, 0);
         txMem.putInt(baseOffset + TX_OFFSET_CHECKSUM_32, EMPTY_TABLE_LAG_CHECKSUM);
+
+        // Zero the 8-byte body-checksum slot [116,124). A stored 0 is the "absent / skip" sentinel: a freshly
+        // created or truncated record carries no body checksum until the next versioned commit writes a real
+        // one. This keeps brand-new tables readable (back-compatible, no format bump) and prevents a stale
+        // checksum from a reused A/B area leaking in if this record is ever published without a following
+        // finishABHeader(). (The 4-byte reserved gap [124,128) is excluded from the checksum and never read.)
+        txMem.putLong(baseOffset + TX_OFFSET_BODY_CHECKSUM_64, 0L);
 
         for (int i = 0; i < symbolMapCount; i++) {
             long offset = getSymbolWriterIndexOffset(i);

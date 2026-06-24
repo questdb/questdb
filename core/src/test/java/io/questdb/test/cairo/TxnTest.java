@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
@@ -43,9 +44,11 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -62,10 +65,355 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static io.questdb.cairo.TableUtils.LONGS_PER_TX_ATTACHED_PARTITION;
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
 public class TxnTest extends AbstractCairoTest {
     private static final Log LOG = LogFactory.getLog(TxnTest.class);
+
+    // Representative geometry for the helper unit tests: 2 symbols + 1 partition.
+    // symbolBytes = 2*8 = 16; partitionBytes = 1*4*8 = 32; partitionTableStart = 132 + 16 = 148;
+    // recordSize = 132 + 16 + 4 + 32 = 184. Covered: [0,80) U [148,184). Excluded: [80,148).
+    private static final int BC_PARTITION_BYTES = 1 * LONGS_PER_TX_ATTACHED_PARTITION * Long.BYTES;
+    private static final int BC_SYMBOL_BYTES = 2 * Long.BYTES;
+    private static final long BC_PARTITION_TABLE_START = TableUtils.getPartitionTableSizeOffset(BC_SYMBOL_BYTES / Long.BYTES);
+    private static final long BC_RECORD_SIZE = TableUtils.calculateTxRecordSize(BC_SYMBOL_BYTES, BC_PARTITION_BYTES);
+
+    @Test
+    public void testBodyChecksumChangesWhenCoveredByteChanges() {
+        long addr = Unsafe.malloc(BC_RECORD_SIZE, MemoryTag.NATIVE_DEFAULT);
+        try {
+            fillPattern(addr, BC_RECORD_SIZE, 0x1234);
+            long base = bodyChecksum(addr);
+
+            // Every byte in the covered union [0,80) U [partitionTableStart, recordSize) must change the result.
+            for (long off = 0; off < BC_RECORD_SIZE; off++) {
+                boolean covered = (off < TableUtils.TX_OFFSET_SEQ_TXN_64) || (off >= BC_PARTITION_TABLE_START);
+                if (!covered) {
+                    continue;
+                }
+                byte orig = Unsafe.getByte(addr + off);
+                Unsafe.putByte(addr + off, (byte) (orig ^ 0x5a));
+                Assert.assertNotEquals("checksum did not change for covered byte offset " + off, base, bodyChecksum(addr));
+                Unsafe.putByte(addr + off, orig);
+            }
+            // Determinism after restore.
+            Assert.assertEquals(base, bodyChecksum(addr));
+        } finally {
+            Unsafe.free(addr, BC_RECORD_SIZE, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testBodyChecksumIsDeterministic() {
+        long addr = Unsafe.malloc(BC_RECORD_SIZE, MemoryTag.NATIVE_DEFAULT);
+        try {
+            fillPattern(addr, BC_RECORD_SIZE, 0xabcd);
+            Assert.assertEquals(bodyChecksum(addr), bodyChecksum(addr));
+            Assert.assertNotEquals(0L, bodyChecksum(addr));
+        } finally {
+            Unsafe.free(addr, BC_RECORD_SIZE, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testBodyChecksumNeverReturnsZero() {
+        long addr = Unsafe.malloc(BC_RECORD_SIZE, MemoryTag.NATIVE_DEFAULT);
+        try {
+            for (int seed = 0; seed < 100_000; seed++) {
+                fillPattern(addr, BC_RECORD_SIZE, seed);
+                Assert.assertNotEquals("checksum returned 0 for seed " + seed, 0L, bodyChecksum(addr));
+            }
+            // The all-zero body (avalanche of 0) must still be remapped away from the 0 = "absent" sentinel.
+            Vect.memset(addr, BC_RECORD_SIZE, 0);
+            Assert.assertNotEquals(0L, bodyChecksum(addr));
+        } finally {
+            Unsafe.free(addr, BC_RECORD_SIZE, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testBodyChecksumUnchangedWhenExcludedRegionChanges() {
+        long addr = Unsafe.malloc(BC_RECORD_SIZE, MemoryTag.NATIVE_DEFAULT);
+        try {
+            fillPattern(addr, BC_RECORD_SIZE, 0x9999);
+            long base = bodyChecksum(addr);
+
+            // 1) The seqTxn + lag region [80,116) is excluded: scribbling it must NOT change the checksum.
+            for (long off = TableUtils.TX_OFFSET_SEQ_TXN_64; off < TableUtils.TX_OFFSET_BODY_CHECKSUM_64; off++) {
+                Unsafe.putByte(addr + off, (byte) (Unsafe.getByte(addr + off) ^ 0x37));
+            }
+            Assert.assertEquals("lag region must be excluded", base, bodyChecksum(addr));
+
+            // 2) The checksum slot + reserved gap [116,128) is excluded.
+            Unsafe.putLong(addr + TableUtils.TX_OFFSET_BODY_CHECKSUM_64, 0xdeadbeefcafef00dL);
+            Unsafe.putInt(addr + TableUtils.TX_OFFSET_BODY_CHECKSUM_64 + Long.BYTES, 0x7fffffff);
+            Assert.assertEquals("checksum slot + gap must be excluded", base, bodyChecksum(addr));
+
+            // 3) The symbol-count region [128, partitionTableStart) is excluded - this is the race-critical
+            //    region mutated in place by writeTransientSymbolCount.
+            for (long off = TableUtils.TX_OFFSET_MAP_WRITER_COUNT_32; off < BC_PARTITION_TABLE_START; off++) {
+                Unsafe.putByte(addr + off, (byte) (Unsafe.getByte(addr + off) ^ 0xa1));
+            }
+            Assert.assertEquals("symbol-count region must be excluded", base, bodyChecksum(addr));
+        } finally {
+            Unsafe.free(addr, BC_RECORD_SIZE, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testBodyChecksumChangesWhenPartitionRecordChanges() {
+        long addr = Unsafe.malloc(BC_RECORD_SIZE, MemoryTag.NATIVE_DEFAULT);
+        try {
+            fillPattern(addr, BC_RECORD_SIZE, 0x55aa);
+            long base = bodyChecksum(addr);
+            // Flip a byte inside the single partition record (which starts at partitionTableStart + 4).
+            long partitionRecordByte = BC_PARTITION_TABLE_START + Integer.BYTES + 3;
+            Unsafe.putByte(addr + partitionRecordByte, (byte) (Unsafe.getByte(addr + partitionRecordByte) ^ 0x5a));
+            Assert.assertNotEquals("partition record change must be detected", base, bodyChecksum(addr));
+        } finally {
+            Unsafe.free(addr, BC_RECORD_SIZE, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testNoFalsePositiveUnderConcurrentSymbolWrites() throws Throwable {
+        // THE KEY REGRESSION. A writer mutates the live committed record IN PLACE - bumping transient
+        // symbol counts (collectValueCount -> writeTransientSymbolCount) and resetting lag - WITHOUT a
+        // version bump, while reader threads loop unsafeLoadAll/safeReadTxn thousands of times. Because the
+        // body checksum covers only commit-immutable bytes, NOT the symbol-count or lag regions, this must
+        // produce ZERO checksum-mismatch throws and ZERO A/B fallbacks. If the checksum covered those
+        // regions, every in-place mutation would stale it and the reader would falsely fall back / throw.
+        TestUtils.assertMemoryLeak(() -> {
+            final String tableName = "noFalsePositive";
+            final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+            final int symbolColumnCount = 8;
+            final int partitionCount = 4;
+            final int targetReads = 5_000;
+
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR);
+            model.timestamp();
+            AbstractCairoTest.create(model);
+            final int timestampType = TableUtils.getTimestampType(model);
+
+            ObjList<SymbolCountProvider> symbolCounts = new ObjList<>();
+            for (int i = 0; i < symbolColumnCount; i++) {
+                symbolCounts.add(new SymbolCountProviderImpl(1));
+            }
+
+            TxReader.resetBodyChecksumFallbackCount();
+
+            final CyclicBarrier start = new CyclicBarrier(2);
+            final AtomicInteger readsDone = new AtomicInteger();
+            final AtomicInteger readerFinished = new AtomicInteger();
+            final ConcurrentLinkedQueue<Throwable> exceptions = new ConcurrentLinkedQueue<>();
+
+            // Writer thread: lay down ONE stable committed record (symbols + partitions, fresh version +
+            // checksum), then continuously mutate IN PLACE the regions that DON'T bump the version - the
+            // transient symbol counts (collectValueCount -> writeTransientSymbolCount) and the lag fields
+            // (resetLagAppliedRows). It keeps going until the reader has done enough loads.
+            Thread writer = new Thread(() -> {
+                try (
+                        Path path = new Path();
+                        TxWriter txWriter = new TxWriter(ff, configuration)
+                ) {
+                    TableToken tableToken = engine.verifyTableName(tableName);
+                    path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
+                    txWriter.ofRW(path.$(), timestampType, PartitionBy.HOUR);
+
+                    txWriter.bumpMetadataAndColumnStructureVersion(symbolCounts);
+                    for (int i = 0; i < partitionCount; i++) {
+                        txWriter.updatePartitionSizeByTimestamp(i * Micros.HOUR_MICROS, 10L + i);
+                    }
+                    txWriter.setMaxTimestamp((partitionCount - 1) * Micros.HOUR_MICROS);
+                    txWriter.commit(symbolCounts);
+
+                    start.await();
+                    int r = 0;
+                    while (readerFinished.get() == 0 && exceptions.isEmpty()) {
+                        int sym = r % symbolColumnCount;
+                        // In-place transient symbol-count bump (excluded region). No version bump.
+                        txWriter.collectValueCount(sym, (r % 100) + 1);
+                        // Periodically reset lag in place (also an excluded region, no version bump).
+                        if ((r & 0xff) == 0) {
+                            txWriter.resetLagAppliedRows();
+                        }
+                        r++;
+                    }
+                } catch (Throwable e) {
+                    exceptions.add(e);
+                    LOG.error().$(e).$();
+                }
+            });
+
+            // Reader thread: call unsafeLoadAll() directly (NOT safeReadTxn, whose fast path would skip the
+            // load when the version is stable) so the body checksum is verified on EVERY iteration.
+            Thread reader = new Thread(() -> {
+                try (
+                        Path path = new Path();
+                        TxReader txReader = new TxReader(ff)
+                ) {
+                    TableToken tableToken = engine.verifyTableName(tableName);
+                    path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
+                    txReader.ofRO(path.$(), timestampType, PartitionBy.HOUR);
+                    start.await();
+                    while (readsDone.get() < targetReads && exceptions.isEmpty()) {
+                        // A spurious checksum mismatch on this healthy table would throw CairoException here.
+                        if (txReader.unsafeLoadAll()) {
+                            // The committed structure never changes during the in-place phase: validate it.
+                            Assert.assertEquals(partitionCount, txReader.getPartitionCount());
+                            Assert.assertEquals(symbolColumnCount, txReader.getSymbolColumnCount());
+                            readsDone.incrementAndGet();
+                        }
+                    }
+                } catch (Throwable e) {
+                    exceptions.add(e);
+                    LOG.error().$(e).$();
+                } finally {
+                    readerFinished.incrementAndGet();
+                }
+            });
+
+            writer.start();
+            reader.start();
+            reader.join();
+            writer.join();
+
+            if (!exceptions.isEmpty()) {
+                Assert.fail(exceptions.poll().toString());
+            }
+            Assert.assertTrue("reader did not loop enough: " + readsDone.get(), readsDone.get() >= targetReads);
+            Assert.assertEquals(
+                    "in-place symbol/lag writes triggered spurious A/B fallbacks",
+                    0L,
+                    TxReader.getBodyChecksumFallbackCount()
+            );
+            LOG.infoW().$("concurrent-symbol-write successful reads ").$(readsDone.get()).$();
+        });
+    }
+
+    @Test
+    public void testOpenOldFormatTxn_noBodyChecksum() throws Exception {
+        // A record whose checksum slot [116,124) is 0 (old format / pre-feature, or freshly created) must
+        // load with the verify SKIPPED (back-compatible, no false rejection, no fallback).
+        TestUtils.assertMemoryLeak(() -> {
+            final String tableName = "oldFormatTxn";
+            final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR);
+            model.timestamp();
+            AbstractCairoTest.create(model);
+            final int timestampType = TableUtils.getTimestampType(model);
+
+            ObjList<SymbolCountProvider> symbolCounts = new ObjList<>();
+            long currentBaseOffset;
+            long expectedTxn;
+            try (Path path = new Path(); TxWriter txWriter = new TxWriter(ff, configuration)) {
+                TableToken tableToken = engine.verifyTableName(tableName);
+                path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
+                txWriter.ofRW(path.$(), timestampType, PartitionBy.HOUR);
+                // Two partitions so partition 0 is not the "last" one (whose size is the transient row count).
+                txWriter.updatePartitionSizeByTimestamp(0, 42);
+                txWriter.updatePartitionSizeByTimestamp(Micros.HOUR_MICROS, 43);
+                txWriter.setMaxTimestamp(Micros.HOUR_MICROS);
+                txWriter.commit(symbolCounts);
+                currentBaseOffset = txWriter.getBaseOffset();
+                expectedTxn = txWriter.getTxn();
+            }
+
+            // Simulate an "old format" record by zeroing the checksum slot of the current area.
+            try (Path path = new Path()) {
+                TableToken tableToken = engine.verifyTableName(tableName);
+                path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
+                pokeLong(ff, path.$(), currentBaseOffset + TableUtils.TX_OFFSET_BODY_CHECKSUM_64, 0L);
+            }
+
+            TxReader.resetBodyChecksumFallbackCount();
+            try (Path path = new Path(); TxReader txReader = new TxReader(ff)) {
+                TableToken tableToken = engine.verifyTableName(tableName);
+                path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
+                txReader.ofRO(path.$(), timestampType, PartitionBy.HOUR);
+                Assert.assertTrue(txReader.unsafeLoadAll());
+                Assert.assertEquals("absent checksum must load without rejection", expectedTxn, txReader.getTxn());
+                Assert.assertEquals(42, txReader.getPartitionSize(0));
+                Assert.assertEquals("absent checksum must not trigger fallback", 0L, TxReader.getBodyChecksumFallbackCount());
+            }
+        });
+    }
+
+    @Test
+    public void testTornTxnBodyBothAreasCorrupt() throws Exception {
+        // Corrupt the covered region of BOTH A and B (a [0,80) scalar) without fixing either checksum.
+        // The reader must surface a hard CairoException - never a silently wrong value.
+        TestUtils.assertMemoryLeak(() -> {
+            final String tableName = "tornBothCorrupt";
+            final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+            final int timestampType = setupTwoCommitTable(tableName, ff, 100L, 200L);
+
+            try (Path path = new Path()) {
+                TableToken tableToken = engine.verifyTableName(tableName);
+                path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
+                long aOffset = peekInt(ff, path.$(), TableUtils.TX_BASE_OFFSET_A_32);
+                long bOffset = peekInt(ff, path.$(), TableUtils.TX_BASE_OFFSET_B_32);
+                // Corrupt fixedRowCount (a covered [0,80) scalar) in BOTH areas, leaving both checksums stale.
+                pokeLong(ff, path.$(), aOffset + TableUtils.TX_OFFSET_FIXED_ROW_COUNT_64, 0x1111_1111L);
+                pokeLong(ff, path.$(), bOffset + TableUtils.TX_OFFSET_FIXED_ROW_COUNT_64, 0x2222_2222L);
+            }
+
+            TxReader.resetBodyChecksumFallbackCount();
+            try (Path path = new Path(); TxReader txReader = new TxReader(ff)) {
+                TableToken tableToken = engine.verifyTableName(tableName);
+                path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
+                txReader.ofRO(path.$(), timestampType, PartitionBy.HOUR);
+                try {
+                    txReader.unsafeLoadAll();
+                    Assert.fail("expected CairoException - both areas corrupt");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "_txn body checksum mismatch in both A and B areas");
+                }
+                Assert.assertEquals(1L, TxReader.getBodyChecksumFallbackCount());
+            }
+        });
+    }
+
+    @Test
+    public void testTornTxnBodyDetectedAndRecovered() throws Exception {
+        // Two commits => A and B both hold valid, checksummed records (fixedRowCount 100 then 200).
+        // Corrupt ONLY the version-selected area's fixedRowCount, leaving its checksum stale. The reader
+        // must detect the mismatch, fall back to the intact other area, and return the PRIOR correct state.
+        TestUtils.assertMemoryLeak(() -> {
+            final String tableName = "tornRecovered";
+            final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+            final int timestampType = setupTwoCommitTable(tableName, ff, 100L, 200L);
+
+            long selectedBaseOffset;
+            try (Path path = new Path(); TxReader txReader = new TxReader(ff)) {
+                TableToken tableToken = engine.verifyTableName(tableName);
+                path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
+                txReader.ofRO(path.$(), timestampType, PartitionBy.HOUR);
+                Assert.assertTrue(txReader.unsafeLoadAll());
+                Assert.assertEquals("latest committed fixedRowCount", 200L, txReader.getFixedRowCount());
+                selectedBaseOffset = txReader.getBaseOffset();
+            }
+
+            // Corrupt the selected (latest) area's fixedRowCount without fixing its checksum.
+            try (Path path = new Path()) {
+                TableToken tableToken = engine.verifyTableName(tableName);
+                path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
+                pokeLong(ff, path.$(), selectedBaseOffset + TableUtils.TX_OFFSET_FIXED_ROW_COUNT_64, 0xdead_beefL);
+            }
+
+            TxReader.resetBodyChecksumFallbackCount();
+            try (Path path = new Path(); TxReader txReader = new TxReader(ff)) {
+                TableToken tableToken = engine.verifyTableName(tableName);
+                path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
+                txReader.ofRO(path.$(), timestampType, PartitionBy.HOUR);
+                Assert.assertTrue(txReader.unsafeLoadAll());
+                // Fell back to the OTHER (intact, prior) area: returns the 100 state, NOT the corrupted value.
+                Assert.assertEquals("must recover prior correct state via A/B fallback", 100L, txReader.getFixedRowCount());
+                Assert.assertEquals("exactly one fallback expected", 1L, TxReader.getBodyChecksumFallbackCount());
+            }
+        });
+    }
 
     @Test
     public void testFailedTxWriterDoesNotCorruptTable() throws Exception {
@@ -464,6 +812,79 @@ public class TxnTest extends AbstractCairoTest {
             Assert.assertTrue(reloadCount.get() > 10);
             LOG.infoW().$("total reload count ").$(reloadCount.get()).$();
         });
+    }
+
+    private static long bodyChecksum(long addr) {
+        return TableUtils.calculateTxnBodyChecksum(addr, BC_RECORD_SIZE, BC_PARTITION_TABLE_START);
+    }
+
+    // Positional 8-byte read of the _txn file (no mmap, so it cannot truncate the file on close).
+    private static long peekLong(FilesFacade ff, LPSZ path, long offset) {
+        long fd = ff.openRO(path);
+        Assert.assertTrue(fd > -1);
+        long buf = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+        try {
+            Assert.assertEquals(Long.BYTES, ff.read(fd, buf, Long.BYTES, offset));
+            return Unsafe.getLong(buf);
+        } finally {
+            Unsafe.free(buf, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            ff.close(fd);
+        }
+    }
+
+    private static int peekInt(FilesFacade ff, LPSZ path, long offset) {
+        return (int) (peekLong(ff, path, offset) & 0xffffffffL);
+    }
+
+    // Positional 8-byte write of the _txn file. Used to corrupt a committed record on disk WITHOUT
+    // recomputing its body checksum and WITHOUT truncating the file (a writable mmap would truncate).
+    private static void pokeLong(FilesFacade ff, LPSZ path, long offset, long value) {
+        long fd = ff.openRW(path, CairoConfiguration.O_NONE);
+        Assert.assertTrue(fd > -1);
+        long buf = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+        try {
+            Unsafe.putLong(buf, value);
+            Assert.assertEquals(Long.BYTES, ff.write(fd, buf, Long.BYTES, offset));
+            ff.fsync(fd);
+        } finally {
+            Unsafe.free(buf, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            ff.close(fd);
+        }
+    }
+
+    // Creates a partitioned table and commits twice (fixedRowCount fixed1 then fixed2), so the A and B
+    // areas each hold a valid, body-checksummed record. Returns the timestamp type.
+    private int setupTwoCommitTable(String tableName, FilesFacade ff, long fixed1, long fixed2) {
+        TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR);
+        model.timestamp();
+        AbstractCairoTest.create(model);
+        final int timestampType = TableUtils.getTimestampType(model);
+        ObjList<SymbolCountProvider> symbolCounts = new ObjList<>();
+        try (Path path = new Path(); TxWriter txWriter = new TxWriter(ff, configuration)) {
+            TableToken tableToken = engine.verifyTableName(tableName);
+            path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
+            txWriter.ofRW(path.$(), timestampType, PartitionBy.HOUR);
+            // Lay down two partitions so the partition table is non-empty and covered.
+            txWriter.updatePartitionSizeByTimestamp(0, 10);
+            txWriter.updatePartitionSizeByTimestamp(Micros.HOUR_MICROS, 11);
+            txWriter.setMaxTimestamp(Micros.HOUR_MICROS);
+            txWriter.reset(fixed1, txWriter.getTransientRowCount(), txWriter.getMaxTimestamp(), symbolCounts);
+            // Second commit: change fixedRowCount, flipping to the other A/B area.
+            txWriter.reset(fixed2, txWriter.getTransientRowCount(), txWriter.getMaxTimestamp(), symbolCounts);
+        }
+        return timestampType;
+    }
+
+    private static void fillPattern(long addr, long size, int seed) {
+        // Deterministic, seed-dependent pseudo-random byte fill (xorshift), so every byte position
+        // carries entropy and distinct seeds produce distinct content.
+        int x = seed | 1; // avoid the zero-stuck xorshift state
+        for (long i = 0; i < size; i++) {
+            x ^= x << 13;
+            x ^= x >>> 17;
+            x ^= x << 5;
+            Unsafe.putByte(addr + i, (byte) x);
+        }
     }
 
     private static void loadTxnWriter(TxWriter tw, Path p, String resourceFile) throws IOException {
