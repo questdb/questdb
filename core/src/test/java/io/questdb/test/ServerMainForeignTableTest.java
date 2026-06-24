@@ -242,7 +242,6 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
             // check content of table after sym-linking it
             try (
                     ServerMain qdb = new ServerMain(getServerMainArgs());
-                    SqlCompiler _ = qdb.getEngine().getSqlCompiler();
                     SqlExecutionContext context = createSqlExecutionCtx(qdb.getEngine())
             ) {
                 qdb.start();
