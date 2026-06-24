@@ -490,6 +490,9 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
         }
         // Acquire after reopen() so a reopen breach leaves no slave cursor to free.
         this.slaveFrameCursor = (TablePageFrameCursor) slaveFactory.getPageFrameCursor(executionContext, slaveOrder);
+        // Bind group-by function args to the slave symbol tables before the lazy time-frame cache,
+        // so a parent projection over a SYMBOL aggregate can resolve its static symbol table now.
+        atom.initOwnerGroupByFunctions(executionContext, masterFrameSequence.getSymbolTableSource(), slaveFrameCursor);
         this.executionContext = executionContext;
         allFramesActive = true;
         isSlaveTimeFrameCacheBuilt = false;

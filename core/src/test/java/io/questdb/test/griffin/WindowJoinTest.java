@@ -5565,6 +5565,44 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowJoinSymbolAggregateInProjection() throws Exception {
+        // A SYMBOL-typed aggregate (first / last over the slave symbol column) wrapped in a
+        // projection plus ORDER BY / LIMIT. The parallel window join must bind the aggregate's slave
+        // arg at getCursor() time so the projection can resolve the output column's static symbol
+        // table; otherwise SymbolColumn.init trips on a null static symbol table. Cross-checked
+        // against the single-threaded path, which binds eagerly and is unaffected.
+        assertMemoryLeak(() -> {
+            prepareTable();
+            final String prevailing = includePrevailing ? " INCLUDE PREVAILING" : " EXCLUDE PREVAILING";
+            final String[] queries = {
+                    // General path (no ON clause), matching the fuzzer repro: a literal and reordered
+                    // columns force a VirtualRecord projection over the join.
+                    "SELECT t.sym, 'U', t.ts, max(p.price), first(p.sym), count(*) " +
+                            "FROM trades t WINDOW JOIN prices p " +
+                            "RANGE BETWEEN 1 MINUTE PRECEDING AND 5 MINUTES FOLLOWING" + prevailing +
+                            " ORDER BY 1, 3 LIMIT 100",
+                    // Fast (symbol-keyed) path: the symbol equality ON clause selects the fast factory.
+                    "SELECT t.sym, 'V', t.ts, first(p.sym), last(p.sym), count(*) " +
+                            "FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) " +
+                            "RANGE BETWEEN 1 MINUTE PRECEDING AND 5 MINUTES FOLLOWING" + prevailing +
+                            " ORDER BY 1, 3 LIMIT 100",
+            };
+            for (int i = 0; i < queries.length; i++) {
+                final String query = queries[i];
+                sqlExecutionContext.setParallelWindowJoinEnabled(false);
+                sink.clear();
+                printSql(query, sink);
+                final String expected = sink.toString();
+
+                sqlExecutionContext.setParallelWindowJoinEnabled(true);
+                sink.clear();
+                printSql(query, sink);
+                TestUtils.assertEquals(query, expected, sink);
+            }
+        });
+    }
+
+    @Test
     public void testWindowJoinWithComplicityAggFunctions() throws Exception {
         // timestamp types don't matter for this test
         Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);

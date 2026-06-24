@@ -622,6 +622,18 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
         }
     }
 
+    // Binds the owner group-by functions' args to the slave symbol tables at getCursor() time, so a
+    // parent projection over a SYMBOL aggregate can resolve the output column's static symbol table
+    // before the slave time-frame cache is built. initTimeFrameCursors() later re-binds them.
+    public void initOwnerGroupByFunctions(
+            SqlExecutionContext executionContext,
+            SymbolTableSource masterSymbolTableSource,
+            SymbolTableSource slaveSymbolTableSource
+    ) throws SqlException {
+        joinSymbolTableSource.of(masterSymbolTableSource, slaveSymbolTableSource);
+        Function.init(ownerGroupByFunctions, joinSymbolTableSource, executionContext, null);
+    }
+
     public void initTimeFrameCursors(
             SqlExecutionContext executionContext,
             SymbolTableSource masterSymbolTableSource,
