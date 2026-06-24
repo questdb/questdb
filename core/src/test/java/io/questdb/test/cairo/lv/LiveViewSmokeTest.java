@@ -12543,6 +12543,18 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 drainJob(job);
             }
             Assert.assertTrue(reloaded.isCheckpointRestoreAttempted());
+            // The view holds four MaxMin RANGE functions (min/max over a bounded
+            // w1 and an unbounded w2), all sharing MaxDoubleWindowFunctionFactory
+            // as their snapshot factory name. The restore must pair each stored
+            // block with the right running function positionally - a name-only
+            // match routes every block to the first MaxMin function, restoring an
+            // unbounded payload into the bounded layout (a runaway dequeSize that
+            // overflowed appendAddressFor) and failing into a head-miss replay.
+            // Assert the restore genuinely rehydrated from the head .cp.
+            Assert.assertTrue(
+                    "head .cp restore must rehydrate the MaxMin RANGE state, not fall back to a head-miss replay",
+                    reloaded.isCheckpointRestoreSucceeded()
+            );
             Assert.assertEquals(preLastProcessed, reloaded.getLastProcessedSeqTxn());
 
             execute("DROP LIVE VIEW lv");

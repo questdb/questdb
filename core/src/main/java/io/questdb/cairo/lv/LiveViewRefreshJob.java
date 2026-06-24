@@ -149,6 +149,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private final PageFrameMemoryPool memoryPool = new PageFrameMemoryPool(0);
     private final Path path = new Path();
     private final LiveViewRefreshTask refreshTask = new LiveViewRefreshTask();
+    // Positional cursor into windowFactory.getWindowFunctions() while a single
+    // restoreFromHead walks the checkpoint's FUNCTION_SNAPSHOT blocks. The writer
+    // emits one block per snapshot-capable function in window-function order, so
+    // restore pairs the i-th block with the i-th snapshot-capable function. Reset
+    // to 0 before each block walk; advanced by restoreFunctionBlock. Per-worker;
+    // mutated only on the refresh-worker thread.
+    private int restoreFunctionCursor;
     // Reusable holder for the values restoreFromHead reads out of the head .cp.
     // One instance per worker; mutated only on the refresh-worker thread between
     // restoreFromHead calls. Avoids per-call allocations on the restart and O3
@@ -1967,6 +1974,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // rather than re-bootstrapping (which would clobber it).
             windowFactory.openForLiveViewRestore(executionContext);
             final LiveViewCheckpointReader.BlockCursor cursor = checkpointReader.getCursor();
+            // Restart the positional pairing for this checkpoint's function blocks.
+            restoreFunctionCursor = 0;
             // The MANIFEST is the first block; skip it - readManifestInto
             // already consumed it conceptually but resets the cursor.
             // Walk forward and dispatch by type.
@@ -2113,6 +2122,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 restoredHeadState.stateBytes,
                 Numbers.LONG_NULL
         );
+        instance.setCheckpointRestoreSucceeded();
     }
 
     /**
@@ -2127,14 +2137,24 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * </pre>
      * Then bulk-copies the trailing payload bytes into the per-worker scratch
      * buffer (so {@link LiveViewFunctionSnapshot#restore} reads from offset 0)
-     * and dispatches by matching the factory name against the compiled
-     * SELECT's window functions.
+     * and pairs the block with a running window function positionally: the
+     * writer emits one block per snapshot-capable function in
+     * {@code getWindowFunctions()} order, so the i-th block restores into the
+     * i-th snapshot-capable function. Matching by factory name alone is
+     * ambiguous - a view can hold several functions from one factory (e.g.
+     * {@code min(x)} and {@code max(x)} share {@code MaxDoubleWindowFunctionFactory},
+     * as do bounded and unbounded RANGE frames of the same function), so a
+     * name-only first-match would route every block to the first such function
+     * and either overflow on a layout mismatch or silently restore crossed
+     * state. The stored factory name is still validated against the paired
+     * function to catch a window-function-order drift.
      */
     private void restoreFunctionBlock(LiveViewCheckpointReader.ReadableBlock block, ObjList<WindowFunction> functions) {
         long offset = 0;
         // windowName: STR. We only need to skip past it - the manifest
-        // already captured window names; cross-validation belongs in a
-        // later commit if needed.
+        // already captured window names, and the writer stamps the anchor
+        // window name (shared across all blocks), so it is not a per-function
+        // discriminator; positional pairing below resolves the function.
         offset += strByteSize(block, offset);
         final CharSequence storedFactoryName = block.getStr(offset);
         final long factoryNameByteSize = strByteSize(block, offset);
@@ -2142,18 +2162,33 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         final int formatVersion = block.getInt(offset);
         offset += Integer.BYTES;
 
+        // Advance to the next snapshot-capable function, mirroring the writer's
+        // !supportsSnapshot() skip so the positional pairing stays aligned.
         WindowFunction match = null;
-        for (int i = 0, n = functions.size(); i < n; i++) {
-            final WindowFunction candidate = functions.getQuick(i);
-            if (Chars.equals(storedFactoryName, snapshotFactoryName(candidate))) {
+        while (restoreFunctionCursor < functions.size()) {
+            final WindowFunction candidate = functions.getQuick(restoreFunctionCursor++);
+            if (candidate.supportsSnapshot()) {
                 match = candidate;
                 break;
             }
         }
         if (match == null) {
             throw CairoException.critical(0)
-                    .put("function not found in compiled live view SELECT, factory=")
+                    .put("more live view function snapshot blocks than snapshot-capable functions, factory=")
                     .put(storedFactoryName);
+        }
+        if (!Chars.equals(storedFactoryName, snapshotFactoryName(match))) {
+            // Window-function order drifted vs the writer (e.g. a definition
+            // change across an upgrade). Errno 0 unlinks the head .cp and
+            // head-miss-replays rather than restoring crossed state.
+            throw CairoException.critical(0)
+                    .put("live view function snapshot factory mismatch [position=")
+                    .put(restoreFunctionCursor - 1)
+                    .put(", expected=")
+                    .put(snapshotFactoryName(match))
+                    .put(", got=")
+                    .put(storedFactoryName)
+                    .put(']');
         }
         if (formatVersion < match.snapshotMinSupportedVersion()) {
             // Below-min versions signal a real compatibility break (operator

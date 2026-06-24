@@ -153,6 +153,12 @@ public class LiveViewInstance implements QuietCloseable {
     // under the refresh latch; volatile so the catalogue thread can read
     // the latest value without additional synchronisation.
     private volatile boolean checkpointRestoreAttempted;
+    // Set true only when a head .cp restore actually rehydrated the window state
+    // (restoreFromHead returned true). Stays false when no head existed or the
+    // restore failed and fell back to a head-miss replay. Distinguishes a real
+    // restore from the replay fallback for observability and tests. Mutated only
+    // under the refresh latch; volatile for the catalogue thread.
+    private volatile boolean checkpointRestoreSucceeded;
     // Wall-clock (micros) of the most recent head-checkpoint commit. Numbers.LONG_NULL
     // until the first cycle that writes a .cp. The refresh worker compares
     // (nowUs - lastCheckpointWrittenUs) against
@@ -545,6 +551,15 @@ public class LiveViewInstance implements QuietCloseable {
         return checkpointRestoreAttempted;
     }
 
+    /**
+     * @return {@code true} once a head-checkpoint restore for this LV actually
+     * rehydrated the window state. Remains {@code false} when no head existed
+     * or the restore failed and the LV fell back to a head-miss replay.
+     */
+    public boolean isCheckpointRestoreSucceeded() {
+        return checkpointRestoreSucceeded;
+    }
+
     public boolean isInvalid() {
         return stateReader.isInvalid();
     }
@@ -684,6 +699,15 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public void setCheckpointRestoreAttempted() {
         this.checkpointRestoreAttempted = true;
+    }
+
+    /**
+     * Single-shot setter for {@link #isCheckpointRestoreSucceeded()}. The
+     * refresh worker calls this only when {@code restoreFromHead} returned
+     * true (the window state was rehydrated from the head .cp).
+     */
+    public void setCheckpointRestoreSucceeded() {
+        this.checkpointRestoreSucceeded = true;
     }
 
     public void setCompiledFactory(RecordCursorFactory factory) {
