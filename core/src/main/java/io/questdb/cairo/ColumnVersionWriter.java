@@ -329,27 +329,36 @@ public class ColumnVersionWriter extends ColumnVersionReader {
 
     private long calculateWriteOffset(long areaSize) {
         // CRITICAL (body-checksum placement): each area's REAL on-disk footprint is its data
-        // (areaSize) PLUS the trailing 8-byte checksum long written immediately after it by
-        // doCommit() at [offset + size, offset + size + 8). The new area we are about to place must
-        // never land on the CURRENT (live) area's data OR on that area's trailing checksum, otherwise
+        // (areaSize) PLUS the 16-byte trailer (8-byte MAGIC + 8-byte checksum) written immediately
+        // after it by doCommit() at [offset + size, offset + size + 16). The new area we are about to
+        // place must never land on the CURRENT (live) area's data OR on that area's trailer, otherwise
         // after the version flip the now-"other" area would fail its checksum verify and the A/B
         // fallback / rollback would see a false corruption on a healthy table. So every placement
-        // computation below treats a footprint as (size + Long.BYTES). The OFFSET_SIZE_{A,B} header
-        // field still stores areaSize only (data length, a multiple of BLOCK_SIZE_BYTES) so old
-        // readers parse blocks unchanged; only this placement math uses the +8 footprint.
+        // computation below treats a footprint as (size + CV_CHECKSUM_TRAILER_SIZE). The
+        // OFFSET_SIZE_{A,B} header field still stores areaSize only (data length, a multiple of
+        // BLOCK_SIZE_BYTES) so old readers parse blocks unchanged; only this placement math uses the
+        // +16 footprint.
+        //
+        // DISJOINTNESS (must hold for +16 exactly as the reviewer confirmed for +8): the current area
+        // occupies [currentOffset, currentOffset + currentSize + 16). The two branches below either
+        // return HEADER_SIZE only when HEADER_SIZE + areaSize + 16 <= currentOffset (so the new area's
+        // whole [writeOffset, writeOffset + areaSize + 16) ends at or before currentOffset), or return
+        // currentOffset + currentSize + 16 (so the new area starts at or after the current area's
+        // trailer end). In both cases [writeOffset, writeOffset + areaSize + 16) is disjoint from
+        // [currentOffset, currentOffset + currentSize + 16).
         boolean currentIsA = isCurrentA();
         long currentOffset = currentIsA ? getOffsetA() : getOffsetB();
         currentOffset = Math.max(currentOffset, HEADER_SIZE);
         // Fits-before: reuse the freed space between the header and the current area only if the new
-        // area AND its trailing checksum both fit strictly before the current area's data start.
-        if (HEADER_SIZE + areaSize + Long.BYTES <= currentOffset) {
+        // area AND its 16-byte trailer both fit strictly before the current area's data start.
+        if (HEADER_SIZE + areaSize + TableUtils.CV_CHECKSUM_TRAILER_SIZE <= currentOffset) {
             return HEADER_SIZE;
         }
-        // Append-after: place the new area past the current area's full footprint (data + checksum),
-        // so writing the new area (and later its own trailing checksum) cannot clobber the current
-        // area's data or its trailing checksum long at currentOffset + currentSize.
+        // Append-after: place the new area past the current area's full footprint (data + trailer),
+        // so writing the new area (and later its own trailer) cannot clobber the current area's data
+        // or its trailer at [currentOffset + currentSize, currentOffset + currentSize + 16).
         long currentSize = currentIsA ? getSizeA() : getSizeB();
-        return currentOffset + currentSize + Long.BYTES;
+        return currentOffset + currentSize + TableUtils.CV_CHECKSUM_TRAILER_SIZE;
     }
 
     private int copyColumnVersions(long srcTimestamp, long dstTimestamp, LongList srcColumnVersionList) {
@@ -380,16 +389,17 @@ public class ColumnVersionWriter extends ColumnVersionReader {
         int entryCount = cachedColumnVersionList.size() / BLOCK_SIZE;
         long areaSize = calculateSize(entryCount);
         long writeOffset = calculateWriteOffset(areaSize);
-        // Reserve the data area PLUS its trailing 8-byte body checksum. calculateWriteOffset already
-        // reserved this footprint for placement, so the area + checksum never overlap the other area.
-        bumpFileSize(writeOffset + areaSize + Long.BYTES);
+        // Reserve the data area PLUS its 16-byte trailer (MAGIC + checksum). calculateWriteOffset
+        // already reserved this footprint for placement, so the area + trailer never overlap the other
+        // area.
+        bumpFileSize(writeOffset + areaSize + TableUtils.CV_CHECKSUM_TRAILER_SIZE);
         store(entryCount, writeOffset);
-        // Body checksum over the whole freshly-written area [writeOffset, writeOffset + areaSize),
+        // Body checksum trailer over the whole freshly-written area [writeOffset, writeOffset + areaSize),
         // stored immediately after it. Written AFTER store() (the bytes it covers) and BEFORE the
         // storeFence()/version bump, so a torn area can never hide behind an already-published version.
         storeAreaChecksum(writeOffset, areaSize);
         // OFFSET_SIZE_{A,B} records the DATA length only (areaSize, a multiple of BLOCK_SIZE_BYTES);
-        // the trailing checksum is found by the reader at offset + size.
+        // the trailer (MAGIC + checksum) is found by the reader at offset + size.
         if (isCurrentA()) {
             updateB(writeOffset, areaSize);
         } else {
@@ -428,13 +438,17 @@ public class ColumnVersionWriter extends ColumnVersionReader {
         }
     }
 
-    // Computes the body checksum over the area [areaOffset, areaOffset + areaSize) and stores it as a
-    // trailing long at [areaOffset + areaSize]. The caller MUST have already written the area's data
-    // (store()) and bumped the file size to at least areaOffset + areaSize + Long.BYTES, and MUST call
-    // this BEFORE the storeFence()/version bump so a torn area is never reachable under a valid version.
+    // Writes the 16-byte body-checksum trailer for the area [areaOffset, areaOffset + areaSize):
+    // CV_CHECKSUM_MAGIC at [areaOffset + areaSize] then the checksum at [areaOffset + areaSize + 8].
+    // The MAGIC is what makes the trailer unambiguously distinguishable from a legacy page-rounded
+    // file's non-zero adjacent-area bytes (see TableUtils.CV_CHECKSUM_MAGIC). The caller MUST have
+    // already written the area's data (store()) and bumped the file size to at least
+    // areaOffset + areaSize + CV_CHECKSUM_TRAILER_SIZE, and MUST call this BEFORE the
+    // storeFence()/version bump so a torn area is never reachable under a valid version.
     private void storeAreaChecksum(long areaOffset, long areaSize) {
         long checksum = TableUtils.calculateCvAreaChecksum(mem.addressOf(areaOffset), areaSize);
-        mem.putLong(areaOffset + areaSize, checksum);
+        mem.putLong(areaOffset + areaSize, TableUtils.CV_CHECKSUM_MAGIC);
+        mem.putLong(areaOffset + areaSize + Long.BYTES, checksum);
     }
 
     private void storeNewVersion() {

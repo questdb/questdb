@@ -109,13 +109,15 @@ public class ColumnVersionReader implements Closeable, Mutable {
             p += BLOCK_SIZE_BYTES;
         }
 
-        // Trailing body checksum over the dumped area [offset, offset + size), stored immediately after
-        // it (mirrors ColumnVersionWriter.doCommit) so a restored checkpoint _cv is protected too.
-        // appendAddressFor ensures the mapping covers the area PLUS the 8-byte checksum slot; we hash the
-        // bytes we just wrote and then store the long. (An absent/0 trailing long would also read back
-        // safely, but writing the real checksum keeps the checkpoint copy verifiable.)
-        long areaAddr = mem.appendAddressFor(offset, size + Long.BYTES);
-        mem.putLong(offset + size, TableUtils.calculateCvAreaChecksum(areaAddr, size));
+        // Body-checksum trailer over the dumped area [offset, offset + size), stored immediately after it
+        // (mirrors ColumnVersionWriter.storeAreaChecksum) so a restored checkpoint _cv is protected too:
+        // CV_CHECKSUM_MAGIC at [offset + size] then the checksum at [offset + size + 8]. The MAGIC gates
+        // presence so the reader can never mistake adjacent bytes for a checksum (see
+        // TableUtils.CV_CHECKSUM_MAGIC). appendAddressFor ensures the mapping covers the area PLUS the
+        // 16-byte trailer slot; we hash the bytes we just wrote and then store MAGIC + checksum.
+        long areaAddr = mem.appendAddressFor(offset, size + TableUtils.CV_CHECKSUM_TRAILER_SIZE);
+        mem.putLong(offset + size, TableUtils.CV_CHECKSUM_MAGIC);
+        mem.putLong(offset + size + Long.BYTES, TableUtils.calculateCvAreaChecksum(areaAddr, size));
     }
 
     public LongList getCachedColumnVersionList() {
@@ -442,8 +444,14 @@ public class ColumnVersionReader implements Closeable, Mutable {
      * {@code cachedColumnVersionList} and verifies its body checksum. Used as the fallback when the
      * version-selected area is torn under a stable version. MUST be called only after the version has been
      * confirmed stable, so the other area is the settled prior commit (not one the writer is mid-write
-     * into). Returns true only if the other area's stored checksum matches (or is absent: file too short /
-     * stored 0 - back-compat). Guards every read against EOF (see {@link #unsafeVerifyAreaChecksum}).
+     * into). Returns true only if the other area's stored checksum verifies (or is absent: file too short
+     * for a trailer / no MAGIC - back-compat). Guards every read against EOF (see
+     * {@link #unsafeVerifyAreaChecksum}).
+     * <p>
+     * Note this fallback is only ever reached when the PRIMARY (version-selected) area had a PRESENT,
+     * magic-gated trailer whose checksum mismatched (a genuinely torn new-format area). A healthy legacy
+     * (pre-checksum) file has no MAGIC on its primary area, so its primary verify PASSES and this fallback
+     * is never entered - i.e. the back-compat fix lives entirely on the primary path.
      */
     private boolean unsafeLoadAndVerifyOtherArea(long selectedVersion) {
         // The selected area used slot (selectedVersion & 1); the prior commit lives in the opposite slot.
@@ -452,14 +460,15 @@ public class ColumnVersionReader implements Closeable, Mutable {
         long otherSize = otherIsA ? mem.getLong(OFFSET_SIZE_A_64) : mem.getLong(OFFSET_SIZE_B_64);
 
         // Geometry sanity: the other area must sit past the header, be a whole number of blocks, and its
-        // data+checksum must fit within the real file. A bad header here just means "no usable fallback".
+        // data + 16-byte trailer must fit within the real file. A bad header here just means "no usable
+        // fallback".
         if (otherOffset < HEADER_SIZE || otherSize < 0 || (otherSize % BLOCK_SIZE_BYTES) != 0) {
             return false;
         }
         final FilesFacade ff = mem.getFilesFacade();
         final long realLen = ff.length(mem.getFd());
-        if (realLen < otherOffset + otherSize + Long.BYTES) {
-            // The other area carries no trailing checksum (old format) OR the file is too short to even hold
+        if (realLen < otherOffset + otherSize + TableUtils.CV_CHECKSUM_TRAILER_SIZE) {
+            // The other area carries no 16-byte trailer (old format) OR the file is too short to even hold
             // its data: in either case we cannot positively verify it, so do not adopt it as a fallback.
             return false;
         }
@@ -471,14 +480,26 @@ public class ColumnVersionReader implements Closeable, Mutable {
 
     /**
      * Verifies the stored body checksum of the area {@code [offset, offset + size)} against a fresh
-     * recompute over the whole area. The checksum long lives immediately AFTER the area, at
-     * {@code [offset + size, offset + size + 8)}.
+     * recompute over the whole area. The checksum lives in a 16-byte trailer immediately AFTER the area,
+     * at {@code [offset + size, offset + size + 16)} = {@code [MAGIC | checksum]}: an 8-byte
+     * {@link TableUtils#CV_CHECKSUM_MAGIC} followed by the 8-byte checksum.
      * <p>
-     * BACK-COMPAT / EOF SAFETY: old {@code _cv} files end at {@code offset + size} with NO trailing long.
-     * Before reading (or mapping) the trailing long we check the REAL file length ({@code ff.length(fd)});
-     * if the file does not extend to {@code offset + size + 8} the checksum is ABSENT and we skip the check
-     * (return a pass) WITHOUT ever resizing/reading past EOF (which would SIGBUS). A stored value of 0 is
-     * likewise the "absent" sentinel and skips the check. Otherwise the area is hashed and compared.
+     * PRESENT-DETECTION IS MAGIC-GATED (the back-compat fix). A checksum is "present" ONLY when BOTH:
+     * <ul>
+     *   <li>the REAL file length ({@code ff.length(fd)}) reaches {@code offset + size + 16}, AND</li>
+     *   <li>{@code getLong(offset + size) == CV_CHECKSUM_MAGIC}.</li>
+     * </ul>
+     * If either fails the checksum is ABSENT and we skip the check (return a pass). This is what lets a
+     * page-rounded legacy pre-checksum {@code _cv} read cleanly: such a file's real length runs well past
+     * {@code offset + size} (its writer closes with {@code close(false)} - no truncation - so the file
+     * stays page-rounded) and the bytes at {@code offset + size} are frequently NON-ZERO adjacent-area
+     * data, so neither an EOF guard nor a zero sentinel would recognise "absent"; the 64-bit MAGIC does
+     * (garbage matches it with probability ~2^-64). Only when the MAGIC is present do we read the checksum
+     * at {@code offset + size + 8} and compare against the recompute.
+     * <p>
+     * EOF SAFETY: the {@code ff.length(fd)} check happens BEFORE any {@code resize}/read of the trailer,
+     * and we only {@code resize} to {@code offset + size + 16} after the length is known to cover it, so
+     * we never map/read past EOF (which would SIGBUS).
      * <p>
      * Race-free with concurrent writers: the whole area is commit-immutable, and the caller re-checks the
      * version after this returns.
@@ -486,18 +507,19 @@ public class ColumnVersionReader implements Closeable, Mutable {
     private boolean unsafeVerifyAreaChecksum(long offset, long size) {
         final FilesFacade ff = mem.getFilesFacade();
         final long realLen = ff.length(mem.getFd());
-        if (realLen < offset + size + Long.BYTES) {
-            // Absent: old-format file with no trailing checksum long. Skip (back-compatible). Crucially we
-            // never resize/read at offset+size+8 here, so no mapping past EOF.
+        if (realLen < offset + size + TableUtils.CV_CHECKSUM_TRAILER_SIZE) {
+            // Absent: the file is too short to hold a 16-byte trailer (old-format / freshly-created). Skip
+            // (back-compatible). Crucially we never resize/read at offset+size here, so no mapping past EOF.
             return true;
         }
-        // Safe to map the trailing long now that the real file is known to cover it.
-        mem.resize(offset + size + Long.BYTES);
-        long stored = mem.getLong(offset + size);
-        if (stored == 0) {
-            // Absent sentinel: freshly-created/empty area or an old file that happens to be long enough.
+        // Safe to map the 16-byte trailer now that the real file is known to cover it.
+        mem.resize(offset + size + TableUtils.CV_CHECKSUM_TRAILER_SIZE);
+        if (mem.getLong(offset + size) != TableUtils.CV_CHECKSUM_MAGIC) {
+            // No MAGIC at offset+size => no real trailer here. This is the legacy page-rounded case: the
+            // bytes are adjacent-area data (or zero), NOT a checksum. Skip the verify (back-compatible).
             return true;
         }
+        long stored = mem.getLong(offset + size + Long.BYTES);
         long computed = TableUtils.calculateCvAreaChecksum(mem.addressOf(offset), size);
         return stored == computed;
     }
