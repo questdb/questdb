@@ -13586,10 +13586,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         }
         if (commitMode != CommitMode.NOSYNC) {
-            final boolean async = commitMode == CommitMode.ASYNC;
-            syncColumns0(async);
-            for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
-                denseSymbolMapWriters.getQuick(i).sync(async);
+            if (commitMode == CommitMode.SYNC && Os.isLinux()) {
+                // Linux SYNC: BATCH the per-file device flushes into ~one. Instead of N blocking
+                // msync(MS_SYNC) (each carrying a device flush), every dirty column/symbol mem is
+                // msync(MS_ASYNC)'d then sync_file_range'd (WAIT_AFTER) so its content lands in the
+                // DEVICE CACHE without a flush; the immediately-following columnVersionWriter.commit()
+                // (_cv) does a single msync(MS_SYNC) whose ONE device flush makes ALL of that
+                // device-cache content durable (and _cv durable). Files that EXTENDED still get their
+                // own fdatasync (journals i_size). _txn is written + flushed strictly after _cv, so the
+                // visibility pointer becomes durable only after everything it exposes. See the batched
+                // crash model (CrashFaultFilesFacade) + BatchedFlushDurabilityCrashTest.
+                syncColumnsBatchedSync();
+            } else {
+                // ASYNC, or non-Linux SYNC (sync_file_range unavailable -> Files.syncFileRange is a
+                // no-op): fall back to the original per-file sync(async). Byte-identical to before.
+                final boolean async = commitMode == CommitMode.ASYNC;
+                syncColumns0(async);
+                for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
+                    denseSymbolMapWriters.getQuick(i).sync(async);
+                }
             }
         }
         // Forward each indexer's purge entries that are already safe for the
@@ -13618,6 +13633,59 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (m2 != null) {
                 m2.sync(async);                           // aux (secondary) after
             }
+        }
+    }
+
+    /**
+     * Linux SYNC-mode batched column+symbol flush. Three passes over the SAME data-before-aux traversal
+     * (columns first, then symbol writers):
+     * <ol>
+     *   <li>KICK: msync(MS_ASYNC) every dirty mem's written range -> pushes mmap-dirty pages to the page
+     *       cache (so the following sync_file_range can see them). No device flush, no watermark advance.</li>
+     *   <li>DRAIN: sync_file_range(WRITE | WAIT_AFTER) every mem -> writes the page-cache-dirty range back to
+     *       the device cache and WAITS. No device flush, no watermark advance. The WAIT is what guarantees the
+     *       content is in the device cache before _cv's flush promotes it.</li>
+     *   <li>FINISH-IF-EXTENDED: for any mem whose file grew, fdatasync it (journals i_size + advances the
+     *       watermark). Non-extending files get NO flush here; their content is made durable by _cv's flush.</li>
+     * </ol>
+     * Splitting into three passes (rather than kick+drain+finish per file) lets the kernel writeback proceed
+     * in parallel across files between the kicks and the waits. The intra-mem data-before-aux ordering is only
+     * load-bearing for the FINISH fdatasyncs (the durability points); the kicks/drains are order-free.
+     */
+    private void syncColumnsBatchedSync() {
+        // Pass 1: KICK all columns (data before aux) then all symbol writers.
+        for (int i = 0; i < columnCount; i++) {
+            columns.getQuick(i * 2).syncFlushKick();
+            final MemoryMA m2 = columns.getQuick(i * 2 + 1);
+            if (m2 != null) {
+                m2.syncFlushKick();
+            }
+        }
+        for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
+            denseSymbolMapWriters.getQuick(i).syncFlushKick();
+        }
+        // Pass 2: DRAIN all (writeback to device cache + WAIT). Order-free.
+        for (int i = 0; i < columnCount; i++) {
+            columns.getQuick(i * 2).syncFlushDrain();
+            final MemoryMA m2 = columns.getQuick(i * 2 + 1);
+            if (m2 != null) {
+                m2.syncFlushDrain();
+            }
+        }
+        for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
+            denseSymbolMapWriters.getQuick(i).syncFlushDrain();
+        }
+        // Pass 3: FINISH-IF-EXTENDED (fdatasync only grown files; advance watermarks). Data before aux so
+        // an extend fdatasync of the aux never precedes its data's.
+        for (int i = 0; i < columnCount; i++) {
+            columns.getQuick(i * 2).syncFlushFinishIfExtended();
+            final MemoryMA m2 = columns.getQuick(i * 2 + 1);
+            if (m2 != null) {
+                m2.syncFlushFinishIfExtended();
+            }
+        }
+        for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
+            denseSymbolMapWriters.getQuick(i).syncFlushFinishIfExtended();
         }
     }
 

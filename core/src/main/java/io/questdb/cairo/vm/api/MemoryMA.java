@@ -62,6 +62,50 @@ public interface MemoryMA extends MemoryM, MemoryA {
 
     void sync(boolean async);
 
+    /**
+     * Phase 1 of the batched SYNC-mode flush (Linux only). Pushes this memory's dirty mmap pages to the
+     * page cache via {@code msync(MS_ASYNC)} over the written range so that a subsequent
+     * {@link #syncFlushDrain()} ({@code sync_file_range}) can see them. Does NOT issue a device flush and
+     * MUST NOT advance any {@code lastSynced*} watermark (that is reserved for
+     * {@link #syncFlushFinishIfExtended()}): advancing it here would let the extend check there wrongly skip
+     * the {@code fdatasync} that journals the inode size, silently losing the extend on a crash.
+     * <p>
+     * Default keeps current behavior: a no-op. The full content durability is then provided entirely by the
+     * fallback {@code sync(false)} in {@link #syncFlushFinishIfExtended()}, so memories that do not override
+     * the 3-phase API remain byte-identical to the original per-file {@code sync(false)}.
+     */
+    default void syncFlushKick() {
+    }
+
+    /**
+     * Phase 2 of the batched SYNC-mode flush (Linux only). Writes this memory's (already page-cache-dirty,
+     * see {@link #syncFlushKick()}) pages back to the device's write cache via
+     * {@code sync_file_range(WRITE | WAIT_AFTER)} and WAITS for that writeback to complete. Issues NO device
+     * flush — the content sits in the device cache until a later device flush (the {@code _cv} commit's
+     * {@code msync(MS_SYNC)}) makes it (and everything else in the device cache) durable. MUST NOT advance
+     * any {@code lastSynced*} watermark, for the same reason as {@link #syncFlushKick()}.
+     * <p>
+     * Default keeps current behavior: a no-op (see {@link #syncFlushKick()}).
+     */
+    default void syncFlushDrain() {
+    }
+
+    /**
+     * Phase 3 of the batched SYNC-mode flush. Persists a file EXTEND only: if the file grew since the last
+     * sync it issues {@code fdatasync(fd)} (which journals the new inode size — and, as a device flush, also
+     * makes already-written-back device-cache content durable) and advances the {@code lastSynced*}
+     * watermark. Non-extending files get NO flush here: their content is made durable by the batch's
+     * {@code _cv} device flush, and their size is unchanged (already durable).
+     * <p>
+     * Default keeps current behavior: a full {@link #sync(boolean) sync(false)} ({@code msync(MS_SYNC)} +
+     * fdatasync-on-extend). This is the conservative fallback for memories that did not push their content to
+     * the device cache via {@link #syncFlushKick()}/{@link #syncFlushDrain()} (both no-ops by default) and
+     * for the non-Linux path, where {@code sync_file_range} is unavailable.
+     */
+    default void syncFlushFinishIfExtended() {
+        sync(false);
+    }
+
     default void toTop() {
         jumpTo(0);
     }

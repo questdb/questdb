@@ -100,6 +100,30 @@ public interface MapWriter extends SymbolCountProvider {
 
     void sync(boolean async);
 
+    /**
+     * Phase 1 of the batched SYNC-mode flush (Linux only); see {@link io.questdb.cairo.vm.api.MemoryMA#syncFlushKick()}.
+     * Default keeps current behavior (no-op kick + the fallback {@code sync(false)} in
+     * {@link #syncFlushFinishIfExtended()} provides durability), so non-overriding writers are unchanged.
+     */
+    default void syncFlushKick() {
+    }
+
+    /**
+     * Phase 2 of the batched SYNC-mode flush (Linux only); see {@link io.questdb.cairo.vm.api.MemoryMA#syncFlushDrain()}.
+     * Default keeps current behavior: a no-op.
+     */
+    default void syncFlushDrain() {
+    }
+
+    /**
+     * Phase 3 of the batched SYNC-mode flush; see {@link io.questdb.cairo.vm.api.MemoryMA#syncFlushFinishIfExtended()}.
+     * Default keeps current behavior: a full {@code sync(false)} (the conservative fallback for writers that
+     * did not push content to the device cache via the no-op default kick/drain, and for the non-Linux path).
+     */
+    default void syncFlushFinishIfExtended() {
+        sync(false);
+    }
+
     void truncate();
 
     void updateCacheFlag(boolean flag);

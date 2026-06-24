@@ -31,6 +31,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.api.MemoryMAR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
 import org.jetbrains.annotations.Nullable;
@@ -162,13 +163,7 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
                 // from the live append offset each call, so prior jumpTo/rollback cannot make it stale
                 // (NARROW-ONLY: no msync skip for PMAR). The page-flip release() still msyncs the full
                 // page it releases, so completed pages are fully flushed.
-                final long pageStart = pageOffset(mappedPage);
-                long inPageWritten = getAppendOffset() - pageStart;
-                if (inPageWritten < 0) {
-                    inPageWritten = 0;
-                } else if (inPageWritten > getPageSize()) {
-                    inPageWritten = getPageSize();
-                }
+                final long inPageWritten = inPageWritten();
                 if (inPageWritten > 0) {
                     ff.msync(pageAddress, inPageWritten, async);
                 }
@@ -185,6 +180,54 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
                     ff.fdatasync(fd);
                     lastSyncedSize = currentFileSize;
                 }
+            }
+        }
+    }
+
+    @Override
+    public void syncFlushKick() {
+        // Batched SYNC stage 1: msync(MS_ASYNC) the dirty bytes of the currently mapped page into the page
+        // cache so the following sync_file_range can see them. Mirrors sync()'s range selection (append-only
+        // narrows to the in-page written length; else the full page) but is always ASYNC and issues NO
+        // fdatasync, and NEVER advances lastSyncedSize.
+        if (pageAddress != 0) {
+            if (appendOnly) {
+                final long inPageWritten = inPageWritten();
+                if (inPageWritten > 0) {
+                    ff.msync(pageAddress, inPageWritten, true);
+                }
+            } else {
+                ff.msync(pageAddress, getPageSize(), true);
+            }
+        }
+    }
+
+    @Override
+    public void syncFlushDrain() {
+        // Batched SYNC stage 2: sync_file_range(WRITE | WAIT_AFTER) writes the page-cache-dirty bytes of the
+        // current page back to the device cache and WAITS. NO device flush, NO watermark mutation. PMAR maps
+        // a single page at file offset pageOffset(mappedPage), so the fd-relative dirty range is
+        // [pageStart, pageStart + dirtyLen). WAIT_AFTER is mandatory for durability (see CMARW).
+        if (pageAddress != 0) {
+            final long pageStart = pageOffset(mappedPage);
+            final long dirtyLen = appendOnly ? inPageWritten() : getPageSize();
+            if (dirtyLen > 0) {
+                ff.syncFileRange(fd, pageStart, dirtyLen, Files.SYNC_FILE_RANGE_WRITE | Files.SYNC_FILE_RANGE_WAIT_AFTER);
+            }
+        }
+    }
+
+    @Override
+    public void syncFlushFinishIfExtended() {
+        // Batched SYNC stage 3: persist an EXTEND only (no msync; content durability comes from the batch's
+        // _cv device flush). The on-disk size after mapping page `mappedPage` is (mappedPage+1)*segment
+        // (mapPage posix_fallocates that length). fdatasync journals the new i_size when the file grew, and
+        // advances lastSyncedSize. Matches sync()'s extend handling.
+        if (pageAddress != 0) {
+            final long currentFileSize = (long) (mappedPage + 1) * getExtendSegmentSize();
+            if (currentFileSize > lastSyncedSize) {
+                ff.fdatasync(fd);
+                lastSyncedSize = currentFileSize;
             }
         }
     }
@@ -208,6 +251,20 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     protected long mapWritePage(int page, long offset) {
         releaseCurrentPage();
         return pageAddress = mapPage(page);
+    }
+
+    /**
+     * Bytes written into the currently mapped page, clamped to [0, pageSize]. The append cursor is always
+     * within the mapped page (jumpTo remaps to the target page), so this is appendOffset - pageStart.
+     * Recomputed from the live append offset on every call (NARROW-ONLY: no cross-call state to go stale).
+     */
+    private long inPageWritten() {
+        long inPageWritten = getAppendOffset() - pageOffset(mappedPage);
+        if (inPageWritten < 0) {
+            return 0;
+        }
+        final long pageSize = getPageSize();
+        return inPageWritten > pageSize ? pageSize : inPageWritten;
     }
 
     @Override

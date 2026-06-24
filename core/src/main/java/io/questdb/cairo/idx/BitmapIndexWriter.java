@@ -445,6 +445,34 @@ public class BitmapIndexWriter implements IndexWriter {
         keyMem.sync(async);
     }
 
+    /**
+     * Batched SYNC stage 1 (Linux): push both index files' dirty pages to the page cache. Kicks are
+     * order-free (no device flush, no durability ordering yet), so value/key order does not matter here.
+     */
+    public void syncFlushKick() {
+        valueMem.syncFlushKick();
+        keyMem.syncFlushKick();
+    }
+
+    /**
+     * Batched SYNC stage 2 (Linux): write both index files' pages back to the device cache (WAIT_AFTER).
+     * Drains are order-free for the same reason as kicks.
+     */
+    public void syncFlushDrain() {
+        valueMem.syncFlushDrain();
+        keyMem.syncFlushDrain();
+    }
+
+    /**
+     * Batched SYNC stage 3: fdatasync only the index file(s) that EXTENDED. The value-before-key ordering
+     * matters here because these fdatasyncs are the durability points: persist the .v (data) extend before
+     * the .k (pointer) extend so a crash can never expose a key block beyond the durable value data.
+     */
+    public void syncFlushFinishIfExtended() {
+        valueMem.syncFlushFinishIfExtended();
+        keyMem.syncFlushFinishIfExtended();
+    }
+
     public void truncate() {
         initKeyMemory(keyMem, blockValueCountMod + 1);
         valueMem.truncate();

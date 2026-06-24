@@ -367,6 +367,58 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     @Override
+    public void syncFlushKick() {
+        // Batched SYNC stage 1: msync(MS_ASYNC) the dirty range to push mmap-dirty pages into the page
+        // cache so the following sync_file_range can see them. Mirrors sync()'s msync-range selection
+        // (append-only narrows to [0, appendOffset); else full [0, size)) but is always ASYNC and issues
+        // NO fdatasync. CRITICAL: this NEVER touches lastSyncedAppendOffset/lastSyncedSize — advancing a
+        // watermark here would make syncFlushFinishIfExtended() wrongly skip the extend fdatasync.
+        if (appendOnly) {
+            final long ao = getAppendOffset();
+            if (ao > 0) {
+                ff.msync(pageAddress, ao, true);
+            }
+        } else {
+            ff.msync(pageAddress, size, true);
+        }
+    }
+
+    @Override
+    public void syncFlushDrain() {
+        // Batched SYNC stage 2: sync_file_range(WRITE | WAIT_AFTER) writes the (now page-cache-dirty) range
+        // back to the device cache and WAITS. NO device flush, NO watermark mutation. The mapping is rooted
+        // at file offset 0, so the fd-relative dirty range equals the in-mapping range: append-only ->
+        // [0, appendOffset); full -> [0, size). WAIT_AFTER is mandatory: without it the writeback may not
+        // reach the device before the _cv device flush, and the content would be lost (model self-test 4/5).
+        final long dirtyLen;
+        if (appendOnly) {
+            dirtyLen = getAppendOffset();
+        } else {
+            dirtyLen = size;
+        }
+        if (dirtyLen > 0) {
+            ff.syncFileRange(fd, 0, dirtyLen, Files.SYNC_FILE_RANGE_WRITE | Files.SYNC_FILE_RANGE_WAIT_AFTER);
+        }
+    }
+
+    @Override
+    public void syncFlushFinishIfExtended() {
+        // Batched SYNC stage 3: persist an EXTEND only. Content durability for non-extending files is
+        // provided by the batch's _cv device flush (so we do NOT msync here). If the file grew since the
+        // last sync, fdatasync journals the new i_size (and, being a device flush, also makes the
+        // already-drained device-cache content durable) and we advance BOTH watermarks so a subsequent
+        // sync()/finish correctly sees no further extend. Keeping lastSyncedAppendOffset in lock-step with
+        // the (now-durable) append offset matches sync()'s post-msync bookkeeping for the append-only path.
+        if (size > lastSyncedSize) {
+            ff.fdatasync(fd);
+            lastSyncedSize = size;
+            if (appendOnly) {
+                lastSyncedAppendOffset = getAppendOffset();
+            }
+        }
+    }
+
+    @Override
     public void setAppendOnly(boolean appendOnly) {
         this.appendOnly = appendOnly;
     }

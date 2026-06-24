@@ -404,6 +404,32 @@ public class SymbolMapWriter implements Closeable, MapWriter {
     }
 
     @Override
+    public void syncFlushKick() {
+        // Order-free (no device flush, no durability ordering yet).
+        charMem.syncFlushKick();
+        offsetMem.syncFlushKick();
+        indexWriter.syncFlushKick();
+    }
+
+    @Override
+    public void syncFlushDrain() {
+        // Order-free (see syncFlushKick).
+        charMem.syncFlushDrain();
+        offsetMem.syncFlushDrain();
+        indexWriter.syncFlushDrain();
+    }
+
+    @Override
+    public void syncFlushFinishIfExtended() {
+        // Same ordering as sync(): char (data) before offset (offset->char pointer) before the index.
+        // Only matters for the rare extend fdatasyncs; non-extending files are made durable by the
+        // batch's _cv device flush.
+        charMem.syncFlushFinishIfExtended();
+        offsetMem.syncFlushFinishIfExtended();
+        indexWriter.syncFlushFinishIfExtended();
+    }
+
+    @Override
     public void truncate() {
         final int symbolCapacity = offsetMem.getInt(HEADER_CAPACITY);
         offsetMem.truncate();
