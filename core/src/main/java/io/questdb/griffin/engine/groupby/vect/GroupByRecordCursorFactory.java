@@ -524,6 +524,10 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         private void buildRosti() {
+            // Consult the breaker before dispatching frames, so an empty base scan still observes cancellation.
+            // Time-throttled so it checks cancellation/timeout unconditionally while bounding the
+            // connection probe to once per window.
+            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
             final int vafCount = vafList.size();
             final RingQueue<VectorAggregateTask> queue = bus.getVectorAggregateQueue();
             final MPSequence pubSeq = bus.getVectorAggregatePubSeq();

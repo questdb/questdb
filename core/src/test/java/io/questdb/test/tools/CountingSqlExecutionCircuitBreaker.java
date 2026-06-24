@@ -22,28 +22,35 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql;
+package io.questdb.test.tools;
 
-import io.questdb.cairo.CairoEngine;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Misc;
-import org.jetbrains.annotations.NotNull;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import org.jetbrains.annotations.Nullable;
-import org.jetbrains.annotations.TestOnly;
 
-import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
-// This wrapper itself does not provide thread-safety, and that is ok because worker threads own the
-// jobs/contexts which hold SqlExecutionCircuitBreakerWrapper objects.
-// However, the `delegate` circuit breaker instance referenced by the wrapper has to be thread-safe
-// if it is used by multiple threads (i.e. set as a delegate in multiple wrappers at the same time).
-public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBreaker, Closeable {
-    private SqlExecutionCircuitBreaker delegate;
-    private NetworkSqlExecutionCircuitBreaker networkSqlExecutionCircuitBreaker;
+/**
+ * A delegating {@link SqlExecutionCircuitBreaker} that counts how many times execution code
+ * consults the breaker, without changing its behavior. A consultation is a call to any of
+ * {@link #checkIfTripped()}, {@link #checkIfTripped(long, long)}, {@link #getState()},
+ * {@link #getState(long, long)}, {@link #statefulThrowExceptionIfTripped()},
+ * {@link #statefulThrowExceptionIfTrippedNoThrottle()} or
+ * {@link #statefulThrowExceptionIfTrippedTimeThrottled()}; all other methods delegate without
+ * counting. The counter is thread-safe: parallel execution shares a thread-safe execution-context
+ * circuit breaker across worker threads, so the wrapper may be consulted concurrently.
+ * <p>
+ * {@code QueryAssertion.expectCircuitBreakerChecks()} installs this wrapper around the execution
+ * context's circuit breaker to assert that the cursor under test honors the breaker, i.e. that the
+ * query is cancellable.
+ */
+public class CountingSqlExecutionCircuitBreaker implements SqlExecutionCircuitBreaker {
+    private final AtomicLong checkCount = new AtomicLong();
+    private final SqlExecutionCircuitBreaker delegate;
 
-    public SqlExecutionCircuitBreakerWrapper(CairoEngine engine, @NotNull SqlExecutionCircuitBreakerConfiguration configuration) {
-        networkSqlExecutionCircuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine, configuration, MemoryTag.NATIVE_CB2);
+    public CountingSqlExecutionCircuitBreaker(SqlExecutionCircuitBreaker delegate) {
+        this.delegate = delegate;
     }
 
     @Override
@@ -52,19 +59,15 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
     }
 
     @Override
-    public boolean checkIfTripped(long millis, long fd) {
-        return delegate.checkIfTripped(millis, fd);
-    }
-
-    @Override
     public boolean checkIfTripped() {
+        checkCount.incrementAndGet();
         return delegate.checkIfTripped();
     }
 
     @Override
-    public void close() {
-        networkSqlExecutionCircuitBreaker = Misc.free(networkSqlExecutionCircuitBreaker);
-        delegate = null;
+    public boolean checkIfTripped(long millis, long fd) {
+        checkCount.incrementAndGet();
+        return delegate.checkIfTripped(millis, fd);
     }
 
     @Override
@@ -72,12 +75,18 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
         return delegate.getCancelledFlag();
     }
 
+    /**
+     * Number of times any of the counted check methods has been called since construction.
+     */
+    public long getCheckCount() {
+        return checkCount.get();
+    }
+
     @Override
     public @Nullable SqlExecutionCircuitBreakerConfiguration getConfiguration() {
         return delegate.getConfiguration();
     }
 
-    @TestOnly
     public SqlExecutionCircuitBreaker getDelegate() {
         return delegate;
     }
@@ -89,33 +98,19 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
 
     @Override
     public int getState() {
+        checkCount.incrementAndGet();
         return delegate.getState();
     }
 
     @Override
     public int getState(long millis, long fd) {
+        checkCount.incrementAndGet();
         return delegate.getState(millis, fd);
     }
 
     @Override
     public long getTimeout() {
         return delegate.getTimeout();
-    }
-
-    public void init(SqlExecutionCircuitBreakerWrapper wrapper) {
-        init(wrapper.delegate);
-    }
-
-    public void init(SqlExecutionCircuitBreaker executionContextCircuitBreaker) {
-        if (executionContextCircuitBreaker.isThreadSafe()) {
-            delegate = executionContextCircuitBreaker;
-        } else {
-            networkSqlExecutionCircuitBreaker.of(executionContextCircuitBreaker.getFd());
-            networkSqlExecutionCircuitBreaker.setTimeout(executionContextCircuitBreaker.getTimeout());
-            networkSqlExecutionCircuitBreaker.resetTimer();
-            networkSqlExecutionCircuitBreaker.setCancelledFlag(executionContextCircuitBreaker.getCancelledFlag());
-            delegate = networkSqlExecutionCircuitBreaker;
-        }
     }
 
     @Override
@@ -134,8 +129,8 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
     }
 
     @Override
-    public void setCancelledFlag(AtomicBoolean cancelled) {
-        delegate.setCancelledFlag(cancelled);
+    public void setCancelledFlag(AtomicBoolean cancelledFlag) {
+        delegate.setCancelledFlag(cancelledFlag);
     }
 
     @Override
@@ -145,16 +140,19 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
 
     @Override
     public void statefulThrowExceptionIfTripped() {
+        checkCount.incrementAndGet();
         delegate.statefulThrowExceptionIfTripped();
     }
 
     @Override
     public void statefulThrowExceptionIfTrippedNoThrottle() {
+        checkCount.incrementAndGet();
         delegate.statefulThrowExceptionIfTrippedNoThrottle();
     }
 
     @Override
     public void statefulThrowExceptionIfTrippedTimeThrottled() {
+        checkCount.incrementAndGet();
         delegate.statefulThrowExceptionIfTrippedTimeThrottled();
     }
 
