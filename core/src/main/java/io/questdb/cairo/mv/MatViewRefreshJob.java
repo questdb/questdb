@@ -886,6 +886,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                             stateStore.enqueueFullRefresh(updatedToken);
                         } else if (refreshTask.operation == MatViewRefreshTask.RANGE_REFRESH) {
                             stateStore.enqueueRangeRefresh(updatedToken, refreshTask.rangeFrom, refreshTask.rangeTo);
+                        } else if (refreshTask.operation == MatViewRefreshTask.UPDATE_REFRESH_INTERVALS) {
+                            stateStore.enqueueUpdateRefreshIntervals(updatedToken);
                         } else {
                             // Invalid task, we cannot retry it.
                             return false;
