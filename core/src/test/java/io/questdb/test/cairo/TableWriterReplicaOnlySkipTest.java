@@ -82,6 +82,40 @@ public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
         });
     }
 
+    // Regression for an O3 crash: out-of-order rows spanning multiple partitions drive the O3 open-
+    // column path (O3PartitionJob.publishOpenColumnTasks), which counts indexed columns to allocate
+    // O3Basket indexer slots. The basket is sized from the writer's denseIndexers/indexCount, which
+    // EXCLUDE a skipped REPLICA ONLY index; if the open-column loop still treats the column as indexed
+    // (raw isColumnIndexed) it calls O3Basket.nextIndexer() one time too many and overruns the slot
+    // list (an AssertionError in O3Basket.nextIndexer). The fix gates both on isColumnIndexActive().
+    @Test
+    public void testPrimarySkipsReplicaOnlyIndexBuildO3MultiPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (s symbol index capacity 256 replica only, v double, ts timestamp) timestamp(ts) partition by day wal");
+            // Out-of-order rows across two partitions (1970-01-01 and 1970-01-02): forces the O3 path.
+            execute("insert into x values" +
+                    " ('a', 1, 0)," +
+                    " ('c', 4, 86400000000)," +     // 1970-01-02
+                    " ('b', 2, 1000000)," +
+                    " ('a', 5, 86401000000)," +     // 1970-01-02
+                    " ('a', 3, 2000000)");
+            drainWalQueue();
+
+            Assert.assertFalse("no index files expected on skipping primary after O3 multi-partition insert",
+                    indexFilesExist("x", "s"));
+            assertMetadataFlags("x", "s");
+            // Full-scan correctness: the skipped index must not change query results.
+            sink.clear();
+            printSql("select s, v, ts from x where s = 'a'", sink);
+            io.questdb.test.tools.TestUtils.assertEquals(
+                    "s\tv\tts\n" +
+                            "a\t1.0\t1970-01-01T00:00:00.000000Z\n" +
+                            "a\t3.0\t1970-01-01T00:00:02.000000Z\n" +
+                            "a\t5.0\t1970-01-02T00:00:01.000000Z\n",
+                    sink);
+        });
+    }
+
     @Test
     public void testPrimarySkipsReplicaOnlyIndexBuild() throws Exception {
         assertMemoryLeak(() -> {
