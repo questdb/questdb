@@ -62,10 +62,69 @@ import org.junit.Test;
  * to {@code Vect.*} merge functions that index pointer+offset directly and never
  * materialise the unmapped {@code [0, dataOffset(rowLo))} prefix.
  *
+ * <p>None of these tests can assert directly that the optimised single-segment
+ * block path ran -- that would need a production seam. The setup forces it; the
+ * COPY_O3 row-group delta (or, for the fresh-parquet case, the born-parquet
+ * format) is the available proxy. A future heuristic that stopped selecting the
+ * block path would make the suspension repros pass vacuously.
+ *
  * <p>The column-top case (a var column added after the partition was written) is
  * not covered here: it is awkward to set up against a converted parquet partition.
  */
 public class WalParquetO3BlockApplyTest extends AbstractCairoTest {
+
+    @Test
+    public void testInOrderO3IntoFreshParquetPartitionViaBlockApply() throws Exception {
+        // The OTHER populateO3DescriptorColumns caller: writeFreshParquetFromO3
+        // (srcDataMax < 1). On a FORMAT PARQUET table a brand-new partition is
+        // born parquet in a single batched WAL apply. With an earlier partition
+        // already advancing the WAL segment past row 0, the born-parquet block's
+        // var column reaches the encoder as a windowed MemoryOM source. Left
+        // null it is an empty window with a non-zero absolute dataExtent -- the
+        // same "null primary_data_ptr with non-zero size" suspension as the
+        // COPY_O3 repro, but through the fresh-parquet writer.
+        setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 10_000_000);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, v VARCHAR) TIMESTAMP(ts) PARTITION BY DAY FORMAT PARQUET WAL");
+            // 2024-01-02 is born parquet and advances the WAL segment past row 0,
+            // so the later 2024-01-01 block starts at a non-zero segment offset.
+            // Long (> 9 byte) values keep the data vector non-empty.
+            execute("INSERT INTO x SELECT timestamp_sequence('2024-01-02T00:00:00.000000Z', 60_000_000L), 'varchar_existing_' || x FROM long_sequence(200)");
+            drainWalQueue();
+
+            final TableToken tt = engine.verifyTableName("x");
+
+            // Trigger: three ascending O3 inserts into the earlier (brand-new)
+            // 2024-01-01 partition, applied as ONE in-order block (no drain
+            // between them), with the VARCHAR column left null. Brand-new +
+            // FORMAT PARQUET -> writeFreshParquetFromO3 with a windowed source.
+            execute("INSERT INTO x(ts) VALUES ('2024-01-01T00:00:00.000000Z')");
+            execute("INSERT INTO x(ts) VALUES ('2024-01-01T00:00:01.000000Z')");
+            execute("INSERT INTO x(ts) VALUES ('2024-01-01T00:00:02.000000Z')");
+            drainWalQueue();
+
+            Assert.assertFalse(
+                    "WAL apply suspended the table: a born-parquet block apply handed "
+                            + "writeFreshParquetFromO3 a windowed var-column buffer with an absolute data offset",
+                    engine.getTableSequencerAPI().isSuspended(tt));
+
+            // The brand-new partition is parquet (born parquet, never converted),
+            // so the windowed source went through writeFreshParquetFromO3.
+            Assert.assertTrue("2024-01-01 was not born parquet", parquetRowGroupCount(tt, "2024-01-01") >= 1);
+
+            assertQuery("SELECT count() FROM x").noRandomAccess().expectSize().returns("count\n203\n");
+            // The three null rows read back as null from the parquet partition.
+            assertQuery("SELECT ts, v FROM x WHERE ts < '2024-01-02T00:00:00.000000Z' ORDER BY ts")
+                    .timestamp("ts")
+                    .sizeMayVary()
+                    .returns(
+                            "ts\tv\n" +
+                                    "2024-01-01T00:00:00.000000Z\t\n" +
+                                    "2024-01-01T00:00:01.000000Z\t\n" +
+                                    "2024-01-01T00:00:02.000000Z\t\n"
+                    );
+        });
+    }
 
     @Test
     public void testInOrderO3IntoParquetPartitionViaBlockApply() throws Exception {
@@ -174,9 +233,10 @@ public class WalParquetO3BlockApplyTest extends AbstractCairoTest {
 
     @Test
     public void testInOrderO3IntoParquetWithBinaryColumn() throws Exception {
-        // BINARY shares StringTypeDriver, so it rebases via the same shift_copy
-        // primitive as STRING. Non-null trigger binaries exercise the real-data
-        // (non-empty-window) rebase: addressOf(dataLo) + window-relative aux.
+        // BINARY uses BinaryTypeDriver, a StringTypeDriver subclass, so it
+        // rebases via the same shift_copy primitive as STRING. Non-null trigger
+        // binaries exercise the real-data (non-empty-window) rebase:
+        // addressOf(dataLo) + window-relative aux.
         configureForCopyO3();
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (ts TIMESTAMP, b BINARY) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -328,6 +388,60 @@ public class WalParquetO3BlockApplyTest extends AbstractCairoTest {
                                     "2024-01-01T00:00:00.000000Z\tvarchar_trigger_alpha\tstring_trigger_alpha\n" +
                                     "2024-01-01T00:00:01.000000Z\tvarchar_trigger_bravo\tstring_trigger_bravo\n" +
                                     "2024-01-01T00:00:02.000000Z\tvarchar_trigger_charlie\tstring_trigger_charlie\n"
+                    );
+        });
+    }
+
+    @Test
+    public void testInOrderO3IntoParquetWithNullArrayColumn() throws Exception {
+        // All-null ARRAY trigger rows: ArrayTypeDriver.appendNull writes only the
+        // aux entry and does not advance the data vector, so the data window is
+        // empty (addressOf(0) == 0) while the absolute dataExtent stays non-zero.
+        // That is the same "null primary_data_ptr with non-zero size" suspension
+        // as the VARCHAR repro, but through ArrayTypeDriver's distinct
+        // getDataVectorOffset / shiftCopyAuxVector, which no other empty-window
+        // test covers.
+        configureForCopyO3();
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x SELECT timestamp_sequence('2024-01-01T06:00:00.000000Z', 60_000_000L), ARRAY[x::double, (x * 2)::double] FROM long_sequence(200)");
+            execute("INSERT INTO x SELECT timestamp_sequence('2024-01-02T00:00:00.000000Z', 60_000_000L), ARRAY[x::double, (x * 2)::double] FROM long_sequence(5)");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+
+            execute("INSERT INTO x SELECT timestamp_sequence('2024-01-03T00:00:00.000000Z', 60_000_000L), ARRAY[x::double, (x * 2)::double] FROM long_sequence(50)");
+            drainWalQueue();
+
+            final TableToken tt = engine.verifyTableName("x");
+            final long rowGroupsBefore = parquetRowGroupCount(tt, "2024-01-01");
+
+            // Trigger: three ascending O3 inserts applied as one in-order block
+            // into the parquet partition, before 06:00 (COPY_O3), with the ARRAY
+            // column left null -- an empty data window.
+            execute("INSERT INTO x(ts) VALUES ('2024-01-01T00:00:00.000000Z')");
+            execute("INSERT INTO x(ts) VALUES ('2024-01-01T00:00:01.000000Z')");
+            execute("INSERT INTO x(ts) VALUES ('2024-01-01T00:00:02.000000Z')");
+            drainWalQueue();
+
+            Assert.assertFalse("WAL apply suspended the table", engine.getTableSequencerAPI().isSuspended(tt));
+            Assert.assertEquals(
+                    "trigger did not take the COPY_O3 prepend path",
+                    rowGroupsBefore + 1,
+                    parquetRowGroupCount(tt, "2024-01-01")
+            );
+
+            assertQuery("SELECT count() FROM x").noRandomAccess().expectSize().returns("count\n258\n");
+            // The three trigger rows read back as null arrays from parquet.
+            assertQuery("SELECT ts, arr FROM x WHERE ts < '2024-01-01T06:00:00.000000Z' ORDER BY ts")
+                    .timestamp("ts")
+                    .sizeMayVary()
+                    .returns(
+                            "ts\tarr\n" +
+                                    "2024-01-01T00:00:00.000000Z\tnull\n" +
+                                    "2024-01-01T00:00:01.000000Z\tnull\n" +
+                                    "2024-01-01T00:00:02.000000Z\tnull\n"
                     );
         });
     }
