@@ -1051,9 +1051,29 @@ public class TableReader implements Closeable, SymbolTableSource {
         } else {
             int partitionIndex = getPartitionIndex(columnBase);
             Path path = pathGenNativePartition(partitionIndex, partitionTxn);
+            final int partitionPathLen = path.size();
             try {
                 final byte indexType = metadata.getColumnIndexType(columnIndex);
                 final long partitionTimestamp = txFile.getPartitionTimestampByIndex(partitionIndex);
+                // For a replica-only indexed column on a non-skipping node (replica/standalone),
+                // the column is treated as active by the planner, so an index scan may be chosen.
+                // There is a transient window (e.g. right after restoring from a primary's backup
+                // that lacks index files, before reconcile rebuilds them) where the column is flagged
+                // indexed but its key/value files are absent. For a replica-only column a missing index
+                // file is NOT corruption — it just means "not materialized here yet" — so degrade
+                // gracefully with a recoverable (non-critical) error instead of the critical corruption
+                // error that the reader ctor would otherwise throw. Normal indexed columns are left
+                // untouched: a missing index file there remains genuine corruption (critical).
+                if (metadata.isColumnReplicaOnlyIndex(columnIndex)
+                        && !ff.exists(IndexFactory.keyFileName(indexType, path, metadata.getColumnName(columnIndex), columnNameTxn))) {
+                    path.trimTo(partitionPathLen);
+                    throw CairoException.nonCritical()
+                            .put("replica-only index not materialized on this node [column=")
+                            .put(metadata.getColumnName(columnIndex))
+                            .put(", partitionTimestamp=").put(partitionTimestamp)
+                            .put(']');
+                }
+                path.trimTo(partitionPathLen);
                 reader = IndexFactory.createReader(
                         indexType,
                         direction,
