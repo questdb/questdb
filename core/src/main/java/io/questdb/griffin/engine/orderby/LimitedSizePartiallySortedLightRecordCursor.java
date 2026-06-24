@@ -71,7 +71,10 @@ public class LimitedSizePartiallySortedLightRecordCursor implements DelegatingRe
         this.chain = chain;
         this.comparator = comparator;
         this.chainCursor = chain.getCursor();
-        this.isOpen = true;
+        // Lazy variant: the chain skeleton is constructed but the key/value heaps
+        // are not allocated yet. The first of() call binds the MemoryTracker and
+        // calls chain.reopen() to allocate the initial backing under it.
+        this.isOpen = false;
         this.timestampIndex = timestampIndex;
         this.rankMaps = rankMaps;
     }
@@ -128,6 +131,7 @@ public class LimitedSizePartiallySortedLightRecordCursor implements DelegatingRe
         baseCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
         if (!isOpen) {
             isOpen = true;
+            chain.setMemoryTracker(executionContext.getMemoryTracker());
             chain.reopen();
         }
         SortKeyEncoder.buildRankMaps(baseCursor, rankMaps, comparator);
@@ -181,6 +185,8 @@ public class LimitedSizePartiallySortedLightRecordCursor implements DelegatingRe
     }
 
     private void buildChain() {
+        // Consult the breaker before consuming the base, so an empty base scan still observes cancellation.
+        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
         final Record placeHolderRecord = baseCursor.getRecordB();
         if (limit != 0) {
             // first record ever, we've to find the timestamp value

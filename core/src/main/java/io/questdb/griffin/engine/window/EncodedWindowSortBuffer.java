@@ -39,10 +39,12 @@ import io.questdb.griffin.engine.orderby.SortKeyType;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import org.jetbrains.annotations.Nullable;
 
 final class EncodedWindowSortBuffer implements WindowSortBuffer {
     private final SortKeyEncoder encoder;
@@ -190,6 +192,12 @@ final class EncodedWindowSortBuffer implements WindowSortBuffer {
             isOpen = true;
             entryMem.reopen();
         }
+    }
+
+    @Override
+    public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        // entryMem grows in of()/put() after this binding. Mirrors EncodedTopKBuffer.
+        entryMem.setMemoryTracker(tracker);
     }
 
     @Override

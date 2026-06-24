@@ -108,6 +108,10 @@ public class WalTxnDetails implements QuietCloseable {
         this.maxLookaheadRows = maxLookaheadRows;
     }
 
+    public static byte dedupModeOf(long walTxnTypeAndFlags) {
+        return (byte) (Numbers.decodeLowInt(walTxnTypeAndFlags) >> 24);
+    }
+
     public static int loadTxns(TransactionLogCursor transactionLogCursor, int txnCount, DirectLongList txnList) {
         txnList.setCapacity(txnCount * 4L);
 
@@ -141,6 +145,10 @@ public class WalTxnDetails implements QuietCloseable {
                     .put(", ").put(ex.getFlyweightMessage()).put(']');
         }
         return walEventCursor;
+    }
+
+    public static byte walTxnTypeOf(long walTxnTypeAndFlags) {
+        return (byte) Numbers.decodeHighInt(walTxnTypeAndFlags);
     }
 
     /**
@@ -339,8 +347,7 @@ public class WalTxnDetails implements QuietCloseable {
     }
 
     public byte getDedupMode(long seqTxn) {
-        int flags = Numbers.decodeLowInt(transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE + WAL_TXN_ROW_IN_ORDER_DATA_TYPE)));
-        return (byte) (flags >> 24);
+        return dedupModeOf(getWalTxnTypeAndFlags(seqTxn));
     }
 
     public long getFullyCommittedTxn(long fromSeqTxn, long toSeqTxn, long maxCommittedTimestamp) {
@@ -421,7 +428,11 @@ public class WalTxnDetails implements QuietCloseable {
     }
 
     public byte getWalTxnType(long seqTxn) {
-        return (byte) Numbers.decodeHighInt(transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE + WAL_TXN_ROW_IN_ORDER_DATA_TYPE)));
+        return walTxnTypeOf(getWalTxnTypeAndFlags(seqTxn));
+    }
+
+    public long getWalTxnTypeAndFlags(long seqTxn) {
+        return transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE + WAL_TXN_ROW_IN_ORDER_DATA_TYPE));
     }
 
     public boolean isLastSegmentUsage(long seqTxn) {

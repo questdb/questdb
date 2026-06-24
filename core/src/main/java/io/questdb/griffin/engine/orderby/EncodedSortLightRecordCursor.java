@@ -172,10 +172,17 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor, RecordCurs
 
     @Override
     public void of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
+        // The tracker is rebound unconditionally below (outside the !isOpen guard) because
+        // the ctor opens eagerly with isOpen=true; binding inside the guard would leave the
+        // first query untracked. A second of() without an intervening close() would rebind
+        // onto still-charged backing and underflow the per-query counter on free. close()
+        // nulls baseCursor, so a null field here means fresh-or-closed.
+        assert this.baseCursor == null : "of() without intervening close(): rebinding the memory tracker would underflow the per-query counter";
         // Take ownership before reopen() can throw: on a reopen OOM, close()
         // must find baseCursor here to free it instead of leaking it.
         this.baseCursor = baseCursor;
         this.baseRecord = baseCursor.getRecord();
+        entryMem.setMemoryTracker(executionContext.getMemoryTracker());
         if (!isOpen) {
             isOpen = true;
             entryMem.reopen();
@@ -223,6 +230,8 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor, RecordCurs
     }
 
     private void buildAndSort() {
+        // Consult the breaker before consuming the base, so an empty base scan still observes cancellation.
+        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
         final boolean isVariable = keyType.isVariable();
         if (isVariable) {
             // Reset the key heap so a re-execution does not accrue stale key bytes;

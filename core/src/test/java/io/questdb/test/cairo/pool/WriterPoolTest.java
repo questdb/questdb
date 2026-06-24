@@ -1021,6 +1021,43 @@ public class WriterPoolTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLiveEngineReleaseAllKeepsHeldLockIntact() throws Exception {
+        // A live (non-closed) pool that force-releases via releaseAll(Long.MAX_VALUE) -- the path
+        // a role-switch drain takes -- MUST NOT close the .lock fd of an in-flight lock() holder.
+        // If it did, the entry would be removed and the next get() could build a second TableWriter
+        // on the same table, breaking the single-writer-per-table invariant. The lock-fd release in
+        // releaseAll is fenced to pool shutdown (isClosed()); on a live pool the lock must survive.
+        assertWithPool(pool -> {
+            // Hold a lock on z (creates an entry with lockFd != -1, owner != UNALLOCATED).
+            Assert.assertEquals(WriterPool.OWNERSHIP_REASON_NONE, pool.lock(zTableToken, "testing"));
+
+            // Force-release on the LIVE pool (deadline == Long.MAX_VALUE). Pre-fix this closed the
+            // held lock fd and removed the entry; post-fix the lockFd branch is isClosed()-fenced
+            // and skips the still-locked entry.
+            pool.releaseAll();
+
+            // The lock must still hold: neither a pooled get() nor an off-pool writer can build a
+            // second TableWriter on z while the lock is live.
+            try {
+                pool.get(zTableToken, "testing");
+                Assert.fail("releaseAll on a live pool must not break a held lock");
+            } catch (EntryLockedException ignored) {
+            }
+            try {
+                newOffPoolWriter(configuration, "z").close();
+                Assert.fail("releaseAll on a live pool must not let a second writer open on a locked table");
+            } catch (CairoException ignored) {
+            }
+
+            // After an explicit unlock the table is writable again -- the lock fd was intact, not leaked.
+            pool.unlock(zTableToken);
+            try (TableWriter wx = pool.get(zTableToken, "testing")) {
+                Assert.assertNotNull(wx);
+            }
+        });
+    }
+
+    @Test
     public void testLockNonExisting() throws Exception {
         assertWithPool(pool -> {
             Assert.assertEquals(WriterPool.OWNERSHIP_REASON_NONE, pool.lock(zTableToken, "testing"));

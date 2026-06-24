@@ -32,9 +32,22 @@ public class GroupByAllocatorFactory {
     }
 
     public static GroupByAllocator createAllocator(CairoConfiguration configuration) {
+        return createAllocator(configuration, true);
+    }
+
+    /**
+     * Creates a GROUP BY allocator. When {@code openOnInit} is {@code false},
+     * the allocator's chunk-index backing is not allocated at construction
+     * time; the first {@link GroupByAllocator#reopen()} allocates it under the
+     * bound {@link io.questdb.std.MemoryTracker}, keeping per-query alloc/free
+     * accounting symmetric from the very first cursor.
+     */
+    public static GroupByAllocator createAllocator(CairoConfiguration configuration, boolean openOnInit) {
         return new FastGroupByAllocator(
                 configuration.getGroupByAllocatorDefaultChunkSize(),
-                configuration.getGroupByAllocatorMaxChunkSize()
+                configuration.getGroupByAllocatorMaxChunkSize(),
+                true,
+                openOnInit
         );
     }
 }

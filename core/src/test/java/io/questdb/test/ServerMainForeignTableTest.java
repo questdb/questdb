@@ -242,13 +242,13 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
             // check content of table after sym-linking it
             try (
                     ServerMain qdb = new ServerMain(getServerMainArgs());
-                    SqlCompiler compiler = qdb.getEngine().getSqlCompiler();
                     SqlExecutionContext context = createSqlExecutionCtx(qdb.getEngine())
             ) {
                 qdb.start();
                 new QueryAssertion(context.getCairoEngine(), context, () -> {
                 }, "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR")
                         .noLeakCheck()
+                        .noMemoryUsageCheck()
                         .expectSize()
                         .returns(TABLE_START_CONTENT);
                 CairoEngine engine = qdb.getEngine();

@@ -2488,7 +2488,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
             int m = (int) sz;
             T[] r = (a.length >= m) ? a :
                     (T[]) java.lang.reflect.Array
-                          .newInstance(a.getClass().getComponentType(), m);
+                            .newInstance(a.getClass().getComponentType(), m);
             int n = r.length;
             int i = 0;
             for (E e : this) {

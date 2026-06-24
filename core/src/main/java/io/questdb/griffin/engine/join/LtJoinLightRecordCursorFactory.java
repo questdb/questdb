@@ -83,7 +83,7 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
             this.slaveKeySink = slaveKeySink;
             this.toleranceInterval = toleranceInterval;
 
-            joinKeyMap = MapFactory.createUnorderedMap(configuration, joinColumnTypes, valueTypes);
+            joinKeyMap = MapFactory.createUnorderedMap(configuration, joinColumnTypes, valueTypes, false, false);
             this.cursor = new LtJoinLightRecordCursor(
                     columnSplit,
                     joinKeyMap,
@@ -112,7 +112,7 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
         try {
             slaveCursor = slaveFactory.getCursor(executionContext);
             slaveCursor.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
-            cursor.of(masterCursor, slaveCursor);
+            cursor.of(masterCursor, slaveCursor, executionContext);
             return cursor;
         } catch (Throwable e) {
             Misc.free(slaveCursor);
@@ -159,6 +159,7 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
         private final OuterJoinRecord record;
         private final int slaveTimestampIndex;
         private final long slaveTimestampScale;
+        private SqlExecutionCircuitBreaker circuitBreaker;
         private boolean isOpen;
         private long lastSlaveRowID = Long.MIN_VALUE;
         private Record masterRecord;
@@ -179,7 +180,7 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
             this.joinKeyMap = joinKeyMap;
             this.masterTimestampIndex = masterTimestampIndex;
             this.slaveTimestampIndex = slaveTimestampIndex;
-            this.isOpen = true;
+            this.isOpen = false;
             if (masterTimestampType == slaveTimestampType) {
                 masterTimestampScale = slaveTimestampScale = 1L;
             } else {
@@ -209,6 +210,7 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
 
         @Override
         public boolean hasNext() {
+            circuitBreaker.statefulThrowExceptionIfTripped();
             if (masterCursor.hasNext()) {
                 final long masterTimestamp = scaleTimestamp(masterRecord.getTimestamp(masterTimestampIndex), masterTimestampScale);
                 MapKey key;
@@ -297,11 +299,13 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
             slaveCursor.toTop();
         }
 
-        void of(RecordCursor masterCursor, RecordCursor slaveCursor) {
+        void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext executionContext) {
             if (!isOpen) {
                 isOpen = true;
+                joinKeyMap.setMemoryTracker(executionContext.getMemoryTracker());
                 joinKeyMap.reopen();
             }
+            this.circuitBreaker = executionContext.getCircuitBreaker();
             if (symbolTranslatingRecord != null) {
                 symbolTranslatingRecord.initSources(masterCursor, slaveCursor);
             }
