@@ -4761,6 +4761,58 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowJoinMasterTimestampMultiIntervalWhere() throws Exception {
+        // A master designated-timestamp predicate that extracts to MULTIPLE disjoint intervals
+        // (t.ts != literal, NOT BETWEEN, OR of ranges) must not collapse the slave page-frame scan
+        // to a single range. The slave scan derived from the master interval is the UNION of the
+        // per-master-range offsets, not their intersection; intersecting empties the slave frame and
+        // returns null aggregates. Every predicate below excludes only timestamps absent from the
+        // data, so it is a logical no-op and must match the predicate-free baseline. Cross-checked
+        // for the keyed (fast) and non-keyed (general) shapes, parallel and single-threaded.
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices (sym SYMBOL, x DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO trades VALUES ('a','2024-01-01T12:00:00.000000Z'), ('a','2024-01-01T13:00:00.000000Z')");
+            execute("INSERT INTO prices VALUES " +
+                    "('a',10.0,'2024-01-01T10:30:00.000000Z'), ('a',20.0,'2024-01-01T11:00:00.000000Z'), " +
+                    "('a',30.0,'2024-01-01T11:40:00.000000Z'), ('a',40.0,'2024-01-01T12:40:00.000000Z')");
+
+            final String prevailing = includePrevailing ? " INCLUDE PREVAILING" : " EXCLUDE PREVAILING";
+            // keyed (fast factory) and non-keyed (general factory) shapes
+            final String[] onClauses = {" ON (t.sym = p.sym)", ""};
+            // master-only predicates that each extract to multiple disjoint intervals while excluding
+            // only timestamps that are absent from the data, so they are logical no-ops
+            final String[] predicates = {
+                    "t.ts != '2020-01-01T00:00:00.000000Z'::TIMESTAMP",
+                    "'2020-01-01T00:00:00.000000Z'::TIMESTAMP != t.ts",
+                    "t.ts NOT BETWEEN '2019-01-01T00:00:00.000000Z'::TIMESTAMP AND '2020-01-01T00:00:00.000000Z'::TIMESTAMP",
+                    "t.ts < '2019-01-01T00:00:00.000000Z'::TIMESTAMP OR t.ts > '2020-01-01T00:00:00.000000Z'::TIMESTAMP",
+            };
+            for (boolean parallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelWindowJoinEnabled(parallel);
+                for (String on : onClauses) {
+                    final String baseQuery = "SELECT t.sym, avg(p.x) AS a0 FROM trades t WINDOW JOIN prices p" + on +
+                            " RANGE BETWEEN 120 MINUTES PRECEDING AND 30 MINUTES PRECEDING" + prevailing +
+                            " ORDER BY t.sym, a0";
+                    sink.clear();
+                    printSql(baseQuery, sink);
+                    final String expected = sink.toString();
+                    for (String pred : predicates) {
+                        final String query = "SELECT t.sym, avg(p.x) AS a0 FROM trades t WINDOW JOIN prices p" + on +
+                                " RANGE BETWEEN 120 MINUTES PRECEDING AND 30 MINUTES PRECEDING" + prevailing +
+                                " WHERE " + pred + " ORDER BY t.sym, a0";
+                        sink.clear();
+                        printSql(query, sink);
+                        TestUtils.assertEquals(query + " (parallel=" + parallel + ")", expected, sink);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testWindowJoinNestedUnderOtherJoin() throws Exception {
         Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
         Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
