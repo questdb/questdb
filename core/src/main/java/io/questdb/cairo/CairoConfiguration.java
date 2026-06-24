@@ -1119,6 +1119,16 @@ public interface CairoConfiguration {
     boolean isWriterMixedIOEnabled();
 
     /**
+     * When true, this node does NOT build or maintain indexes flagged REPLICA ONLY,
+     * and treats such columns as un-indexed for query planning. OSS default is false
+     * (build everything). Enterprise primaries in a replication setup return true so the
+     * index-build cost is offloaded to replicas. Read dynamically (role can switch at runtime).
+     */
+    default boolean skipReplicaOnlyIndexes() {
+        return false;
+    }
+
+    /**
      * This is a flag to enable/disable making table directory names different to table names for non-WAL tables.
      * When it is enabled directory name of table TRADE becomes TRADE~, so that ~ sign is added at the end.
      * The flag is enabled in tests and disabled in released code for backward compatibility. Tests verify that
