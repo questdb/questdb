@@ -7540,6 +7540,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (!ColumnType.isSymbol(metadata.getColumnType(columnIndex)) || !metadata.isIndexed(columnIndex)) {
                     continue;
                 }
+                // A skipping primary never built the .k/.v (or posting) files for a replica-only
+                // index, so there is nothing to hard-link into the parquet partition dir; mirror
+                // the build-side gate in rebuildPartitionIndexFiles to avoid "index files do not exist".
+                if (metadata.isColumnReplicaOnlyIndex(columnIndex) && configuration.skipReplicaOnlyIndexes()) {
+                    continue;
+                }
                 // no data in partition for this column
                 if (columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex) == -1) {
                     continue;
@@ -11636,7 +11642,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try {
             final int columnCount = metadata.getColumnCount();
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-                if (ColumnType.isSymbol(metadata.getColumnType(columnIndex)) && metadata.isIndexed(columnIndex)) {
+                if (ColumnType.isSymbol(metadata.getColumnType(columnIndex)) && metadata.isIndexed(columnIndex)
+                        && !(metadata.isColumnReplicaOnlyIndex(columnIndex) && configuration.skipReplicaOnlyIndexes())) {
                     final long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
                     if (columnTop == -1 || columnTop >= partitionRowCount) {
                         continue;

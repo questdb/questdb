@@ -116,6 +116,45 @@ public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
         });
     }
 
+    // parquet -> native conversion rebuilds the per-partition bitmap index for indexed symbol
+    // columns (TableWriter.rebuildPartitionIndexFiles). On a skipping primary a REPLICA ONLY
+    // index must NOT be rebuilt during the conversion back to native, otherwise the offload
+    // invariant is violated for any partition that was round-tripped through parquet.
+    @Test
+    public void testPrimarySkipsReplicaOnlyIndexBuildOnParquetToNativeConversion() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (s symbol index capacity 256 replica only, ts timestamp) timestamp(ts) partition by day wal");
+            // Spread several rows across one day partition.
+            execute("insert into x values ('a', 0), ('b', 1000000), ('a', 2000000), ('c', 3000000)");
+            drainWalQueue();
+
+            // No index built on the skipping primary at insert time.
+            Assert.assertFalse("no index files expected on skipping primary after insert", indexFilesExist("x", "s"));
+
+            // Round-trip the partition through parquet and back to native.
+            execute("alter table x convert partition to parquet where ts >= 0");
+            drainWalQueue();
+            execute("alter table x convert partition to native where ts >= 0");
+            drainWalQueue();
+
+            // The conversion back to native must not have rebuilt the replica-only index.
+            Assert.assertFalse(
+                    "no index files expected on skipping primary after parquet->native conversion",
+                    indexFilesExist("x", "s")
+            );
+            assertMetadataFlags("x", "s");
+
+            // Full-scan correctness: the skipped index must not change query results.
+            sink.clear();
+            printSql("select s, ts from x where s = 'a'", sink);
+            io.questdb.test.tools.TestUtils.assertEquals(
+                    "s\tts\n" +
+                            "a\t1970-01-01T00:00:00.000000Z\n" +
+                            "a\t1970-01-01T00:00:02.000000Z\n",
+                    sink);
+        });
+    }
+
     @Test
     public void testPrimarySkipsReplicaOnlyIndexBuild() throws Exception {
         assertMemoryLeak(() -> {
@@ -128,6 +167,40 @@ public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
             // symbol dictionary must still be built (only the bitmap index is skipped):
             // the per-column symbol map files (s.o/s.c/s.k/s.v at the table root) are always present.
             assertSymbolDictExists("x", "s");
+        });
+    }
+
+    // REINDEX (IndexBuilder.isSupportedColumn) rebuilds the bitmap index for every indexed symbol
+    // column. On a skipping primary a REPLICA ONLY index must be excluded, otherwise an operator
+    // running REINDEX would materialise the very index the node is meant to offload to replicas.
+    // With the gate, a table whose only indexed column is replica-only has no reindexable column,
+    // so a whole-table REINDEX reports "Table does not have any indexes" and builds nothing -- the
+    // same outcome as a table with no indexes at all. The observable invariant is: no index files.
+    @Test
+    public void testReindexSkipsReplicaOnlyIndexOnSkippingPrimary() throws Exception {
+        assertMemoryLeak(() -> {
+            // BYPASS WAL: REINDEX TABLE ... LOCK EXCLUSIVE operates on the table directly.
+            execute("create table x (s symbol index capacity 256 replica only, ts timestamp) timestamp(ts) partition by day bypass wal");
+            execute("insert into x values ('a', 0), ('b', 1000000), ('a', 2000000)");
+            engine.releaseAllWriters();
+
+            // Nothing built at insert time on the skipping primary.
+            Assert.assertFalse("no index files expected on skipping primary before REINDEX", indexFilesExist("x", "s"));
+
+            // The replica-only column is excluded by the IndexBuilder gate, so the whole-table
+            // REINDEX finds no reindexable column and reports it as un-indexed (instead of building).
+            try {
+                execute("REINDEX TABLE x LOCK EXCLUSIVE");
+                Assert.fail("REINDEX should find no reindexable column on a skipping primary");
+            } catch (io.questdb.cairo.CairoException e) {
+                io.questdb.test.tools.TestUtils.assertContains(e.getFlyweightMessage(), "Table does not have any indexes");
+            }
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+
+            // REINDEX must not have built the replica-only index on the skipping primary.
+            Assert.assertFalse("no index files expected on skipping primary after REINDEX", indexFilesExist("x", "s"));
+            assertMetadataFlags("x", "s");
         });
     }
 
