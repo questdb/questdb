@@ -9436,7 +9436,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             final int colOffset = TableWriter.getPrimaryColumnIndex(i);
                             final boolean notTheTimestamp = i != timestampIndex;
                             final CharSequence columnName = metadata.getColumnName(i);
-                            final int indexBlockCapacity = metadata.isColumnIndexed(i) ? metadata.getIndexValueBlockCapacity(i) : -1;
+                            // Use role-aware check (mirrors openPartition / O3PartitionJob guards): on a skipping
+                            // primary a replica-only column has no indexer wired (indexers[i] == null), so the
+                            // raw isColumnIndexed() would cause a null-indexer deref in getIndexWriter(i).
+                            final int indexBlockCapacity = metadata.isColumnIndexActive(i, configuration.skipReplicaOnlyIndexes()) ? metadata.getIndexValueBlockCapacity(i) : -1;
                             final IndexWriter indexWriter = indexBlockCapacity > -1 ? getIndexWriter(i) : null;
                             final MemoryR oooMem1 = o3Columns.getQuick(colOffset);
                             final MemoryR oooMem2 = o3Columns.getQuick(colOffset + 1);
