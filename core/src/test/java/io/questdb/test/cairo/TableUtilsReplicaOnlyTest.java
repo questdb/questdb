@@ -27,20 +27,18 @@ package io.questdb.test.cairo;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
 public class TableUtilsReplicaOnlyTest extends AbstractCairoTest {
 
     @Test
-    @Ignore("enable in Task 7 once parser + metadata accessors wire the flag")
     public void testReplicaOnlyFlagRoundTrips() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (s symbol index capacity 256 replica only, ts timestamp) timestamp(ts) partition by day wal");
             try (TableMetadata m = engine.getTableMetadata(engine.verifyTableName("x"))) {
                 int idx = m.getColumnIndex("s");
                 Assert.assertTrue(m.isColumnIndexed(idx));
-                // TODO Task 4: assert m.isColumnReplicaOnlyIndex(idx) once the method is added to RecordMetadata
+                Assert.assertTrue(m.isColumnReplicaOnlyIndex(idx));
             }
         });
     }
