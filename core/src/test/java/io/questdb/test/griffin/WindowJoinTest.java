@@ -5655,6 +5655,93 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowJoinVectorizedSharedColumnAggregates() throws Exception {
+        // Multiple vectorized slave aggregates where two share one slave column dedup to a single
+        // column slot. The per-worker reduce path kept its function args function-indexed (an entry
+        // per aggregate, null for the deduped one) while the types and column slots stayed
+        // column-indexed, so a worker overran them: AssertionError in the general factory,
+        // "valueIndex out of bounds" in the fast factory. Cross-checked against the single-threaded
+        // result for both factories. Throws on HEAD without the fix.
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        setProperty(PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, 2);
+        setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 4);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_JOIN_ENABLED, "true");
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 1);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_SPIN_TIMEOUT, 2_000_000_000L);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        // v is LONG256, whose first/last are thread-unsafe, so the planner builds
+                        // per-worker group-by function copies -- the path the bug lives on. n is INT for
+                        // the second, distinct column slot.
+                        engine.execute(
+                                "create table trades (ts timestamp, sym symbol, v long256, n int) " +
+                                        "timestamp(ts) partition by day",
+                                sqlExecutionContext
+                        );
+                        engine.execute(
+                                "create table prices (ts timestamp, sym symbol, v long256, n int) " +
+                                        "timestamp(ts) partition by day",
+                                sqlExecutionContext
+                        );
+                        // 4000 master rows over small page frames fan hundreds of frames out to the 4 pool
+                        // workers, so the per-worker reduce path (where the bug lives) is reliably hit.
+                        engine.execute(
+                                "insert into trades select " +
+                                        "'2023-01-01T00:00:00.000000Z'::timestamp + (1_000_000 * x), " +
+                                        "rnd_symbol('TSLA', 'AMZN', 'META'), rnd_long256(), rnd_int() " +
+                                        "from long_sequence(4000)",
+                                sqlExecutionContext
+                        );
+                        engine.execute(
+                                "insert into prices select " +
+                                        "'2023-01-01T00:00:00.000000Z'::timestamp + (100_000 * x), " +
+                                        "rnd_symbol('TSLA', 'AMZN', 'META'), rnd_long256(), rnd_int() " +
+                                        "from long_sequence(40000)",
+                                sqlExecutionContext
+                        );
+                        TestUtils.drainWalQueue(engine);
+
+                        // first/last/count are order-independent and bit-exact, so the parallel result
+                        // matches the single-threaded one (a floating-point sum/avg would diverge in the
+                        // last ULP between the two paths).
+                        final String prevailing = includePrevailing ? " INCLUDE PREVAILING" : " EXCLUDE PREVAILING";
+                        final String[] queries = {
+                                // General (non-keyed) factory: first/last over v dedup to one column slot,
+                                // count over n is the second.
+                                "SELECT t.sym, t.ts, first(p.v), last(p.v), count(p.n) " +
+                                        "FROM trades t WINDOW JOIN prices p " +
+                                        "RANGE BETWEEN 5 SECONDS PRECEDING AND 5 SECONDS FOLLOWING" + prevailing +
+                                        " ORDER BY 1, 2",
+                                // Fast (symbol-keyed) factory: same shape with a symbol equality join key.
+                                "SELECT t.sym, t.ts, first(p.v), last(p.v), count(p.n) " +
+                                        "FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) " +
+                                        "RANGE BETWEEN 5 SECONDS PRECEDING AND 5 SECONDS FOLLOWING" + prevailing +
+                                        " ORDER BY 1, 2",
+                        };
+                        final StringSink expectedSink = new StringSink();
+                        final StringSink actualSink = new StringSink();
+                        for (int i = 0; i < queries.length; i++) {
+                            final String query = queries[i];
+                            sqlExecutionContext.setParallelWindowJoinEnabled(false);
+                            TestUtils.printSql(compiler, sqlExecutionContext, query, expectedSink);
+
+                            sqlExecutionContext.setParallelWindowJoinEnabled(true);
+                            TestUtils.printSql(compiler, sqlExecutionContext, query, actualSink);
+
+                            TestUtils.assertEquals(query, expectedSink, actualSink);
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
     public void testWindowJoinWithComplicityAggFunctions() throws Exception {
         // timestamp types don't matter for this test
         Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
