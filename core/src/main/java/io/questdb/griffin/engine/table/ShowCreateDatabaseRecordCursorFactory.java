@@ -38,7 +38,6 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.view.ViewDefinition;
-import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlCompiler;
@@ -283,29 +282,34 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
             return;
         }
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            final CompiledQuery compiledQuery = compiler.compile(definition.getMatViewSql(), executionContext);
-            try (RecordCursorFactory factory = compiledQuery.getRecordCursorFactory()) {
-                if (factory != null) {
-                    tableTokenCollector.collect(factory, executionContext);
-                    final ObjList<TableToken> collected = tableTokenCollector.tables.getList();
-                    for (int i = 0, n = collected.size(); i < n; i++) {
-                        out.add(collected.getQuick(i));
-                    }
-                }
-            }
-            // a view referenced by the mat view is inlined during compilation, so the plan walk
-            // above only sees the view's physical base tables, never the view itself. Collect the
-            // view (and mat-view) names from the parsed model so those objects are emitted ahead of
-            // this mat view and the dump stays replayable.
+            // Compile the mat view SQL once: build the execution model, then derive the factory
+            // from that same model. The two walks below need different artifacts but share one
+            // parse+optimise instead of paying for it twice.
             final ExecutionModel model = compiler.generateExecutionModel(definition.getMatViewSql(), executionContext);
             final IQueryModel queryModel = model.getQueryModel();
             if (queryModel != null) {
+                // a view referenced by the mat view is inlined during compilation, so the plan walk
+                // below only sees the view's physical base tables, never the view itself. Collect the
+                // view (and mat-view) names from the parsed model first, before generating the factory
+                // (which may mutate the model), so those objects are emitted ahead of this mat view
+                // and the dump stays replayable.
                 final ObjList<CharSequence> referencedViews = new ObjList<>();
                 SqlUtil.collectAllTableAndViewNames(queryModel, referencedViews, true);
                 for (int i = 0, n = referencedViews.size(); i < n; i++) {
                     final TableToken dependency = engine.getTableTokenIfExists(referencedViews.getQuick(i));
                     if (dependency != null) {
                         out.add(dependency);
+                    }
+                }
+                // generate the factory from the already-compiled model (no second parse+optimise)
+                // and walk its plan to collect the physical base tables the mat view reads.
+                try (RecordCursorFactory factory = SqlUtil.generateFactory(compiler, model, executionContext)) {
+                    if (factory != null) {
+                        tableTokenCollector.collect(factory, executionContext);
+                        final ObjList<TableToken> collected = tableTokenCollector.tables.getList();
+                        for (int i = 0, n = collected.size(); i < n; i++) {
+                            out.add(collected.getQuick(i));
+                        }
                     }
                 }
             }

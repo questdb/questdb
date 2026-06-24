@@ -352,6 +352,34 @@ public class ShowCreateDatabaseTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTablesDumpExercisesCursorContract() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, true);
+            execute("create table alpha (ts timestamp, v double) timestamp(ts) partition by day wal");
+            execute("create table beta (ts timestamp, s symbol) timestamp(ts) partition by day wal");
+            drainWalQueue();
+
+            // Drive the cursor through the standard builder so the second cursor pass, toTop()
+            // re-read, calculateSize() cross-check, and variable-column checks all run against
+            // ShowCreateDatabaseCursor. The hand-rolled dumpDatabase() helper only iterates once,
+            // so a toTop() reset bug on this multi-row cursor would otherwise pass undetected.
+            assertQuery("SHOW CREATE DATABASE INCLUDE (TABLES)")
+                    .noRandomAccess()
+                    .returns("""
+                            ddl
+                            CREATE TABLE 'alpha' (\s
+                            \tts TIMESTAMP,
+                            \tv DOUBLE
+                            ) timestamp(ts) PARTITION BY DAY;
+                            CREATE TABLE 'beta' (\s
+                            \tts TIMESTAMP,
+                            \ts SYMBOL
+                            ) timestamp(ts) PARTITION BY DAY;
+                            """);
+        });
+    }
+
+    @Test
     public void testViewOnViewDependencyOrdering() throws Exception {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, true);
