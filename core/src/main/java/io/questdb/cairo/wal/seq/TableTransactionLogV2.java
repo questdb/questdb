@@ -191,6 +191,10 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
 
     @Override
     public void fullSync() {
+        // Part file must be durable before the header: same ordering invariant as sync0().
+        if (txnPartMem.isOpen()) {
+            txnPartMem.sync(false);
+        }
         txnMem.sync(false);
     }
 
@@ -324,7 +328,14 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
     private void sync0() {
         int commitMode = configuration.getCommitMode();
         if (commitMode != CommitMode.NOSYNC) {
-            txnMem.sync(commitMode == CommitMode.ASYNC);
+            // Part file must be durable before the header that points to it.
+            // A crash after the header sync but before the part file is written back
+            // would leave maxTxn=N pointing at a zeroed/partial record.
+            boolean async = commitMode == CommitMode.ASYNC;
+            if (txnPartMem.isOpen()) {
+                txnPartMem.sync(async);
+            }
+            txnMem.sync(async);
         }
     }
 
