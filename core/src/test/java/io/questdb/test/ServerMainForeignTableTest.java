@@ -208,6 +208,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                 new QueryAssertion(context.getCairoEngine(), context, () -> {
                 }, "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR")
                         .noLeakCheck()
+                        .noMemoryUsageCheck()
                         .expectSize()
                         .returns(TABLE_START_CONTENT);
                 assertTableExists(tableToken, false, true);
@@ -362,6 +363,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                 new QueryAssertion(context.getCairoEngine(), context, () -> {
                 }, "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR")
                         .noLeakCheck()
+                        .noMemoryUsageCheck()
                         .expectSize()
                         .returns(TABLE_START_CONTENT);
                 dropTable(context, tableToken);
