@@ -37,6 +37,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
@@ -73,7 +74,10 @@ import java.util.Comparator;
  * {@code SHOW CREATE ...} factory, so the dump stays in lock-step with those
  * commands without duplicating their formatting logic. Objects the caller is not
  * authorized to read are skipped, so the dump never discloses DDL the caller
- * could not otherwise see.
+ * could not otherwise see. An object dropped, renamed or recreated after the
+ * initial token snapshot but before its DDL is produced is likewise skipped (with
+ * a logged warning) rather than failing the whole dump; cancellation, timeouts and
+ * genuine errors still abort it.
  */
 public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorFactory {
     public static final int N_DDL_COL = 0;
@@ -138,8 +142,8 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
     }
 
     // the per-object SHOW CREATE factories take a token position for error reporting; a database dump
-    // has no per-object source position, so it passes 0. The position is only surfaced if the object
-    // is dropped between collection and emit, an accepted best-effort edge case for a live dump.
+    // has no per-object source position, so it passes 0. An object dropped between collection and emit
+    // is skipped by appendObjectDdl, so this 0 surfaces only for a genuine error that aborts the dump.
     protected RecordCursorFactory matViewFactory(TableToken token) {
         return new ShowCreateMatViewRecordCursorFactory(token, 0);
     }
@@ -150,22 +154,6 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
 
     protected RecordCursorFactory viewFactory(TableToken token) {
         return new ShowCreateViewRecordCursorFactory(token, 0);
-    }
-
-    private static void appendObjectDdl(
-            ObjList<CharSequence> out,
-            RecordCursorFactory factory,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        try {
-            try (RecordCursor cursor = factory.getCursor(executionContext)) {
-                if (cursor.hasNext()) {
-                    out.add(cursor.getRecord().getVarcharA(N_DDL_COL).toString());
-                }
-            }
-        } finally {
-            Misc.free(factory);
-        }
     }
 
     private static int categoryBit(TableToken token) {
@@ -207,6 +195,54 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
         }
     }
 
+    private static void logSkippedObject(TableToken token, CharSequence reason) {
+        LOG.info().$("object dropped or replaced between snapshot and emit, skipping from database dump [object=")
+                .$(token).$(", reason=").$safe(reason).I$();
+    }
+
+    // re-resolves the snapshotted name in the registry: a null or non-matching token means the
+    // object was dropped, renamed or recreated between the token snapshot and this emit, so the
+    // failing per-object SHOW CREATE is the vanish race rather than a real error to surface.
+    private static boolean vanishedBetweenSnapshotAndEmit(TableToken token, SqlExecutionContext executionContext) {
+        final TableToken live = executionContext.getCairoEngine().getTableTokenIfExists(token.getTableName());
+        return live == null || !live.equals(token);
+    }
+
+    // Produces one object's DDL by delegating to its per-object SHOW CREATE factory. The token set was
+    // snapshotted earlier (see appendObjects), but each object is resolved afresh here, so a concurrent
+    // DROP/RENAME/recreate can make the delegate throw. Skip such a vanished object with a logged warning
+    // instead of aborting the whole dump; still rethrow cancellation/interruption and genuine errors.
+    private void appendObjectDdl(
+            ObjList<CharSequence> out,
+            TableToken token,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        final RecordCursorFactory factory = objectFactory(token);
+        try {
+            try (RecordCursor cursor = factory.getCursor(executionContext)) {
+                if (cursor.hasNext()) {
+                    out.add(cursor.getRecord().getVarcharA(N_DDL_COL).toString());
+                }
+            }
+        } catch (CairoException e) {
+            // a cancelled or timed-out dump must surface, never be mistaken for a benign drop race
+            if (e.isInterruption() || e.isCancellation() || !vanishedBetweenSnapshotAndEmit(token, executionContext)) {
+                throw e;
+            }
+            logSkippedObject(token, e.getFlyweightMessage());
+        } catch (TableReferenceOutOfDateException e) {
+            // the object was recreated or renamed between snapshot and emit; its identity changed
+            logSkippedObject(token, e.getFlyweightMessage());
+        } catch (SqlException e) {
+            if (!vanishedBetweenSnapshotAndEmit(token, executionContext)) {
+                throw e;
+            }
+            logSkippedObject(token, e.getFlyweightMessage());
+        } finally {
+            Misc.free(factory);
+        }
+    }
+
     private void appendObjects(ObjList<CharSequence> out, SqlExecutionContext executionContext) throws SqlException {
         if ((includeMask & INCLUDE_SCHEMA) == 0) {
             return;
@@ -240,7 +276,7 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
         }
 
         for (int i = 0, n = ordered.size(); i < n; i++) {
-            appendObjectDdl(out, objectFactory(ordered.getQuick(i)), executionContext);
+            appendObjectDdl(out, ordered.getQuick(i), executionContext);
         }
     }
 

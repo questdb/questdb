@@ -25,11 +25,25 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.ShowCreateDatabaseRecordCursorFactory;
+import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -487,6 +501,236 @@ public class ShowCreateDatabaseTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testCancellationPropagates() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t1 (ts timestamp, v double) timestamp(ts) partition by day bypass wal");
+            execute("create table t2 (ts timestamp, v double) timestamp(ts) partition by day bypass wal");
+
+            // a cancelled dump must surface immediately, never be mistaken for a benign drop race
+            final Throwable thrown = runExpectingFailure(new HookedDatabaseFactory(
+                    ShowCreateDatabaseRecordCursorFactory.INCLUDE_TABLES,
+                    token -> "t2".contentEquals(token.getTableName())
+                            ? new ThrowingObjectFactory(null, CairoException.queryCancelled())
+                            : null
+            ));
+
+            Assert.assertTrue("cancellation must propagate", thrown instanceof CairoException);
+            Assert.assertTrue("cancellation must not be swallowed as a drop race", ((CairoException) thrown).isCancellation());
+        });
+    }
+
+    @Test
+    public void testConcurrentDropOfFirstTableSkipsItAndEmitsRest() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table aaa_victim (ts timestamp, v double) timestamp(ts) partition by day bypass wal");
+            execute("create table bbb_keep (ts timestamp, v double) timestamp(ts) partition by day bypass wal");
+            execute("create table ccc_keep (ts timestamp, v double) timestamp(ts) partition by day bypass wal");
+
+            // aaa_victim sorts first, so the very first emit resolves a table this hook drops in the same
+            // window. Proves the loop skips a vanished object even at position zero and still emits the rest.
+            final boolean[] fired = {false};
+            final ObjList<String> statements = drive(new HookedDatabaseFactory(
+                    ShowCreateDatabaseRecordCursorFactory.INCLUDE_TABLES,
+                    token -> {
+                        if (!fired[0] && "aaa_victim".contentEquals(token.getTableName())) {
+                            fired[0] = true;
+                            executeQuietly("drop table aaa_victim");
+                        }
+                        return null; // resolve the real per-object factory against the now-dropped table
+                    }
+            ));
+
+            Assert.assertTrue("drop hook must have fired", fired[0]);
+            final String dump = statements.toString();
+            Assert.assertEquals(dump, 2, statements.size());
+            Assert.assertFalse("dropped table must be skipped", dump.contains("aaa_victim"));
+            Assert.assertTrue(dump, dump.contains("CREATE TABLE 'bbb_keep'"));
+            Assert.assertTrue(dump, dump.contains("CREATE TABLE 'ccc_keep'"));
+        });
+    }
+
+    @Test
+    public void testConcurrentDropOfMatViewSkipsIt() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, true);
+            execute("create table base (ts timestamp, s symbol, v double) timestamp(ts) partition by day wal");
+            execute("create materialized view mv_drop as (select ts, s, avg(v) v from base sample by 1d) partition by day");
+            drainWalQueue();
+
+            final boolean[] fired = {false};
+            final ObjList<String> statements = drive(new HookedDatabaseFactory(
+                    ShowCreateDatabaseRecordCursorFactory.INCLUDE_SCHEMA,
+                    token -> {
+                        if (!fired[0] && "mv_drop".contentEquals(token.getTableName())) {
+                            fired[0] = true;
+                            executeQuietly("drop materialized view mv_drop");
+                            drainWalQueue();
+                        }
+                        return null;
+                    }
+            ));
+
+            Assert.assertTrue("materialized view drop hook must have fired", fired[0]);
+            final String dump = statements.toString();
+            Assert.assertEquals(dump, 1, statements.size());
+            Assert.assertTrue(dump, dump.contains("CREATE TABLE 'base'"));
+            Assert.assertFalse("dropped materialized view must be skipped", dump.contains("mv_drop"));
+        });
+    }
+
+    @Test
+    public void testConcurrentDropOfViewSkipsIt() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, true);
+            execute("create table base (ts timestamp, s symbol, v double) timestamp(ts) partition by day wal");
+            execute("create view v_drop as (select ts, s from base)");
+            drainWalQueue();
+
+            // Unlike a table, a view reads its DDL from an on-disk definition, so a concurrent DROP throws
+            // "could not read view definition" only once that file is gone (until then the dump emits the
+            // last-known DDL, an accepted best-effort outcome). Reproduce the throw while the view is
+            // genuinely dropped from the registry, so the re-check confirms the vanish and the dump skips it.
+            final boolean[] fired = {false};
+            final ObjList<String> statements = drive(new HookedDatabaseFactory(
+                    ShowCreateDatabaseRecordCursorFactory.INCLUDE_SCHEMA,
+                    token -> {
+                        if (!fired[0] && "v_drop".contentEquals(token.getTableName())) {
+                            fired[0] = true;
+                            executeQuietly("drop view v_drop");
+                            return new ThrowingObjectFactory(
+                                    SqlException.$(0, "could not read view definition [table=v_drop]"), null);
+                        }
+                        return null;
+                    }
+            ));
+
+            Assert.assertTrue("view drop hook must have fired", fired[0]);
+            final String dump = statements.toString();
+            Assert.assertEquals(dump, 1, statements.size());
+            Assert.assertTrue(dump, dump.contains("CREATE TABLE 'base'"));
+            Assert.assertFalse("dropped view must be skipped", dump.contains("v_drop"));
+        });
+    }
+
+    @Test
+    public void testConcurrentRecreateUnderSameNameSkipsStaleObject() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table aaa_keep (ts timestamp, v double) timestamp(ts) partition by day bypass wal");
+            execute("create table victim (ts timestamp, v double) timestamp(ts) partition by day bypass wal");
+
+            // drop then immediately recreate victim under the same name: the snapshotted token is now stale,
+            // so the per-object SHOW CREATE resolves a different identity. The best-effort dump skips it rather
+            // than emitting a freshly created object that was never part of the snapshot.
+            final boolean[] fired = {false};
+            final ObjList<String> statements = drive(new HookedDatabaseFactory(
+                    ShowCreateDatabaseRecordCursorFactory.INCLUDE_TABLES,
+                    token -> {
+                        if (!fired[0] && "victim".contentEquals(token.getTableName())) {
+                            fired[0] = true;
+                            executeQuietly("drop table victim");
+                            executeQuietly("create table victim (ts timestamp, x int) timestamp(ts) partition by day bypass wal");
+                        }
+                        return null;
+                    }
+            ));
+
+            Assert.assertTrue("recreate hook must have fired", fired[0]);
+            final String dump = statements.toString();
+            Assert.assertEquals(dump, 1, statements.size());
+            Assert.assertTrue(dump, dump.contains("CREATE TABLE 'aaa_keep'"));
+            Assert.assertFalse("stale victim must be skipped", dump.contains("victim"));
+        });
+    }
+
+    @Test
+    public void testGenuineCairoExceptionForPresentObjectPropagates() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t1 (ts timestamp, v double) timestamp(ts) partition by day bypass wal");
+            execute("create table t2 (ts timestamp, v double) timestamp(ts) partition by day bypass wal");
+
+            // t2 is never dropped; a non-cancellation failure for a still-present object is a real error
+            // and must abort the dump rather than be silently skipped.
+            final Throwable thrown = runExpectingFailure(new HookedDatabaseFactory(
+                    ShowCreateDatabaseRecordCursorFactory.INCLUDE_TABLES,
+                    token -> "t2".contentEquals(token.getTableName())
+                            ? new ThrowingObjectFactory(null, CairoException.nonCritical().put("disk read boom"))
+                            : null
+            ));
+
+            Assert.assertTrue("a genuine error must propagate", thrown instanceof CairoException);
+            Assert.assertFalse("a genuine error must not be flagged as cancellation", ((CairoException) thrown).isCancellation());
+            TestUtils.assertContains(((FlyweightMessageContainer) thrown).getFlyweightMessage(), "disk read boom");
+        });
+    }
+
+    @Test
+    public void testGenuineSqlExceptionForPresentObjectPropagates() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t1 (ts timestamp, v double) timestamp(ts) partition by day bypass wal");
+            execute("create table t2 (ts timestamp, v double) timestamp(ts) partition by day bypass wal");
+
+            // t2 is never dropped; a delegate that fails for a still-present object is a real error and must
+            // abort the dump rather than be mistaken for a vanished object.
+            final Throwable thrown = runExpectingFailure(new HookedDatabaseFactory(
+                    ShowCreateDatabaseRecordCursorFactory.INCLUDE_TABLES,
+                    token -> "t2".contentEquals(token.getTableName())
+                            ? new ThrowingObjectFactory(SqlException.$(0, "boom while building t2"), null)
+                            : null
+            ));
+
+            Assert.assertTrue("a genuine error must propagate", thrown instanceof SqlException);
+            TestUtils.assertContains(((FlyweightMessageContainer) thrown).getFlyweightMessage(), "boom while building t2");
+        });
+    }
+
+    @Test
+    public void testTableReferenceOutOfDateIsSkipped() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t1 (ts timestamp, v double) timestamp(ts) partition by day bypass wal");
+            execute("create table t2 (ts timestamp, v double) timestamp(ts) partition by day bypass wal");
+
+            // a stale-reference signal means the object's identity changed between snapshot and emit;
+            // the dump skips it deterministically without consulting the registry.
+            final boolean[] fired = {false};
+            final ObjList<String> statements = drive(new HookedDatabaseFactory(
+                    ShowCreateDatabaseRecordCursorFactory.INCLUDE_TABLES,
+                    token -> {
+                        if ("t2".contentEquals(token.getTableName())) {
+                            fired[0] = true;
+                            return new ThrowingObjectFactory(null, TableReferenceOutOfDateException.of(token));
+                        }
+                        return null;
+                    }
+            ));
+
+            Assert.assertTrue("stale-reference hook must have fired", fired[0]);
+            final String dump = statements.toString();
+            Assert.assertEquals(dump, 1, statements.size());
+            Assert.assertTrue(dump, dump.contains("CREATE TABLE 't1'"));
+            Assert.assertFalse("stale-reference object must be skipped", dump.contains("t2"));
+        });
+    }
+
+    @Test
+    public void testTimeoutInterruptionPropagates() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t1 (ts timestamp, v double) timestamp(ts) partition by day bypass wal");
+            execute("create table t2 (ts timestamp, v double) timestamp(ts) partition by day bypass wal");
+
+            // a timed-out dump must surface, never be mistaken for a benign drop race
+            final Throwable thrown = runExpectingFailure(new HookedDatabaseFactory(
+                    ShowCreateDatabaseRecordCursorFactory.INCLUDE_TABLES,
+                    token -> "t2".contentEquals(token.getTableName())
+                            ? new ThrowingObjectFactory(null, CairoException.queryTimedOut())
+                            : null
+            ));
+
+            Assert.assertTrue("timeout must propagate", thrown instanceof CairoException);
+            Assert.assertTrue("timeout must not be swallowed as a drop race", ((CairoException) thrown).isInterruption());
+        });
+    }
+
     private static String inventory() throws Exception {
         sink.clear();
         printSql("SELECT table_name, table_type FROM tables() ORDER BY table_name, table_type");
@@ -512,5 +756,114 @@ public class ShowCreateDatabaseTest extends AbstractCairoTest {
             }
         }
         return statements;
+    }
+
+    // drives a directly-constructed dump factory through the cursor, collecting one statement per row
+    private static ObjList<String> drive(ShowCreateDatabaseRecordCursorFactory factory) throws SqlException {
+        final ObjList<String> statements = new ObjList<>();
+        try (RecordCursorFactory f = factory; RecordCursor cursor = f.getCursor(sqlExecutionContext)) {
+            final Record record = cursor.getRecord();
+            while (cursor.hasNext()) {
+                statements.add(record.getVarcharA(0).toString());
+            }
+        }
+        return statements;
+    }
+
+    // runs DDL from inside a per-object hook, where checked exceptions cannot propagate
+    private static void executeQuietly(String sql) {
+        try {
+            execute(sql);
+        } catch (SqlException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    // drives a dump expected to fail, returning the thrown error (or null) while always closing the factory
+    private static Throwable runExpectingFailure(ShowCreateDatabaseRecordCursorFactory factory) {
+        try (RecordCursorFactory f = factory) {
+            try (RecordCursor cursor = f.getCursor(sqlExecutionContext)) {
+                //noinspection StatementWithEmptyBody
+                while (cursor.hasNext()) {
+                    // drain
+                }
+            }
+            return null;
+        } catch (Throwable t) {
+            return t;
+        }
+    }
+
+    private static GenericRecordMetadata stubMetadata() {
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        metadata.add(new TableColumnMetadata("ddl", ColumnType.VARCHAR));
+        return metadata;
+    }
+
+    @FunctionalInterface
+    private interface PerObjectHook {
+        // Returns a replacement per-object factory for this token, or null to fall back to the real one.
+        // The hook may perform a side effect (such as dropping the object) to simulate a concurrent DDL
+        // landing between the token snapshot and this object's emit.
+        RecordCursorFactory replace(TableToken token);
+    }
+
+    // A dump factory that routes each per-object SHOW CREATE through a test hook, so a test can drop the
+    // object or substitute a throwing delegate exactly at emit time.
+    private static final class HookedDatabaseFactory extends ShowCreateDatabaseRecordCursorFactory {
+        private final PerObjectHook hook;
+
+        private HookedDatabaseFactory(int includeMask, PerObjectHook hook) {
+            super(includeMask);
+            this.hook = hook;
+        }
+
+        @Override
+        protected RecordCursorFactory matViewFactory(TableToken token) {
+            final RecordCursorFactory replacement = hook.replace(token);
+            return replacement != null ? replacement : super.matViewFactory(token);
+        }
+
+        @Override
+        protected RecordCursorFactory tableFactory(TableToken token) {
+            final RecordCursorFactory replacement = hook.replace(token);
+            return replacement != null ? replacement : super.tableFactory(token);
+        }
+
+        @Override
+        protected RecordCursorFactory viewFactory(TableToken token) {
+            final RecordCursorFactory replacement = hook.replace(token);
+            return replacement != null ? replacement : super.viewFactory(token);
+        }
+    }
+
+    // A per-object factory whose getCursor always throws, simulating a delegate failure during emit.
+    private static final class ThrowingObjectFactory extends AbstractRecordCursorFactory {
+        private final RuntimeException runtimeError;
+        private final SqlException sqlError;
+
+        private ThrowingObjectFactory(SqlException sqlError, RuntimeException runtimeError) {
+            super(stubMetadata());
+            this.sqlError = sqlError;
+            this.runtimeError = runtimeError;
+        }
+
+        @Override
+        public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+            if (sqlError != null) {
+                throw sqlError;
+            }
+            throw runtimeError;
+        }
+
+        @Override
+        public boolean recordCursorSupportsRandomAccess() {
+            return false;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.type("throwing");
+        }
     }
 }
