@@ -2431,7 +2431,7 @@ public class CairoEngine implements Closeable, WriterSource {
             // pending-window residual is a known, tracked deferral. Letting the exception escape would
             // cause loadMatViewIntoStore's logging-only catch to swallow it, skipping
             // enqueueIncrementalRefresh and leaving the view silently unscheduled after a promote-hydrate.
-            LOG.error().$("could not scan base WAL gap for truncate, scheduling refresh [baseTable=").$(baseTableToken)
+            LOG.info().$("could not scan base WAL gap for truncate, scheduling refresh [baseTable=").$(baseTableToken)
                     .$(", errno=").$(e.getErrno())
                     .$(", msg=").$safe(e.getFlyweightMessage())
                     .I$();

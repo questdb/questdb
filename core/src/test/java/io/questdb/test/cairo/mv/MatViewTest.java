@@ -3068,6 +3068,24 @@ public class MatViewTest extends AbstractCairoTest {
                 // drain
             }
 
+            // Positive witness: the deletion above must make a WAL-gap scan over the affected range
+            // actually throw, so the hydrate path's catch is genuinely exercised (not silently bypassed
+            // via a clean no-truncate read on a platform where the deletion did not take effect).
+            final MatViewState mvState = ((MatViewStateStoreImpl) engine.getMatViewStateStore())
+                    .getViewState(engine.verifyTableName("mv"));
+            Assert.assertNotNull(mvState);
+            final long baseLastTxn = engine.getTableSequencerAPI().getTxnTracker(baseTableToken).getWriterTxn();
+            try (
+                    WalTxnRangeLoader probe = new WalTxnRangeLoader(engine.getConfiguration());
+                    Path probePath = new Path()
+            ) {
+                final LongList probeIntervals = new LongList();
+                probe.load(engine, probePath, baseTableToken, probeIntervals, mvState.getLastRefreshBaseTxn(), baseLastTxn);
+                Assert.fail("expected the missing WAL segment to make the gap scan throw");
+            } catch (CairoException expected) {
+                // expected: the deleted event file makes the loader fail to read the gap
+            }
+
             // Simulate the role-promote hydrate path. The truncate scan's load() will throw because
             // the WAL segment file is missing. The fix catches the exception inside
             // hasBaseTableTruncateInWalGap and returns false, allowing enqueueIncrementalRefresh to
@@ -8183,6 +8201,12 @@ public class MatViewTest extends AbstractCairoTest {
                     baseTxnBeforeTruncate,
                     state.getLastRefreshBaseTxn()
             );
+            Assert.assertTrue("the truncate barrier must invalidate the period view", state.isInvalid());
+            drainWalAndMatViewQueues();
+            assertQuery("select view_status, invalidation_reason from materialized_views where view_name = 'mv'")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("view_status\tinvalidation_reason\ninvalid\ttruncate operation\n");
         });
     }
 
