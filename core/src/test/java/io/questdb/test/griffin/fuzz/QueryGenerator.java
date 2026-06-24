@@ -27,11 +27,13 @@ package io.questdb.test.griffin.fuzz;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.test.griffin.fuzz.clauses.GroupByClause;
+import io.questdb.test.griffin.fuzz.clauses.HorizonJoinClause;
 import io.questdb.test.griffin.fuzz.clauses.PostingClause;
 import io.questdb.test.griffin.fuzz.clauses.SampleByClause;
 import io.questdb.test.griffin.fuzz.clauses.SimpleClause;
 import io.questdb.test.griffin.fuzz.clauses.TemporalJoinClause;
 import io.questdb.test.griffin.fuzz.clauses.WindowClause;
+import io.questdb.test.griffin.fuzz.clauses.WindowJoinClause;
 import io.questdb.test.griffin.fuzz.expr.BindContext;
 
 /**
@@ -67,7 +69,7 @@ public final class QueryGenerator {
     private QueryGenerator() {
     }
 
-    public static GeneratedQuery generate(Rnd rnd, ObjList<FuzzTable> tables, BindContext ctx, boolean injectFaultFn, boolean windowEnabled) {
+    public static GeneratedQuery generate(Rnd rnd, ObjList<FuzzTable> tables, BindContext ctx, boolean injectFaultFn, boolean windowEnabled, boolean horizonJoinEnabled, boolean windowJoinEnabled) {
         int pick = rnd.nextInt(100);
         FuzzTable t = tables.getQuick(rnd.nextInt(tables.size()));
 
@@ -76,10 +78,12 @@ public final class QueryGenerator {
             if (other == t) {
                 other = tables.getQuick((tables.indexOf(t) + 1) % tables.size());
             }
-            // Joins stay on direct, real tables: ASOF/LT/SPLICE need a
-            // designated timestamp on both sides which virtual tables
-            // don't carry.
-            return TemporalJoinClause.generate(rnd, FuzzSource.direct(t), FuzzSource.direct(other), ctx, injectFaultFn);
+            // Joins stay on direct, real tables: ASOF/LT/SPLICE, HORIZON and
+            // WINDOW joins all need a designated timestamp on both sides which
+            // virtual tables don't carry. The 15% join band is split across the
+            // enabled join kinds; with both new kinds off it stays temporal-only
+            // and draws no extra rnd op, preserving the original distribution.
+            return generateJoin(rnd, t, other, ctx, injectFaultFn, horizonJoinEnabled, windowJoinEnabled);
         }
 
         // Posting-index read shapes (distinct key enumeration / covering read)
@@ -116,6 +120,36 @@ public final class QueryGenerator {
             return WindowClause.generate(rnd, source, ctx, injectFaultFn);
         }
         return SimpleClause.generate(rnd, source, ctx, injectFaultFn);
+    }
+
+    /**
+     * Picks one of the enabled join kinds for the join band. Temporal
+     * (ASOF/LT/SPLICE) is always available; HORIZON and WINDOW joins are added
+     * when their config flags are on. The sub-pick is drawn only when more than
+     * one kind is enabled, so the both-off case reproduces the pre-existing
+     * temporal-only rnd stream exactly. All three kinds run on direct real
+     * tables and thread {@code injectFaultFn} into their master-only WHERE.
+     */
+    private static GeneratedQuery generateJoin(
+            Rnd rnd,
+            FuzzTable t,
+            FuzzTable other,
+            BindContext ctx,
+            boolean injectFaultFn,
+            boolean horizonJoinEnabled,
+            boolean windowJoinEnabled
+    ) {
+        int kinds = 1 + (horizonJoinEnabled ? 1 : 0) + (windowJoinEnabled ? 1 : 0);
+        int joinPick = kinds > 1 ? rnd.nextInt(kinds) : 0;
+        if (joinPick == 0) {
+            return TemporalJoinClause.generate(rnd, FuzzSource.direct(t), FuzzSource.direct(other), ctx, injectFaultFn);
+        }
+        if (horizonJoinEnabled && joinPick == 1) {
+            return HorizonJoinClause.generate(rnd, t, other, ctx, injectFaultFn);
+        }
+        // The remaining slot is WINDOW: either joinPick == 2 (both kinds on) or
+        // joinPick == 1 with only WINDOW enabled.
+        return WindowJoinClause.generate(rnd, t, other, ctx, injectFaultFn);
     }
 
     private static FuzzSource pickSource(Rnd rnd, FuzzTable realTable) {

@@ -52,7 +52,8 @@ import java.nio.file.Paths;
  * Seeded random query fuzzer. Generates 1..3 WAL tables with all supported
  * scalar types plus DECIMAL and DOUBLE arrays, inserts rows that span
  * multiple DAY partitions, then runs a budget of randomly generated
- * SELECT / GROUP BY / SAMPLE BY / ASOF-LT-SPLICE JOIN queries and
+ * SELECT / GROUP BY / SAMPLE BY / ASOF-LT-SPLICE / HORIZON / WINDOW JOIN
+ * queries and
  * materializes every result row, additionally re-iterating each cursor
  * after {@code toTop()} and cross-checking {@code size()} /
  * {@code calculateSize()} against the materialized row count.
@@ -111,6 +112,16 @@ import java.nio.file.Paths;
  *         SIMPLE range, so the other shapes' frequencies are unchanged;
  *         pass {@code false} to drop window shapes and exercise the
  *         rest.</li>
+ *     <li>{@code -Dquestdb.fuzz.horizonjoin=true|false} and
+ *         {@code -Dquestdb.fuzz.windowjoin=true|false} &mdash; generate
+ *         HORIZON JOIN (a keyed GROUP BY over offset-shifted ASOF matches)
+ *         and WINDOW JOIN (a per-master-row aggregate over a slave time
+ *         frame) shapes (both default true). They share the join band with
+ *         the ASOF/LT/SPLICE temporal joins, so enabling them splits that
+ *         band rather than widening it; with both off the band is
+ *         temporal-only and draws the original rnd stream. Their WHERE is
+ *         master-side only, so the FUNCTION fault is woven there like the
+ *         other shapes.</li>
  *     <li>{@code -Dquestdb.fuzz.s0=L -Dquestdb.fuzz.s1=L} - replay a
  *         specific seed pair, as printed in the run's "random seeds: ..."
  *         line. Use to reproduce a failure deterministically.</li>
@@ -381,6 +392,8 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 .$(", faultPct=").$(config.getFaultProbabilityPct())
                 .$(", parallelFaults=").$(config.isParallelFaultEnabled())
                 .$(", window=").$(config.isWindowEnabled())
+                .$(", horizonJoin=").$(config.isHorizonJoinEnabled())
+                .$(", windowJoin=").$(config.isWindowJoinEnabled())
                 .$();
 
         FuzzTableFactory factory = new FuzzTableFactory(config);
@@ -430,7 +443,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 boolean injectFaultFn = faultType == FaultType.FUNCTION;
                 long preGenS0 = rnd.getSeed0();
                 long preGenS1 = rnd.getSeed1();
-                GeneratedQuery query = QueryGenerator.generate(rnd, tables, null, injectFaultFn, config.isWindowEnabled());
+                GeneratedQuery query = QueryGenerator.generate(rnd, tables, null, injectFaultFn, config.isWindowEnabled(), config.isHorizonJoinEnabled(), config.isWindowJoinEnabled());
                 QueryRunner.Result result;
                 if (faultType != null) {
                     // Fault queries use a crash-and-recover oracle, not the
@@ -486,7 +499,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                         long bindS1 = rnd.nextLong();
                         rnd.reset(preGenS0, preGenS1);
                         BindContext ctx = new BindContext(new Rnd(bindS0, bindS1), CONSTANT_BIND_PROBABILITY_PCT);
-                        GeneratedQuery bindForm = QueryGenerator.generate(rnd, tables, ctx, injectFaultFn, config.isWindowEnabled());
+                        GeneratedQuery bindForm = QueryGenerator.generate(rnd, tables, ctx, injectFaultFn, config.isWindowEnabled(), config.isHorizonJoinEnabled(), config.isWindowJoinEnabled());
                         if (ctx.getBindValues().size() > 0) {
                             query = query.withBind(bindForm.sql(), ctx.getBindNames(), ctx.getBindValues());
                             bindGen++;
