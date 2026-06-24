@@ -31,8 +31,8 @@ use questdbr::parquet_write::ParquetWriter;
 use arrow::array::UInt32Array;
 
 use crate::common::encode::{
-    build_qdb_varchar_data, make_primitive_column, make_symbol_column, make_varchar_column,
-    serialize_as_symbols, write_parquet,
+    build_qdb_binary_data, build_qdb_varchar_data, make_primitive_column, make_string_column,
+    make_symbol_column, make_varchar_column, serialize_as_symbols, write_parquet,
 };
 use crate::common::Encoding;
 
@@ -801,5 +801,236 @@ fn questdb_parquet_ipv4_dict_unsigned_bounds_survive_external_pruning() {
     assert!(
         matched,
         "row group 1 must contain an address > 199.0.0.0, so pruning it drops rows"
+    );
+}
+
+/// Companion to the dict test above, but for the multi-page chunk reduce. IPv4
+/// per-page bounds are unsigned; when one column chunk spans several data pages,
+/// the footer's chunk-level `min_value`/`max_value` come from reducing those
+/// per-page bounds, and that reduce must compare unsigned too. A signed reduce
+/// understates the chunk max for any address >= 128.0.0.0 (a negative i32), so a
+/// conformant reader pruning `WHERE ip > '199.0.0.0'` would skip the chunk that
+/// holds the match -- silently dropping rows.
+///
+/// This forces a single row group split into several data pages with a tiny
+/// `data_page_size`, places a sign-straddling high address on a later page than
+/// the low one, then reads the chunk bounds back with the independent Arrow
+/// reader and replays the unsigned pruning.
+#[test]
+fn questdb_parquet_reduces_multipage_ipv4_unsigned_bounds() {
+    const LOW: u32 = 0x0100_0000; // 1.0.0.0
+    const HIGH: u32 = 0xC800_0000; // 200.0.0.0 (negative as i32)
+    const PROBE: u32 = 0xC700_0000; // 199.0.0.0; only HIGH is above it
+
+    // LOW first, HIGH last; a 4-byte/row Int32 with an 8-byte page budget yields
+    // 2 rows/page, so LOW and HIGH land on different pages and the chunk reduce
+    // must fold the sign-straddling max across pages.
+    let ips: Vec<i32> = vec![
+        LOW as i32,
+        0x2000_0000, // 32.0.0.0
+        0x4000_0000, // 64.0.0.0
+        0x6400_0000, // 100.0.0.0
+        0x7F00_0000, // 127.0.0.0 (largest positive i32 here)
+        HIGH as i32,
+    ];
+    let ip_bytes = as_bytes(&ips);
+
+    let column = make_primitive_column(
+        "ip",
+        ColumnType::new(ColumnTypeTag::IPv4, 0).code(),
+        ip_bytes.as_ptr(),
+        ip_bytes.len(),
+        ips.len(),
+        Encoding::Plain.config(),
+    );
+    let partition = Partition {
+        table: "compat".to_string(),
+        columns: vec![column],
+    };
+
+    // One row group (default size) but a tiny page budget forces several data
+    // pages within that single chunk.
+    let mut buf = Cursor::new(Vec::new());
+    ParquetWriter::new(&mut buf)
+        .with_statistics(true)
+        .with_data_page_size(Some(8))
+        .finish(partition)
+        .expect("ParquetWriter::finish");
+    let data = buf.into_inner();
+
+    // The chunk must really span >1 data page, else the reduce never folds.
+    let options = ArrowReaderOptions::new().with_page_index(true);
+    let builder =
+        ParquetRecordBatchReaderBuilder::try_new_with_options(Bytes::from(data.clone()), options)
+            .expect("open parquet with arrow reader");
+    assert_eq!(
+        builder.metadata().num_row_groups(),
+        1,
+        "expected a single row group so the chunk reduce folds across pages"
+    );
+    let offset_index = builder
+        .metadata()
+        .offset_index()
+        .expect("offset index present when statistics are written");
+    assert!(
+        offset_index[0][0].page_locations().len() > 1,
+        "the ipv4 chunk must span multiple data pages"
+    );
+
+    // Decode the chunk bounds as unsigned u32 -- the order a conformant reader
+    // uses for a UINT_32 column with TypeDefinedOrder.
+    let metadata = external_metadata(&data);
+    let stats = metadata
+        .row_group(0)
+        .column(0)
+        .statistics()
+        .expect("ipv4 statistics");
+    let min = u32::from_le_bytes(
+        stats
+            .min_bytes_opt()
+            .expect("min_value present")
+            .try_into()
+            .expect("4-byte ipv4 min"),
+    );
+    let max = u32::from_le_bytes(
+        stats
+            .max_bytes_opt()
+            .expect("max_value present")
+            .try_into()
+            .expect("4-byte ipv4 max"),
+    );
+    assert_eq!(
+        (min, max),
+        (LOW, HIGH),
+        "unsigned chunk bounds; a signed reduce understates the chunk max (the page holding \
+         200.0.0.0 reduces to a smaller positive address)"
+    );
+
+    // Replay `ip > PROBE`: the chunk's unsigned max is above PROBE, so an external
+    // reader keeps it. The signed bug understates the max and would prune it.
+    assert!(
+        max > PROBE,
+        "unsigned chunk max must exceed the probe so the chunk is not pruned"
+    );
+
+    // The chunk really holds a match, so pruning it would lose rows.
+    let reader = ParquetRecordBatchReaderBuilder::try_new(Bytes::from(data))
+        .expect("arrow reader")
+        .build()
+        .expect("build reader");
+    let mut matched = false;
+    for batch in reader.flatten() {
+        let arr = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<UInt32Array>()
+            .expect("UInt32Array");
+        matched |= arr.iter().flatten().any(|v| v > PROBE);
+    }
+    assert!(
+        matched,
+        "the chunk must contain an address > 199.0.0.0, so pruning it drops rows"
+    );
+}
+
+/// Companion to the IPv4 multi-page reduce test, for the opaque-Binary unbounded-max
+/// sentinel. A page whose `max_value` prefix is all `0xFF` has no short upper bound,
+/// so the writer emits no `max_value` (min present, max absent) to mean "unbounded".
+/// When the chunk spans several data pages, the footer's chunk-level max comes from
+/// reducing the per-page bounds; that reduce must keep the chunk max absent too, or a
+/// sibling page's smaller bounded max would understate it and a conformant reader
+/// pruning `WHERE blob > ...` would silently drop the all-`0xFF` row.
+#[test]
+fn questdb_parquet_reduces_multipage_binary_unbounded_max() {
+    // A value whose clamped 9-byte prefix is all 0xFF (no short upper bound exists, so
+    // its page emits no max), placed among smaller values whose pages carry an
+    // ordinary bounded max.
+    let unbounded: Vec<u8> = vec![0xFF; 12];
+    let values: Vec<&[u8]> = vec![&[0x00], &[0x01], &unbounded, &[0x02]];
+    let nulls = vec![false; values.len()];
+    let (primary, offsets) = build_qdb_binary_data(&values, &nulls);
+    let offsets_bytes = as_bytes(&offsets);
+
+    let column = make_string_column(
+        "b",
+        ColumnType::new(ColumnTypeTag::Binary, 0).code(),
+        primary.as_ptr(),
+        primary.len(),
+        offsets_bytes.as_ptr(),
+        offsets_bytes.len(),
+        values.len(),
+        Encoding::Plain.config(),
+    );
+    let partition = Partition {
+        table: "compat".to_string(),
+        columns: vec![column],
+    };
+
+    // One row group (default size) but a tiny page budget forces several data pages
+    // within the single chunk, so the chunk reduce folds the unbounded page with the
+    // bounded ones.
+    let mut buf = Cursor::new(Vec::new());
+    ParquetWriter::new(&mut buf)
+        .with_statistics(true)
+        .with_data_page_size(Some(8))
+        .finish(partition)
+        .expect("ParquetWriter::finish");
+    let data = buf.into_inner();
+
+    // The chunk must really span >1 data page, else the reduce never folds.
+    let options = ArrowReaderOptions::new().with_page_index(true);
+    let builder =
+        ParquetRecordBatchReaderBuilder::try_new_with_options(Bytes::from(data.clone()), options)
+            .expect("open parquet with arrow reader");
+    assert_eq!(
+        builder.metadata().num_row_groups(),
+        1,
+        "expected a single row group so the chunk reduce folds across pages"
+    );
+    let offset_index = builder
+        .metadata()
+        .offset_index()
+        .expect("offset index present when statistics are written");
+    assert!(
+        offset_index[0][0].page_locations().len() > 1,
+        "the binary chunk must span multiple data pages"
+    );
+
+    // The footer chunk max must be absent (unbounded). A None-as-empty reduce would
+    // instead emit one of the small values (e.g. [0x02]) -- byte-wise less than the
+    // all-0xFF value, an invalid upper bound. The min stays present.
+    let thrift = thrift_metadata(&data);
+    let column_chunk = &thrift.row_groups[0].columns[0];
+    let stats = column_chunk
+        .meta_data
+        .as_ref()
+        .and_then(|meta| meta.statistics.as_ref())
+        .expect("thrift binary statistics");
+    assert_eq!(stats.max_value, None, "unbounded chunk max stays absent");
+    assert!(stats.min_value.is_some(), "chunk min is still present");
+
+    // The page index degrades to OffsetIndex-only: an unbounded-max page cannot go in
+    // a ColumnIndex, so the writer drops the ColumnIndex for the file while keeping
+    // the OffsetIndex (the supported all-or-nothing degradation).
+    assert!(
+        column_chunk.column_index_offset.is_none(),
+        "the ColumnIndex is omitted for a chunk with an unbounded-max page"
+    );
+    assert!(
+        column_chunk.offset_index_offset.is_some(),
+        "the OffsetIndex is still present"
+    );
+
+    // The independent Arrow reader agrees: no max bound, so `WHERE blob > ...` cannot
+    // prune the chunk that holds the all-0xFF row.
+    let metadata = external_metadata(&data);
+    let arrow_stats = metadata
+        .row_group(0)
+        .column(0)
+        .statistics()
+        .expect("binary statistics");
+    assert!(
+        arrow_stats.max_bytes_opt().is_none(),
+        "external reader must see no max bound for the unbounded chunk"
     );
 }

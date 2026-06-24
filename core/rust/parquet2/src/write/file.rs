@@ -13,7 +13,7 @@ use crate::{
 };
 
 use super::footer_cache::FooterCache;
-use super::indexes::{write_column_index, write_offset_index};
+use super::indexes::{pages_support_column_index, write_column_index, write_offset_index};
 use super::page::PageWriteSpec;
 use super::{row_group::write_row_group, type_defined_column_orders, RowGroupIter, WriteOptions};
 
@@ -297,16 +297,19 @@ fn write_page_index<W: Write>(
 ) -> Result<()> {
     let copied_for = |rg_idx: usize| copied_page_index.get(rg_idx).and_then(Option::as_ref);
 
-    // A fresh group can always supply a ColumnIndex from its page stats when
-    // write_statistics is set; a copied group can only supply one if its source
-    // carried it. If any copied group is missing it, emit none, since a copied
-    // group whose source predates statistics (or was written with them off)
-    // would otherwise leave the rewrite output with a ColumnIndex on the fresh
-    // groups but not the copied ones.
+    // A fresh group can supply a ColumnIndex from its page stats when
+    // write_statistics is set, unless a column carries an opaque-Binary page with an
+    // unbounded (max-less) max, which the ColumnIndex cannot represent. A copied group
+    // can only supply one if its source carried it. If any group cannot supply one,
+    // emit none: a copied group whose source predates statistics, or a fresh group
+    // with an unbounded-max page, would otherwise leave the output with a ColumnIndex
+    // on some row groups but not others.
     let emit_column_index = write_statistics
         && (0..row_groups.len()).all(|rg_idx| match copied_for(rg_idx) {
             Some(columns) => columns.iter().all(|c| c.column_index.is_some()),
-            None => true,
+            None => page_specs
+                .get(rg_idx)
+                .is_none_or(|cols| cols.iter().all(|pages| pages_support_column_index(pages))),
         });
 
     if emit_column_index {
