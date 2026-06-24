@@ -178,6 +178,10 @@ public final class Files {
         return size - size % PAGE_SIZE;
     }
 
+    public static int fdatasync(long fd) {
+        return fdatasync0(toOsFd(fd));
+    }
+
     public static int fsync(long fd) {
         return fsync(toOsFd(fd));
     }
@@ -639,6 +643,8 @@ public final class Files {
 
     // caller must call findClose to free allocated struct
     private native static long findFirst(long lpszName);
+
+    private static native int fdatasync0(int fd);
 
     private static native int fsync(int fd);
 

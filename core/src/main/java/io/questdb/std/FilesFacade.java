@@ -68,6 +68,8 @@ public interface FilesFacade {
 
     int findType(long findPtr);
 
+    void fdatasync(long fd);
+
     void fsync(long fd);
 
     void fsyncAndClose(long fd);

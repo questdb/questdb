@@ -319,10 +319,12 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     public void sync(boolean async) {
         ff.msync(pageAddress, size, async);
         // SYNC mode: also make a file EXTEND durable. msync flushes data pages but not the inode
-        // size after a posix_fallocate/ftruncate grow; fsync the fd when the file grew since the
-        // last sync so a crash cannot lose the just-committed extent (P2). ASYNC stays non-blocking.
+        // size after a posix_fallocate/ftruncate grow; fdatasync the fd when the file grew since the
+        // last sync so a crash cannot lose the just-committed extent (P2). fdatasync is cheaper than
+        // fsync (skips mtime/ctime inode metadata) but still persists data + i_size on Linux. ASYNC
+        // stays non-blocking.
         if (!async && size > lastSyncedSize) {
-            ff.fsync(fd);
+            ff.fdatasync(fd);
             lastSyncedSize = size;
         }
     }

@@ -146,10 +146,12 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
             ff.msync(pageAddress, getPageSize(), async);
             if (!async) {
                 // File size after mapping page `mappedPage` is (mappedPage+1)*extendSegmentSize
-                // (each mapPage posix_fallocates that length). fsync the extend in SYNC mode.
+                // (each mapPage posix_fallocates that length). fdatasync the extend in SYNC mode.
+                // fdatasync persists data + i_size but skips mtime/ctime — cheaper than fsync,
+                // same durability guarantee for file content and size on Linux.
                 long currentFileSize = (long) (mappedPage + 1) * getExtendSegmentSize();
                 if (currentFileSize > lastSyncedSize) {
-                    ff.fsync(fd);
+                    ff.fdatasync(fd);
                     lastSyncedSize = currentFileSize;
                 }
             }

@@ -275,6 +275,15 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_fsync(JNIEnv *e, jclass cl, jin
     return fsync((int) fd);
 }
 
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_fdatasync0(JNIEnv *e, jclass cl, jint fd) {
+#if defined(__linux__) || defined(__FreeBSD__)
+    return fdatasync((int) fd);
+#else
+    /* macOS: fsync is already the weak primitive (no metadata flush needed) */
+    return fsync((int) fd);
+#endif
+}
+
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_sync(JNIEnv *e, jclass cl) {
     sync();
     return 0;
