@@ -170,6 +170,8 @@ public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCurso
     }
 
     private void buildChain() {
+        // Consult the breaker before consuming the base, so an empty base scan still observes cancellation.
+        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
         final Record placeHolderRecord = baseCursor.getRecordB();
         if (limit != 0) {
             while (baseCursor.hasNext()) {
