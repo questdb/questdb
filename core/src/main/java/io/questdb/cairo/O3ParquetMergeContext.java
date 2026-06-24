@@ -50,6 +50,7 @@ public class O3ParquetMergeContext implements Closeable {
     private IntList activeToDecodeIdx;
     private DirectIntList bloomFilterColumns;
     private PartitionDescriptor chunkDescriptor;
+    private LongList convertedPtrs;
     private Decimal128 decimal128Buf;
     private Decimal256 decimal256Buf;
     private Decimal64 decimal64Buf;
@@ -81,6 +82,7 @@ public class O3ParquetMergeContext implements Closeable {
         activeToDecodeIdx = new IntList();
         bloomFilterColumns = new DirectIntList(16, MemoryTag.NATIVE_O3);
         chunkDescriptor = new PartitionDescriptor();
+        convertedPtrs = new LongList();
         decimal128Buf = new Decimal128();
         decimal256Buf = new Decimal256();
         decimal64Buf = new Decimal64();
@@ -108,6 +110,7 @@ public class O3ParquetMergeContext implements Closeable {
         activeToDecodeIdx.clear();
         bloomFilterColumns.clear();
         chunkDescriptor.clear();
+        convertedPtrs.clear();
         freshPartitionDescriptor.clear();
         gapO3Ranges.clear();
         mergeDstBufs.clear();
@@ -128,6 +131,9 @@ public class O3ParquetMergeContext implements Closeable {
         activeToDecodeIdx = null;
         bloomFilterColumns = Misc.free(bloomFilterColumns);
         chunkDescriptor = Misc.free(chunkDescriptor);
+        // Holds pointer copies into rowGroupBuffers / nullBufs / tmpBufs, not owned
+        // buffers, so it is dropped like srcPtrs (no freeNativePairs).
+        convertedPtrs = null;
         decimal128Buf = null;
         decimal256Buf = null;
         decimal64Buf = null;
@@ -179,6 +185,20 @@ public class O3ParquetMergeContext implements Closeable {
 
     public PartitionDescriptor getChunkDescriptor() {
         return chunkDescriptor;
+    }
+
+    /**
+     * Per-row-group result table for {@link O3PartitionJob#prepareParquetSourceColumn}, sized
+     * for {@code colCount} columns. Layout: 4 longs per column =
+     * {@code [dataPtr, dataSize, auxPtr, auxSize]} (auxPtr/auxSize are 0 for fixed-size columns).
+     * Holds the target-typed source pointers a converted/null/raw decoded column resolves to;
+     * the owned allocations behind them are tracked separately in the caller's free-list.
+     */
+    public LongList getConvertedPtrs(int colCount) {
+        final int requiredLen = colCount * 4;
+        convertedPtrs.setPos(requiredLen);
+        convertedPtrs.fill(0, requiredLen, 0);
+        return convertedPtrs;
     }
 
     public Decimal128 getDecimal128Buf() {

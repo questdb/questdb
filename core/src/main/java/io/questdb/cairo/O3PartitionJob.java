@@ -2210,35 +2210,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 parquetColumns.add(parquetIdx);
                 // When the source parquet type differs from the target, request a decode
                 // type that Rust can actually produce. Java batch-converts afterward.
-                int decodeType = columnType;
-                int srcType = decoder.metadata().getColumnType(parquetIdx);
-                int srcTag = ColumnType.tagOf(srcType);
-                int dstTag = ColumnType.tagOf(columnType);
-                if (ColumnType.isVarSize(srcTag) && !ColumnType.isVarSize(dstTag) && !ColumnType.isSymbol(dstTag)) {
-                    // Var->fixed: must use VARCHAR_SLICE (not native VARCHAR) because
-                    // convertVarColumnToFixed() reads VarcharSlice aux layout directly:
-                    // 4-byte u32 header at offset 0 + absolute data pointer at offset 8.
-                    decodeType = (srcTag == ColumnType.VARCHAR)
-                            ? ColumnType.VARCHAR_SLICE : srcType;
-                } else if (ColumnType.isSymbol(srcTag) && !ColumnType.isSymbol(dstTag)) {
-                    if (ColumnType.isVarSize(dstTag)) {
-                        // Symbol->var: must use native VARCHAR (not VARCHAR_SLICE) because
-                        // the merge path and parquet write path expect native VARCHAR aux format.
-                        // VarcharSlice aux entries have bit 0 set in the header, which the native
-                        // VARCHAR reader misinterprets as HEADER_FLAG_INLINED.
-                        decodeType = dstTag == ColumnType.STRING ? ColumnType.STRING : ColumnType.VARCHAR;
-                    } else {
-                        // Symbol->fixed: must use VARCHAR_SLICE because convertVarColumnToFixed()
-                        // reads VarcharSlice aux layout (4-byte header + absolute pointer at offset 8).
-                        decodeType = ColumnType.VARCHAR_SLICE;
-                    }
-                } else if (!ColumnType.isVarSize(srcTag) && !ColumnType.isSymbol(srcTag)
-                        && ColumnType.isVarSize(dstTag)) {
-                    // Fixed->var: Rust cannot produce var-size output from fixed input.
-                    // Decode as source fixed type; Java converts afterward.
-                    decodeType = srcType;
-                }
-                parquetColumns.add(decodeType);
+                parquetColumns.add(chooseParquetDecodeType(decoder, parquetIdx, columnType));
                 activeToDecodeIdx.setQuick(activeColCount, decodeColCount);
                 decodeColCount++;
             } else {
@@ -2276,121 +2248,36 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         srcPtrs.fill(0, activeColCount * 2, 0);
 
         try {
-            // Phase 1a: prepare the per-column SOURCE pointers in srcPtrs (data at
-            // slot bi2, aux at bi2+1). When a column's parquet decode type crosses the
-            // fixed<->var/symbol boundary relative to the current (post-ALTER) type,
-            // Rust decoded the row group in the SOURCE representation; this pass
-            // batch-converts it into the target representation in freshly allocated
-            // buffers tracked in nullBufs. Column-top / missing columns get null source
-            // buffers. This MUST run before the dedup compare below: the native dedup
-            // comparer reads these source pointers directly, and if it saw the raw
-            // cross-typed decode buffer it would misread it -- a fixed->var key has a
-            // dangling/empty aux vector (SIGSEGV), and a var/symbol->fixed key would
-            // read VARCHAR_SLICE bytes as fixed values (silent wrong dedup). The
-            // destination sizing (Phase 1b) and merge copy (Phase 2) reuse the same
+            // Phase 1a: prepare the per-column SOURCE pointers in srcPtrs (data at slot bi2, aux at
+            // bi2+1). prepareParquetSourceColumn batch-converts a fixed<->var/symbol crossing into
+            // the target representation (buffers tracked in nullBufs for freeing), fills a null
+            // source buffer for a column-top / missing column, or passes a target-typed decode
+            // through. This MUST run before the dedup compare below: the native dedup comparer
+            // reads these source pointers directly, and if it saw the raw cross-typed decode buffer
+            // it would misread it -- a fixed->var key has a dangling/empty aux vector (SIGSEGV), and
+            // a var/symbol->fixed key would read VARCHAR_SLICE bytes as fixed values (silent wrong
+            // dedup). The destination sizing (Phase 1b) and merge copy (Phase 2) reuse the same
             // prepared pointers, so each crossing conversion runs exactly once.
+            final LongList convertedPtrs = ctx.getConvertedPtrs(columnCount);
             for (int ai = 0; ai < activeColCount; ai++) {
                 int columnIndex = activeColIndices.getQuick(ai);
                 int columnType = tableWriterMetadata.getColumnType(columnIndex);
-                int bi4 = ai * 4;
-                int bi2 = ai * 2;
                 int decodeIdx = activeToDecodeIdx.getQuick(ai);
-
-                if (ColumnType.isVarSize(columnType)) {
-                    final ColumnTypeDriver ctd = ColumnType.getDriver(columnType);
-                    long columnDataPtr = decodeIdx >= 0 ? rowGroupBuffers.getChunkDataPtr(decodeIdx) : 0;
-                    long columnAuxPtr = decodeIdx >= 0 ? rowGroupBuffers.getChunkAuxPtr(decodeIdx) : 0;
-                    // Rust refresh_ptrs() sets aux_ptr to a non-null dangling pointer even when
-                    // aux_vec is empty (e.g. fixed->var: decoded as INT, target is VARCHAR/STRING).
-                    // Use aux_size to detect empty aux.
-                    long columnAuxSize = decodeIdx >= 0 ? rowGroupBuffers.getChunkAuxSize(decodeIdx) : 0;
-
-                    if (columnAuxSize == 0) {
-                        if (decodeIdx >= 0 && columnDataPtr != 0) {
-                            // Fixed->var: Rust decoded as source fixed type (no aux).
-                            // Batch-convert fixed data to the target var-size format.
-                            int parquetIdx = tableToParquetIdx.getQuick(columnIndex);
-                            int srcType = decoder.metadata().getColumnType(parquetIdx);
-
-                            long auxSize = ctd.getAuxVectorSize(rowGroupSize);
-                            long auxBuf = Unsafe.malloc(auxSize, MemoryTag.NATIVE_O3);
-                            nullBufs.setQuick(bi4, auxBuf);
-                            nullBufs.setQuick(bi4 + 1, auxSize);
-
-                            final int convColumnTop = (int) rowGroupBuffers.getChunkColumnTop(decodeIdx);
-                            if (ColumnType.isVarchar(columnType)) {
-                                long dataSize = estimateVarcharDataSize(srcType, rowGroupSize);
-                                long dataBuf = dataSize > 0 ? Unsafe.malloc(dataSize, MemoryTag.NATIVE_O3) : 0;
-                                if (dataBuf != 0) {
-                                    nullBufs.setQuick(bi4 + 2, dataBuf);
-                                    nullBufs.setQuick(bi4 + 3, dataSize);
-                                }
-                                convertFixedColumnToVarchar(srcType, columnDataPtr, rowGroupSize, convColumnTop, auxBuf, dataBuf, dataSize, ctx.getUtf8Sink());
-                                columnAuxPtr = auxBuf;
-                                columnDataPtr = dataBuf;
-                            } else {
-                                // STRING
-                                long dataSize = estimateStringDataSize(srcType, rowGroupSize);
-                                long dataBuf = Unsafe.malloc(dataSize, MemoryTag.NATIVE_O3);
-                                nullBufs.setQuick(bi4 + 2, dataBuf);
-                                nullBufs.setQuick(bi4 + 3, dataSize);
-                                convertFixedColumnToString(srcType, columnDataPtr, rowGroupSize, convColumnTop, auxBuf, dataBuf, dataSize, ctx.getUtf16Sink());
-                                columnAuxPtr = auxBuf;
-                                columnDataPtr = dataBuf;
-                            }
-                        } else {
-                            // Column top or missing from parquet: create null source buffers.
-                            long nullAuxSize = ctd.getAuxVectorSize(rowGroupSize);
-                            long nullAuxBuf = Unsafe.malloc(nullAuxSize, MemoryTag.NATIVE_O3);
-                            ctd.setFullAuxVectorNull(nullAuxBuf, rowGroupSize);
-                            columnAuxPtr = nullAuxBuf;
-                            nullBufs.setQuick(bi4, nullAuxBuf);
-                            nullBufs.setQuick(bi4 + 1, nullAuxSize);
-
-                            long nullDataSize = ctd.getDataVectorSizeAt(nullAuxBuf, rowGroupSize - 1);
-                            if (nullDataSize > 0) {
-                                long nullDataBuf = Unsafe.malloc(nullDataSize, MemoryTag.NATIVE_O3);
-                                ctd.setDataVectorEntriesToNull(nullDataBuf, rowGroupSize);
-                                columnDataPtr = nullDataBuf;
-                                nullBufs.setQuick(bi4 + 2, nullDataBuf);
-                                nullBufs.setQuick(bi4 + 3, nullDataSize);
-                            }
-                        }
-                    }
-                    srcPtrs.setQuick(bi2, columnDataPtr);
-                    srcPtrs.setQuick(bi2 + 1, columnAuxPtr);
-                } else {
-                    long columnDataPtr = decodeIdx >= 0 ? rowGroupBuffers.getChunkDataPtr(decodeIdx) : 0;
-                    long columnAuxSize = decodeIdx >= 0 ? rowGroupBuffers.getChunkAuxSize(decodeIdx) : 0;
-
-                    if (columnAuxSize > 0 && columnDataPtr != 0) {
-                        // Var->fixed or Symbol->fixed: Rust decoded as source var type (has aux).
-                        // Batch-convert var data to the target fixed-size format.
-                        long columnAuxPtr = rowGroupBuffers.getChunkAuxPtr(decodeIdx);
-                        int parquetIdx = tableToParquetIdx.getQuick(columnIndex);
-                        int srcType = decoder.metadata().getColumnType(parquetIdx);
-                        // SYMBOL was decoded as VARCHAR_SLICE; use VARCHAR as effective source type.
-                        if (ColumnType.isSymbol(ColumnType.tagOf(srcType))) {
-                            srcType = ColumnType.VARCHAR;
-                        }
-
-                        long fixSize = (long) rowGroupSize * ColumnType.sizeOf(columnType);
-                        long fixBuf = Unsafe.malloc(fixSize, MemoryTag.NATIVE_O3);
-                        nullBufs.setQuick(bi4, fixBuf);
-                        nullBufs.setQuick(bi4 + 1, fixSize);
-                        convertVarColumnToFixed(srcType, columnType, columnDataPtr, columnAuxPtr, rowGroupSize, fixBuf, ctx.getUtf8Sink(), ctx.getUtf16Sink(), ctx.getDecimal64Buf(), ctx.getDecimal128Buf(), ctx.getDecimal256Buf());
-                        columnDataPtr = fixBuf;
-                    } else if (columnDataPtr == 0) {
-                        // Column top or missing from parquet: create null source buffer.
-                        long nullFixSize = (long) rowGroupSize * ColumnType.sizeOf(columnType);
-                        long nullFixBuf = Unsafe.malloc(nullFixSize, MemoryTag.NATIVE_O3);
-                        TableUtils.setNull(columnType, nullFixBuf, rowGroupSize);
-                        columnDataPtr = nullFixBuf;
-                        nullBufs.setQuick(bi4, nullFixBuf);
-                        nullBufs.setQuick(bi4 + 1, nullFixSize);
-                    }
-                    srcPtrs.setQuick(bi2, columnDataPtr);
-                }
+                prepareParquetSourceColumn(
+                        decoder,
+                        rowGroupBuffers,
+                        tableToParquetIdx,
+                        columnIndex,
+                        columnType,
+                        decodeIdx,
+                        rowGroupSize,
+                        ctx,
+                        nullBufs,
+                        convertedPtrs,
+                        ai * 4
+                );
+                srcPtrs.setQuick(ai * 2, convertedPtrs.getQuick(ai * 4));        // dataPtr
+                srcPtrs.setQuick(ai * 2 + 1, convertedPtrs.getQuick(ai * 4 + 2)); // auxPtr
             }
 
             if (!tableWriter.isCommitDedupMode()) {
@@ -3626,6 +3513,180 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     }
 
     /**
+     * Selects the decode type Rust should produce for a parquet column whose stored type is
+     * {@code decoder.metadata().getColumnType(parquetIdx)} while its current (post-ALTER) type is
+     * {@code columnType}. Same-representation conversions (fixed-&gt;fixed, var-&gt;var) decode
+     * straight into {@code columnType}; a fixed&lt;-&gt;var/symbol crossing decodes into a source
+     * representation that {@link #prepareParquetSourceColumn} converts afterward. Shared by the
+     * O3 dedup-merge ({@link #mergeRowGroup}) and full-rewrite
+     * ({@link #rewriteParquetRowGroupWithConversions}) decode-list builders.
+     */
+    private static int chooseParquetDecodeType(ParquetPartitionDecoder decoder, int parquetIdx, int columnType) {
+        int srcType = decoder.metadata().getColumnType(parquetIdx);
+        int srcTag = ColumnType.tagOf(srcType);
+        int dstTag = ColumnType.tagOf(columnType);
+        if (ColumnType.isVarSize(srcTag) && !ColumnType.isVarSize(dstTag) && !ColumnType.isSymbol(dstTag)) {
+            // Var->fixed: must use VARCHAR_SLICE (not native VARCHAR) because
+            // convertVarColumnToFixed() reads VarcharSlice aux layout directly:
+            // 4-byte u32 header at offset 0 + absolute data pointer at offset 8.
+            return (srcTag == ColumnType.VARCHAR) ? ColumnType.VARCHAR_SLICE : srcType;
+        }
+        if (ColumnType.isSymbol(srcTag) && !ColumnType.isSymbol(dstTag)) {
+            if (ColumnType.isVarSize(dstTag)) {
+                // Symbol->var: must use native VARCHAR (not VARCHAR_SLICE) because
+                // the merge path and parquet write path expect native VARCHAR aux format.
+                // VarcharSlice aux entries have bit 0 set in the header, which the native
+                // VARCHAR reader misinterprets as HEADER_FLAG_INLINED.
+                return dstTag == ColumnType.STRING ? ColumnType.STRING : ColumnType.VARCHAR;
+            }
+            // Symbol->fixed: must use VARCHAR_SLICE because convertVarColumnToFixed()
+            // reads VarcharSlice aux layout (4-byte header + absolute pointer at offset 8).
+            return ColumnType.VARCHAR_SLICE;
+        }
+        if (!ColumnType.isVarSize(srcTag) && !ColumnType.isSymbol(srcTag) && ColumnType.isVarSize(dstTag)) {
+            // Fixed->var: Rust cannot produce var-size output from fixed input.
+            // Decode as source fixed type; Java converts afterward.
+            return srcType;
+        }
+        return columnType;
+    }
+
+    /**
+     * Materialises one decoded parquet column as a target-typed source for an O3 parquet write
+     * (dedup merge or full row-group rewrite). When the decode type crosses the fixed&lt;-&gt;
+     * var/symbol boundary (see {@link #chooseParquetDecodeType}), batch-converts the decode buffer
+     * into the target representation in a freshly allocated buffer; a column-top / missing column
+     * gets a null source buffer; an already-target-typed decode is passed through unchanged.
+     * <p>
+     * Writes the resulting source pointers into {@code outPtrs} at {@code [slot4 .. slot4+3]} as
+     * {@code [dataPtr, dataSize, auxPtr, auxSize]} (auxPtr/auxSize are 0 for fixed-size columns).
+     * Any buffer it allocates is recorded in {@code ownedBufs} at {@code [slot4 .. slot4+3]} as
+     * {@code [addr, size, addr, size]} so the caller can free it; pass-through (raw decode)
+     * pointers are not recorded. {@code slot4} is {@code ai * 4} for the active-column position.
+     */
+    private static void prepareParquetSourceColumn(
+            ParquetPartitionDecoder decoder,
+            RowGroupBuffers rowGroupBuffers,
+            IntList tableToParquetIdx,
+            int columnIndex,
+            int columnType,
+            int decodeIdx,
+            int rowGroupSize,
+            O3ParquetMergeContext ctx,
+            LongList ownedBufs,
+            LongList outPtrs,
+            int slot4
+    ) {
+        if (ColumnType.isVarSize(columnType)) {
+            final ColumnTypeDriver ctd = ColumnType.getDriver(columnType);
+            long columnDataPtr = decodeIdx >= 0 ? rowGroupBuffers.getChunkDataPtr(decodeIdx) : 0;
+            long columnDataSize = decodeIdx >= 0 ? rowGroupBuffers.getChunkDataSize(decodeIdx) : 0;
+            long columnAuxPtr = decodeIdx >= 0 ? rowGroupBuffers.getChunkAuxPtr(decodeIdx) : 0;
+            // Rust refresh_ptrs() sets aux_ptr to a non-null dangling pointer even when
+            // aux_vec is empty (e.g. fixed->var: decoded as INT, target is VARCHAR/STRING).
+            // Use aux_size to detect empty aux.
+            long columnAuxSize = decodeIdx >= 0 ? rowGroupBuffers.getChunkAuxSize(decodeIdx) : 0;
+
+            if (columnAuxSize == 0) {
+                if (decodeIdx >= 0 && columnDataPtr != 0) {
+                    // Fixed->var: Rust decoded as source fixed type (no aux).
+                    // Batch-convert fixed data to the target var-size format.
+                    int parquetIdx = tableToParquetIdx.getQuick(columnIndex);
+                    int srcType = decoder.metadata().getColumnType(parquetIdx);
+
+                    long auxSize = ctd.getAuxVectorSize(rowGroupSize);
+                    long auxBuf = Unsafe.malloc(auxSize, MemoryTag.NATIVE_O3);
+                    ownedBufs.setQuick(slot4, auxBuf);
+                    ownedBufs.setQuick(slot4 + 1, auxSize);
+
+                    final int convColumnTop = (int) rowGroupBuffers.getChunkColumnTop(decodeIdx);
+                    if (ColumnType.isVarchar(columnType)) {
+                        long dataSize = estimateVarcharDataSize(srcType, rowGroupSize);
+                        long dataBuf = dataSize > 0 ? Unsafe.malloc(dataSize, MemoryTag.NATIVE_O3) : 0;
+                        if (dataBuf != 0) {
+                            ownedBufs.setQuick(slot4 + 2, dataBuf);
+                            ownedBufs.setQuick(slot4 + 3, dataSize);
+                        }
+                        convertFixedColumnToVarchar(srcType, columnDataPtr, rowGroupSize, convColumnTop, auxBuf, dataBuf, dataSize, ctx.getUtf8Sink());
+                        columnAuxPtr = auxBuf;
+                        columnAuxSize = auxSize;
+                        columnDataPtr = dataBuf;
+                        columnDataSize = dataSize;
+                    } else {
+                        // STRING
+                        long dataSize = estimateStringDataSize(srcType, rowGroupSize);
+                        long dataBuf = Unsafe.malloc(dataSize, MemoryTag.NATIVE_O3);
+                        ownedBufs.setQuick(slot4 + 2, dataBuf);
+                        ownedBufs.setQuick(slot4 + 3, dataSize);
+                        convertFixedColumnToString(srcType, columnDataPtr, rowGroupSize, convColumnTop, auxBuf, dataBuf, dataSize, ctx.getUtf16Sink());
+                        columnAuxPtr = auxBuf;
+                        columnAuxSize = auxSize;
+                        columnDataPtr = dataBuf;
+                        columnDataSize = dataSize;
+                    }
+                } else {
+                    // Column top or missing from parquet: create null source buffers.
+                    long nullAuxSize = ctd.getAuxVectorSize(rowGroupSize);
+                    long nullAuxBuf = Unsafe.malloc(nullAuxSize, MemoryTag.NATIVE_O3);
+                    ctd.setFullAuxVectorNull(nullAuxBuf, rowGroupSize);
+                    columnAuxPtr = nullAuxBuf;
+                    columnAuxSize = nullAuxSize;
+                    ownedBufs.setQuick(slot4, nullAuxBuf);
+                    ownedBufs.setQuick(slot4 + 1, nullAuxSize);
+
+                    long nullDataSize = ctd.getDataVectorSizeAt(nullAuxBuf, rowGroupSize - 1);
+                    if (nullDataSize > 0) {
+                        long nullDataBuf = Unsafe.malloc(nullDataSize, MemoryTag.NATIVE_O3);
+                        ctd.setDataVectorEntriesToNull(nullDataBuf, rowGroupSize);
+                        columnDataPtr = nullDataBuf;
+                        columnDataSize = nullDataSize;
+                        ownedBufs.setQuick(slot4 + 2, nullDataBuf);
+                        ownedBufs.setQuick(slot4 + 3, nullDataSize);
+                    }
+                }
+            }
+            outPtrs.setQuick(slot4, columnDataPtr);
+            outPtrs.setQuick(slot4 + 1, columnDataSize);
+            outPtrs.setQuick(slot4 + 2, columnAuxPtr);
+            outPtrs.setQuick(slot4 + 3, columnAuxSize);
+        } else {
+            long columnDataPtr = decodeIdx >= 0 ? rowGroupBuffers.getChunkDataPtr(decodeIdx) : 0;
+            long columnAuxSize = decodeIdx >= 0 ? rowGroupBuffers.getChunkAuxSize(decodeIdx) : 0;
+
+            if (columnAuxSize > 0 && columnDataPtr != 0) {
+                // Var->fixed or Symbol->fixed: Rust decoded as source var type (has aux).
+                // Batch-convert var data to the target fixed-size format.
+                long columnAuxPtr = rowGroupBuffers.getChunkAuxPtr(decodeIdx);
+                int parquetIdx = tableToParquetIdx.getQuick(columnIndex);
+                int srcType = decoder.metadata().getColumnType(parquetIdx);
+                // SYMBOL was decoded as VARCHAR_SLICE; use VARCHAR as effective source type.
+                if (ColumnType.isSymbol(ColumnType.tagOf(srcType))) {
+                    srcType = ColumnType.VARCHAR;
+                }
+
+                long fixSize = (long) rowGroupSize * ColumnType.sizeOf(columnType);
+                long fixBuf = Unsafe.malloc(fixSize, MemoryTag.NATIVE_O3);
+                ownedBufs.setQuick(slot4, fixBuf);
+                ownedBufs.setQuick(slot4 + 1, fixSize);
+                convertVarColumnToFixed(srcType, columnType, columnDataPtr, columnAuxPtr, rowGroupSize, fixBuf, ctx.getUtf8Sink(), ctx.getUtf16Sink(), ctx.getDecimal64Buf(), ctx.getDecimal128Buf(), ctx.getDecimal256Buf());
+                columnDataPtr = fixBuf;
+            } else if (columnDataPtr == 0) {
+                // Column top or missing from parquet: create null source buffer.
+                long nullFixSize = (long) rowGroupSize * ColumnType.sizeOf(columnType);
+                long nullFixBuf = Unsafe.malloc(nullFixSize, MemoryTag.NATIVE_O3);
+                TableUtils.setNull(columnType, nullFixBuf, rowGroupSize);
+                columnDataPtr = nullFixBuf;
+                ownedBufs.setQuick(slot4, nullFixBuf);
+                ownedBufs.setQuick(slot4 + 1, nullFixSize);
+            }
+            outPtrs.setQuick(slot4, columnDataPtr);
+            outPtrs.setQuick(slot4 + 1, (long) rowGroupSize * ColumnType.sizeOf(columnType));
+            outPtrs.setQuick(slot4 + 2, 0);
+            outPtrs.setQuick(slot4 + 3, 0);
+        }
+    }
+
+    /**
      * Decodes a parquet row group, applies type conversions for columns that
      * have been ALTER-ed, and writes the result as a new row group via
      * addRowGroup(). This is used instead of copyRowGroupWithNullColumns()
@@ -3664,35 +3725,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             int parquetIdx = tableToParquetIdx.getQuick(columnIndex);
             if (parquetIdx >= 0) {
                 parquetColumns.add(parquetIdx);
-                int decodeType = columnType;
-                int srcType = decoder.metadata().getColumnType(parquetIdx);
-                int srcTag = ColumnType.tagOf(srcType);
-                int dstTag = ColumnType.tagOf(columnType);
-                if (ColumnType.isVarSize(srcTag) && !ColumnType.isVarSize(dstTag) && !ColumnType.isSymbol(dstTag)) {
-                    // Var->fixed: must use VARCHAR_SLICE (not native VARCHAR) because
-                    // convertVarColumnToFixed() reads VarcharSlice aux layout directly:
-                    // 4-byte u32 header at offset 0 + absolute data pointer at offset 8.
-                    decodeType = (srcTag == ColumnType.VARCHAR)
-                            ? ColumnType.VARCHAR_SLICE : srcType;
-                } else if (ColumnType.isSymbol(srcTag) && !ColumnType.isSymbol(dstTag)) {
-                    if (ColumnType.isVarSize(dstTag)) {
-                        // Symbol->var: must use native VARCHAR (not VARCHAR_SLICE) because
-                        // the merge path and parquet write path expect native VARCHAR aux format.
-                        // VarcharSlice aux entries have bit 0 set in the header, which the native
-                        // VARCHAR reader misinterprets as HEADER_FLAG_INLINED.
-                        decodeType = dstTag == ColumnType.STRING ? ColumnType.STRING : ColumnType.VARCHAR;
-                    } else {
-                        // Symbol->fixed: must use VARCHAR_SLICE because convertVarColumnToFixed()
-                        // reads VarcharSlice aux layout (4-byte header + absolute pointer at offset 8).
-                        decodeType = ColumnType.VARCHAR_SLICE;
-                    }
-                } else if (!ColumnType.isVarSize(srcTag) && !ColumnType.isSymbol(srcTag)
-                        && ColumnType.isVarSize(dstTag)) {
-                    // Fixed->var: Rust cannot produce var-size output from fixed input.
-                    // Decode as source fixed type; Java converts afterward.
-                    decodeType = srcType;
-                }
-                parquetColumns.add(decodeType);
+                parquetColumns.add(chooseParquetDecodeType(decoder, parquetIdx, columnType));
                 activeToDecodeIdx.setQuick(activeColCount, decodeColCount);
                 decodeColCount++;
             } else {
@@ -3716,8 +3749,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         // Layout: 4 longs per column = [auxAddr, auxSize, dataAddr, dataSize].
         // Pulled from the thread-local context so we don't allocate per row group.
         final LongList tmpBufs = ctx.getTmpBufs(activeColCount);
-        final StringSink utf16Sink = ctx.getUtf16Sink();
-        final Utf8StringSink utf8Sink = ctx.getUtf8Sink();
+        // Per-column [dataPtr, dataSize, auxPtr, auxSize] results from prepareParquetSourceColumn;
+        // the owned buffers behind them are tracked in tmpBufs and freed in the finally below.
+        final LongList convertedPtrs = ctx.getConvertedPtrs(activeColCount);
 
         try {
             for (int ai = 0; ai < activeColCount; ai++) {
@@ -3728,70 +3762,25 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 final int columnId = tableWriterMetadata.getColumnMetadata(columnIndex).getOriginalWriterIndex();
                 final int parquetEncodingConfig = tableWriterMetadata.getColumnMetadata(columnIndex).getParquetEncodingConfig();
 
+                prepareParquetSourceColumn(
+                        decoder,
+                        rowGroupBuffers,
+                        tableToParquetIdx,
+                        columnIndex,
+                        columnType,
+                        decodeIdx,
+                        rowGroupSize,
+                        ctx,
+                        tmpBufs,
+                        convertedPtrs,
+                        ai * 4
+                );
+                final long columnDataPtr = convertedPtrs.getQuick(ai * 4);
+                final long columnDataSize = convertedPtrs.getQuick(ai * 4 + 1);
+                final long columnAuxPtr = convertedPtrs.getQuick(ai * 4 + 2);
+                final long columnAuxSize = convertedPtrs.getQuick(ai * 4 + 3);
+
                 if (ColumnType.isVarSize(columnType)) {
-                    final ColumnTypeDriver ctd = ColumnType.getDriver(columnType);
-                    long columnDataPtr = decodeIdx >= 0 ? rowGroupBuffers.getChunkDataPtr(decodeIdx) : 0;
-                    long columnDataSize = decodeIdx >= 0 ? rowGroupBuffers.getChunkDataSize(decodeIdx) : 0;
-                    long columnAuxPtr = decodeIdx >= 0 ? rowGroupBuffers.getChunkAuxPtr(decodeIdx) : 0;
-                    long columnAuxSize = decodeIdx >= 0 ? rowGroupBuffers.getChunkAuxSize(decodeIdx) : 0;
-
-                    if (columnAuxSize == 0) {
-                        if (decodeIdx >= 0 && columnDataPtr != 0) {
-                            // Fixed->var: Rust decoded as source fixed type (no aux).
-                            int parquetIdx = tableToParquetIdx.getQuick(columnIndex);
-                            int srcType = decoder.metadata().getColumnType(parquetIdx);
-
-                            long auxSize = ctd.getAuxVectorSize(rowGroupSize);
-                            long auxBuf = Unsafe.malloc(auxSize, MemoryTag.NATIVE_O3);
-                            tmpBufs.setQuick(ai * 4, auxBuf);
-                            tmpBufs.setQuick(ai * 4 + 1, auxSize);
-                            final int convColumnTop = (int) rowGroupBuffers.getChunkColumnTop(decodeIdx);
-
-                            if (ColumnType.isVarchar(columnType)) {
-                                long dataSize = estimateVarcharDataSize(srcType, rowGroupSize);
-                                long dataBuf = dataSize > 0 ? Unsafe.malloc(dataSize, MemoryTag.NATIVE_O3) : 0;
-                                if (dataBuf != 0) {
-                                    tmpBufs.setQuick(ai * 4 + 2, dataBuf);
-                                    tmpBufs.setQuick(ai * 4 + 3, dataSize);
-                                }
-                                convertFixedColumnToVarchar(srcType, columnDataPtr, rowGroupSize, convColumnTop, auxBuf, dataBuf, dataSize, utf8Sink);
-                                columnAuxPtr = auxBuf;
-                                columnAuxSize = auxSize;
-                                columnDataPtr = dataBuf;
-                                columnDataSize = dataSize;
-                            } else {
-                                long dataSize = estimateStringDataSize(srcType, rowGroupSize);
-                                long dataBuf = Unsafe.malloc(dataSize, MemoryTag.NATIVE_O3);
-                                tmpBufs.setQuick(ai * 4 + 2, dataBuf);
-                                tmpBufs.setQuick(ai * 4 + 3, dataSize);
-                                convertFixedColumnToString(srcType, columnDataPtr, rowGroupSize, convColumnTop, auxBuf, dataBuf, dataSize, utf16Sink);
-                                columnAuxPtr = auxBuf;
-                                columnAuxSize = auxSize;
-                                columnDataPtr = dataBuf;
-                                columnDataSize = dataSize;
-                            }
-                        } else {
-                            // Column missing from parquet: null var data.
-                            long nullAuxSize = ctd.getAuxVectorSize(rowGroupSize);
-                            long nullAuxBuf = Unsafe.malloc(nullAuxSize, MemoryTag.NATIVE_O3);
-                            ctd.setFullAuxVectorNull(nullAuxBuf, rowGroupSize);
-                            columnAuxPtr = nullAuxBuf;
-                            columnAuxSize = nullAuxSize;
-                            tmpBufs.setQuick(ai * 4, nullAuxBuf);
-                            tmpBufs.setQuick(ai * 4 + 1, nullAuxSize);
-
-                            long nullDataSize = ctd.getDataVectorSizeAt(nullAuxBuf, rowGroupSize - 1);
-                            if (nullDataSize > 0) {
-                                long nullDataBuf = Unsafe.malloc(nullDataSize, MemoryTag.NATIVE_O3);
-                                ctd.setDataVectorEntriesToNull(nullDataBuf, rowGroupSize);
-                                columnDataPtr = nullDataBuf;
-                                columnDataSize = nullDataSize;
-                                tmpBufs.setQuick(ai * 4 + 2, nullDataBuf);
-                                tmpBufs.setQuick(ai * 4 + 3, nullDataSize);
-                            }
-                        }
-                    }
-
                     chunkDescriptor.addColumn(
                             columnName,
                             columnType,
@@ -3805,74 +3794,44 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             0,
                             parquetEncodingConfig
                     );
+                } else if (ColumnType.isSymbol(columnType)) {
+                    final MapWriter symbolMapWriter = tableWriter.getSymbolMapWriter(columnIndex);
+                    final MemoryR offsetsMem = symbolMapWriter.getSymbolOffsetsMemory();
+                    final MemoryR valuesMem = symbolMapWriter.getSymbolValuesMemory();
+                    final int symbolCount = symbolMapWriter.getSymbolCount();
+                    final long offset = SymbolMapWriter.keyToOffset(symbolCount);
+                    final long valuesMemSize = offsetsMem.getLong(offset);
+                    int encodeColumnType = columnType;
+                    if (!symbolMapWriter.getNullFlag()) {
+                        encodeColumnType |= Integer.MIN_VALUE;
+                    }
+                    chunkDescriptor.addColumn(
+                            columnName,
+                            encodeColumnType,
+                            columnId,
+                            0,
+                            columnDataPtr,
+                            columnDataSize,
+                            valuesMem.addressOf(0),
+                            valuesMemSize,
+                            offsetsMem.addressOf(SymbolMapWriter.HEADER_SIZE),
+                            symbolCount,
+                            parquetEncodingConfig
+                    );
                 } else {
-                    long columnDataPtr = decodeIdx >= 0 ? rowGroupBuffers.getChunkDataPtr(decodeIdx) : 0;
-                    long columnAuxSize = decodeIdx >= 0 ? rowGroupBuffers.getChunkAuxSize(decodeIdx) : 0;
-
-                    if (columnAuxSize > 0 && columnDataPtr != 0) {
-                        // Var->fixed or Symbol->fixed: batch-convert.
-                        long columnAuxPtr = rowGroupBuffers.getChunkAuxPtr(decodeIdx);
-                        int parquetIdx = tableToParquetIdx.getQuick(columnIndex);
-                        int srcType = decoder.metadata().getColumnType(parquetIdx);
-                        if (ColumnType.isSymbol(ColumnType.tagOf(srcType))) {
-                            srcType = ColumnType.VARCHAR;
-                        }
-
-                        long fixSize = (long) rowGroupSize * ColumnType.sizeOf(columnType);
-                        long fixBuf = Unsafe.malloc(fixSize, MemoryTag.NATIVE_O3);
-                        tmpBufs.setQuick(ai * 4, fixBuf);
-                        tmpBufs.setQuick(ai * 4 + 1, fixSize);
-                        convertVarColumnToFixed(srcType, columnType, columnDataPtr, columnAuxPtr, rowGroupSize, fixBuf, utf8Sink, utf16Sink, ctx.getDecimal64Buf(), ctx.getDecimal128Buf(), ctx.getDecimal256Buf());
-                        columnDataPtr = fixBuf;
-                    } else if (columnDataPtr == 0) {
-                        // Column missing from parquet: null fixed data.
-                        long nullFixSize = (long) rowGroupSize * ColumnType.sizeOf(columnType);
-                        long nullFixBuf = Unsafe.malloc(nullFixSize, MemoryTag.NATIVE_O3);
-                        TableUtils.setNull(columnType, nullFixBuf, rowGroupSize);
-                        columnDataPtr = nullFixBuf;
-                        tmpBufs.setQuick(ai * 4, nullFixBuf);
-                        tmpBufs.setQuick(ai * 4 + 1, nullFixSize);
-                    }
-
-                    if (ColumnType.isSymbol(columnType)) {
-                        final MapWriter symbolMapWriter = tableWriter.getSymbolMapWriter(columnIndex);
-                        final MemoryR offsetsMem = symbolMapWriter.getSymbolOffsetsMemory();
-                        final MemoryR valuesMem = symbolMapWriter.getSymbolValuesMemory();
-                        final int symbolCount = symbolMapWriter.getSymbolCount();
-                        final long offset = SymbolMapWriter.keyToOffset(symbolCount);
-                        final long valuesMemSize = offsetsMem.getLong(offset);
-                        int encodeColumnType = columnType;
-                        if (!symbolMapWriter.getNullFlag()) {
-                            encodeColumnType |= Integer.MIN_VALUE;
-                        }
-                        chunkDescriptor.addColumn(
-                                columnName,
-                                encodeColumnType,
-                                columnId,
-                                0,
-                                columnDataPtr,
-                                (long) rowGroupSize * ColumnType.sizeOf(columnType),
-                                valuesMem.addressOf(0),
-                                valuesMemSize,
-                                offsetsMem.addressOf(SymbolMapWriter.HEADER_SIZE),
-                                symbolCount,
-                                parquetEncodingConfig
-                        );
-                    } else {
-                        chunkDescriptor.addColumn(
-                                columnName,
-                                columnType,
-                                columnId,
-                                0,
-                                columnDataPtr,
-                                (long) rowGroupSize * ColumnType.sizeOf(columnType),
-                                0,
-                                0,
-                                0,
-                                0,
-                                parquetEncodingConfig
-                        );
-                    }
+                    chunkDescriptor.addColumn(
+                            columnName,
+                            columnType,
+                            columnId,
+                            0,
+                            columnDataPtr,
+                            columnDataSize,
+                            0,
+                            0,
+                            0,
+                            0,
+                            parquetEncodingConfig
+                    );
                 }
             }
             partitionUpdater.addRowGroup(metadataPosition, chunkDescriptor);
