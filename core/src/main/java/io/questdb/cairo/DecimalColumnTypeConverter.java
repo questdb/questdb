@@ -34,6 +34,8 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Unsafe;
 
+import java.math.RoundingMode;
+
 public class DecimalColumnTypeConverter {
     private static final Loader loaderFromByte = DecimalColumnTypeConverter::loadDecimalFromByte;
     private static final Loader loaderFromDecimal128 = DecimalColumnTypeConverter::loadDecimalFromDecimal128;
@@ -59,18 +61,27 @@ public class DecimalColumnTypeConverter {
         long hi = srcMem + rowCount * srcColumnTypeSize;
         for (long i = srcMem; i < hi; i += srcColumnTypeSize) {
             loader.load(decimal, i);
-            // A value that does not fit the target decimal is stored as NULL rather than aborting
-            // the whole conversion. Aborting would surface as "column is corrupt" and suspend a WAL
-            // table; instead we mirror the fixed->fixed converters, where an unrepresentable value
-            // becomes the target NULL sentinel (e.g. an out-of-range DOUBLE->FLOAT becomes NaN).
-            // Two cases produce NULL: the magnitude exceeds the target precision (comparePrecision),
-            // or a rescale would lose information (rescale throws under RoundingMode.UNNECESSARY).
+            // Align with SQL store-assignment semantics: excess fractional digits are rounded to the
+            // target scale (round half away from zero), and only a magnitude overflow - the integer
+            // part exceeds the target precision - cannot be represented. The unrepresentable value
+            // becomes the target NULL sentinel rather than aborting the whole conversion; aborting
+            // would surface as "column is corrupt" and suspend a WAL table. Instead we mirror the
+            // fixed->fixed converters, where an out-of-range value becomes the target NULL sentinel
+            // (e.g. an out-of-range DOUBLE->FLOAT becomes NaN). So NULL is produced only when the
+            // magnitude exceeds the target precision (comparePrecision); a scale reduction rounds.
             // Source NULLs flow through unchanged (the loader already set the decimal to NULL).
             if (!decimal.isNull()) {
                 try {
                     if (srcScale != dstScale) {
                         decimal.setScale(srcScale);
-                        decimal.rescale(dstScale);
+                        if (dstScale < srcScale) {
+                            // Scale reduction rounds half away from zero, like every mainstream SQL
+                            // database storing into DECIMAL(p,s); it never fails on lost fraction.
+                            decimal.round(dstScale, RoundingMode.HALF_UP);
+                        } else {
+                            // Scale increase is lossless.
+                            decimal.rescale(dstScale);
+                        }
                     }
                     if (!decimal.comparePrecision(dstPrecision)) {
                         decimal.ofNull();

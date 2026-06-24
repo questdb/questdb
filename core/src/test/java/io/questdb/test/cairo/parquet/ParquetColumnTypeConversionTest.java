@@ -738,9 +738,9 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
             // Decimal8 <-> Decimal256: extreme width gap. Widening sign-extends 1 byte
             // to 32 bytes; narrowing keeps the bottom byte. Narrowing keeps the same
             // scale so no rescale runs: raw values stay inside i8 and the bottom-byte
-            // truncation is lossless. A wider sweep of scale-change-with-narrowing is
-            // intentionally out of scope here; the decoder narrows before rescale, so
-            // wide-to-narrow rescale across mismatched scales is a separate issue.
+            // truncation is lossless. Scale-change-with-narrowing (where a rescale runs at
+            // the source width before the narrow) is covered separately in
+            // testDecimalToDecimalNarrowingWithScaleChange.
             String tinyValues = """
                     (1.2m, '2024-01-01T00:00:01.000000Z'),
                     (0.0m, '2024-01-01T00:00:02.000000Z'),
@@ -773,8 +773,8 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
             // Decimal128 -> Decimal128 same-width rescale: exercises rescale_i128 in place
             // with magnitudes past i64 range (so the i128 multiply genuinely matters) for
             // both the multiply (scale-up) and divide (scale-down) branches. Trailing zero
-            // fractional digits keep the divide branch lossless so it matches the native
-            // path, which rejects information-losing rescale via RoundingMode.UNNECESSARY.
+            // fractional digits keep the divide branch exact so the expected value is obvious; a
+            // lossy scale-down would instead round half away from zero on both paths (never NULL).
             String d128Values = """
                     (12345678901234567890.5600m, '2024-01-01T00:00:01.000000Z'),
                     (0.0000m, '2024-01-01T00:00:02.000000Z'),
@@ -825,24 +825,21 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     @Test
     public void testDecimalToDecimalNarrowingWithScaleChange() throws Exception {
         assertMemoryLeak(() -> {
-            // Reproduces a lazy-parquet correctness divergence for decimal->decimal conversions
-            // that narrow the physical width AND change the scale.
+            // Decimal->decimal conversions that narrow the physical width AND change the scale.
             //
-            // The native converter (DecimalColumnTypeConverter.convertToDecimal) loads each
-            // value into a full Decimal256, rescales at full width, then narrows to the target
-            // (widen -> rescale -> narrow), so it preserves any value that fits the target
-            // precision. The lazy parquet decoder instead narrows to the target width DURING
-            // decode (truncating the raw little-endian bytes) and only THEN rescales
-            // (narrow -> rescale, see row_groups.rs rescale_decimal_in_place). When the raw
-            // source value (logical * 10^srcScale) exceeds the target's physical byte width --
-            // even though the logical value fits the target precision -- the parquet path
-            // truncates first and produces a silently wrong result, while native stays correct.
+            // The native converter (DecimalColumnTypeConverter.convertToDecimal) loads each value
+            // into a full Decimal256, rescales at full width, range-checks against the target
+            // precision, then narrows to the target (widen -> rescale -> range-check -> narrow), so
+            // it preserves any value that fits the target precision. The lazy parquet decoder mirrors
+            // this via convert_decimal_narrowing (row_groups.rs): plan_decode_conversion keeps the
+            // SOURCE width during decode, then convert_decimal_narrowing rescales, range-checks, and
+            // only then narrows. So a value whose raw form (logical * 10^srcScale) exceeds the
+            // target's physical byte width still survives when the logical value fits the target
+            // precision -- it is the rescaled, not the raw, magnitude that is range-checked.
             //
-            // Every value below is representable in the narrower target, so the parquet read (pt)
-            // must equal the native conversion (nt). ConvertOperatorImpl.isDecimalNarrowingWithScaleChange
-            // routes these to the eager parquet->native pre-pass (the lazy decoder cannot do them
-            // losslessly), so the conversion runs through the native DecimalColumnTypeConverter.
-            // Without that guard the lazy path truncates 1.2 to 0.0 here -- this is the regression.
+            // Every value below is representable in the narrower target, so the lazy parquet read
+            // (pt) must equal the native conversion (nt). A naive narrow-before-rescale decoder
+            // would truncate 1.2 to 0.0 here; this test pins that it does not.
 
             // Decimal128(scale 4) -> Decimal8(scale 1): raw 1.2 -> 12000 overflows 1 byte.
             assertConversion("DECIMAL(38, 4)", "DECIMAL(2, 1)", """
@@ -878,6 +875,41 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                     (-3000000000000000000.00m, '2024-01-01T00:00:02.000000Z'),
                     (0.00m, '2024-01-01T00:00:03.000000Z'),
                     (NULL, '2024-01-01T00:00:04.000000Z')""");
+        });
+    }
+
+    @Test
+    public void testDecimalToDecimalScaleDownRounds() throws Exception {
+        assertMemoryLeak(() -> {
+            // A scale reduction rounds half away from zero on BOTH the native ALTER and the lazy
+            // parquet decode; a dropped fraction never NULLs. assertConversion pins that nt (native)
+            // and pt (parquet) agree across the lazy read and the eager parquet->native rewrite.
+            // Values carry non-zero dropped digits, including exact-half ties and negatives, across
+            // all backings.
+            // Decimal16 -> Decimal16 (i64), scale 2 -> 1; 99.99 rounds up to 100.0 (carry).
+            assertConversion("DECIMAL(4, 2)", "DECIMAL(4, 1)", """
+                    (12.34m, '2024-01-01T00:00:01.000000Z'),
+                    (12.35m, '2024-01-01T00:00:02.000000Z'),
+                    (-12.35m, '2024-01-01T00:00:03.000000Z'),
+                    (99.99m, '2024-01-01T00:00:04.000000Z'),
+                    (NULL, '2024-01-01T00:00:05.000000Z')""");
+            // Decimal128 -> Decimal128 (i128), scale 4 -> 2, magnitudes past i64 range.
+            assertConversion("DECIMAL(38, 4)", "DECIMAL(38, 2)", """
+                    (12345678901234567890.5678m, '2024-01-01T00:00:01.000000Z'),
+                    (-12345678901234567890.5650m, '2024-01-01T00:00:02.000000Z'),
+                    (0.0001m, '2024-01-01T00:00:03.000000Z'),
+                    (NULL, '2024-01-01T00:00:04.000000Z')""");
+            // Decimal256 -> Decimal256 (i256), scale 5 -> 2; 0.005 ties and rounds away to 0.01.
+            assertConversion("DECIMAL(76, 5)", "DECIMAL(76, 2)", """
+                    (12345.67891m, '2024-01-01T00:00:01.000000Z'),
+                    (-12345.67850m, '2024-01-01T00:00:02.000000Z'),
+                    (0.00500m, '2024-01-01T00:00:03.000000Z'),
+                    (NULL, '2024-01-01T00:00:04.000000Z')""");
+            // Narrowing width AND scale: Decimal128 -> Decimal32 (i128 source), scale 4 -> 2.
+            assertConversion("DECIMAL(38, 4)", "DECIMAL(9, 2)", """
+                    (1234.5678m, '2024-01-01T00:00:01.000000Z'),
+                    (-1234.5650m, '2024-01-01T00:00:02.000000Z'),
+                    (NULL, '2024-01-01T00:00:03.000000Z')""");
         });
     }
 
@@ -947,8 +979,8 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                     (NULL, '2024-01-01T00:00:04.000000Z')""";
             assertConversion("DECIMAL(9, 3)", "DECIMAL(18, 6)", d32);
             assertConversion("DECIMAL(9, 3)", "DECIMAL(76, 3)", d32);
-            // Scale down (3 -> 1) needs lossless trailing zeros in the dropped positions, as the
-            // native path rejects information-losing rescale (RoundingMode.UNNECESSARY).
+            // Scale down (3 -> 1) uses trailing zeros so the result is exact; a lossy scale-down
+            // would round half away from zero on both paths (it never NULLs on a dropped fraction).
             assertConversion("DECIMAL(9, 3)", "DECIMAL(38, 1)", """
                     (123456.700m, '2024-01-01T00:00:01.000000Z'),
                     (-987654.300m, '2024-01-01T00:00:02.000000Z'),
@@ -1407,32 +1439,43 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     /**
-     * Pins lazy parquet behavior for narrow-int -&gt; narrow-decimal scaling
-     * overflow.
+     * Pins the shared overflow contract for narrow-int -&gt; narrow-decimal scaling: a value that
+     * does not fit the target DECIMAL becomes the target NULL sentinel on BOTH the native ALTER and
+     * the lazy parquet decode, and neither path throws or suspends the WAL table.
      * <p>
-     * In {@code convert_fixed_to_decimal} (core/rust/qdbr/src/parquet_read/row_groups.rs)
-     * the Rust path scales each value as {@code val * 10^scale} then writes only
-     * the low {@code dst_size} bytes. Without a bounds check the high bytes are
-     * silently truncated: INT {@code 2_000_000} -&gt; {@code DECIMAL(2, 2)}
-     * (Decimal8, 1 byte) computes {@code 200_000_000}, low byte {@code 0x00},
-     * displayed as {@code 0.00}; INT {@code 1_000_000} -&gt; {@code DECIMAL(9, 4)}
-     * (Decimal32, 4 bytes) computes {@code 10^10}, low 32 bits
-     * {@code 1_410_065_408}, displayed as {@code 141006.5408}.
-     * <p>
-     * The native (JNI) {@code DecimalColumnTypeConverter.convertToDecimal}
-     * scales through Decimal256 and validates against the destination precision,
-     * so it rejects the ALTER on overflow with {@code CairoException} (the WAL
-     * applier swallows the failure and the column stays INT). The differential
-     * helper {@link #assertConversion} cannot express that asymmetry, so this
-     * test exercises the parquet path directly and asserts the contract: every
-     * overflowing row reads back as NULL, never as a truncated value.
+     * The native (JNI) {@code DecimalColumnTypeConverter.convertToDecimal} scales through Decimal256,
+     * maps a rescale that loses information or a magnitude beyond the target precision to NULL, and
+     * never throws. The lazy parquet decoder ({@code convert_fixed_to_decimal} in
+     * core/rust/qdbr/src/parquet_read/row_groups.rs) must match it: it scales each value by
+     * {@code 10^scale} and NULLs the result when it exceeds the target <b>precision</b>, not merely
+     * the destination byte width. Two overflow shapes are covered:
+     * <ul>
+     *     <li><b>Width overflow</b> -- the scaled value exceeds the target's physical byte width.
+     *         INT {@code 2_000_000} -&gt; {@code DECIMAL(2, 2)} (Decimal8, 1 byte) computes
+     *         {@code 200_000_000}; INT {@code 1_000_000} -&gt; {@code DECIMAL(9, 4)} (Decimal32,
+     *         4 bytes) computes {@code 10^10}. A naive low-byte write would truncate these to a
+     *         wrong value; both paths produce NULL instead.</li>
+     *     <li><b>Precision overflow only</b> -- the scaled value fits the byte width but exceeds the
+     *         target precision. INT {@code 100} -&gt; {@code DECIMAL(2, 0)} fits a Decimal8 byte
+     *         (&lt;= 127) yet precision 2 admits only 99; INT {@code 1_500_000_000} -&gt;
+     *         {@code DECIMAL(9, 0)} fits i32 yet precision 9 admits only 999_999_999; INT {@code 1}
+     *         -&gt; {@code DECIMAL(18, 18)} computes {@code 10^18}, which fits i64 but is 19 digits.
+     *         A byte-width-only guard stored these verbatim, diverging from the native NULL.</li>
+     * </ul>
+     * The helper asserts NULL on the native control, the lazy parquet read, and after a
+     * CONVERT PARTITION TO NATIVE rewrite, so all three materialization paths agree.
      */
     @Test
     public void testIntToNarrowDecimalScalingOverflow() throws Exception {
         assertMemoryLeak(() -> {
-            assertParquetIntToDecimalOverflowNull("DECIMAL(2, 2)", "2_000_000");
-            assertParquetIntToDecimalOverflowNull("DECIMAL(4, 2)", "1_000_000");
-            assertParquetIntToDecimalOverflowNull("DECIMAL(9, 4)", "1_000_000");
+            // Width overflow: the scaled value exceeds the target's physical byte width.
+            assertIntToDecimalOverflowNull("DECIMAL(2, 2)", "2_000_000");
+            assertIntToDecimalOverflowNull("DECIMAL(4, 2)", "1_000_000");
+            assertIntToDecimalOverflowNull("DECIMAL(9, 4)", "1_000_000");
+            // Precision overflow without width overflow: fits the byte width, exceeds the precision.
+            assertIntToDecimalOverflowNull("DECIMAL(2, 0)", "100");
+            assertIntToDecimalOverflowNull("DECIMAL(9, 0)", "1_500_000_000");
+            assertIntToDecimalOverflowNull("DECIMAL(18, 18)", "1");
         });
     }
 
@@ -3839,18 +3882,29 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
         }
     }
 
-    private void assertParquetIntToDecimalOverflowNull(String targetType, String overflowValue) throws Exception {
+    private void assertIntToDecimalOverflowNull(String targetType, String overflowValue) throws Exception {
         try {
+            // nt stays native (eager ALTER); pt converts to parquet so its ALTER takes the lazy
+            // decode path. Both must read the overflowing row back as NULL.
+            execute("CREATE TABLE nt (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE TABLE pt (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO nt VALUES (" + overflowValue + ", '2024-01-01T00:00:01.000000Z')");
             execute("INSERT INTO pt VALUES (" + overflowValue + ", '2024-01-01T00:00:01.000000Z')");
             drainWalQueue();
             execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
             drainWalQueue();
+            execute("ALTER TABLE nt ALTER COLUMN val TYPE " + targetType);
             execute("ALTER TABLE pt ALTER COLUMN val TYPE " + targetType);
             drainWalQueue();
-            // CursorPrinter renders Decimal*_NULL as an empty cell.
+            // CursorPrinter renders Decimal*_NULL as an empty cell. Neither ALTER suspends the WAL.
+            assertQuery("SELECT val FROM nt").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns("val\n\n");
+            assertQuery("SELECT val FROM pt").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns("val\n\n");
+            // Materialize the lazy conversion eagerly (parquet -> native rewrite) and re-assert.
+            execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+            drainWalQueue();
             assertQuery("SELECT val FROM pt").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns("val\n\n");
         } finally {
+            tryDrop("nt");
             tryDrop("pt");
         }
     }

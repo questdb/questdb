@@ -224,6 +224,7 @@ pub(super) fn post_convert(
                 dst,
                 dec_leading_nulls,
                 to_type.decimal_scale(),
+                to_type.decimal_precision(),
             )?;
         }
         // Int32 → Int64 widening (Byte/Short/Int → Long/Date/Timestamp).
@@ -670,20 +671,44 @@ fn convert_decimal_in_place(
     Ok(())
 }
 
-/// Rescale a single i64 unscaled decimal. Returns `None` when a divide loses information
-/// (non-zero remainder) or a multiply overflows i64.
+/// Rescale a single i64 unscaled decimal. A scale reduction (`divide`) rounds half away from zero
+/// to the target scale - it never drops the row to NULL on a lost fraction, matching SQL
+/// store-assignment. Returns `None` only when a scale increase (multiply) overflows i64.
 #[inline]
 fn rescale_one_i64(v: i64, factor: i64, divide: bool) -> Option<i64> {
     if factor == 1 {
         Some(v)
     } else if divide {
-        if v % factor != 0 {
-            None
-        } else {
-            Some(v / factor)
-        }
+        Some(round_div_i64(v, factor))
     } else {
         v.checked_mul(factor)
+    }
+}
+
+/// Integer division rounding half away from zero. `factor` (= 10^k, k >= 1 on the divide path) is
+/// even and the remainder fits i64, so promoting to i128 for the `2*|r|` comparison cannot overflow.
+#[inline]
+fn round_div_i64(v: i64, factor: i64) -> i64 {
+    let q = v / factor;
+    let r = (v % factor) as i128;
+    if 2 * r.abs() >= factor as i128 {
+        q + v.signum()
+    } else {
+        q
+    }
+}
+
+/// Integer division rounding half away from zero for i128. `factor` (= 10^k, k >= 1) is even, so
+/// `factor / 2` is exact; comparing `|r| >= factor / 2` avoids the `2*|r|` overflow a factor near
+/// 10^38 would cause.
+#[inline]
+fn round_div_i128(v: i128, factor: i128) -> i128 {
+    let q = v / factor;
+    let r = v % factor;
+    if r.abs() >= factor / 2 {
+        q + v.signum()
+    } else {
+        q
     }
 }
 
@@ -764,11 +789,8 @@ fn convert_decimal_i128(
         let scaled = if factor == 1 {
             Some(val)
         } else if divide {
-            if val % factor != 0 {
-                None
-            } else {
-                Some(val / factor)
-            }
+            // Scale reduction rounds half away from zero; it never NULLs on a dropped fraction.
+            Some(round_div_i128(val, factor))
         } else {
             val.checked_mul(factor)
         };
@@ -808,14 +830,8 @@ fn convert_decimal_i256(
         let scaled = if scale_diff == 0 {
             Some((w0, w1, w2, w3))
         } else if divide {
-            let q = div_i256_pow10(w0, w1, w2, w3, scale_diff);
-            // Lossless iff q * 10^scale_diff reproduces the original (div truncates toward zero).
-            // q has smaller magnitude than the original, so this multiply cannot overflow.
-            if mul_i256_pow10(q.0, q.1, q.2, q.3, scale_diff) == (w0, w1, w2, w3) {
-                Some(q)
-            } else {
-                None
-            }
+            // Scale reduction rounds half away from zero; it never NULLs on a dropped fraction.
+            Some(round_div_i256_pow10(w0, w1, w2, w3, scale_diff))
         } else {
             checked_mul_i256_pow10(w0, w1, w2, w3, scale_diff)
         };
@@ -976,11 +992,8 @@ fn convert_decimal_narrowing(
                     let scaled = if factor == 1 {
                         Some(val)
                     } else if divide {
-                        if val % factor != 0 {
-                            None
-                        } else {
-                            Some(val / factor)
-                        }
+                        // Scale reduction rounds half away from zero (no NULL on a dropped fraction).
+                        Some(round_div_i128(val, factor))
                     } else {
                         val.checked_mul(factor)
                     };
@@ -1008,12 +1021,8 @@ fn convert_decimal_narrowing(
                     let scaled = if scale_diff == 0 {
                         Some((w0, w1, w2, w3))
                     } else if divide {
-                        let q = div_i256_pow10(w0, w1, w2, w3, scale_diff);
-                        if mul_i256_pow10(q.0, q.1, q.2, q.3, scale_diff) == (w0, w1, w2, w3) {
-                            Some(q)
-                        } else {
-                            None
-                        }
+                        // Scale reduction rounds half away from zero (no NULL on a dropped fraction).
+                        Some(round_div_i256_pow10(w0, w1, w2, w3, scale_diff))
                     } else {
                         checked_mul_i256_pow10(w0, w1, w2, w3, scale_diff)
                     };
@@ -1142,6 +1151,49 @@ fn negate_i256(w0: i64, w1: u64, w2: u64, w3: u64) -> (i64, u64, u64, u64) {
     (n0, n1, n2, n3)
 }
 
+/// Add two 256-bit two's complement integers (wrapping, high word first). Used to bias a magnitude
+/// by half the divisor before a truncating divide; callers keep the sum within i256.
+#[inline]
+fn add_i256(a: (i64, u64, u64, u64), b: (i64, u64, u64, u64)) -> (i64, u64, u64, u64) {
+    let (r3, c3) = a.3.overflowing_add(b.3);
+    let (s2, c2a) = a.2.overflowing_add(b.2);
+    let (r2, c2b) = s2.overflowing_add(c3 as u64);
+    let (s1, c1a) = a.1.overflowing_add(b.1);
+    let (r1, c1b) = s1.overflowing_add((c2a || c2b) as u64);
+    let r0 = (a.0 as u64)
+        .wrapping_add(b.0 as u64)
+        .wrapping_add((c1a || c1b) as u64) as i64;
+    (r0, r1, r2, r3)
+}
+
+/// Divide a 256-bit value by 10^scale_diff (scale_diff >= 1), rounding half away from zero. Biases
+/// the magnitude by half the divisor (5 * 10^(scale_diff-1)) then truncates toward zero, which is
+/// round-half-away. The biased magnitude stays within i256: a valid Decimal256 magnitude is < 10^76
+/// and the bias is < 5 * 10^75, so the sum is < 1.5 * 10^76 < i256::MAX.
+fn round_div_i256_pow10(
+    w0: i64,
+    w1: u64,
+    w2: u64,
+    w3: u64,
+    scale_diff: u32,
+) -> (i64, u64, u64, u64) {
+    let neg = w0 < 0;
+    let abs = if neg {
+        negate_i256(w0, w1, w2, w3)
+    } else {
+        (w0, w1, w2, w3)
+    };
+    // half divisor = 5 * 10^(scale_diff - 1) = (10^scale_diff) / 2
+    let half = mul_i256_pow10(0, 0, 0, 5, scale_diff - 1);
+    let biased = add_i256(abs, half);
+    let q = div_i256_pow10(biased.0, biased.1, biased.2, biased.3, scale_diff);
+    if neg {
+        negate_i256(q.0, q.1, q.2, q.3)
+    } else {
+        q
+    }
+}
+
 /// Convert decoded fixed integer values (BYTE/SHORT/INT/LONG) to a target decimal type.
 /// Widens each value from the source size to the target decimal size, then multiplies
 /// by 10^scale. Iterates backwards when the target is wider to avoid overwriting unread data.
@@ -1151,6 +1203,7 @@ fn convert_fixed_to_decimal(
     dst_tag: ColumnTypeTag,
     leading_nulls: usize,
     dst_scale: u8,
+    dst_precision: u8,
 ) -> ParquetResult<()> {
     let src_size = fixed_tag_size(src_tag);
     let dst_size = decimal_tag_size(dst_tag);
@@ -1181,6 +1234,19 @@ fn convert_fixed_to_decimal(
                     dst_tag
                 ));
             };
+            // Clamp to the target precision, not just the byte width: a precision can be tighter
+            // than its width admits (e.g. DECIMAL(2,0) is a Decimal8 whose i8 width holds 127 but
+            // precision admits only 99). |scaled| < 10^precision is the stricter bound and also
+            // guarantees the result fits dst_size, mirroring the decimal->decimal i64 path. For an
+            // i64-backed target precision <= 18, so 10^precision fits i64.
+            let Some(limit) = 10i64.checked_pow(dst_precision as u32) else {
+                return Err(fmt_err!(
+                    InvalidLayout,
+                    "decimal precision {} exceeds i64 range for target {:?}",
+                    dst_precision,
+                    dst_tag
+                ));
+            };
             let null_sentinel = null_i64_for_decimal(dst_tag);
             if dst_size >= src_size {
                 for i in (0..count).rev() {
@@ -1188,7 +1254,7 @@ fn convert_fixed_to_decimal(
                     let scaled = if i < leading_nulls || is_int_null(val, src_tag) {
                         null_sentinel
                     } else {
-                        scale_or_null_i64(val, factor, dst_size, null_sentinel)
+                        scale_or_null_i64(val, factor, limit, null_sentinel)
                     };
                     unsafe { write_le_i64_at(ptr, i, dst_size, scaled) };
                 }
@@ -1198,7 +1264,7 @@ fn convert_fixed_to_decimal(
                     let scaled = if i < leading_nulls || is_int_null(val, src_tag) {
                         null_sentinel
                     } else {
-                        scale_or_null_i64(val, factor, dst_size, null_sentinel)
+                        scale_or_null_i64(val, factor, limit, null_sentinel)
                     };
                     unsafe { write_le_i64_at(ptr, i, dst_size, scaled) };
                 }
@@ -1214,24 +1280,33 @@ fn convert_fixed_to_decimal(
                     dst_scale
                 ));
             };
+            // Precision <= 38 for Decimal128, so 10^precision fits i128.
+            let Some(limit) = 10i128.checked_pow(dst_precision as u32) else {
+                return Err(fmt_err!(
+                    InvalidLayout,
+                    "decimal precision {} exceeds i128 range for Decimal128",
+                    dst_precision
+                ));
+            };
             for i in (0..count).rev() {
                 let val = unsafe { read_le_i64_at(ptr, i, src_size) };
                 let offset = i * 16;
                 // i64 widened to i128 multiplied by 10^scale can exceed i128
                 // (e.g. i64::MAX * 10^38 overflows). Use checked_mul and emit
-                // the Decimal128 NULL pair on overflow, mirroring the i64 path
-                // in scale_or_null_i64.
+                // the Decimal128 NULL pair on overflow; a result within i128 that
+                // still exceeds the target precision (|scaled| >= 10^precision) is
+                // also NULLed, mirroring the i64 path in scale_or_null_i64.
                 let scaled = if i < leading_nulls || is_int_null(val, src_tag) {
                     None
                 } else {
                     (val as i128).checked_mul(factor)
                 };
                 match scaled {
-                    Some(s) => unsafe {
+                    Some(s) if s > -limit && s < limit => unsafe {
                         (ptr.add(offset) as *mut i64).write_unaligned((s >> 64) as i64);
                         (ptr.add(offset + 8) as *mut u64).write_unaligned(s as u64);
                     },
-                    None => unsafe {
+                    _ => unsafe {
                         (ptr.add(offset) as *mut i64).write_unaligned(i64::MIN);
                         (ptr.add(offset + 8) as *mut u64).write_unaligned(0);
                     },
@@ -1240,13 +1315,18 @@ fn convert_fixed_to_decimal(
         }
         // Target Decimal256: widen to 256-bit, scale, write as (w0, w1, w2, w3).
         ColumnTypeTag::Decimal256 => {
+            // Precision <= 76 for Decimal256, so 10^precision fits i256.
+            let limit = pow10_i256(dst_precision as u32)?;
+            let limit_abs = (limit.0 as u64, limit.1, limit.2, limit.3);
             for i in (0..count).rev() {
                 let val = unsafe { read_le_i64_at(ptr, i, src_size) };
                 let offset = i * 32;
                 // Sign-extended i64 multiplied by 10^scale can exceed i256 for
                 // large scale + large |val| (e.g. i64::MAX * 10^76 overflows).
                 // checked_mul_i256_pow10 returns None on overflow; emit the
-                // Decimal256 NULL on overflow, mirroring the Decimal128 path.
+                // Decimal256 NULL on overflow. A value within i256 that still
+                // exceeds the target precision (|scaled| >= 10^precision) is also
+                // NULLed, mirroring the Decimal128 path.
                 let scaled = if i < leading_nulls || is_int_null(val, src_tag) {
                     None
                 } else {
@@ -1254,13 +1334,13 @@ fn convert_fixed_to_decimal(
                     checked_mul_i256_pow10(sign as i64, sign, sign, val as u64, dst_scale as u32)
                 };
                 match scaled {
-                    Some((w0, w1, w2, w3)) => unsafe {
-                        (ptr.add(offset) as *mut i64).write_unaligned(w0);
-                        (ptr.add(offset + 8) as *mut u64).write_unaligned(w1);
-                        (ptr.add(offset + 16) as *mut u64).write_unaligned(w2);
-                        (ptr.add(offset + 24) as *mut u64).write_unaligned(w3);
+                    Some(s) if !i256_abs_ge(s, limit_abs) => unsafe {
+                        (ptr.add(offset) as *mut i64).write_unaligned(s.0);
+                        (ptr.add(offset + 8) as *mut u64).write_unaligned(s.1);
+                        (ptr.add(offset + 16) as *mut u64).write_unaligned(s.2);
+                        (ptr.add(offset + 24) as *mut u64).write_unaligned(s.3);
                     },
-                    None => unsafe {
+                    _ => unsafe {
                         (ptr.add(offset) as *mut i64).write_unaligned(i64::MIN);
                         (ptr.add(offset + 8) as *mut u64).write_unaligned(0);
                         (ptr.add(offset + 16) as *mut u64).write_unaligned(0);
@@ -1318,23 +1398,19 @@ fn null_i64_for_decimal(tag: ColumnTypeTag) -> i64 {
     }
 }
 
-/// Scales `val` by `factor` and verifies the result fits the destination width.
-/// Returns `null_sentinel` if the i64 multiplication overflows or the product
-/// is outside the signed range of `dst_size` bytes. Without this guard,
-/// `write_le_i64_at` would silently truncate the low bytes and produce a
-/// corrupted decimal (see issue: INT 2_000_000 -> Decimal8 scale 2 stored as 0).
+/// Scales `val` by `factor` (= 10^scale) and clamps the result to the target precision.
+/// Returns `null_sentinel` when the i64 multiplication overflows or `|scaled| >= limit`
+/// (`limit` = 10^precision). The precision bound is stricter than the destination byte
+/// width (a precision never needs more digits than its width holds), so a value that
+/// passes it also fits the target width and `write_le_i64_at` will not truncate. Without
+/// this guard the low bytes silently truncate and produce a corrupted decimal (see issue:
+/// INT 2_000_000 -> Decimal8 scale 2 stored as 0, and INT 100 -> DECIMAL(2,0) stored as 100).
 #[inline]
-fn scale_or_null_i64(val: i64, factor: i64, dst_size: usize, null_sentinel: i64) -> i64 {
+fn scale_or_null_i64(val: i64, factor: i64, limit: i64, null_sentinel: i64) -> i64 {
     let Some(scaled) = val.checked_mul(factor) else {
         return null_sentinel;
     };
-    let fits = match dst_size {
-        1 => (i8::MIN as i64..=i8::MAX as i64).contains(&scaled),
-        2 => (i16::MIN as i64..=i16::MAX as i64).contains(&scaled),
-        4 => (i32::MIN as i64..=i32::MAX as i64).contains(&scaled),
-        _ => true,
-    };
-    if fits {
+    if scaled > -limit && scaled < limit {
         scaled
     } else {
         null_sentinel
@@ -4086,11 +4162,11 @@ mod decimal_convert_tests {
         assert_eq!(read_small(up.as_slice(), 1, 2), null);
         assert_eq!(read_small(up.as_slice(), 2, 2), null); // NULL stays NULL
 
-        // Scale down 1 -> 0, precision 4. 120(=12.0)->12 exact; 125(=12.5)->lossy null.
+        // Scale down 1 -> 0, precision 4. 120(=12.0)->12 exact; 125(=12.5)->rounds half away to 13.
         let mut down = buf(&allocator, &le_small(&[120, 125], 2));
         convert_decimal_in_place(&mut down, ColumnTypeTag::Decimal16, 1, 0, 4).unwrap();
         assert_eq!(read_small(down.as_slice(), 0, 2), 12);
-        assert_eq!(read_small(down.as_slice(), 1, 2), null);
+        assert_eq!(read_small(down.as_slice(), 1, 2), 13);
 
         // Same scale, precision reduced to 3 (limit 1000): 1234 fits Decimal16 width but exceeds
         // precision 3 -> null; 999 survives.
@@ -4138,13 +4214,13 @@ mod decimal_convert_tests {
         assert_eq!(read_d128(up.as_slice(), 1), 12_3456 * 10_000); // 12.34560000
         assert_eq!(read_d128(up.as_slice(), 2), d128_null()); // NULL stays NULL
 
-        // Scale down 4 -> 2, precision 38. Lossy (non-zero dropped digits) -> null; exact -> value.
+        // Scale down 4 -> 2, precision 38. Lossy digits round half away from zero; exact -> value.
         let mut bytes = Vec::new();
-        bytes.extend_from_slice(&d128_bytes(12_3456)); // 12.3456 -> scale 2 drops 56 -> lossy
+        bytes.extend_from_slice(&d128_bytes(12_3456)); // 12.3456 -> scale 2 rounds half away to 12.35
         bytes.extend_from_slice(&d128_bytes(12_3400)); // 12.3400 -> 12.34 exact
         let mut down = buf(&allocator, &bytes);
         convert_decimal_in_place(&mut down, ColumnTypeTag::Decimal128, 4, 2, 38).unwrap();
-        assert_eq!(read_d128(down.as_slice(), 0), d128_null());
+        assert_eq!(read_d128(down.as_slice(), 0), 1235);
         assert_eq!(read_d128(down.as_slice(), 1), 1234);
     }
 
@@ -4185,13 +4261,13 @@ mod decimal_convert_tests {
         assert_eq!(&prec.as_slice()[64..96], &d256_from_i128(-99_999)); // negative magnitude
         assert_eq!(&prec.as_slice()[96..128], &d256_null()); // NULL stays NULL
 
-        // Lossy scale-down 2 -> 0: 1234(=12.34) drops .34 -> null; 1200(=12.00) -> 12 exact.
+        // Scale-down 2 -> 0 rounds half away from zero: 1250(=12.50) -> 13; 1234(=12.34) -> 12.
         let mut bytes = Vec::new();
+        bytes.extend_from_slice(&d256_from_i128(1250));
         bytes.extend_from_slice(&d256_from_i128(1234));
-        bytes.extend_from_slice(&d256_from_i128(1200));
         let mut down = buf(&allocator, &bytes);
         convert_decimal_in_place(&mut down, ColumnTypeTag::Decimal256, 2, 0, 40).unwrap();
-        assert_eq!(&down.as_slice()[0..32], &d256_null());
+        assert_eq!(&down.as_slice()[0..32], &d256_from_i128(13));
         assert_eq!(&down.as_slice()[32..64], &d256_from_i128(12));
     }
 
@@ -4220,7 +4296,8 @@ mod decimal_convert_tests {
         assert_eq!(read_small(b.as_slice(), 1, 2), dst_null);
         assert_eq!(read_small(b.as_slice(), 2, 2), dst_null);
 
-        // Scale down 4 -> 2, precision 4. 123400(=12.3400)->1234 exact; 123456(=12.3456) lossy->null.
+        // Scale down 4 -> 2, precision 4. 123400(=12.3400)->1234 exact; 123456(=12.3456) rounds
+        // half away to 12.35 (1235).
         let mut b = buf(&allocator, &le_small(&[123400, 123456], 8));
         convert_decimal_narrowing(
             &mut b,
@@ -4232,7 +4309,7 @@ mod decimal_convert_tests {
         )
         .unwrap();
         assert_eq!(read_small(b.as_slice(), 0, 2), 1234);
-        assert_eq!(read_small(b.as_slice(), 1, 2), dst_null);
+        assert_eq!(read_small(b.as_slice(), 1, 2), 1235);
     }
 
     /// Narrowing from Decimal128 to Decimal32 (16 -> 4 bytes/elem).
@@ -4294,12 +4371,12 @@ mod decimal_convert_tests {
         assert_eq!(read_small(b.as_slice(), 2, 8), dst_null);
         assert_eq!(read_small(b.as_slice(), 3, 8), dst_null);
 
-        // Scale down 2 -> 0, precision 18. 1234(=12.34) lossy -> null; 1200(=12.00) -> 12 exact;
-        // negative exact -560(=-5.60) -> -6? no: -560/100 = -5 r -60 -> lossy -> null. Use -600 -> -6.
+        // Scale down 2 -> 0 rounds half away from zero: 1250(=12.50)->13; 1234(=12.34)->12;
+        // -560(=-5.60)->-6 (negative rounds away from zero).
         let mut bytes = Vec::new();
+        bytes.extend_from_slice(&d256_from_i128(1250));
         bytes.extend_from_slice(&d256_from_i128(1234));
-        bytes.extend_from_slice(&d256_from_i128(1200));
-        bytes.extend_from_slice(&d256_from_i128(-600));
+        bytes.extend_from_slice(&d256_from_i128(-560));
         let mut b = buf(&allocator, &bytes);
         convert_decimal_narrowing(
             &mut b,
@@ -4310,8 +4387,142 @@ mod decimal_convert_tests {
             18,
         )
         .unwrap();
-        assert_eq!(read_small(b.as_slice(), 0, 8), dst_null);
+        assert_eq!(read_small(b.as_slice(), 0, 8), 13);
         assert_eq!(read_small(b.as_slice(), 1, 8), 12);
         assert_eq!(read_small(b.as_slice(), 2, 8), -6);
+    }
+
+    /// Regression: integer->decimal must clamp to the target PRECISION, not just the destination
+    /// byte width. A precision can be tighter than its width admits (DECIMAL(2,0) is a Decimal8
+    /// whose i8 width holds 127 but precision admits only 99; DECIMAL(9,0) is a Decimal32 whose
+    /// i32 width holds ~2.1e9 but precision admits only 999_999_999; DECIMAL(18,18) scales 1 to
+    /// 10^18, which fits i64 but is 19 digits). The lazy parquet decoder must NULL these to match
+    /// the native DecimalColumnTypeConverter, which rejects them via comparePrecision.
+    #[test]
+    fn fixed_to_decimal_i64_target_clamps_to_precision() {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
+        // INT -> Decimal8(2,0): 100/-100 fit the i8 width but exceed precision 2 -> null; 99/-99/0 survive.
+        let null8 = i8::MIN as i64;
+        let mut b = buf(&allocator, &le_small(&[100, 99, -100, -99, 0], 4));
+        convert_fixed_to_decimal(&mut b, ColumnTypeTag::Int, ColumnTypeTag::Decimal8, 0, 0, 2)
+            .unwrap();
+        assert_eq!(read_small(b.as_slice(), 0, 1), null8);
+        assert_eq!(read_small(b.as_slice(), 1, 1), 99);
+        assert_eq!(read_small(b.as_slice(), 2, 1), null8);
+        assert_eq!(read_small(b.as_slice(), 3, 1), -99);
+        assert_eq!(read_small(b.as_slice(), 4, 1), 0);
+
+        // INT -> Decimal32(9,0): 1_500_000_000 fits the i32 width but exceeds precision 9 -> null;
+        // 999_999_999 survives. Same byte width (4) as the INT source, so no resize.
+        let null32 = i32::MIN as i64;
+        let mut b = buf(&allocator, &le_small(&[1_500_000_000, 999_999_999], 4));
+        convert_fixed_to_decimal(
+            &mut b,
+            ColumnTypeTag::Int,
+            ColumnTypeTag::Decimal32,
+            0,
+            0,
+            9,
+        )
+        .unwrap();
+        assert_eq!(read_small(b.as_slice(), 0, 4), null32);
+        assert_eq!(read_small(b.as_slice(), 1, 4), 999_999_999);
+
+        // INT -> Decimal64(18,18): 1 and 2 scale to 10^18 / 2*10^18, both fit i64 (< i64::MAX) but
+        // are 19 digits, exceeding precision 18 -> null; 0 stays 0. Only the precision clamp catches
+        // these; the old byte-width-only guard stored them verbatim.
+        let null64 = i64::MIN;
+        let mut b = buf(&allocator, &le_small(&[1, 0, 2], 4));
+        convert_fixed_to_decimal(
+            &mut b,
+            ColumnTypeTag::Int,
+            ColumnTypeTag::Decimal64,
+            0,
+            18,
+            18,
+        )
+        .unwrap();
+        assert_eq!(read_small(b.as_slice(), 0, 8), null64);
+        assert_eq!(read_small(b.as_slice(), 1, 8), 0);
+        assert_eq!(read_small(b.as_slice(), 2, 8), null64);
+    }
+
+    /// INT -> Decimal128(20,19): 100 scales to 10^21 (22 digits, exceeds precision 20) -> null;
+    /// 5 scales to 5*10^19 (within precision 20) -> stored. Both fit i128, so only the precision
+    /// clamp distinguishes them.
+    #[test]
+    fn fixed_to_decimal128_target_clamps_to_precision() {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let mut b = buf(&allocator, &le_small(&[100, 5, 0], 4));
+        convert_fixed_to_decimal(
+            &mut b,
+            ColumnTypeTag::Int,
+            ColumnTypeTag::Decimal128,
+            0,
+            19,
+            20,
+        )
+        .unwrap();
+        assert_eq!(read_d128(b.as_slice(), 0), d128_null());
+        assert_eq!(read_d128(b.as_slice(), 1), 5i128 * 10i128.pow(19));
+        assert_eq!(read_d128(b.as_slice(), 2), 0);
+    }
+
+    /// INT -> Decimal256(76,75): 50 scales to 5*10^76, which fits i256 (< i256::MAX ~5.78e76) but
+    /// exceeds precision 76 (limit 10^76) -> null; 5 scales to 5*10^75 (< 10^76) -> stored. The
+    /// overflow guard (checked_mul_i256_pow10) alone would store the 50 case; only the precision
+    /// clamp NULLs it.
+    #[test]
+    fn fixed_to_decimal256_target_clamps_to_precision() {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let mut b = buf(&allocator, &le_small(&[50, 5], 4));
+        convert_fixed_to_decimal(
+            &mut b,
+            ColumnTypeTag::Int,
+            ColumnTypeTag::Decimal256,
+            0,
+            75,
+            76,
+        )
+        .unwrap();
+        assert_eq!(&b.as_slice()[0..32], &d256_null());
+        assert_ne!(&b.as_slice()[32..64], &d256_null());
+    }
+
+    /// Pins round-half-away-from-zero on decimal scale reduction across the i64 and i128 backings,
+    /// including the exact-half boundary and negative magnitudes (which round away from zero), so a
+    /// scale-down conversion never NULLs on a dropped fraction. Matches the native
+    /// DecimalColumnTypeConverter, which uses Decimal256.round(targetScale, RoundingMode.HALF_UP).
+    #[test]
+    fn decimal_scale_down_rounds_half_away_from_zero() {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
+        // Decimal64 scale 1 -> 0, precision 18. 2.5->3, -2.5->-3 (exact half rounds away);
+        // 2.4->2, -2.4->-2; 0 stays 0; NULL stays NULL.
+        let null = i64::MIN;
+        let mut b = buf(&allocator, &le_small(&[25, -25, 24, -24, 0, null], 8));
+        convert_decimal_in_place(&mut b, ColumnTypeTag::Decimal64, 1, 0, 18).unwrap();
+        assert_eq!(read_small(b.as_slice(), 0, 8), 3);
+        assert_eq!(read_small(b.as_slice(), 1, 8), -3);
+        assert_eq!(read_small(b.as_slice(), 2, 8), 2);
+        assert_eq!(read_small(b.as_slice(), 3, 8), -2);
+        assert_eq!(read_small(b.as_slice(), 4, 8), 0);
+        assert_eq!(read_small(b.as_slice(), 5, 8), null);
+
+        // Decimal128 scale 2 -> 0, precision 38. 2.50->3, -2.50->-3 (exact half away); 2.49->2.
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&d128_bytes(250));
+        bytes.extend_from_slice(&d128_bytes(-250));
+        bytes.extend_from_slice(&d128_bytes(249));
+        let mut b = buf(&allocator, &bytes);
+        convert_decimal_in_place(&mut b, ColumnTypeTag::Decimal128, 2, 0, 38).unwrap();
+        assert_eq!(read_d128(b.as_slice(), 0), 3);
+        assert_eq!(read_d128(b.as_slice(), 1), -3);
+        assert_eq!(read_d128(b.as_slice(), 2), 2);
     }
 }

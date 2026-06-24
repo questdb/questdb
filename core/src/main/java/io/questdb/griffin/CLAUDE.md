@@ -272,11 +272,16 @@ No allocations on the data path.
 
 ### O3 Merge with Type-Converted Parquet
 
-When O3 data lands on a parquet partition that has type-converted columns,
-`O3PartitionJob` detects `hasTypeConvertedColumns = true`, sets `hasSchemaChange = true`,
-and forces a full parquet rewrite. The rewrite decodes old columns with old types and
-re-encodes the entire partition with new types — the lazy conversion is materialized
-permanently.
+When O3 (out-of-order) rows land inside a parquet partition that has a pending lazy
+conversion, `O3PartitionJob` materialises the conversion at **write** time while merging the
+rows in (a `MERGE` action interleaves them via `mergeRowGroup`; a non-overlapping row group
+that still needs the new schema is re-encoded via `rewriteParquetRowGroupWithConversions`).
+
+That write path — the merge-action dispatch, the shared `prepareParquetSourceColumn`
+conversion and its allocations, and how **deduplication** interacts with it — is documented
+separately in `cairo/CLAUDE.md` ("Writing Parquet Partitions with Pending Column
+Conversions"). This file (griffin) owns the conversion *semantics* and the *read* path; the
+write path lives with `O3PartitionJob` / `TableWriter` in cairo.
 
 ## The Native/Parquet Contract
 

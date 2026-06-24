@@ -126,6 +126,19 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testChangeDecimalScaleDownRounds() throws Exception {
+        // A scale reduction rounds half away from zero (like every mainstream SQL database storing
+        // into DECIMAL(p,s)); it never NULLs on a dropped fraction. Only a magnitude overflow NULLs.
+        assertChangeDecimal("1.2m", "1", "decimal(2, 1)", "decimal(4, 0)");      // round down
+        assertChangeDecimal("1.5m", "2", "decimal(2, 1)", "decimal(4, 0)");      // tie rounds away
+        assertChangeDecimal("1.6m", "2", "decimal(2, 1)", "decimal(4, 0)");      // round up
+        assertChangeDecimal("-1.5m", "-2", "decimal(2, 1)", "decimal(4, 0)");    // negative tie away
+        assertChangeDecimal("12.34m", "12.3", "decimal(4, 2)", "decimal(4, 1)"); // round down
+        assertChangeDecimal("12.35m", "12.4", "decimal(4, 2)", "decimal(4, 1)"); // tie rounds away
+        assertChangeDecimal("12.99m", "13.0", "decimal(4, 2)", "decimal(4, 1)"); // carry into integer
+    }
+
+    @Test
     public void testChangeDecimalToDecimal() throws Exception {
         // DECIMAL8 conversions
         assertChangeDecimal("12", "12.0", "decimal(2, 0)", "decimal(4, 1)");
@@ -139,8 +152,8 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
         assertChangeDecimal("1.2m", "1.20", "decimal(2, 1)", "decimal(8, 2)");
         assertChangeDecimal("1.2m", "1.200", "decimal(2, 1)", "decimal(18, 3)");
         assertChangeDecimal("1.2m", "1.2000", "decimal(2, 1)", "decimal(38, 4)");
-        // 1.2 cannot be represented at scale 0 without losing the fraction -> NULL.
-        assertChangeDecimalToNull("1.2m", "decimal(2, 1)", "decimal(64, 0)");
+        // 1.2 rounds half away from zero to scale 0 -> 1 (a dropped fraction never NULLs).
+        assertChangeDecimal("1.2m", "1", "decimal(2, 1)", "decimal(64, 0)");
         assertChangeDecimal("1.2m", "1.200000000000", "decimal(2, 1)", "decimal(64, 12)");
 
         // DECIMAL16 conversions
@@ -1782,9 +1795,10 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             execute(String.format("insert into x values('2024-05-14T16:00:00.000000Z', %s)", initial), sqlExecutionContext);
             drainWalQueue();
 
-            // A value that does not fit the narrower target - magnitude exceeds the target precision, or
-            // the rescale would lose information - becomes NULL. The conversion succeeds and the WAL table
-            // is never suspended (mirrors an out-of-range DOUBLE->FLOAT becoming NaN).
+            // A value whose magnitude exceeds the target precision becomes NULL (a scale reduction
+            // instead rounds half away from zero, so only magnitude overflow NULLs). The conversion
+            // succeeds and the WAL table is never suspended (mirrors an out-of-range DOUBLE->FLOAT
+            // becoming NaN).
             execute(String.format("alter table x alter column col type %s", toType), sqlExecutionContext);
             drainWalQueue();
 
