@@ -141,6 +141,44 @@ public class ReplicaOnlyReconcileTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testReconcileIfRoleChangedTriggerOnPooledWriter() throws Exception {
+        assertMemoryLeak(() -> {
+            // Replica (skip=false): index materialized on apply.
+            skip = false;
+            execute("create table x (s symbol index capacity 256 replica only, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into x values ('a',1,0),('b',2,1000000),('a',3,2000000)");
+            drainWalQueue();
+            Assert.assertTrue("index files must exist on a replica", indexFilesExist("x", "s"));
+
+            final TableToken token = engine.verifyTableName("x");
+
+            // Promote to a skipping primary, bump the generation, then drive the PUBLIC role-switch
+            // sweep trigger directly on an already-open / pooled writer (no WAL apply): it must purge
+            // the stale replica-only index sidecars.
+            skip = true;
+            engine.bumpRoleGeneration();
+            try (io.questdb.cairo.TableWriter writer = engine.getWriter(token, "sweep")) {
+                writer.reconcileReplicaOnlyIndexesIfRoleChanged();
+            }
+            Assert.assertFalse("role-switch sweep trigger must purge the replica-only index files", indexFilesExist("x", "s"));
+
+            // Demote back to a replica, bump again, and trigger the sweep: it must rebuild the index.
+            skip = false;
+            engine.bumpRoleGeneration();
+            try (io.questdb.cairo.TableWriter writer = engine.getWriter(token, "sweep")) {
+                writer.reconcileReplicaOnlyIndexesIfRoleChanged();
+                // Idempotent: a second call with no further gen bump is a cheap no-op.
+                writer.reconcileReplicaOnlyIndexesIfRoleChanged();
+            }
+            Assert.assertTrue("role-switch sweep trigger must rebuild the replica-only index files", indexFilesExist("x", "s"));
+            assertIndexUsed();
+            assertContents("s\tv\tts\n" +
+                    "a\t1.0\t1970-01-01T00:00:00.000000Z\n" +
+                    "a\t3.0\t1970-01-01T00:00:02.000000Z\n");
+        });
+    }
+
     // Query correctness over the index scan path: s = 'a' rows in timestamp order.
     private void assertContents(String expected) throws Exception {
         sink.clear();

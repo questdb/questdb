@@ -1490,6 +1490,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         commitTxWriterAndPublishPendingPostingSealPurges();
     }
 
+    /**
+     * Best-effort, role-switch-driven reconcile trigger for the cold-table sweep.
+     * <p>
+     * Mirrors EXACTLY the gen-check the WAL-apply hook performs (and the apply hook now delegates
+     * here). Safe to call on an already-open / pooled writer that is NOT mid-transaction: it only
+     * (re)materializes or purges replica-only index sidecars via {@link #reconcileReplicaOnlyIndexes()},
+     * which reuses the writeIndex / removeIndexFilesInPartition paths and never calls commit(). It is
+     * a cheap no-op when the role generation is unchanged or the table has no replica-only columns.
+     */
+    public void reconcileReplicaOnlyIndexesIfRoleChanged() {
+        final long gen = engine.getRoleGeneration();
+        if (gen != lastReconciledRoleGen) {
+            reconcileReplicaOnlyIndexes();
+            lastReconciledRoleGen = gen;
+        }
+    }
+
     public void commitWalInsertTransactions(
             @Transient Path walPath,
             long seqTxn,
@@ -1507,11 +1524,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // mid-transaction here, so building/purging index files is safe (no in-progress commit to
         // corrupt; reconcile never calls commit()). Done before the apply so the freshly
         // (un)materialized index covers the rows committed by this very apply.
-        final long gen = engine.getRoleGeneration();
-        if (gen != lastReconciledRoleGen) {
-            reconcileReplicaOnlyIndexes();
-            lastReconciledRoleGen = gen;
-        }
+        reconcileReplicaOnlyIndexesIfRoleChanged();
 
         physicallyWrittenRowsSinceLastCommit.reset();
         dedupRowsRemovedSinceLastCommit.reset();
