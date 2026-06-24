@@ -792,11 +792,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     @Override
     public void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize, byte indexType) {
-        addIndex(columnName, indexValueBlockSize, indexType, null);
+        addIndex(columnName, indexValueBlockSize, indexType, null, false);
     }
 
     @Override
-    public void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize, byte indexType, @Nullable ObjList<CharSequence> coveringColumnNames) {
+    public void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize, byte indexType, @Nullable ObjList<CharSequence> coveringColumnNames, boolean replicaOnly) {
         assert indexValueBlockSize == Numbers.ceilPow2(indexValueBlockSize) : "power of 2 expected";
 
         checkDistressed();
@@ -858,6 +858,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             writeIndex(columnName, indexValueBlockSize, indexType, columnIndex, indexer);
 
             columnMetadata.setIndexType(indexType);
+            columnMetadata.setReplicaOnlyIndex(replicaOnly);
             columnMetadata.setIndexValueBlockCapacity(indexValueBlockSize);
 
             // set the index flag in metadata and create new _meta.swp
@@ -12377,6 +12378,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 if (metadata.isCovering(i)) {
                     flags |= META_FLAG_BIT_COVERING;
+                }
+
+                if (metadata.isColumnReplicaOnlyIndex(i)) {
+                    flags |= META_FLAG_BIT_REPLICA_ONLY;
                 }
 
                 ddlMem.putLong(flags);

@@ -65,8 +65,8 @@ public class SequencerMetadataService implements MetadataServiceStub {
     }
 
     @Override
-    public void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize, byte indexType, @Nullable ObjList<CharSequence> coveringColumnNames) {
-        metadata.addIndex(columnName, indexValueBlockSize, indexType, coveringColumnNames);
+    public void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize, byte indexType, @Nullable ObjList<CharSequence> coveringColumnNames, boolean replicaOnly) {
+        metadata.addIndex(columnName, indexValueBlockSize, indexType, coveringColumnNames, replicaOnly);
     }
 
     @Override

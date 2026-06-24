@@ -117,7 +117,7 @@ public class AlterOperationBuilder implements Mutable {
         extraInfo.add(columnNamePosition);
     }
 
-    public void ofAddIndex(int tableNamePosition, TableToken tableToken, int tableId, CharSequence columnName, int indexValueBlockSize, byte indexType, @Nullable ObjList<CharSequence> coveringColumnNames) {
+    public void ofAddIndex(int tableNamePosition, TableToken tableToken, int tableId, CharSequence columnName, int indexValueBlockSize, byte indexType, @Nullable ObjList<CharSequence> coveringColumnNames, boolean replicaOnly) {
         this.command = ADD_INDEX;
         this.tableNamePosition = tableNamePosition;
         this.tableToken = tableToken;
@@ -125,6 +125,8 @@ public class AlterOperationBuilder implements Mutable {
         this.extraStrInfo.add(columnName);
         this.extraInfo.add(indexValueBlockSize);
         this.extraInfo.add(indexType);
+        // Replica-only flag slot (1 = replica-only, 0 = normal); precedes coverCount
+        this.extraInfo.add(replicaOnly ? 1 : 0);
         // Covering column count followed by names (0 means no covering)
         int coverCount = coveringColumnNames != null ? coveringColumnNames.size() : 0;
         this.extraInfo.add(coverCount);
