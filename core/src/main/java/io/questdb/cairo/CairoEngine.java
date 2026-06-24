@@ -1440,6 +1440,19 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public @NotNull WalWriter getWalWriter(TableToken tableToken) {
+        return getWalWriterUnsafe(tableToken);
+    }
+
+    /**
+     * Acquires a WAL writer WITHOUT the read-only client gate {@link #getWalWriter} carries
+     * (the twin of {@link #getWriterUnsafe} for the WAL writer pool). The enterprise override of
+     * {@link #getWalWriter} refuses on {@code isReadOnlyMode()} to block client writes on a read-only
+     * replica / demoting node; this method is intentionally NOT overridden there, so engine-internal
+     * paths that legitimately mint on a read-only node -- replica WAL apply and the read-only replica's
+     * own {@code REBASE WAL INTO} reconstruction -- acquire through here. Callers are responsible for the
+     * read-only/role gating themselves (e.g. rebaseWalTable0's assertRebaseRole + variant check).
+     */
+    public @NotNull WalWriter getWalWriterUnsafe(TableToken tableToken) {
         verifyTableToken(tableToken);
         if (configuration.isWalApplySuspendedWriteDenied() && isWalApplySuspended(tableToken)) {
             throw CairoException.tableSuspended(tableToken);
@@ -2665,8 +2678,12 @@ public class CairoEngine implements Closeable, WriterSource {
         TableWriter oldWriter = null;
         try {
             // Fence any in-flight apply and snapshot a consistent applied state (the table is suspended,
-            // so the writer is free).
-            oldWriter = getWriter(oldToken, "rebase");
+            // so the writer is free). The replica REBASE WAL INTO variant is the read-only replica's own
+            // follow-the-primary reconstruction (gated to a read-only replica by assertRebaseRole), so it
+            // acquires through getWriterUnsafe -- the enterprise getWriter override would otherwise refuse
+            // it on isReadOnlyMode(). The plain variant keeps the read-only-refusing getWriter acquire so a
+            // client REBASE WAL on a demoting primary is refused (the demote write-fence).
+            oldWriter = replicaVariant ? getWriterUnsafe(oldToken, "rebase") : getWriter(oldToken, "rebase");
 
             try (Path src = new Path(); Path dst = new Path()) {
                 // Build the clone in a hidden ".rebase/" staging dir (mirrors ".download"/".checkpoint").
@@ -2738,7 +2755,10 @@ public class CairoEngine implements Closeable, WriterSource {
                 // seeds are local-only (never uploaded): they advance the new sequencer to seqTxn 2 so the
                 // downloader resumes from the primary's seqTxn 3 rather than stalling on the missing
                 // baseline below first_txn.
-                try (WalWriter walWriter = getWalWriter(newToken)) {
+                // The replica variant seeds on a read-only replica, so it acquires through
+                // getWalWriterUnsafe (the enterprise getWalWriter override refuses on isReadOnlyMode());
+                // the plain variant keeps the gated getWalWriter, consistent with the old-table acquire above.
+                try (WalWriter walWriter = replicaVariant ? getWalWriterUnsafe(newToken) : getWalWriter(newToken)) {
                     walWriter.commitRebaseSeed();
                 }
 
