@@ -332,6 +332,12 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         // rewriteAndSwapMetadata() persists a _meta with no covering flag/section
         // and every reader thereafter sees the posting index as non-covering.
         newColumnMetadata.setCoveringColumnIndices(oldMeta.getCoveringColumnIndices());
+        // Preserve the replica-only-index flag across a symbol-capacity change.
+        // Like the covering schema above, this per-column flag lives on the
+        // column metadata; rebuilding the column to change its capacity must
+        // carry it over, otherwise the next rewriteAndSwapMetadata() persists
+        // replicaOnly=false and the flag is lost cluster-wide.
+        newColumnMetadata.setReplicaOnlyIndex(oldMeta.isReplicaOnlyIndex());
         columnMetadata.set(columnIndex, newColumnMetadata);
     }
 

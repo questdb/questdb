@@ -269,6 +269,75 @@ public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
         });
     }
 
+    // ALTER COLUMN ... SYMBOL CAPACITY rebuilds the column metadata and rebinds the indexer. On a
+    // skipping primary the replica-only column has NO wired indexer, so the indexer-rebind block in
+    // TableWriter.changeSymbolCapacity would assert/NPE and distress the writer. The capacity change
+    // also rebuilds TableColumnMetadata via updateColumnSymbolCapacity, which must carry the
+    // replicaOnly flag over, otherwise rewriteAndSwapMetadata persists replicaOnly=false.
+    @Test
+    public void testChangeSymbolCapacityPreservesReplicaOnlyFlagAndDoesNotDistress() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (s symbol index capacity 256 replica only, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into x values ('a', 0), ('b', 1000000), ('a', 2000000)");
+            drainWalQueue();
+
+            final TableToken token = engine.verifyTableName("x");
+
+            execute("alter table x alter column s symbol capacity 512");
+            drainWalQueue();
+
+            // (1) the writer must not be distressed / the table must not be suspended
+            Assert.assertFalse(
+                    "WAL table must not be suspended by ALTER COLUMN SYMBOL CAPACITY on a replica-only index",
+                    engine.getTableSequencerAPI().isSuspended(token)
+            );
+
+            // (2) the indexed + replicaOnly flags must SURVIVE the capacity change
+            assertMetadataFlags("x", "s");
+
+            // (3) no index files materialised on the skipping primary
+            Assert.assertFalse(
+                    "no index files expected on skipping primary after SYMBOL CAPACITY change",
+                    indexFilesExist("x", "s")
+            );
+
+            // table remains queryable; the skipped index must not change results
+            sink.clear();
+            printSql("select s, ts from x where s = 'a'", sink);
+            io.questdb.test.tools.TestUtils.assertEquals(
+                    "s\tts\n" +
+                            "a\t1970-01-01T00:00:00.000000Z\n" +
+                            "a\t1970-01-01T00:00:02.000000Z\n",
+                    sink);
+        });
+    }
+
+    // TRUNCATE on a NON-partitioned table reaches TableWriter.truncateColumns, which resets the
+    // indexer column top for indexed columns. On a skipping primary the replica-only column has no
+    // wired indexer, so a raw indexers.get(i).resetColumnTop() would NPE. (Partitioned TRUNCATE goes
+    // through releaseIndexerWriters, which is already null-safe.) Non-partitioned tables cannot use
+    // WAL, so this exercises the direct (BYPASS WAL) writer path where truncateColumns runs.
+    @Test
+    public void testTruncateNonPartitionedReplicaOnlyIndexDoesNotCrash() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (s symbol index capacity 256 replica only, ts timestamp) timestamp(ts) partition by none bypass wal");
+            execute("insert into x values ('a', 0), ('b', 1000000), ('a', 2000000)");
+            engine.releaseAllWriters();
+
+            // TRUNCATE on the non-partitioned table must not NPE on the absent indexer.
+            execute("truncate table x");
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+
+            assertMetadataFlags("x", "s");
+
+            // empty + queryable
+            sink.clear();
+            printSql("select count() from x", sink);
+            io.questdb.test.tools.TestUtils.assertEquals("count\n0\n", sink);
+        });
+    }
+
     // The metadata must still record indexed=true and replicaOnly=true so a replica or a promoted
     // node (skipReplicaOnlyIndexes()==false) can build the bitmap index later.
     private void assertMetadataFlags(String table, String col) {

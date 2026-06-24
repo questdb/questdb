@@ -9579,15 +9579,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     if (Chars.equalsIgnoreCase(qc.getAst().token, qc.getAlias())) {
                         factoryMetadata.add(i, m);
                     } else { // keep alias
-                        factoryMetadata.add(i, new TableColumnMetadata(
-                                        Chars.toString(qc.getAlias()),
-                                        m.getColumnType(),
-                                        m.getIndexType(),
-                                        m.getIndexValueBlockCapacity(),
-                                        m.isSymbolTableStatic(),
-                                        baseMetadata
-                                )
+                        TableColumnMetadata aliased = new TableColumnMetadata(
+                                Chars.toString(qc.getAlias()),
+                                m.getColumnType(),
+                                m.getIndexType(),
+                                m.getIndexValueBlockCapacity(),
+                                m.isSymbolTableStatic(),
+                                baseMetadata
                         );
+                        // defense-in-depth: carry the replica-only-index flag through the alias copy
+                        aliased.setReplicaOnlyIndex(m.isReplicaOnlyIndex());
+                        factoryMetadata.add(i, aliased);
                     }
                 }
             }
@@ -9635,15 +9637,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     if (Chars.equalsIgnoreCase(qc.getAst().token, qc.getAlias())) {
                         factoryMetadata.add(i, m);
                     } else { // keep alias
-                        factoryMetadata.add(i, new TableColumnMetadata(
-                                        Chars.toString(qc.getAlias()),
-                                        m.getColumnType(),
-                                        m.getIndexType(),
-                                        m.getIndexValueBlockCapacity(),
-                                        m.isSymbolTableStatic(),
-                                        baseMetadata
-                                )
+                        TableColumnMetadata aliased = new TableColumnMetadata(
+                                Chars.toString(qc.getAlias()),
+                                m.getColumnType(),
+                                m.getIndexType(),
+                                m.getIndexValueBlockCapacity(),
+                                m.isSymbolTableStatic(),
+                                baseMetadata
                         );
+                        // defense-in-depth: carry the replica-only-index flag through the alias copy
+                        aliased.setReplicaOnlyIndex(m.isReplicaOnlyIndex());
+                        factoryMetadata.add(i, aliased);
                     }
                     chainTypes.add(i, m.getColumnType());
                     listColumnFilterA.extendAndSet(i, i + 1);

@@ -1428,13 +1428,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     setColumnAppendPosition(columnIndex, transientRowCount, false);
                     path.trimTo(pathSize);
 
-                    if (metadata.isIndexed(columnIndex)) {
-                        ColumnIndexer indexer = indexers.get(columnIndex);
-                        final long columnTop = columnVersionWriter.getColumnTopQuick(partitionTimestamp, columnIndex);
-                        assert indexer != null;
-                        indexer.getWriter().setCurrentTableTxn(txWriter.getTxn());
-                        indexer.configureFollowerAndWriter(path.trimTo(plen), columnName, columnNameTxn, getPrimaryColumn(columnIndex), columnTop, partitionTimestamp, partitionNameTxn);
-                        configureCoveringIfNeeded(indexer, columnIndex, partitionTimestamp);
+                    if (metadata.isIndexed(columnIndex)
+                            && !(metadata.isColumnReplicaOnlyIndex(columnIndex) && configuration.skipReplicaOnlyIndexes())) {
+                        // getQuiet() is bounds- and null-safe: on a skipping primary the
+                        // indexers list can be shorter than columnCount (or hold a null slot).
+                        ColumnIndexer indexer = indexers.getQuiet(columnIndex);
+                        if (indexer != null) {
+                            final long columnTop = columnVersionWriter.getColumnTopQuick(partitionTimestamp, columnIndex);
+                            indexer.getWriter().setCurrentTableTxn(txWriter.getTxn());
+                            indexer.configureFollowerAndWriter(path.trimTo(plen), columnName, columnNameTxn, getPrimaryColumn(columnIndex), columnTop, partitionTimestamp, partitionNameTxn);
+                            configureCoveringIfNeeded(indexer, columnIndex, partitionTimestamp);
+                        }
                     }
                 }
             } catch (Throwable th) {
@@ -2053,6 +2057,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             columnMetadata.setIndexType(IndexType.NONE);
             columnMetadata.setIndexValueBlockCapacity(defaultIndexValueBlockSize);
             columnMetadata.setCoveringColumnIndices(null);
+            // The index is gone; clear the replica-only flag too, otherwise the
+            // column persists as indexed=false, replicaOnly=true.
+            columnMetadata.setReplicaOnlyIndex(false);
             rewriteAndSwapMetadata(metadata);
             clearTodoAndCommitMeta();
 
@@ -13889,8 +13896,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     ColumnType.getDriver(columnType).configureAuxMemMA(auxMem);
                 }
                 if (metadata.isIndexed(i)) {
-                    // Reset indexer column top
-                    indexers.get(i).resetColumnTop();
+                    // Reset indexer column top. On a skipping primary a
+                    // replica-only-indexed column has no wired indexer, so the
+                    // indexers list can be shorter than columnCount (or hold a
+                    // null slot); getQuiet() is bounds- and null-safe.
+                    ColumnIndexer ix = indexers.getQuiet(i);
+                    if (ix != null) {
+                        ix.resetColumnTop();
+                    }
                 }
             }
 

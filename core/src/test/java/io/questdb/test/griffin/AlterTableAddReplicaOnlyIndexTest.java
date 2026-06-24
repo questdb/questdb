@@ -46,6 +46,34 @@ public class AlterTableAddReplicaOnlyIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDropIndexClearsReplicaOnlyFlag() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (s symbol index capacity 256 replica only, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into x values ('a', 0), ('b', 1000000)");
+            drainWalQueue();
+
+            execute("alter table x alter column s drop index");
+            drainWalQueue();
+
+            try (TableMetadata m = engine.getTableMetadata(engine.verifyTableName("x"))) {
+                int i = m.getColumnIndex("s");
+                Assert.assertFalse("index dropped -> not indexed", m.isColumnIndexed(i));
+                Assert.assertFalse("drop index must clear the replica-only flag", m.isColumnReplicaOnlyIndex(i));
+            }
+
+            // table_columns() must reflect the cleared flag
+            assertQuery("select \"column\", indexed, indexReplicaOnly from table_columns('x')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            column\tindexed\tindexReplicaOnly
+                            s\tfalse\tfalse
+                            ts\tfalse\tfalse
+                            """);
+        });
+    }
+
+    @Test
     public void testAlterAddReplicaOnlyIndex() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (s symbol, ts timestamp) timestamp(ts) partition by day wal");
