@@ -379,6 +379,13 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_fdatasync0(JNIEnv *e, jclass cl
     return -1;
 }
 
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_syncFileRange0(JNIEnv *e, jclass cl, jint fd, jlong offset, jlong nbytes, jint flags) {
+    /* Windows has no sync_file_range; return 0 (no-op). Java callers MUST fall back to a full
+     * fsync/fdatasync for durability rather than relying on this. */
+    (void) e; (void) cl; (void) fd; (void) offset; (void) nbytes; (void) flags;
+    return 0;
+}
+
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_sync(JNIEnv *e, jclass cl) {
     // Windows does not seem to have sync.
     return -1;

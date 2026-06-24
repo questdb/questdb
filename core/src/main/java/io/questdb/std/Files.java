@@ -67,6 +67,13 @@ public final class Files {
     public static final int POSIX_MADV_RANDOM;
     public static final int POSIX_MADV_SEQUENTIAL;
     public static final char SEPARATOR;
+    // sync_file_range(2) flags (Linux). Values are part of the stable kernel ABI.
+    // WAIT_BEFORE: wait for already-in-flight writeback over the range to finish before starting.
+    public static final int SYNC_FILE_RANGE_WAIT_BEFORE = 1;
+    // WRITE: initiate writeback of dirty pages in the range to the device (does NOT flush the device cache).
+    public static final int SYNC_FILE_RANGE_WRITE = 2;
+    // WAIT_AFTER: wait for the writeback initiated above to reach the device cache before returning.
+    public static final int SYNC_FILE_RANGE_WAIT_AFTER = 4;
     // https://github.com/torvalds/linux/blob/e2f48c48090dea172c0c571101041de64634dae5/include/uapi/linux/magic.h#L18
     public static final int TMPFS_MAGIC = 0x01021994;
     public static final Charset UTF_8;
@@ -184,6 +191,20 @@ public final class Files {
 
     public static int fsync(long fd) {
         return fsync(toOsFd(fd));
+    }
+
+    /**
+     * Linux sync_file_range(2): initiate (and optionally wait for) writeback of the file's page-cache
+     * pages over {@code [offset, offset+nbytes)} to the backing device's cache, WITHOUT issuing a device
+     * cache flush. Use the {@code SYNC_FILE_RANGE_*} flag constants. To make the written-back data durable
+     * the caller MUST follow with {@link #fdatasync(long)}/{@link #fsync(long)} (a device flush).
+     * <p>
+     * Only acts on pages the kernel already tracks as dirty: mmap-dirtied pages must first be flushed to
+     * the page cache via {@link #msync(long, long, boolean)} (or written via {@code write()}), otherwise the
+     * dirty mmap pages are invisible to this call. On non-Linux platforms this is a no-op returning 0.
+     */
+    public static int syncFileRange(long fd, long offset, long nbytes, int flags) {
+        return syncFileRange0(toOsFd(fd), offset, nbytes, flags);
     }
 
     public static long getDirSize(Path path) {
@@ -647,6 +668,8 @@ public final class Files {
     private static native int fdatasync0(int fd);
 
     private static native int fsync(int fd);
+
+    private static native int syncFileRange0(int fd, long offset, long nbytes, int flags);
 
     private static native long getDiskSize(long lpszPath);
 

@@ -284,6 +284,22 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_fdatasync0(JNIEnv *e, jclass cl
 #endif
 }
 
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_syncFileRange0(JNIEnv *e, jclass cl, jint fd, jlong offset, jlong nbytes, jint flags) {
+#if defined(__linux__)
+    /* Linux-only: initiate writeback of the file's page cache over [offset, offset+nbytes)
+     * to the backing device's cache. Does NOT issue a device flush; the caller must follow
+     * with fdatasync/fsync to make the data durable. Crucially this only acts on pages that
+     * the kernel already knows are dirty in the page cache, so mmap-dirtied pages must first
+     * be msync'd (or written via write()) before sync_file_range can see them. */
+    return sync_file_range((int) fd, offset, nbytes, (unsigned) flags);
+#else
+    /* Non-Linux: no equivalent primitive. Return 0 (no-op); Java callers MUST fall back to a
+     * full fsync/fdatasync for durability rather than relying on this. */
+    (void) fd; (void) offset; (void) nbytes; (void) flags;
+    return 0;
+#endif
+}
+
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_sync(JNIEnv *e, jclass cl) {
     sync();
     return 0;

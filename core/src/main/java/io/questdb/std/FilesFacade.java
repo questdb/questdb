@@ -74,6 +74,19 @@ public interface FilesFacade {
 
     void fsyncAndClose(long fd);
 
+    /**
+     * Linux sync_file_range(2): initiate writeback of the file's page-cache pages over
+     * {@code [offset, offset+nbytes)} to the device cache without a device flush (see the
+     * {@code Files.SYNC_FILE_RANGE_*} flags). A no-op returning 0 on non-Linux platforms.
+     * Durability still requires a following {@link #fdatasync(long)}/{@link #fsync(long)}.
+     * <p>
+     * Provided as a {@code default} so existing implementors keep compiling; fault-injection
+     * facades may override it to model writeback/device-cache semantics.
+     */
+    default int syncFileRange(long fd, long offset, long nbytes, int flags) {
+        return Files.syncFileRange(fd, offset, nbytes, flags);
+    }
+
     long getDirSize(Path path);
 
     long getDiskFreeSpace(LPSZ path);
