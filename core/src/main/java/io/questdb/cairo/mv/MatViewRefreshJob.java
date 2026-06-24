@@ -1385,6 +1385,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             try {
                 // Mark the view invalid only if the operation is forced or the view was never refreshed.
                 if (force || viewState.getLastRefreshBaseTxn() != -1) {
+                    final long prevRefreshStartTimestampUs = viewState.getLastRefreshStartTimestampUs();
                     while (true) {
                         // Just in case the view is being concurrently renamed.
                         viewToken = engine.getUpdatedTableToken(viewToken);
@@ -1408,8 +1409,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                 // matches disk and the deferred invalidation is a clean pending retry, not a
                                 // half-applied one the re-enqueued task would then skip. Defer the same way
                                 // the top guard does -- mark pending and re-enqueue -- instead of looping on
-                                // the refused acquire forever. The finally unlocks.
+                                // the refused acquire forever. The finally unlocks. setInvalidState also
+                                // bumped the in-memory start timestamp before the fence refused; restore it
+                                // so the catalogue does not report this valid view as "refreshing" forever
+                                // (its in-memory start would otherwise sit ahead of the persisted finish).
                                 viewState.markAsValid();
+                                viewState.setLastRefreshStartTimestampUs(prevRefreshStartTimestampUs);
                                 viewState.markAsPendingInvalidation();
                                 stateStore.enqueueInvalidate(viewToken, invalidationReason);
                                 return;
@@ -2004,6 +2009,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     // actually refreshed before (lastRefreshBaseTxn != -1). A view that only ever tracked
                     // intervals has no materialized rows to go stale; holding the watermark is enough.
                     if (viewState.getLastRefreshBaseTxn() != -1) {
+                        final long prevRefreshStartTimestampUs = viewState.getLastRefreshStartTimestampUs();
                         final long invalidationTimestamp = microsecondClock.getTicks();
                         LOG.error().$("marking materialized view as invalid [view=").$(viewToken)
                                 .$(", reason=truncate operation, ts=").$ts(invalidationTimestamp)
@@ -2018,7 +2024,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                 // unchanged on-disk state, then re-throw: the refresh's outer read-only
                                 // handler defers (retry-later) and the load-time backstop re-detects the
                                 // truncate on the next promote (the watermark never advanced past it).
+                                // setInvalidState also bumped the in-memory start timestamp before the fence
+                                // refused; restore it so the catalogue does not report this valid view as
+                                // "refreshing" (its in-memory start would otherwise sit ahead of the
+                                // persisted finish).
                                 viewState.markAsValid();
+                                viewState.setLastRefreshStartTimestampUs(prevRefreshStartTimestampUs);
                             }
                             throw ex;
                         }
