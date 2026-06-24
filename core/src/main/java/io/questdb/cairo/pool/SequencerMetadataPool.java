@@ -106,7 +106,8 @@ public class SequencerMetadataPool extends AbstractMultiTenantPool<SequencerMeta
                 boolean isDedupKey,
                 boolean symbolIsCached,
                 int symbolCapacity,
-                @Transient IntList coveringColumnIndices
+                @Transient IntList coveringColumnIndices,
+                boolean replicaOnlyIndex
         ) {
             if (columnType > -1L) {
                 TableColumnMetadata columnMetadata = new TableColumnMetadata(
@@ -125,6 +126,7 @@ public class SequencerMetadataPool extends AbstractMultiTenantPool<SequencerMeta
                 if (coveringColumnIndices != null) {
                     columnMetadata.setCoveringColumnIndices(new IntList(coveringColumnIndices));
                 }
+                columnMetadata.setReplicaOnlyIndex(replicaOnlyIndex);
                 add(columnMetadata);
             }
         }
