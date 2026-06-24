@@ -2198,7 +2198,8 @@ mod tests {
             0.0,  // min_compression_ratio
             None, // parquet_meta_fd
             0,    // parquet_meta_file_size
-            -1,   // existing_parquet_meta_file_size
+            0,    // append_base
+            -1,   // existing_parquet_file_size
         )?;
 
         // Append a second row group, then re-read the footer.
@@ -2280,8 +2281,9 @@ mod tests {
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
             None,
-            0,
-            -1,
+            0,  // parquet_meta_file_size
+            0,  // append_base
+            -1, // existing_parquet_file_size
         )?;
         let o3_ts = [5i64, 6, 7];
         let o3_val = [50i32, 60, 70];
@@ -2504,8 +2506,9 @@ mod tests {
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
             None,
-            0,
-            -1,
+            0,  // parquet_meta_file_size
+            0,  // append_base
+            -1, // existing_parquet_file_size
         )?;
         updater.copy_row_group(0)?; // raw-copied: source index rebased
         updater.insert_row_group(&ts_val_partition(&[5, 6, 7], &[50, 60, 70]), 1)?; // fresh
@@ -2568,8 +2571,9 @@ mod tests {
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
             None,
-            0,
-            -1,
+            0,  // parquet_meta_file_size
+            0,  // append_base
+            -1, // existing_parquet_file_size
         )?;
         updater.copy_row_group(0)?; // raw-copied: source DESCENDING index rebased verbatim
         updater.end(None)?;
@@ -2625,8 +2629,9 @@ mod tests {
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
             None,
-            0,
-            -1,
+            0,  // parquet_meta_file_size
+            0,  // append_base
+            -1, // existing_parquet_file_size
         )?;
         updater.insert_row_group(&ts_val_partition(&[5, 6, 7], &[50, 60, 70]), 1)?;
         updater.end(None)?;
@@ -2690,8 +2695,9 @@ mod tests {
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
             None,
-            0,
-            -1,
+            0,  // parquet_meta_file_size
+            0,  // append_base
+            -1, // existing_parquet_file_size
         )?;
         updater.copy_row_group(0)?; // source has no index -> not indexable
         updater.insert_row_group(&ts_val_partition(&[5, 6, 7], &[50, 60, 70]), 1)?;
@@ -2755,8 +2761,9 @@ mod tests {
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
             None,
-            0,
-            -1,
+            0,  // parquet_meta_file_size
+            0,  // append_base
+            -1, // existing_parquet_file_size
         )?;
         updater.insert_row_group(&ts_val_partition(&[5, 6, 7], &[50, 60, 70]), 1)?;
         updater.end(None)?;
@@ -2816,8 +2823,9 @@ mod tests {
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
             None,
-            0,
-            -1,
+            0,  // parquet_meta_file_size
+            0,  // append_base
+            -1, // existing_parquet_file_size
         )?;
         updater.copy_row_group(0)?; // source has an OffsetIndex but no ColumnIndex
         updater.insert_row_group(&ts_val_partition(&[5, 6, 7], &[50, 60, 70]), 1)?;
@@ -2893,8 +2901,9 @@ mod tests {
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
             None,
-            0,
-            -1,
+            0,  // parquet_meta_file_size
+            0,  // append_base
+            -1, // existing_parquet_file_size
         )?;
         updater.copy_row_group(0)?; // copied group has an OffsetIndex but no ColumnIndex
         updater.insert_row_group(&ts_val_partition(&[5, 6, 7], &[50, 60, 70]), 1)?;
@@ -2970,8 +2979,9 @@ mod tests {
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
             None,
-            0,
-            -1,
+            0,  // parquet_meta_file_size
+            0,  // append_base
+            -1, // existing_parquet_file_size
         )?;
         updater.insert_row_group(&ts_val_partition(&[5, 6, 7], &[50, 60, 70]), 1)?;
         updater.end(None)?;
@@ -3029,8 +3039,9 @@ mod tests {
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
             None,
-            0,
-            -1,
+            0,  // parquet_meta_file_size
+            0,  // append_base
+            -1, // existing_parquet_file_size
         )?;
         updater.insert_row_group(&ts_val_partition(&[5, 6, 7], &[50, 60, 70]), 1)?;
         updater.end(None)?;
@@ -3954,8 +3965,9 @@ mod tests {
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
             None,
-            0,
-            -1,
+            0,  // parquet_meta_file_size
+            0,  // append_base
+            -1, // existing_parquet_file_size
         )?;
 
         // Physical output order (rewrite ignores the insert position):
@@ -4035,8 +4047,9 @@ mod tests {
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
             Some(pm.reopen()?), // real _pm fd exercises the id-resolution path
-            0,
-            -1, // no existing _pm -> full-create branch
+            0,                  // parquet_meta_file_size
+            0,                  // append_base
+            -1,                 // existing_parquet_file_size
         )?;
         updater.copy_row_group(0)?;
         updater.end(None)?;
