@@ -2410,6 +2410,11 @@ public class CairoEngine implements Closeable, WriterSource {
         if (lastRefreshBaseTxn >= baseTableLastTxn) {
             return false;
         }
+        // This load-time probe scans the same (lastRefreshBaseTxn, baseTableLastTxn] gap that the
+        // enqueued incremental refresh re-scans to build its intervals, so the no-truncate promote path
+        // reads the gap twice (and allocates a fresh loader per view). It is bounded to lagging views on
+        // the cold boot/promote path, so the redundant scan is a tracked optimization, not a steady-state
+        // cost.
         try (
                 Path path = new Path();
                 WalTxnRangeLoader loader = new WalTxnRangeLoader(configuration)
@@ -2419,9 +2424,12 @@ public class CairoEngine implements Closeable, WriterSource {
             return loader.hasTruncate();
         } catch (CairoException e) {
             // Missing or purged WAL files in the gap. Treat as "no truncate found" so the caller
-            // still schedules the normal incremental refresh; the refresh path's own interval
-            // planning falls back to a full refresh on the same read failure. Letting the exception
-            // escape would cause loadMatViewIntoStore's logging-only catch to swallow it, skipping
+            // still schedules the normal incremental refresh. The refresh path's own interval planning
+            // hits the same read failure and falls back to a full refresh; note that fallback is a
+            // REPLACE_RANGE over the current range, so if the purged gap held a truncate, pre-truncate
+            // buckets outside the current range can survive (a stale-valid view). That purge-during-the-
+            // pending-window residual is a known, tracked deferral. Letting the exception escape would
+            // cause loadMatViewIntoStore's logging-only catch to swallow it, skipping
             // enqueueIncrementalRefresh and leaving the view silently unscheduled after a promote-hydrate.
             LOG.error().$("could not scan base WAL gap for truncate, scheduling refresh [baseTable=").$(baseTableToken)
                     .$(", errno=").$(e.getErrno())

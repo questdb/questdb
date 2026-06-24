@@ -8053,7 +8053,8 @@ public class MatViewTest extends AbstractCairoTest {
             }
 
             // Drive ONE fresh incremental refresh. The truncate in the scanned range must NOT let the
-            // no-rows commit advance the persisted base txn past the truncate.
+            // no-rows commit advance the persisted base txn past the truncate. The same drain that runs the
+            // refresh also dequeues the barrier's INVALIDATE and finalizes it, so the view ends invalid.
             store.enqueueIncrementalRefresh(viewToken);
             try (MatViewRefreshJob job = createMatViewRefreshJob()) {
                 job.run();
@@ -8064,6 +8065,112 @@ public class MatViewTest extends AbstractCairoTest {
                     baseTxnBeforeTruncate,
                     state.getLastRefreshBaseTxn()
             );
+            // The user-visible half of the barrier: the durable INVALIDATE the refresh enqueued must take
+            // effect, leaving the view actually invalid with the truncate reason -- not silently valid.
+            Assert.assertTrue("the truncate barrier must invalidate the view", state.isInvalid());
+            drainWalAndMatViewQueues();
+            assertQuery("select view_status, invalidation_reason from materialized_views where view_name = 'mv'")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("view_status\tinvalidation_reason\ninvalid\ttruncate operation\n");
+        });
+    }
+
+    @Test
+    public void testTruncateBarrierHoldsWatermarkForPeriodMatView() throws Exception {
+        // The truncate barrier must hold the refresh watermark for PERIOD mat-views too, not only plain
+        // ones. A period view's incremental refresh synthesizes a fresh range from the period bounds, so
+        // even when the barrier clears the incremental intervals the refresh would otherwise build a
+        // non-empty range, commit, and advance lastRefreshBaseTxn past the truncate -- blinding the
+        // load-time backstop if the queued invalidation is later lost across a role switch.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, val double, ts timestamp) timestamp(ts) partition by DAY WAL");
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T00:00:00.000000Z");
+            execute("create materialized view mv refresh immediate period (length 1d) as " +
+                    "(select ts, count() cnt from base sample by 1h) partition by DAY");
+
+            // First complete period: insert rows in the 2024-09-10 day and let "now" pass its end so the
+            // period completes and the view refreshes over it.
+            execute("insert into base values ('a', 1.0, '2024-09-10T12:00'), ('a', 2.0, '2024-09-10T12:30')");
+            currentMicros = parseFloorPartialTimestamp("2024-09-11T00:00:00.000000Z");
+            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            final TableToken viewToken = engine.verifyTableName("mv");
+            final MatViewStateStoreImpl store = (MatViewStateStoreImpl) engine.getMatViewStateStore();
+            final MatViewState state = store.getViewState(viewToken);
+            Assert.assertNotNull(state);
+            final long baseTxnBeforeTruncate = state.getLastRefreshBaseTxn();
+            Assert.assertTrue("precondition: the period view refreshed at least once", baseTxnBeforeTruncate > -1);
+
+            // Truncate (the barrier) then add a later bucket in a NEW complete period. Apply only the base
+            // WAL so the truncate sits in the gap the next incremental refresh scans, and advance "now"
+            // past the new period's end so the period branch synthesizes a non-empty range for it.
+            execute("truncate table base");
+            execute("insert into base values ('a', 9.0, '2024-09-11T20:00')");
+            currentMicros = parseFloorPartialTimestamp("2024-09-12T00:00:00.000000Z");
+            drainWalQueue();
+
+            // Drop any queued mat-view task (including the apply-time INVALIDATE) so the lone refresh run is
+            // what must avoid advancing the watermark past the truncate.
+            final MatViewRefreshTask discard = new MatViewRefreshTask();
+            while (store.tryDequeueRefreshTask(discard)) {
+                // drop
+            }
+
+            // Drive ONE fresh incremental refresh. The truncate in the scanned range must NOT let the
+            // period branch's synthesized range commit a watermark advance past the truncate.
+            store.enqueueIncrementalRefresh(viewToken);
+            try (MatViewRefreshJob job = createMatViewRefreshJob()) {
+                job.run();
+            }
+
+            Assert.assertEquals(
+                    "a truncate-barrier refresh of a period view must not advance the persisted base txn past the truncate",
+                    baseTxnBeforeTruncate,
+                    state.getLastRefreshBaseTxn()
+            );
+        });
+    }
+
+    @Test
+    public void testWalTxnRangeLoaderDetectsTruncate() throws Exception {
+        // Direct unit coverage for the detection primitive the whole truncate barrier rests on:
+        // a range with a TRUNCATE reports hasTruncate()==true; a data-only range reports false; and a
+        // second clean load resets the flag back to false (no stale carry-over on a reused loader).
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, val double, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("insert into base values ('a', 1.0, '2024-09-10T12:00')");
+            drainWalQueue();
+            final TableToken baseToken = engine.verifyTableName("base");
+            final long txnAfterFirstInsert = engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn();
+
+            execute("truncate table base");
+            execute("insert into base values ('a', 9.0, '2024-09-10T20:00')");
+            drainWalQueue();
+            final long txnAfterTruncate = engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn();
+
+            try (
+                    WalTxnRangeLoader loader = new WalTxnRangeLoader(engine.getConfiguration());
+                    Path path = new Path()
+            ) {
+                final LongList intervals = new LongList();
+
+                // Data-only range (the very first insert): no truncate.
+                loader.load(engine, path, baseToken, intervals, 0, txnAfterFirstInsert);
+                Assert.assertFalse("a data-only range must not report a truncate", loader.hasTruncate());
+
+                // Range that spans the truncate: detected.
+                intervals.clear();
+                loader.load(engine, path, baseToken, intervals, txnAfterFirstInsert, txnAfterTruncate);
+                Assert.assertTrue("a range containing a TRUNCATE must report a truncate", loader.hasTruncate());
+
+                // A second clean (data-only) load must reset the flag, proving no stale carry-over.
+                intervals.clear();
+                loader.load(engine, path, baseToken, intervals, 0, txnAfterFirstInsert);
+                Assert.assertFalse("a clean reload must reset the truncate flag to false", loader.hasTruncate());
+            }
         });
     }
 

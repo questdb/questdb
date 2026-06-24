@@ -150,6 +150,10 @@ public class WalTxnRangeLoader implements QuietCloseable {
                             // Skip non-inserts for interval computation, but flag a TRUNCATE: it carries
                             // no data interval yet is an invalidating barrier for an incremental mat-view
                             // refresh. The caller must not advance the refresh base txn past a truncate.
+                            // Scoped to TRUNCATE only for now: DROP/DETACH PARTITION and rows-affected
+                            // UPDATE also delete base rows and likewise commit as non-data SQL txns the
+                            // interval scan skips, so they share the same gap-skip loss class. Treating any
+                            // invalidating non-data txn in the gap as a barrier is a tracked follow-up.
                             if (walEventCursor.getType() == WalTxnType.TRUNCATE) {
                                 hasTruncate = true;
                             }
