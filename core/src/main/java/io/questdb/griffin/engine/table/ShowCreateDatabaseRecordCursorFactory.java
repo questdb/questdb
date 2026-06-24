@@ -31,6 +31,7 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
@@ -39,20 +40,22 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.view.ViewDefinition;
+import io.questdb.griffin.BasePlanSink;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlUtil;
-import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Interval;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 import org.jetbrains.annotations.NotNull;
@@ -408,8 +411,39 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
     }
 
     // Walks a compiled query plan collecting the tokens of every table the query reads.
-    private static final class TableTokenCollector extends TextPlanSink {
+    /**
+     * Walks a compiled factory's execution plan to enumerate the table tokens it reads, without
+     * rendering any plan text. Unlike {@link io.questdb.griffin.TextPlanSink}, every value- and
+     * attribute-emitting method discards its input; only the {@code child(...)} and
+     * {@code val(Plannable)}/{@code val(ObjList)} traversal is kept, so nested cursor factories are
+     * still reached. This avoids building (and immediately discarding) the full textual plan on this
+     * cold dump path.
+     */
+    private static final class TableTokenCollector extends BasePlanSink {
         private final ObjHashSet<TableToken> tables = new ObjHashSet<>();
+
+        @Override
+        public PlanSink attr(CharSequence name) {
+            return this;
+        }
+
+        @Override
+        public PlanSink child(CharSequence outer, Plannable inner) {
+            return child(inner);
+        }
+
+        @Override
+        public PlanSink child(Plannable p) {
+            if (p instanceof RecordCursorFactory factory) {
+                addToken(factory.getTableToken());
+                factoryStack.push(factory);
+                p.toPlan(this);
+                factoryStack.pop();
+            } else {
+                p.toPlan(this);
+            }
+            return this;
+        }
 
         public void collect(RecordCursorFactory factory, SqlExecutionContext executionContext) {
             tables.clear();
@@ -418,11 +452,146 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
         }
 
         @Override
-        public PlanSink child(Plannable p) {
-            if (p instanceof RecordCursorFactory) {
-                addToken(((RecordCursorFactory) p).getTableToken());
+        public void end() {
+        }
+
+        @Override
+        public CharSequence getLine(int idx) {
+            return null;
+        }
+
+        @Override
+        public int getLineCount() {
+            return 0;
+        }
+
+        @Override
+        public PlanSink meta(CharSequence name) {
+            return this;
+        }
+
+        @Override
+        public void of(RecordCursorFactory factory, SqlExecutionContext executionContext) {
+            clear();
+            this.executionContext = executionContext;
+            if (factory != null) {
+                factoryStack.push(factory);
+                factory.toPlan(this);
+                factoryStack.pop();
             }
-            return super.child(p);
+        }
+
+        @Override
+        public PlanSink type(CharSequence type) {
+            return this;
+        }
+
+        @Override
+        public PlanSink val(boolean b) {
+            return this;
+        }
+
+        @Override
+        public PlanSink val(char c) {
+            return this;
+        }
+
+        @Override
+        public PlanSink val(CharSequence cs) {
+            return this;
+        }
+
+        @Override
+        public PlanSink val(double d) {
+            return this;
+        }
+
+        @Override
+        public PlanSink val(float f) {
+            return this;
+        }
+
+        @Override
+        public PlanSink val(int i) {
+            return this;
+        }
+
+        @Override
+        public PlanSink val(long l) {
+            return this;
+        }
+
+        @Override
+        public PlanSink val(long hash, int geoHashBits) {
+            return this;
+        }
+
+        @Override
+        public PlanSink val(ObjList<?> list, int from, int to) {
+            for (int i = from; i < to; i++) {
+                if (list.getQuick(i) instanceof Plannable plannable) {
+                    plannable.toPlan(this);
+                }
+            }
+            return this;
+        }
+
+        @Override
+        public PlanSink val(Plannable s) {
+            if (s != null) {
+                s.toPlan(this);
+            }
+            return this;
+        }
+
+        @Override
+        public PlanSink val(Sinkable s) {
+            return this;
+        }
+
+        @Override
+        public PlanSink val(Utf8Sequence utf8) {
+            return this;
+        }
+
+        @Override
+        public PlanSink valDecimal(long value, int precision, int scale) {
+            return this;
+        }
+
+        @Override
+        public PlanSink valDecimal(long hi, long lo, int precision, int scale) {
+            return this;
+        }
+
+        @Override
+        public PlanSink valDecimal(long hh, long hl, long lh, long ll, int precision, int scale) {
+            return this;
+        }
+
+        @Override
+        public PlanSink valIPv4(int ip) {
+            return this;
+        }
+
+        @Override
+        public PlanSink valISODate(TimestampDriver driver, long l) {
+            return this;
+        }
+
+        @Override
+        public PlanSink valInterval(Interval interval, int intervalType) {
+            return this;
+        }
+
+        @Override
+        public PlanSink valLong256(long long0, long long1, long long2, long long3) {
+            return this;
+        }
+
+        @Override
+        public PlanSink valUuid(long lo, long hi) {
+            return this;
         }
 
         private void addToken(TableToken token) {
