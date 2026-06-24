@@ -27,27 +27,36 @@ package io.questdb.griffin.engine.orderby;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.DelegatingRecordCursor;
+import io.questdb.cairo.sql.PageFrameAddressCache;
+import io.questdb.cairo.sql.ParquetDecodeHint;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.vm.MemoryCARWImpl;
+import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.Rows;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
-class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
-    private static final long MAX_HEAP_SIZE_LIMIT = (Integer.toUnsignedLong(-1) - 1) << 3;
+class EncodedSortLightRecordCursor implements DelegatingRecordCursor, RecordCursor.RowIdSource {
+    private final IntHashSet buildReadColumns;
     private final SortKeyEncoder encoder;
     private final DirectLongList entryMem;
-    private final long maxEntryMemBytes;
+    private final long keyCapBytes;
+    private final MemoryCARW keyHeap;
     private final long parallelThreshold;
+    private final long valueCapBytes;
     private RecordCursor baseCursor;
     private Record baseRecord;
     private SqlExecutionCircuitBreaker circuitBreaker;
@@ -69,13 +78,26 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
     ) {
         try {
             this.encoder = new SortKeyEncoder(metadata, sortColumnFilter);
+            this.buildReadColumns = SortKeyEncoder.extractSortKeyColumnIndexes(sortColumnFilter);
             this.entryMem = new DirectLongList(16 * 1024, MemoryTag.NATIVE_DEFAULT, true); // 128KB
-            // Clamp each operand to MAX_HEAP_SIZE_LIMIT before adding so an unset (Long.MAX_VALUE)
-            // cap does not overflow into a negative budget.
-            final long keyCap = Math.min(configuration.getSqlSortKeyMaxBytes(), MAX_HEAP_SIZE_LIMIT);
-            final long valueCap = Math.min(configuration.getSqlSortLightValueMaxBytes(), MAX_HEAP_SIZE_LIMIT);
-            this.maxEntryMemBytes = Math.min(keyCap + valueCap, MAX_HEAP_SIZE_LIMIT);
+            this.keyCapBytes = configuration.getSqlSortKeyMaxBytes();
+            this.valueCapBytes = configuration.getSqlSortLightValueMaxBytes();
             this.parallelThreshold = configuration.getSqlSortEncodedParallelThreshold();
+            final long keyHeapPageSize = configuration.getSqlSortKeyPageSize();
+            // The key heap and the entry array share the same byte budget; size the
+            // heap's page ceiling off the combined cap so a runaway build still trips
+            // the overflow check rather than allocating without bound.
+            final long maxKeyHeapBytes = Math.min(
+                    Math.min(keyCapBytes, SortKeyEncoder.MAX_ENTRY_HEAP_BYTES)
+                            + Math.min(valueCapBytes, SortKeyEncoder.MAX_ENTRY_HEAP_BYTES),
+                    SortKeyEncoder.MAX_ENTRY_HEAP_BYTES
+            );
+            this.keyHeap = new MemoryCARWImpl(
+                    keyHeapPageSize,
+                    (int) Math.min(Integer.MAX_VALUE, maxKeyHeapBytes / Numbers.ceilPow2(keyHeapPageSize) + 1),
+                    MemoryTag.NATIVE_DEFAULT,
+                    PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath()
+            );
             this.isOpen = true;
         } finally {
             if (!this.isOpen) {
@@ -89,6 +111,26 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
         if (isOpen) {
             isOpen = false;
             forceClose();
+        }
+    }
+
+    @Override
+    public void copyParquetRowIdsTo(DirectLongList target, PageFrameAddressCache addressCache) {
+        long parquetRowCount = 0;
+        for (long addr = startAddr; addr < endAddr; addr += entrySize) {
+            if (addressCache.getFrameFormat(Rows.toPartitionIndex(Unsafe.getLong(addr))) == PartitionFormat.PARQUET) {
+                parquetRowCount++;
+            }
+        }
+        if (parquetRowCount == 0) {
+            return;
+        }
+        target.ensureCapacity(parquetRowCount);
+        for (long addr = startAddr; addr < endAddr; addr += entrySize) {
+            final long rowId = Unsafe.getLong(addr);
+            if (addressCache.getFrameFormat(Rows.toPartitionIndex(rowId)) == PartitionFormat.PARQUET) {
+                target.add(rowId);
+            }
         }
     }
 
@@ -130,14 +172,28 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
 
     @Override
     public void of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
+        // The tracker is rebound unconditionally below (outside the !isOpen guard) because
+        // the ctor opens eagerly with isOpen=true; binding inside the guard would leave the
+        // first query untracked. A second of() without an intervening close() would rebind
+        // onto still-charged backing and underflow the per-query counter on free. close()
+        // nulls baseCursor, so a null field here means fresh-or-closed.
+        assert this.baseCursor == null : "of() without intervening close(): rebinding the memory tracker would underflow the per-query counter";
+        // Take ownership before reopen() can throw: on a reopen OOM, close()
+        // must find baseCursor here to free it instead of leaking it.
         this.baseCursor = baseCursor;
         this.baseRecord = baseCursor.getRecord();
+        entryMem.setMemoryTracker(executionContext.getMemoryTracker());
         if (!isOpen) {
             isOpen = true;
             entryMem.reopen();
         }
+        baseCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
+        baseCursor.setParentUsedColumns(buildReadColumns);
         keyType = encoder.init(baseCursor);
         assert keyType != SortKeyType.UNSUPPORTED;
+        if (keyType.isVariable()) {
+            encoder.setKeyHeap(keyHeap);
+        }
         entrySize = keyType.entrySize();
         rowIdOffset = keyType.rowIdOffset();
         longsPerEntry = entrySize / Long.BYTES;
@@ -157,6 +213,12 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
     }
 
     @Override
+    public void setParquetDecodeHint(ParquetDecodeHint hint) {
+        // We emit out of order, so of() pins the base to SCATTERED. An outer MONOTONIC push
+        // (e.g. an ASOF light join slave) must not downgrade it and force base re-decodes.
+    }
+
+    @Override
     public long size() {
         return baseCursor.size();
     }
@@ -168,71 +230,92 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
     }
 
     private void buildAndSort() {
+        // Consult the breaker before consuming the base, so an empty base scan still observes cancellation.
+        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+        final boolean isVariable = keyType.isVariable();
+        if (isVariable) {
+            // Reset the key heap so a re-execution does not accrue stale key bytes;
+            // appendAddressFor re-grows it lazily on the first encode.
+            keyHeap.close();
+        }
         // Pre-allocate if size is known
-        try {
-            long estimatedSize = baseCursor.size();
-            long maxEntries = maxEntryMemBytes / entrySize;
-            if (estimatedSize > 0) {
-                if (estimatedSize > maxEntries) {
-                    throwLimitOverflow();
-                }
-                entryMem.setCapacity(estimatedSize * longsPerEntry);
+        long estimatedSize = baseCursor.size();
+        long maxEntries = SortKeyEncoder.maxEntries(keyCapBytes, valueCapBytes, keyType);
+        long maxEntryMemBytes = maxEntries * entrySize;
+        if (estimatedSize > 0) {
+            if (estimatedSize > maxEntries) {
+                SortKeyEncoder.throwSortHeapOverflow(maxEntryMemBytes);
             }
+            entryMem.setCapacity(estimatedSize * longsPerEntry);
+        }
 
-            // Collect (key, rowId) entries
-            entryMem.clear();
-            count = 0;
-            if (estimatedSize > 0) {
-                while (baseCursor.hasNext()) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
-                    long addr = entryMem.getAppendAddress();
-                    encoder.encode(baseRecord, addr, baseRecord.getRowId());
-                    entryMem.skip(longsPerEntry);
-                    count++;
+        // Collect (key, rowId) entries
+        entryMem.clear();
+        count = 0;
+        if (isVariable) {
+            // Variable keys spill into the key heap; the per-row check bounds the
+            // entry array and the heap together against the combined budget.
+            while (baseCursor.hasNext()) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
+                entryMem.ensureCapacity(longsPerEntry);
+                long addr = entryMem.getAppendAddress();
+                encoder.encode(baseRecord, addr, baseRecord.getRowId());
+                entryMem.skip(longsPerEntry);
+                count++;
+                if (count * entrySize + keyHeap.getAppendOffset() > maxEntryMemBytes) {
+                    SortKeyEncoder.throwSortHeapOverflow(maxEntryMemBytes);
                 }
+            }
+        } else if (estimatedSize > 0) {
+            while (baseCursor.hasNext()) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
+                long addr = entryMem.getAppendAddress();
+                encoder.encode(baseRecord, addr, baseRecord.getRowId());
+                entryMem.skip(longsPerEntry);
+                count++;
+            }
+        } else {
+            while (baseCursor.hasNext()) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
+                if (count >= maxEntries) {
+                    SortKeyEncoder.throwSortHeapOverflow(maxEntryMemBytes);
+                }
+                entryMem.ensureCapacity(longsPerEntry);
+                long addr = entryMem.getAppendAddress();
+                encoder.encode(baseRecord, addr, baseRecord.getRowId());
+                entryMem.skip(longsPerEntry);
+                count++;
+            }
+        }
+
+        if (count > 1) {
+            if (isVariable) {
+                long heapAddr = keyHeap.getAppendOffset() == 0 ? 0 : keyHeap.addressOf(0);
+                Vect.sortEncodedVarEntries(entryMem.getAddress(), count, heapAddr, parallelThreshold);
             } else {
-                while (baseCursor.hasNext()) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
-                    if (count >= maxEntries) {
-                        throwLimitOverflow();
-                    }
-                    entryMem.ensureCapacity(longsPerEntry);
-                    long addr = entryMem.getAppendAddress();
-                    encoder.encode(baseRecord, addr, baseRecord.getRowId());
-                    entryMem.skip(longsPerEntry);
-                    count++;
-                }
+                Vect.sortEncodedEntries(entryMem.getAddress(), count, keyType.keyLength() / Long.BYTES, parallelThreshold);
             }
-        } finally {
-            Misc.free(encoder);
+            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
         }
-
-        if (count <= 1) {
-            startAddr = entryMem.getAddress() + rowIdOffset;
-            toTop();
-            return;
+        if (isVariable) {
+            // emit reads only rowIds; the key heap is not needed past the sort
+            keyHeap.close();
         }
-
-        Vect.sortEncodedEntries(entryMem.getAddress(), count, keyType.keyLength() / Long.BYTES, parallelThreshold);
-        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
         startAddr = entryMem.getAddress() + rowIdOffset;
         toTop();
+        if (count > 0) {
+            baseCursor.setRecordAtRows(this);
+        }
+        // Success-path free of the encoder's rank maps; a mid-build throw leaves them
+        // for close(). The cursor is not retryable: buildAndSort resets state at entry.
+        Misc.free(encoder);
     }
 
     private void forceClose() {
         Misc.free(entryMem);
+        Misc.free(keyHeap);
         Misc.free(encoder);
         baseCursor = Misc.free(baseCursor);
         baseRecord = null;
-    }
-
-    private void throwLimitOverflow() {
-        throw LimitOverflowException.instance()
-                .put("limit of ").put(maxEntryMemBytes)
-                .put(" memory exceeded in EncodedSort (raise ")
-                .put(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath())
-                .put(" or ")
-                .put(PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath())
-                .put(')');
     }
 }

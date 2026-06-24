@@ -99,6 +99,7 @@ public class FuzzRunner {
     private double colRemoveProb;
     private double colRenameProb;
     private double colTypeChangeProb;
+    private boolean createWalAsParquet;
     private double dataAddProb;
     private CairoEngine engine;
     private double equalTsRowsProb;
@@ -119,6 +120,7 @@ public class FuzzRunner {
     private long s0;
     private long s1;
     private double setParquetEncodingProb;
+    private double setTableFormatProb;
     private double setTtlProb;
     private SqlExecutionContext sqlExecutionContext;
     private int strLen;
@@ -139,7 +141,7 @@ public class FuzzRunner {
 
     public static void purgeAndReloadReaders(Rnd reloadRnd, TableReader rdr1, TableReader rdr2, O3PartitionPurgeJob purgeJob, double realoadThreashold) {
         if (reloadRnd.nextDouble() < realoadThreashold) {
-            purgeJob.run(0);
+            purgeJob.run();
             reloadReader(reloadRnd, rdr1, "1");
             reloadReader(reloadRnd, rdr2, "2");
         }
@@ -517,7 +519,7 @@ public class FuzzRunner {
                 generateSymbols(rnd, rnd.nextInt(Math.max(1, symbolCountMax - 5)) + 5, symbolStrLenMax, tableName),
                 (int) sequencerMetadata.getMetadataVersion(),
                 setParquetEncodingProb,
-                addCoveringIndexProb
+                addCoveringIndexProb, setTableFormatProb
         );
     }
 
@@ -560,6 +562,14 @@ public class FuzzRunner {
         } else {
             return (int) (20 * randomDriver);
         }
+    }
+
+    /**
+     * When true, fuzz-created WAL tables get FORMAT PARQUET in their CREATE TABLE
+     * statement so every partition is born parquet from the very first WAL apply.
+     */
+    public void setCreateWalAsParquet(boolean createWalAsParquet) {
+        this.createWalAsParquet = createWalAsParquet;
     }
 
     public void setFuzzCounts(
@@ -719,13 +729,28 @@ public class FuzzRunner {
             double setParquetEncodingProb
     ) {
         setFuzzProbabilities(
-                cancelRowsProb, notSetProb, nullSetProb, rollbackProb,
-                colAddProb, colRemoveProb, colRenameProb, colTypeChangeProb,
-                dataAddProb, equalTsRowsProb, partitionDropProb,
-                partitionToParquetProb, partitionToNativeProb,
-                truncateProb, tableDropProb, setTtlProb,
-                replaceInsertProb, symbolAccessValidationProb, queryProb,
-                setParquetEncodingProb, 0.0
+                cancelRowsProb,
+                notSetProb,
+                nullSetProb,
+                rollbackProb,
+                colAddProb,
+                colRemoveProb,
+                colRenameProb,
+                colTypeChangeProb,
+                dataAddProb,
+                equalTsRowsProb,
+                partitionDropProb,
+                partitionToParquetProb,
+                partitionToNativeProb,
+                truncateProb,
+                tableDropProb,
+                setTtlProb,
+                replaceInsertProb,
+                symbolAccessValidationProb,
+                queryProb,
+                setParquetEncodingProb,
+                0.0,
+                0.0
         );
     }
 
@@ -750,6 +775,7 @@ public class FuzzRunner {
             double symbolAccessValidationProb,
             double queryProb,
             double setParquetEncodingProb,
+            double setTableFormatProb,
             double addCoveringIndexProb
     ) {
         this.cancelRowsProb = cancelRowsProb;
@@ -772,6 +798,7 @@ public class FuzzRunner {
         this.symbolAccessValidationProb = symbolAccessValidationProb;
         this.queryProb = queryProb;
         this.setParquetEncodingProb = setParquetEncodingProb;
+        this.setTableFormatProb = setTableFormatProb;
         this.addCoveringIndexProb = addCoveringIndexProb;
     }
 
@@ -959,10 +986,16 @@ public class FuzzRunner {
         }
 
         if (engine.getTableTokenIfExists(tableName) == null) {
+            String tail;
+            if (isWal) {
+                tail = createWalAsParquet ? "FORMAT PARQUET WAL" : "WAL";
+            } else {
+                tail = "BYPASS WAL";
+            }
             engine.execute(
                     "create atomic table " + tableName + " as (" +
                             "select * from data_temp" +
-                            "), index(sym2 " + randomIndexTypeClause() + ") timestamp(ts) partition by DAY " + (isWal ? "WAL" : "BYPASS WAL"),
+                            "), index(sym2 " + randomIndexTypeClause() + ") timestamp(ts) partition by DAY " + tail,
                     sqlExecutionContext
             );
             // force few column tops
@@ -1001,7 +1034,8 @@ public class FuzzRunner {
             engine.execute(
                     "create atomic table " + tableName + " as (" +
                             "select * from data_temp" +
-                            "), index(sym2 " + randomIndexTypeClause() + ") timestamp(ts) partition by DAY WAL",
+                            "), index(sym2 " + randomIndexTypeClause() + ") timestamp(ts) partition by DAY "
+                            + (createWalAsParquet ? "FORMAT PARQUET WAL" : "WAL"),
                     sqlExecutionContext
             );
             // force few column tops
@@ -1012,30 +1046,6 @@ public class FuzzRunner {
             engine.execute("alter table " + tableName + " add column var_top varchar", sqlExecutionContext);
         }
         engine.verifyTableName(tableName);
-    }
-
-    /**
-     * Picks an index type clause for fuzz table creation. Returns either
-     * an empty string (BITMAP — the default), or one of the POSTING
-     * variants. Uses {@link SharedRandom} so the choice tracks the existing
-     * fuzz seed.
-     */
-    private String randomIndexTypeClause() {
-        Rnd rnd = SharedRandom.RANDOM.get();
-        if (rnd == null) {
-            return "";
-        }
-        double pick = rnd.nextDouble();
-        if (pick < 0.5) {
-            return ""; // BITMAP (the default for the existing INDEX clause)
-        }
-        if (pick < 0.7) {
-            return "TYPE POSTING";
-        }
-        if (pick < 0.85) {
-            return "TYPE POSTING DELTA";
-        }
-        return "TYPE POSTING EF";
     }
 
     @NotNull
@@ -1186,7 +1196,7 @@ public class FuzzRunner {
              TableReader rdr2 = getReaderHandleTableDropped(tableName)
         ) {
             CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
-            while (walApplyJob.run(0) || checkWalTransactionsJob.run(0)) {
+            while (walApplyJob.run() || checkWalTransactionsJob.run()) {
                 forceReleaseTableWriter(applyRnd);
                 purgeAndReloadReaders(applyRnd, rdr1, rdr2, purgeJob, 0.25);
             }
@@ -1240,6 +1250,30 @@ public class FuzzRunner {
         }
     }
 
+    /**
+     * Picks an index type clause for fuzz table creation. Returns either
+     * an empty string (BITMAP — the default), or one of the POSTING
+     * variants. Uses {@link SharedRandom} so the choice tracks the existing
+     * fuzz seed.
+     */
+    private String randomIndexTypeClause() {
+        Rnd rnd = SharedRandom.RANDOM.get();
+        if (rnd == null) {
+            return "";
+        }
+        double pick = rnd.nextDouble();
+        if (pick < 0.5) {
+            return ""; // BITMAP (the default for the existing INDEX clause)
+        }
+        if (pick < 0.7) {
+            return "TYPE POSTING";
+        }
+        if (pick < 0.85) {
+            return "TYPE POSTING DELTA";
+        }
+        return "TYPE POSTING EF";
+    }
+
     private void runApplyThread(AtomicInteger done, ConcurrentLinkedQueue<Throwable> errors, Rnd applyRnd) {
         try {
             ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
@@ -1248,7 +1282,7 @@ public class FuzzRunner {
             try (ApplyWal2TableJob job = new ApplyWal2TableJob(engine, 0)) {
                 while (done.get() == 0 && errors.isEmpty()) {
                     Unsafe.loadFence();
-                    while (job.run(0) || checkJob.run(0)) {
+                    while (job.run() || checkJob.run()) {
                         // Sometimes WAL Apply Job does not finish table in one go and return TableWriter to the pool
                         // where it can be fully closed before continuing the WAL application Test TableWriter closures.
                         forceReleaseTableWriter(applyRnd);
@@ -1257,7 +1291,7 @@ public class FuzzRunner {
                     checkNoSuspendedTables(tableTokenBucket);
                     i++;
                 }
-                while (job.run(0) || checkJob.run(0)) {
+                while (job.run() || checkJob.run()) {
                     forceReleaseTableWriter(applyRnd);
                 }
                 i++;

@@ -343,6 +343,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         frame.partitionLo = partitionLo;
         frame.partitionHi = adjustedHi;
         frame.format = PartitionFormat.NATIVE;
+        frame.parquetMetaDecoder = null;
         frame.rowGroupIndex = -1;
         frame.rowGroupLo = -1;
         frame.rowGroupHi = -1;
@@ -430,7 +431,10 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
                     reenterParquetDecoder.metadata(),
                     pushdownFilterConditions,
                     filterList,
-                    filterValues
+                    filterValues,
+                    // native-table partitions: resolve the Parquet column by stable id so a
+                    // renamed column maps correctly despite the frozen Parquet name.
+                    true
             )) {
                 filterBufEnd = filterValues.getAddress() + filterValues.getAppendOffset();
             }

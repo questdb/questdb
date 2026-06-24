@@ -56,7 +56,9 @@ public class LatestByAllFilteredRecordCursorFactory extends AbstractTreeSetRecor
 
         try {
             this.filter = filter;
-            Map map = MapFactory.createOrderedMap(configuration, columnTypes);
+            // openOnInit=false: the cursor binds the per-query tracker and reopens the map in of(),
+            // so the first allocation is charged to the per-query counter.
+            Map map = MapFactory.createOrderedMap(configuration, columnTypes, null, false);
             if (filter == null) {
                 cursor = new LatestByAllRecordCursor(configuration, metadata, map, rows, recordSink);
             } else {

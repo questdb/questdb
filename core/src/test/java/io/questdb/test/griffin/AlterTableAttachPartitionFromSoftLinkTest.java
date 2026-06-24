@@ -1050,7 +1050,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                             if (Os.isWindows()) {
                                 engine.releaseInactive();
                             }
-                            purgeJob.run(0);
+                            purgeJob.run();
                         } catch (Exception unexpected) {
                             Assert.fail(unexpected.getMessage());
                         }
@@ -1327,7 +1327,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
         engine.releaseAllReaders();
         engine.releaseAllWriters();
         try (O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1)) {
-            while (purgeJob.run(0)) {
+            while (purgeJob.run()) {
                 Os.pause();
             }
         }

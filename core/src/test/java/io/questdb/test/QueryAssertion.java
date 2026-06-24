@@ -18,6 +18,7 @@ import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -40,6 +41,7 @@ import io.questdb.std.str.MutableUtf16Sink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.test.tools.BindVarTuple;
+import io.questdb.test.tools.CountingSqlExecutionCircuitBreaker;
 import io.questdb.test.tools.MutationStep;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -78,6 +80,7 @@ public class QueryAssertion {
     private ObjList<CharSequence> ddl2More;
     private ObjList<CharSequence> ddlMore;
     private CairoEngine engine;
+    private boolean expectCircuitBreakerChecks = true;
     private boolean expectSize;
     private IntList expectedColumnTypes;
     private CharSequence expectedPlan;
@@ -287,6 +290,25 @@ public class QueryAssertion {
     }
 
     /**
+     * Assert that the cursor under test consults the execution context's circuit breaker at least
+     * once while the assertion battery runs it. The battery wraps the context's circuit breaker in
+     * a {@link CountingSqlExecutionCircuitBreaker} for its duration (every cursor pass, including
+     * the {@link #mutateWith} re-checks) and fails when no check was recorded, pinning that the
+     * query is cancellable.
+     * <p>
+     * ON by default; this step only re-enables the expectation after {@link #noCircuitBreakerCheck()}
+     * (e.g. in helper methods that receive the flag from the caller). Enforced on the
+     * {@link #returns(CharSequence)} / {@link #returns(CharSequence, CharSequence)} terminals,
+     * including the {@link #withPlan} / {@link #withPlanContaining} / {@link #fullFatJoins} /
+     * {@link #withCompiler} variants; other terminals do not run the full battery and skip the
+     * expectation, as do executions whose context is not a {@link SqlExecutionContextImpl}.
+     */
+    public QueryAssertion expectCircuitBreakerChecks() {
+        this.expectCircuitBreakerChecks = true;
+        return this;
+    }
+
+    /**
      * Assert that {@code cursor.size()} returns a known (non-negative) value. Off by default.
      */
     public QueryAssertion expectSize() {
@@ -428,6 +450,16 @@ public class QueryAssertion {
         for (int i = 0, n = more.length; i < n; i++) {
             this.ddl2More.add(more[i]);
         }
+        return this;
+    }
+
+    /**
+     * Skip the circuit breaker expectation (see {@link #expectCircuitBreakerChecks()}, on by
+     * default). Use for queries whose cursor legitimately never consults the circuit breaker,
+     * e.g. a constant projection over {@code long_sequence}.
+     */
+    public QueryAssertion noCircuitBreakerCheck() {
+        this.expectCircuitBreakerChecks = false;
         return this;
     }
 
@@ -675,9 +707,24 @@ public class QueryAssertion {
         return this;
     }
 
+    /**
+     * The .returns() battery installs a {@link CountingSqlExecutionCircuitBreaker} as the context
+     * breaker to verify that the cursor under test consults it on its own initiative (in
+     * {@code hasNext()} / {@code getCursor()} / build), i.e. that the query is cancellable. The
+     * harness's own auxiliary {@code calculateSize()} probes must NOT feed that counter: the default
+     * (iterating) {@link RecordCursor#calculateSize} checks the breaker it is HANDED once per row, so
+     * passing it the counting wrapper would satisfy the expectation for any non-empty cursor whether
+     * or not the cursor itself ever checks. Hand calculateSize the underlying delegate instead; the
+     * cursor's own field breaker (still the counting wrapper, installed during getCursor) keeps
+     * registering genuine checks.
+     */
+    private static SqlExecutionCircuitBreaker uncounted(SqlExecutionCircuitBreaker breaker) {
+        return breaker instanceof CountingSqlExecutionCircuitBreaker counting ? counting.getDelegate() : breaker;
+    }
+
     private static void assertCalculateSize(RecordCursorFactory factory, SqlExecutionContext sqlExecutionContext) throws SqlException {
         long size;
-        SqlExecutionCircuitBreaker circuitBreaker = sqlExecutionContext.getCircuitBreaker();
+        SqlExecutionCircuitBreaker circuitBreaker = uncounted(sqlExecutionContext.getCircuitBreaker());
         RecordCursor.Counter counter = new RecordCursor.Counter();
 
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
@@ -735,14 +782,14 @@ public class QueryAssertion {
     private static void drainWalQueue(ApplyWal2TableJob walApplyJob, CairoEngine engine) {
         CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
         drainWalQueue0(walApplyJob);
-        if (checkWalTransactionsJob.run(0)) {
+        if (checkWalTransactionsJob.run()) {
             drainWalQueue0(walApplyJob);
         }
     }
 
     @SuppressWarnings("StatementWithEmptyBody")
     private static void drainWalQueue0(ApplyWal2TableJob walApplyJob) {
-        while (walApplyJob.run(0)) ;
+        while (walApplyJob.run()) ;
     }
 
     private static void releaseInactive(CairoEngine engine) {
@@ -750,6 +797,10 @@ public class QueryAssertion {
         engine.releaseInactiveTableSequencers();
         engine.resetNameRegistryMemory();
         engine.getTxnScoreboardPool().clear();
+        // Drain the per-workload memory-tracker pool: a tracker acquired by a
+        // registered query is returned to the pool (not freed) and would
+        // otherwise trip the leak checker as a retained native block.
+        engine.getMemoryTrackerProvider().clear();
         Assert.assertEquals("busy writer count", 0, engine.getBusyWriterCount());
         Assert.assertEquals("busy reader count", 0, engine.getBusyReaderCount());
     }
@@ -971,6 +1022,14 @@ public class QueryAssertion {
         assertCalculateSize(factory, executionContext);
     }
 
+    private void assertCircuitBreakerWasChecked(CountingSqlExecutionCircuitBreaker countingCircuitBreaker) {
+        if (countingCircuitBreaker != null && countingCircuitBreaker.getCheckCount() == 0) {
+            Assert.fail("expected the cursor to check the execution context's circuit breaker at least once, " +
+                    "but it never did, so the query is not cancellable " +
+                    "(remove .expectCircuitBreakerChecks() if this cursor legitimately performs no checks)");
+        }
+    }
+
     private void assertColumnTypes(RecordCursorFactory factory) {
         if (expectedColumnTypes != null) {
             final RecordMetadata metadata = factory.getMetadata();
@@ -1080,7 +1139,7 @@ public class QueryAssertion {
                 counter.inc();
             }
             SqlExecutionCircuitBreaker breaker =
-                    sqlExecutionContext != null ? sqlExecutionContext.getCircuitBreaker() : null;
+                    sqlExecutionContext != null ? uncounted(sqlExecutionContext.getCircuitBreaker()) : null;
             cursor.calculateSize(breaker, counter);
             Assert.assertEquals(
                     String.format("Skip %,d then calculateSize(). Expect: as counted with hasNext(), actual: cursor.calculateSize()", skip),
@@ -1088,7 +1147,7 @@ public class QueryAssertion {
 
             cursor.toTop();
             counter.set(count + 1);
-            cursor.skipRows(counter);
+            cursor.skipRows(counter, RecordCursor.UNBOUNDED_ROW_COUNT);
             Assert.assertEquals("skipRows(rowCountPlusOne) didn't leave the counter at 1", 1, counter.get());
             Assert.assertFalse("hasNext() returned true after skipRows exhausted the cursor", cursor.hasNext());
 
@@ -1096,7 +1155,7 @@ public class QueryAssertion {
                 skip = rnd.nextInt(countReducedToInt / 2);
                 counter.set(skip);
                 cursor.toTop();
-                cursor.skipRows(counter);
+                cursor.skipRows(counter, RecordCursor.UNBOUNDED_ROW_COUNT);
                 Assert.assertEquals("skipRows(lessThanRowCount) didn't bring the counter to 0", 0, counter.get());
                 long remaining = 0;
                 String countMethod;
@@ -1464,6 +1523,16 @@ public class QueryAssertion {
     }
 
     private void assertReturns(CharSequence expected, CharSequence expected2) throws SqlException {
+        final CountingSqlExecutionCircuitBreaker countingCircuitBreaker = installCountingCircuitBreaker();
+        try {
+            assertReturnsBattery(expected, expected2);
+        } finally {
+            restoreCircuitBreaker(countingCircuitBreaker);
+        }
+        assertCircuitBreakerWasChecked(countingCircuitBreaker);
+    }
+
+    private void assertReturnsBattery(CharSequence expected, CharSequence expected2) throws SqlException {
         snapshotMemoryUsage();
         RecordCursorFactory factory = compileSelect();
         try {
@@ -1727,21 +1796,27 @@ public class QueryAssertion {
     private void assertViaFactoryCursor(CharSequence expected) throws SqlException {
         runDdl();
         snapshotMemoryUsage();
-        if (compiler != null) {
-            if (fullFatJoins) {
-                compiler.setFullFatJoins(true);
-            }
-            try (RecordCursorFactory factory = CairoEngine.select(compiler, query, context)) {
-                assertFactoryCursor(expected, factory, supportsRandomAccess, context, expectSize);
-            }
-        } else {
-            try (SqlCompiler fullFatCompiler = engine.getSqlCompiler()) {
-                fullFatCompiler.setFullFatJoins(true);
-                try (RecordCursorFactory factory = CairoEngine.select(fullFatCompiler, query, context)) {
+        final CountingSqlExecutionCircuitBreaker countingCircuitBreaker = installCountingCircuitBreaker();
+        try {
+            if (compiler != null) {
+                if (fullFatJoins) {
+                    compiler.setFullFatJoins(true);
+                }
+                try (RecordCursorFactory factory = CairoEngine.select(compiler, query, context)) {
                     assertFactoryCursor(expected, factory, supportsRandomAccess, context, expectSize);
                 }
+            } else {
+                try (SqlCompiler fullFatCompiler = engine.getSqlCompiler()) {
+                    fullFatCompiler.setFullFatJoins(true);
+                    try (RecordCursorFactory factory = CairoEngine.select(fullFatCompiler, query, context)) {
+                        assertFactoryCursor(expected, factory, supportsRandomAccess, context, expectSize);
+                    }
+                }
             }
+        } finally {
+            restoreCircuitBreaker(countingCircuitBreaker);
         }
+        assertCircuitBreakerWasChecked(countingCircuitBreaker);
     }
 
     private RecordCursorFactory compileSelect() throws SqlException {
@@ -1830,6 +1905,25 @@ public class QueryAssertion {
         assertThrows(errorPos, contains, fullFatJoins);
     }
 
+    private CountingSqlExecutionCircuitBreaker installCountingCircuitBreaker() {
+        if (!expectCircuitBreakerChecks) {
+            return null;
+        }
+        if (!(context instanceof SqlExecutionContextImpl impl)) {
+            // The check is a default, not an explicit request: a custom context exposes no way to
+            // interpose on the circuit breaker, so skip the expectation instead of failing.
+            return null;
+        }
+        final CountingSqlExecutionCircuitBreaker countingCircuitBreaker = new CountingSqlExecutionCircuitBreaker(impl.getCircuitBreaker());
+        impl.with(countingCircuitBreaker);
+        // While a DML operation is in flight the context serves its simple circuit breaker, in which
+        // case with() addresses a different field than getCircuitBreaker() reads and the count would
+        // be meaningless. The battery never runs in that state; fail fast if it somehow does.
+        Assert.assertSame("execution context did not adopt the counting circuit breaker",
+                countingCircuitBreaker, impl.getCircuitBreaker());
+        return countingCircuitBreaker;
+    }
+
     private void requireBindsCompatible() {
         if (ddl2 != null || fullFatJoins || compiler != null
                 || expectedPlan != null || planFragments != null || planFragmentsAbsent != null) {
@@ -1887,6 +1981,12 @@ public class QueryAssertion {
             return expectedTimestampOrder;
         }
         return testCase.getOrder() == BindVarTuple.Order.ASC ? TimestampOrder.ASC : TimestampOrder.DESC;
+    }
+
+    private void restoreCircuitBreaker(CountingSqlExecutionCircuitBreaker countingCircuitBreaker) {
+        if (countingCircuitBreaker != null) {
+            ((SqlExecutionContextImpl) context).with(countingCircuitBreaker.getDelegate());
+        }
     }
 
     private void runBinds(ObjList<BindVarTuple> cases) throws SqlException {

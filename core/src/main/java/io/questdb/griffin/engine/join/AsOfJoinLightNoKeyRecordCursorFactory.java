@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -71,7 +72,8 @@ public class AsOfJoinLightNoKeyRecordCursorFactory extends AbstractJoinRecordCur
         RecordCursor slaveCursor = null;
         try {
             slaveCursor = slaveFactory.getCursor(executionContext);
-            cursor.of(masterCursor, slaveCursor);
+            slaveCursor.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
+            cursor.of(masterCursor, slaveCursor, executionContext.getCircuitBreaker());
             return cursor;
         } catch (Throwable e) {
             Misc.free(slaveCursor);
@@ -111,6 +113,7 @@ public class AsOfJoinLightNoKeyRecordCursorFactory extends AbstractJoinRecordCur
         private final int slaveTimestampIndex;
         private final long slaveTimestampScale;
         private final long toleranceInterval;
+        private SqlExecutionCircuitBreaker circuitBreaker;
         private long latestSlaveRowID = Long.MIN_VALUE;
         private Record masterRecord;
         private long slaveATimestamp = Long.MIN_VALUE;
@@ -153,6 +156,7 @@ public class AsOfJoinLightNoKeyRecordCursorFactory extends AbstractJoinRecordCur
 
         @Override
         public boolean hasNext() {
+            circuitBreaker.statefulThrowExceptionIfTripped();
             if (masterCursor.hasNext()) {
                 // great, we have a record no matter what
                 final long masterTimestamp = scaleTimestamp(masterRecord.getTimestamp(masterTimestampIndex), masterTimestampScale);
@@ -218,9 +222,10 @@ public class AsOfJoinLightNoKeyRecordCursorFactory extends AbstractJoinRecordCur
             assert !record.hasSlave() || slaveBTimestamp <= masterTimestamp;
         }
 
-        private void of(RecordCursor masterCursor, RecordCursor slaveCursor) {
+        private void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
             this.masterCursor = masterCursor;
             this.slaveCursor = slaveCursor;
+            this.circuitBreaker = circuitBreaker;
             slaveATimestamp = Long.MIN_VALUE;
             slaveBTimestamp = Long.MIN_VALUE;
             latestSlaveRowID = Long.MIN_VALUE;

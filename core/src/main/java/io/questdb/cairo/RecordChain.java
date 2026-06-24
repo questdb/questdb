@@ -42,6 +42,8 @@ import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -50,6 +52,7 @@ import io.questdb.std.str.DirectString;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -68,9 +71,15 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
     private RecordChainRecord recordC;
     private SymbolTableSource symbolTableResolver;
 
+    /**
+     * Sink may be null when the caller does not need {@code put(Record)} - e.g. the
+     * Light window chain only allocates rows via {@link #beginRecord} and writes via
+     * {@link RecordSinkSPI} methods, never copying a full record. Calling
+     * {@code put(Record)} on a chain constructed without a sink throws NPE.
+     */
     public RecordChain(
             @Transient @NotNull ColumnTypes columnTypes,
-            @NotNull RecordSink recordSink,
+            @Nullable RecordSink recordSink,
             long pageSize,
             int maxPages
     ) {
@@ -79,7 +88,7 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
 
     public RecordChain(
             @Transient @NotNull ColumnTypes columnTypes,
-            @NotNull RecordSink recordSink,
+            @Nullable RecordSink recordSink,
             long pageSize,
             int maxPages,
             String maxPagesConfigKey
@@ -141,7 +150,8 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
     public void clear() {
         // memory will self-extend on write
         // reads are prevented by setting nextRecordOffset to -1
-        mem.close();
+        // Misc.free is null-safe: the ctor calls close() on its error path, where mem may be null.
+        Misc.free(mem);
         nextRecordOffset = -1L;
         varAppendOffset = 0L;
     }
@@ -363,6 +373,17 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
     @Override
     public void recordAt(Record record, long row) {
         ((RecordChainRecord) record).of(rowToDataOffset(row));
+    }
+
+    /**
+     * Binds the per-query native memory tracker. The chain is lazy by design
+     * (the inner MemoryCARW does not allocate native memory until the first
+     * write), so factories can safely set the tracker between cursors as long
+     * as the chain's backing has been released first via {@link #clear()} or
+     * {@link #close()}.
+     */
+    public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        mem.setMemoryTracker(tracker);
     }
 
     public void setSymbolTableResolver(SymbolTableSource resolver) {

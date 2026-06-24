@@ -1509,7 +1509,7 @@ public class PivotTest extends AbstractSqlParserTest {
                 .mutateWith(dmlCities)
                 .expectSize()
                 .withPlan("""
-                        Sort light
+                        Encode sort light
                           keys: [country]
                             GroupBy vectorized: false
                               keys: [country]
@@ -1653,7 +1653,7 @@ public class PivotTest extends AbstractSqlParserTest {
                 SELECT * FROM CPB PIVOT (sum(jg) FOR nf IN (SELECT NF FROM CPB ORDER BY NF) GROUP BY CPDH) ORDER BY CPDH;""")
                 .expectSize()
                 .withPlan("""
-                        Sort light
+                        Encode sort light
                           keys: [CPDH]
                             GroupBy vectorized: false
                               keys: [CPDH]
@@ -1710,7 +1710,7 @@ public class PivotTest extends AbstractSqlParserTest {
                 .mutateWith(dmlCities)
                 .expectSize()
                 .withPlan("""
-                        Sort light
+                        Encode sort light
                           keys: [country]
                             GroupBy vectorized: false
                               keys: [country]
@@ -1802,7 +1802,7 @@ public class PivotTest extends AbstractSqlParserTest {
                 .mutateWith(dmlCities)
                 .expectSize()
                 .withPlan("""
-                        Sort light
+                        Encode sort light
                           keys: [country]
                             GroupBy vectorized: false
                               keys: [country,name]
@@ -1903,7 +1903,7 @@ public class PivotTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .expectSize()
                     .withPlan("""
-                            Sort light
+                            Encode sort light
                               keys: [country]
                                 GroupBy vectorized: false
                                   keys: [country]
@@ -2102,7 +2102,7 @@ public class PivotTest extends AbstractSqlParserTest {
                 .mutateWith(dmlCities)
                 .expectSize()
                 .withPlan("""
-                        Sort light lo: 1
+                        Encode sort light lo: 1
                           keys: [country, name]
                             GroupBy vectorized: false
                               keys: [country,name]
@@ -2301,7 +2301,7 @@ public class PivotTest extends AbstractSqlParserTest {
                 .mutateWith(dmlCities)
                 .expectSize()
                 .withPlan("""
-                        Sort light
+                        Encode sort light
                           keys: [country]
                             GroupBy vectorized: false
                               keys: [country]
@@ -2339,7 +2339,7 @@ public class PivotTest extends AbstractSqlParserTest {
                 .mutateWith(dmlCities)
                 .expectSize()
                 .withPlan("""
-                        Sort light
+                        Encode sort light
                           keys: [name]
                             GroupBy vectorized: false
                               keys: [name]
@@ -2377,7 +2377,7 @@ public class PivotTest extends AbstractSqlParserTest {
                 .mutateWith(dmlCities)
                 .expectSize()
                 .withPlan("""
-                        Sort light
+                        Encode sort light
                           keys: [name]
                             GroupBy vectorized: false
                               keys: [name]
@@ -2450,7 +2450,7 @@ public class PivotTest extends AbstractSqlParserTest {
                 .mutateWith(dmlCities)
                 .expectSize()
                 .withPlan("""
-                        Sort light
+                        Encode sort light
                           keys: [country]
                             GroupBy vectorized: false
                               keys: [country]
@@ -2487,7 +2487,7 @@ public class PivotTest extends AbstractSqlParserTest {
                 .mutateWith(dmlCities)
                 .expectSize()
                 .withPlan("""
-                        Sort light lo: 1
+                        Encode sort light lo: 1
                           keys: [country desc]
                             GroupBy vectorized: false
                               keys: [country]
@@ -2593,7 +2593,7 @@ public class PivotTest extends AbstractSqlParserTest {
                 .mutateWith(dmlCities)
                 .expectSize()
                 .withPlan("""
-                        Sort light
+                        Encode sort light
                           keys: [country, name]
                             GroupBy vectorized: false
                               keys: [country,name]
@@ -3394,7 +3394,7 @@ public class PivotTest extends AbstractSqlParserTest {
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: sensors
-                                Sort light lo: -10
+                                Encode sort light lo: -10
                                   keys: [timestamp]
                                     GroupBy vectorized: false
                                       keys: [timestamp,vehicle_id]
@@ -3419,15 +3419,15 @@ public class PivotTest extends AbstractSqlParserTest {
                             2025-01-01T00:00:00.000000Z	AAA008	-693.0
                             2025-01-01T00:00:00.000000Z	AAA009	910.0
                             2025-01-01T00:00:00.000000Z	AAA010	-270.0
-                            2025-01-01T00:00:00.009000Z	AAA058	-746.0
-                            2025-01-01T00:00:00.009000Z	AAA057	-791.0
-                            2025-01-01T00:00:00.009000Z	AAA056	282.0
-                            2025-01-01T00:00:00.009000Z	AAA055	332.0
-                            2025-01-01T00:00:00.009000Z	AAA054	-547.0
-                            2025-01-01T00:00:00.009000Z	AAA053	-965.0
-                            2025-01-01T00:00:00.009000Z	AAA052	-800.0
-                            2025-01-01T00:00:00.009000Z	AAA051	-461.0
-                            2025-01-01T00:00:00.009000Z	AAA050	-753.0
+                            2025-01-01T00:00:00.009000Z	AAA091	675.0
+                            2025-01-01T00:00:00.009000Z	AAA092	-742.0
+                            2025-01-01T00:00:00.009000Z	AAA093	-473.0
+                            2025-01-01T00:00:00.009000Z	AAA094	625.0
+                            2025-01-01T00:00:00.009000Z	AAA095	-949.0
+                            2025-01-01T00:00:00.009000Z	AAA096	733.0
+                            2025-01-01T00:00:00.009000Z	AAA097	662.0
+                            2025-01-01T00:00:00.009000Z	AAA098	-240.0
+                            2025-01-01T00:00:00.009000Z	AAA099	160.0
                             2025-01-01T00:00:00.010000Z	AAA000	-636.0
                             """);
         });
@@ -3448,7 +3448,7 @@ public class PivotTest extends AbstractSqlParserTest {
                 .mutateWith(dmlCities)
                 .expectSize()
                 .withPlan("""
-                        Sort light
+                        Encode sort light
                           keys: [country]
                             GroupBy vectorized: false
                               keys: [country,name]

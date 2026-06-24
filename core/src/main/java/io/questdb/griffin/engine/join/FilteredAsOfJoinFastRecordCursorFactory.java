@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.SingleRecordSink;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -42,6 +43,7 @@ import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
 import io.questdb.griffin.engine.table.SymbolTranslatingRecord;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rows;
@@ -139,11 +141,18 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
             Record filterRecord = baseTimeFrameCursor.getRecordB();
             slaveRecordFilter.init(baseTimeFrameCursor, executionContext);
             slaveCursor = selectedTimeFrameCursor == null ? baseTimeFrameCursor : selectedTimeFrameCursor.of(baseTimeFrameCursor);
+            // Bind the per-query tracker before of(); the cursor's of()
+            // reopens its SingleRecordSinks, so the first malloc lands
+            // under the bound tracker.
+            cursor.setMemoryTracker(executionContext.getMemoryTracker());
+            slaveCursor.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
             cursor.of(masterCursor, slaveCursor, filterRecord, executionContext.getCircuitBreaker());
             return cursor;
         } catch (Throwable e) {
             Misc.free(slaveCursor);
             Misc.free(masterCursor);
+            // of() reopens the sinks before adopting the cursors, so close() here frees only the partial heap.
+            Misc.free(cursor);
             throw e;
         }
     }
@@ -315,12 +324,13 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
         }
 
         public void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, Record filterRecord, SqlExecutionCircuitBreaker circuitBreaker) {
+            // Reopen the sinks before super.of() adopts the cursors so an open-time breach frees each exactly once.
+            masterSinkTarget.reopen();
+            slaveSinkTarget.reopen();
             super.of(masterCursor, slaveCursor);
             this.circuitBreaker = circuitBreaker;
             this.filterRecord = filterRecord;
             this.masterKeyRecord = masterRecord;
-            masterSinkTarget.reopen();
-            slaveSinkTarget.reopen();
             if (symbolTranslatingRecord != null) {
                 symbolTranslatingRecord.initSources(masterCursor, slaveCursor);
                 symbolTranslatingRecord.of(masterRecord);
@@ -331,6 +341,12 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
         @Override
         public long preComputedStateSize() {
             return 0;
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            masterSinkTarget.setMemoryTracker(tracker);
+            slaveSinkTarget.setMemoryTracker(tracker);
         }
 
         @Override

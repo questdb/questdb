@@ -147,6 +147,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private static final String ILP_PROTO_SUPPORT_VERSIONS = "[1,2,3]";
     private static final String ILP_PROTO_SUPPORT_VERSIONS_NAME = "line.proto.support.versions";
     private static final String ILP_PROTO_TRANSPORTS = "ilp.proto.transports";
+    private static final long MAX_MEMORY_USAGE_LOG_INTERVAL_MILLIS = 24L * 60 * 60 * 1000;
     // Minimum heap page sizes: a page must hold one fixed-size block or it corrupts the heap.
     // sort.key also feeds RecordTreeChain's MemoryPages (41-byte node -> 64-byte page); window.tree
     // feeds AbstractRedBlackTree (BLOCK_SIZE 24); sort.light.value/window.rowid feed value chains
@@ -345,6 +346,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean matViewParallelExecutionEnabled;
     private final long matViewRefreshIntervalsUpdatePeriod;
     private final int matViewRefreshMaxClusters;
+    private final long matViewRefreshMemoryLimitBytes;
     private final boolean matViewRefreshMissingWalFilesFatal;
     private final long matViewRefreshOomRetryTimeout;
     private final WorkerPoolConfiguration matViewRefreshPoolConfiguration = new PropMatViewsRefreshPoolConfiguration();
@@ -425,6 +427,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final String publicDirectory;
     private final PublicPassthroughConfiguration publicPassthroughConfiguration = new PropPublicPassthroughConfiguration();
     private final int queryCacheEventQueueCapacity;
+    private final long queryContinuationWakeIntervalMillis;
+    private final long queryMemoryLimitBytes;
     private final boolean queryWithinLatestByOptimisationEnabled;
     private final int qwpEgressForcedZstdLevel;
     private final int qwpMaxRowsPerTable;
@@ -527,7 +531,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean sqlParallelWindowJoinEnabled;
     private final long sqlParallelWorkStealingSpinTimeout;
     private final int sqlParallelWorkStealingThreshold;
-    private final int sqlParquetFrameCacheCapacity;
+    private final long sqlParquetCacheMemorySize;
     private final boolean sqlParquetRowGroupPruningEnabled;
     private final int sqlPivotForColumnPoolCapacity;
     private final int sqlPivotMaxProducedColumns;
@@ -550,12 +554,14 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long sqlSortValueMaxBytes;
     private final int sqlSortValuePageSize;
     private final int sqlStrFunctionBufferMaxSize;
+    private final int sqlTimerShardCount;
     private final int sqlTxnScoreboardEntryCount;
     private final int sqlUnorderedMapMaxEntrySize;
     private final int sqlViewLexerPoolCapacity;
     private final long sqlWindowCacheMaxBytes;
     private final String sqlWindowCacheMaxPagesConfigKey;
     private final int sqlWindowCacheMaxPagesResolved;
+    private final boolean sqlWindowCachedLightEnabled;
     private final int sqlWindowColumnPoolCapacity;
     private final int sqlWindowInitialRangeBufferSize;
     private final int sqlWindowMaxRecursion;
@@ -599,6 +605,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final VolumeDefinitions volumeDefinitions = new VolumeDefinitions();
     private final boolean walApplyEnabled;
     private final int walApplyLookAheadTransactionCount;
+    private final long walApplyMemoryLimitBytes;
     private final WorkerPoolConfiguration walApplyPoolConfiguration = new PropWalApplyPoolConfiguration();
     private final long walApplySleepTimeout;
     private final long walApplyTableTimeQuota;
@@ -872,10 +879,20 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.dynamicProperties = dynamicProperties;
         boolean configValidationStrict = getBoolean(properties, env, PropertyKey.CONFIG_VALIDATION_STRICT, false);
         validateProperties(properties, configValidationStrict);
+        final boolean memoryUsageLogEnabled = getBoolean(properties, env, PropertyKey.MEMORY_USAGE_LOG_ENABLED, true);
+        final long memoryUsageLogInterval = getMillis(properties, env, PropertyKey.MEMORY_USAGE_LOG_INTERVAL, 60_000);
+        if (memoryUsageLogInterval <= 0 || memoryUsageLogInterval > MAX_MEMORY_USAGE_LOG_INTERVAL_MILLIS) {
+            throw ServerConfigurationException.forInvalidKey(
+                    PropertyKey.MEMORY_USAGE_LOG_INTERVAL.getPropertyPath(),
+                    Long.toString(memoryUsageLogInterval)
+            );
+        }
 
         this.memoryConfiguration = new MemoryConfigurationImpl(
                 getLongSize(properties, env, PropertyKey.RAM_USAGE_LIMIT_BYTES, 0),
-                getIntPercentage(properties, env, PropertyKey.RAM_USAGE_LIMIT_PERCENT, 90)
+                getIntPercentage(properties, env, PropertyKey.RAM_USAGE_LIMIT_PERCENT, 90),
+                memoryUsageLogEnabled,
+                memoryUsageLogInterval
         );
         this.isReadOnlyInstance = getBoolean(properties, env, PropertyKey.READ_ONLY_INSTANCE, false);
         this.isQueryTracingEnabled = getBoolean(properties, env, PropertyKey.QUERY_TRACING_ENABLED, false);
@@ -1624,6 +1641,9 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.matViewRowsPerQueryEstimate = getLong(properties, env, PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, 1_000_000L);
             this.matViewMaxRefreshIntervals = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_INTERVALS, 100);
             this.matViewRefreshMaxClusters = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_MAX_CLUSTERS, 32);
+            this.queryMemoryLimitBytes = getLongSize(properties, env, PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
+            this.matViewRefreshMemoryLimitBytes = getLongSize(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_MEMORY_LIMIT_BYTES, 0);
+            this.walApplyMemoryLimitBytes = getLongSize(properties, env, PropertyKey.CAIRO_WAL_APPLY_MEMORY_LIMIT_BYTES, 0);
             this.sqlCompileViewModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_COMPILE_VIEW_MODEL_POOL_CAPACITY, 8);
             this.sqlCopyBufferSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_COPY_BUFFER_SIZE, 2 * Numbers.SIZE_1MB);
             this.columnPurgeQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_QUEUE_CAPACITY, 128);
@@ -1633,6 +1653,9 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.columnPurgeRetryDelayMultiplier = getDouble(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_MULTIPLIER, "10.0");
             this.systemTableNamePrefix = getString(properties, env, PropertyKey.CAIRO_SQL_SYSTEM_TABLE_PREFIX, "sys.");
             this.parquetExportTableNamePrefix = getString(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_TABLE_PREFIX, "zzz.copy.");
+            if (Chars.isBlank(this.parquetExportTableNamePrefix)) {
+                throw ServerConfigurationException.forInvalidKey(PropertyKey.CAIRO_PARQUET_EXPORT_TABLE_PREFIX.getPropertyPath(), "prefix must not be blank");
+            }
             this.parquetExportCopyReportFrequencyLines = getInt(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_COPY_REPORT_FREQUENCY_LINES, 500_000);
             this.parquetExportVersion = getInt(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_VERSION, ParquetVersion.PARQUET_VERSION_V1);
             this.parquetExportBloomFilterFpp = getDouble(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_BLOOM_FILTER_FPP, String.valueOf(PartitionEncoder.DEFAULT_BLOOM_FILTER_FPP));
@@ -1767,6 +1790,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.rndFunctionMemoryPageSize = Numbers.ceilPow2(getIntSize(properties, env, PropertyKey.CAIRO_RND_MEMORY_PAGE_SIZE, 8192));
             this.rndFunctionMemoryMaxPages = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_RND_MEMORY_MAX_PAGES, 128));
             this.sqlStrFunctionBufferMaxSize = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_SQL_STR_FUNCTION_BUFFER_MAX_SIZE, Numbers.SIZE_1MB));
+            this.sqlWindowCachedLightEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
             this.sqlWindowMaxRecursion = getInt(properties, env, PropertyKey.CAIRO_SQL_WINDOW_MAX_RECURSION, 128);
             int sqlWindowStorePageSize = Numbers.ceilPow2(getIntSize(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_STORE_PAGE_SIZE, Numbers.SIZE_1MB));
             this.sqlWindowStorePageSize = Numbers.ceilPow2(getIntSize(properties, env, PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, sqlWindowStorePageSize));
@@ -1831,6 +1855,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.cairoSqlLegacyUnionColumnPropagation = getBoolean(properties, env, PropertyKey.CAIRO_SQL_LEGACY_UNION_COLUMN_PROPAGATION, false);
             this.sqlWindowInitialRangeBufferSize = getInt(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_INITIAL_RANGE_BUFFER_SIZE, 32);
             this.sqlTxnScoreboardEntryCount = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_O3_TXN_SCOREBOARD_ENTRY_COUNT, 16384));
+            this.sqlTimerShardCount = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_TIMER_SHARDS,
+                    Math.min(4, Math.max(1, Runtime.getRuntime().availableProcessors() / 4))));
             this.latestByQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_LATEST_ON_QUEUE_CAPACITY, 32));
 
             // telemetry config
@@ -2153,6 +2179,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.httpSqlCacheBlockCount = getInt(properties, env, PropertyKey.HTTP_QUERY_CACHE_BLOCK_COUNT, 32);
             this.httpSqlCacheRowCount = getInt(properties, env, PropertyKey.HTTP_QUERY_CACHE_ROW_COUNT, Math.max(effectiveHttpWorkerCount, 4));
             this.queryCacheEventQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_QUERY_CACHE_EVENT_QUEUE_CAPACITY, 4));
+            this.queryContinuationWakeIntervalMillis = Math.max(1, getMillis(properties, env, PropertyKey.GRIFFIN_QUERY_CONTINUATION_WAKE_INTERVAL, 1_000));
 
             this.sqlCompilerPoolCapacity = 2 * (httpWorkerCount + pgWorkerCount + writeWorkers + networkPoolWorkerCount);
 
@@ -2199,7 +2226,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.matViewCoveringIndexEnabled = getBoolean(properties, env, PropertyKey.CAIRO_MAT_VIEW_COVERING_INDEX_ENABLED, false);
             this.sqlParallelWorkStealingThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 16);
             this.sqlParallelWorkStealingSpinTimeout = getNanos(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_SPIN_TIMEOUT, 50_000);
-            this.sqlParquetFrameCacheCapacity = Math.max(getInt(properties, env, PropertyKey.CAIRO_SQL_PARQUET_FRAME_CACHE_CAPACITY, 8), 8);
+            this.sqlParquetCacheMemorySize = Math.max(getLongSize(properties, env, PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 256L * Numbers.SIZE_1MB), 0L);
             this.sqlParquetRowGroupPruningEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARQUET_ROW_GROUP_PRUNING_ENABLED, true);
             this.sqlOrderBySortEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_ORDER_BY_SORT_ENABLED, true);
             this.copierChunkedEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_COPIER_CHUNKED, true);
@@ -2416,6 +2443,38 @@ public class PropServerConfiguration implements ServerConfiguration {
         return httpContextWebConsole;
     }
 
+    private static void validateGroupByBatchSize(PropertyKey key, int value) throws ServerConfigurationException {
+        // A non-positive batch size would turn the reducer loop
+        // `for (long batchStart = 0; batchStart < rowCount; batchStart += batchSize)`
+        // into an infinite loop. Cap at the same 24-bit row index bound as
+        // page frames since the batch cannot exceed a single page frame.
+        final int maxBatchSize = io.questdb.cairo.map.Map.BATCH_ROW_INDEX_MASK + 1;
+        if (value < 1 || value > maxBatchSize) {
+            throw new ServerConfigurationException(key.getPropertyPath() + " must be between 1 and " + maxBatchSize);
+        }
+    }
+
+    private static void validatePageFrameRows(PropertyKey key, int value) throws ServerConfigurationException {
+        // Frame-relative row indexes are packed into the 24-bit slot of every
+        // batched GROUP BY entry, so a frame cannot exceed BATCH_ROW_INDEX_MASK + 1
+        // rows. Reject misconfigurations that would silently truncate.
+        final int maxRows = io.questdb.cairo.map.Map.BATCH_ROW_INDEX_MASK + 1;
+        if (value < 1 || value > maxRows) {
+            throw new ServerConfigurationException(key.getPropertyPath() + " must be between 1 and " + maxRows);
+        }
+    }
+
+    // A page.size below the operator's block size can never fit one entry and corrupts the heap (or
+    // trips an assertion) at query time, so reject it at startup naming the key. See MIN_*_PAGE_SIZE.
+    private static void validatePageSizeAtLeast(ConfigPropertyKey key, long pageSize, long minPageSize) throws ServerConfigurationException {
+        if (pageSize < minPageSize) {
+            throw ServerConfigurationException.forInvalidKey(
+                    key.getPropertyPath(),
+                    "page size " + pageSize + " is below the minimum of " + minPageSize + " bytes"
+            );
+        }
+    }
+
     private int configureSharedThreadPool(
             Properties properties,
             Map<String, String> env,
@@ -2473,12 +2532,23 @@ public class PropServerConfiguration implements ServerConfiguration {
                 : getIntSize(properties, env, deprecatedMaxPagesKey, Integer.MAX_VALUE);
 
         if (isPropertyExplicitlySet(properties, env, deprecatedMaxPagesKey)) {
-            return pageSize * (long) mainMaxPages;
+            return pagesToBytesSaturating(pageSize, mainMaxPages);
         }
         if (hasAlias && isPropertyExplicitlySet(properties, env, deprecatedAliasMaxPagesKey)) {
-            return pageSize * (long) aliasMaxPages;
+            return pagesToBytesSaturating(pageSize, aliasMaxPages);
         }
         return Long.MAX_VALUE;
+    }
+
+    private static long pagesToBytesSaturating(long pageSize, int maxPages) {
+        final long bytes = pageSize * (long) maxPages;
+        // An absurdly large explicit page size combined with a high deprecated
+        // *_MAX_PAGES value can overflow a signed long; saturate so the derived
+        // byte cap never wraps negative.
+        if (pageSize != 0 && bytes / pageSize != maxPages) {
+            return Long.MAX_VALUE;
+        }
+        return bytes;
     }
 
     private int getCommitMode(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key) {
@@ -2514,26 +2584,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         };
     }
 
-    private int getSqlJitMode(Properties properties, @Nullable Map<String, String> env) {
-        final String jitMode = getString(properties, env, PropertyKey.CAIRO_SQL_JIT_MODE, "on");
-
-        assert jitMode != null;
-
-        if (Chars.equalsLowerCaseAscii(jitMode, "on")) {
-            return SqlJitMode.JIT_MODE_ENABLED;
-        }
-
-        if (Chars.equalsLowerCaseAscii(jitMode, "off")) {
-            return SqlJitMode.JIT_MODE_DISABLED;
-        }
-
-        if (Chars.equalsLowerCaseAscii(jitMode, "scalar")) {
-            return SqlJitMode.JIT_MODE_FORCE_SCALAR;
-        }
-
-        return SqlJitMode.JIT_MODE_ENABLED;
-    }
-
     private int getSampleByFillSortStrategy(Properties properties, @Nullable Map<String, String> env) throws ServerConfigurationException {
         final ConfigPropertyKey key = PropertyKey.CAIRO_SQL_SAMPLEBY_FILL_SORT_STRATEGY;
         final String strategy = getString(properties, env, key, "light_encoded");
@@ -2564,6 +2614,26 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), strategy);
+    }
+
+    private int getSqlJitMode(Properties properties, @Nullable Map<String, String> env) {
+        final String jitMode = getString(properties, env, PropertyKey.CAIRO_SQL_JIT_MODE, "on");
+
+        assert jitMode != null;
+
+        if (Chars.equalsLowerCaseAscii(jitMode, "on")) {
+            return SqlJitMode.JIT_MODE_ENABLED;
+        }
+
+        if (Chars.equalsLowerCaseAscii(jitMode, "off")) {
+            return SqlJitMode.JIT_MODE_DISABLED;
+        }
+
+        if (Chars.equalsLowerCaseAscii(jitMode, "scalar")) {
+            return SqlJitMode.JIT_MODE_FORCE_SCALAR;
+        }
+
+        return SqlJitMode.JIT_MODE_ENABLED;
     }
 
     private int getWalWriterMadviseMode(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key) throws ServerConfigurationException {
@@ -2674,38 +2744,6 @@ public class PropServerConfiguration implements ServerConfiguration {
                             + ((httpIlpConnectionLimit > 0) ? PropertyKey.HTTP_ILP_CONNECTION_LIMIT.getPropertyPath() + "=" + httpIlpConnectionLimit + ", " : "")
                             + ((httpExportConnectionLimit > 0) ? PropertyKey.HTTP_EXPORT_CONNECTION_LIMIT.getPropertyPath() + "=" + httpExportConnectionLimit + ", " : "")
                             + PropertyKey.HTTP_NET_CONNECTION_LIMIT.getPropertyPath() + "=" + httpNetConnectionLimit + ']');
-        }
-    }
-
-    private static void validateGroupByBatchSize(PropertyKey key, int value) throws ServerConfigurationException {
-        // A non-positive batch size would turn the reducer loop
-        // `for (long batchStart = 0; batchStart < rowCount; batchStart += batchSize)`
-        // into an infinite loop. Cap at the same 24-bit row index bound as
-        // page frames since the batch cannot exceed a single page frame.
-        final int maxBatchSize = io.questdb.cairo.map.Map.BATCH_ROW_INDEX_MASK + 1;
-        if (value < 1 || value > maxBatchSize) {
-            throw new ServerConfigurationException(key.getPropertyPath() + " must be between 1 and " + maxBatchSize);
-        }
-    }
-
-    private static void validatePageFrameRows(PropertyKey key, int value) throws ServerConfigurationException {
-        // Frame-relative row indexes are packed into the 24-bit slot of every
-        // batched GROUP BY entry, so a frame cannot exceed BATCH_ROW_INDEX_MASK + 1
-        // rows. Reject misconfigurations that would silently truncate.
-        final int maxRows = io.questdb.cairo.map.Map.BATCH_ROW_INDEX_MASK + 1;
-        if (value < 1 || value > maxRows) {
-            throw new ServerConfigurationException(key.getPropertyPath() + " must be between 1 and " + maxRows);
-        }
-    }
-
-    // A page.size below the operator's block size can never fit one entry and corrupts the heap (or
-    // trips an assertion) at query time, so reject it at startup naming the key. See MIN_*_PAGE_SIZE.
-    private static void validatePageSizeAtLeast(ConfigPropertyKey key, long pageSize, long minPageSize) throws ServerConfigurationException {
-        if (pageSize < minPageSize) {
-            throw ServerConfigurationException.forInvalidKey(
-                    key.getPropertyPath(),
-                    "page size " + pageSize + " is below the minimum of " + minPageSize + " bytes"
-            );
         }
     }
 
@@ -3448,6 +3486,10 @@ public class PropServerConfiguration implements ServerConfiguration {
                     PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_BYTES
             );
             registerDeprecated(
+                    PropertyKey.CAIRO_SQL_PARQUET_FRAME_CACHE_CAPACITY,
+                    PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE
+            );
+            registerDeprecated(
                     PropertyKey.CAIRO_SQL_COLUMN_CAST_MODEL_POOL_CAPACITY,
                     PropertyKey.CAIRO_SQL_CREATE_TABLE_COLUMN_MODEL_POOL_CAPACITY
             );
@@ -4110,6 +4152,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getMatViewRefreshMemoryLimitBytes() {
+            return matViewRefreshMemoryLimitBytes;
+        }
+
+        @Override
         public long getMatViewRefreshOomRetryTimeout() {
             return matViewRefreshOomRetryTimeout;
         }
@@ -4370,8 +4417,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public long getPostingIndexerSpillBytesMax() {
-            return postingIndexerSpillBytesMax;
+        public int getPostingIndexAdaptiveDeltaAtOrAbove() {
+            return postingIndexAdaptiveDeltaAtOrAbove;
         }
 
         @Override
@@ -4380,8 +4427,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getPostingIndexAdaptiveDeltaAtOrAbove() {
-            return postingIndexAdaptiveDeltaAtOrAbove;
+        public long getPostingIndexerSpillBytesMax() {
+            return postingIndexerSpillBytesMax;
         }
 
         @Override
@@ -4402,6 +4449,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getQueryCacheEventQueueCapacity() {
             return queryCacheEventQueueCapacity;
+        }
+
+        @Override
+        public long getQueryContinuationWakeIntervalMillis() {
+            return queryContinuationWakeIntervalMillis;
+        }
+
+        @Override
+        public long getQueryMemoryLimitBytes() {
+            return queryMemoryLimitBytes;
         }
 
         @Override
@@ -4735,8 +4792,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getSqlParquetFrameCacheCapacity() {
-            return sqlParquetFrameCacheCapacity;
+        public long getSqlParquetCacheMemorySize() {
+            return sqlParquetCacheMemorySize;
         }
 
         @Override
@@ -4930,6 +4987,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getTimerShardCount() {
+            return sqlTimerShardCount;
+        }
+
+        @Override
         public int getTxnScoreboardEntryCount() {
             return sqlTxnScoreboardEntryCount;
         }
@@ -4962,6 +5024,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getWalApplyLookAheadTransactionCount() {
             return walApplyLookAheadTransactionCount;
+        }
+
+        @Override
+        public long getWalApplyMemoryLimitBytes() {
+            return walApplyMemoryLimitBytes;
         }
 
         @Override
@@ -5210,6 +5277,14 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean isSqlDistinctGroupByRewriteEnabled() {
+            // No production property backs this seam: the rewrite is always on in
+            // a running server. Only tests override it (to reach
+            // DistinctTimeSeriesRecordCursorFactory) via a CairoConfiguration subclass.
+            return true;
+        }
+
+        @Override
         public boolean isSqlJitDebugEnabled() {
             return sqlJitDebugEnabled;
         }
@@ -5252,6 +5327,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isSqlParquetRowGroupPruningEnabled() {
             return sqlParquetRowGroupPruningEnabled;
+        }
+
+        @Override
+        public boolean isSqlWindowCachedLightEnabled() {
+            return sqlWindowCachedLightEnabled;
         }
 
         @Override

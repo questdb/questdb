@@ -40,6 +40,7 @@ public class PgGetKeywordsFunctionFactoryTest extends AbstractCairoTest {
         assertQuery("pg_get_keywords;")
                 .noRandomAccess()
                 .expectSize()
+                .noCircuitBreakerCheck() // immutable constant keyword list; no per-row checks required
                 .returns(sink.toString());
     }
 
@@ -53,6 +54,7 @@ public class PgGetKeywordsFunctionFactoryTest extends AbstractCairoTest {
         assertQuery("pg_catalog.pg_get_keywords;")
                 .noRandomAccess()
                 .expectSize()
+                .noCircuitBreakerCheck() // immutable constant keyword list; no per-row checks required
                 .returns(sink.toString());
     }
 }

@@ -63,12 +63,12 @@ class WalApplySqlExecutionContext extends SqlExecutionContextImpl {
 
     @Override
     public TableReader getReader(TableToken tableToken, long version) {
-        return getCairoEngine().getReader(this.tableToken, version);
+        return getCairoEngine().getReader(this.tableToken, version, this.getReaderPoolSupervisor());
     }
 
     @Override
     public TableReader getReader(TableToken tableToken) {
-        return getCairoEngine().getReader(this.tableToken);
+        return getCairoEngine().getReader(this.tableToken, this.getReaderPoolSupervisor());
     }
 
     @Override

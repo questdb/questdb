@@ -265,15 +265,15 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                     barrier.await();
                     while (!done.get()) {
                         //noinspection StatementWithEmptyBody
-                        while (walApplyJob.run(0)) {
+                        while (walApplyJob.run()) {
                             // run until empty
                         }
 
-                        checkWalTransactionsJob.run(0);
+                        checkWalTransactionsJob.run();
 
                         // run once again as there might be notifications to handle now
                         //noinspection StatementWithEmptyBody
-                        while (walApplyJob.run(0)) {
+                        while (walApplyJob.run()) {
                             // run until empty
                         }
                     }
@@ -293,7 +293,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                 ) {
                     barrier.await();
                     //noinspection StatementWithEmptyBody
-                    while (!done.get() && job.run(0)) {
+                    while (!done.get() && job.run()) {
                         // run until empty
                     }
                 } catch (Throwable e) {
@@ -1229,7 +1229,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                                 drainWalQueue();
                                 break;
                             case FUZZ_SWEEP:
-                                purgeJob.run(thread);
+                                purgeJob.run();
                                 break;
                             default:
                                 assert false;

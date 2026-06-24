@@ -1415,6 +1415,41 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupByTrivialExpressionKeyReferencedByAlias() throws Exception {
+        // rewriteTrivialGroupByExpressions lifts a trivial key such as
+        // 859371 + (cnt * -237288) out of the inner GROUP BY when its base
+        // column (cnt) is also a key, recomputing the offset in an outer
+        // VIRTUAL and removing the lifted key column from the group-by model.
+        // It used to leave the alias reference behind in the model's GROUP BY
+        // list, and validateGroupByColumns then rejected the now-missing alias
+        // with "group by column does not match any key column". Expression keys
+        // hid the bug because validateGroupByColumns matches them against the
+        // surviving base column, but a bare alias reference has nothing to match.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE fuzz_t1 (c4 INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO fuzz_t1 VALUES (1, 0), (2, 1000), (1, 2000)");
+            String expected = """
+                    e0\te1\ta0
+                    1\t622083\t1
+                    2\t384795\t1
+                    """;
+            String body = "FROM (SELECT c4 AS k, count() AS cnt FROM fuzz_t1) t0\n";
+            // alias reference in GROUP BY - the shape the query fuzzer hit
+            assertQuery("SELECT t0.cnt AS e0, (859371 + (t0.cnt * -237288)) AS e1, count() AS a0\n"
+                    + body + "GROUP BY t0.cnt, e1 ORDER BY 1 ASC, e1")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
+            // and the same query spelling out the expression in GROUP BY
+            assertQuery("SELECT t0.cnt AS e0, (859371 + (t0.cnt * -237288)) AS e1, count() AS a0\n"
+                    + body + "GROUP BY t0.cnt, (859371 + (t0.cnt * -237288)) ORDER BY 1 ASC, e1")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
+        });
+    }
+
+    @Test
     public void testGroupByVarchar() throws Exception {
         assertQuery("select key, max(value) from t group by key order by key")
                 .ddl("create table t as ( select (x%10)::varchar key, x as value from long_sequence(100)); ")
@@ -1760,7 +1795,7 @@ public class GroupByTest extends AbstractCairoTest {
                         .returns(expectedResult);
                 assertQuery(query1)
                         .noLeakCheck()
-                        .assertsPlan("Sort light lo: 10000\n" +
+                        .assertsPlan("Encode sort light lo: 10000\n" +
                                 "  keys: [fact_table__avg_radiation desc]\n" +
                                 "    VirtualRecord\n" +
                                 "      functions: [dim_ap_temperature__category,fact_table__date_time_day,fact_table__avg_radiation,fact_table__energy_power]\n" +
@@ -1800,7 +1835,7 @@ public class GroupByTest extends AbstractCairoTest {
                         .returns(expectedResult);
                 assertQuery(query2)
                         .noLeakCheck()
-                        .assertsPlan("Sort light lo: 10000\n" +
+                        .assertsPlan("Encode sort light lo: 10000\n" +
                                 "  keys: [fact_table__avg_radiation desc]\n" +
                                 "    VirtualRecord\n" +
                                 "      functions: [category,timestamp_floor,fact_table__avg_radiation,fact_table__energy_power]\n" +
@@ -1840,7 +1875,7 @@ public class GroupByTest extends AbstractCairoTest {
                         .returns(expectedResult);
                 assertQuery(query3)
                         .noLeakCheck()
-                        .assertsPlan("Sort light lo: 10000\n" +
+                        .assertsPlan("Encode sort light lo: 10000\n" +
                                 "  keys: [fact_table__avg_radiation desc]\n" +
                                 "    VirtualRecord\n" +
                                 "      functions: [category,timestamp_floor,fact_table__avg_radiation,fact_table__energy_power]\n" +
@@ -1877,7 +1912,7 @@ public class GroupByTest extends AbstractCairoTest {
                         .returns(expectedResult);
                 assertQuery(query4)
                         .noLeakCheck()
-                        .assertsPlan("Sort light lo: 10000\n" +
+                        .assertsPlan("Encode sort light lo: 10000\n" +
                                 "  keys: [fact_table__avg_radiation desc]\n" +
                                 "    GroupBy vectorized: false\n" +
                                 "      keys: [dim_ap_temperature__category,fact_table__date_time_day]\n" +
@@ -2598,7 +2633,7 @@ public class GroupByTest extends AbstractCairoTest {
             assertQuery(query1)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Sort light lo: 1000 hi: 1010
+                            Encode sort light lo: 1000 hi: 1010
                               keys: [PageViews desc]
                                 VirtualRecord
                                   functions: [TraficSourceID,SearchEngineID,AdvEngineID,Src,Dst,PageViews]
@@ -2623,7 +2658,7 @@ public class GroupByTest extends AbstractCairoTest {
             assertQuery(query2)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Sort light lo: 1000 hi: 1010
+                            Encode sort light lo: 1000 hi: 1010
                               keys: [PageViews desc]
                                 VirtualRecord
                                   functions: [TraficSourceID,SearchEngineID,AdvEngineID,Src,URL,PageViews]
@@ -2647,7 +2682,7 @@ public class GroupByTest extends AbstractCairoTest {
             assertQuery(query3)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Sort light lo: 1000 hi: 1010
+                            Encode sort light lo: 1000 hi: 1010
                               keys: [PageViews desc]
                                 VirtualRecord
                                   functions: [TraficSourceID,SearchEngineID,AdvEngineID,Src,URL,PageViews,cat]

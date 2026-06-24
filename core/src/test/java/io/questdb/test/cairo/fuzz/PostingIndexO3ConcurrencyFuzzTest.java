@@ -98,7 +98,8 @@ public class PostingIndexO3ConcurrencyFuzzTest extends AbstractFuzzTest {
                 0.0,   // symbolAccessProb
                 0.05,  // queryProb
                 0.0,   // setParquetEncodingProb
-                0.6    // addCoveringIndexProb
+                0.6,   // addCoveringIndexProb
+                0.0    // setTableFormatProb
         );
         setFuzzCounts(true, 600_000, 400, 20, 10, 1000, 80_000, 20);
         // Tiny apply quota + split-min-size=1 + low max-splits force partition
@@ -133,11 +134,21 @@ public class PostingIndexO3ConcurrencyFuzzTest extends AbstractFuzzTest {
                 0.1,
                 0.0,
                 0.8,
-                0.1,   // replaceProb
+                0.0,   // replaceProb -- DISABLED: replace-range commits are a mat-view-only
+                //   operation in production (WalWriter.commitMatView via
+                //   MatViewRefreshJob); they are never issued against a regular WAL
+                //   table. With partitionToParquetProb>0 above, enabling replace here
+                //   makes the fuzz apply a replace commit onto a Parquet partition --
+                //   an unsupported, production-unreachable state that suspends the
+                //   table ("commit replace mode is not supported for Parquet
+                //   partitions"). Replace and Parquet must stay mutually exclusive;
+                //   native-partition replace coverage lives in
+                //   testCoveringPostingO3NativeSpillFuzz and testCoveringPostingSquashSpillFuzz.
                 0.0,
                 0.01,
                 0.1,   // setParquetEncodingProb
-                0.6    // addCoveringIndexProb
+                0.6,   // addCoveringIndexProb
+                0.0    // setTableFormatProb
         );
         setFuzzCounts(true, 300_000, 300, 20, 10, 1000, 50_000, 12);
         setFuzzProperties(1, getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd));
@@ -172,7 +183,8 @@ public class PostingIndexO3ConcurrencyFuzzTest extends AbstractFuzzTest {
                 0.0,
                 0.05,
                 0.0,
-                0.7    // addCoveringIndexProb
+                0.7,   // addCoveringIndexProb
+                0.0    // setTableFormatProb
         );
         setFuzzCounts(true, 400_000, 500, 16, 8, 800, 60_000, 24);
         setFuzzProperties(1, 1, 1);

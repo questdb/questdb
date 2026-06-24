@@ -48,7 +48,7 @@ impl TestAlloc {
     fn new() -> Self {
         let mem_tracking = Box::new(MemTracking::new());
         let tagged_used = Box::new(AtomicUsize::new(0));
-        let allocator = QdbAllocator::new(&*mem_tracking, &*tagged_used, 65);
+        let allocator = QdbAllocator::new(&*mem_tracking, std::ptr::null(), &*tagged_used, 65);
         Self {
             _mem_tracking: mem_tracking,
             _tagged_used: tagged_used,
@@ -268,6 +268,7 @@ fn run_e2e_pipeline(parquet_bytes: &[u8]) {
                 rg_rows,
                 col_name,
                 rg_idx,
+                true,
             )
             .unwrap_or_else(|e| {
                 panic!(
@@ -412,6 +413,7 @@ fn run_e2e_pipeline_multi(parquet_bytes: &[u8]) -> (Vec<Vec<u8>>, Vec<Vec<u8>>) 
                 rg_rows,
                 col_name,
                 rg_idx,
+                true,
             )
             .unwrap_or_else(|e| {
                 panic!(
@@ -1043,6 +1045,7 @@ fn e2e_multiple_row_groups() {
             rg_rows,
             col_name,
             rg_idx,
+            true,
         )
         .unwrap_or_else(|e| panic!("decode rg {}: {}", rg_idx, e));
 

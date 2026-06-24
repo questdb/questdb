@@ -46,6 +46,7 @@ import io.questdb.griffin.engine.groupby.SimpleMapValue;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.IntHashSet;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -72,6 +73,10 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
     private final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
     private final PerWorkerLocks perWorkerLocks;
     private final ObjList<SimpleMapValue> perWorkerMapValues;
+    // Per-query native memory tracker captured from SqlExecutionContext on init.
+    // Null when no per-query limit applies. Workers and operator code feed it to
+    // tracker-aware Unsafe overloads to charge allocations to the active workload.
+    private MemoryTracker memoryTracker;
 
     public AsyncGroupByNotKeyedAtom(
             @Transient @NotNull BytecodeAssembler asm,
@@ -114,8 +119,8 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
                     perWorkerFilters,
                     workerCount,
                     workerCount,
-                    1,
-                    1
+                    0L,
+                    0L
             );
 
             final Class<? extends GroupByFunctionsUpdater> updaterClass = GroupByFunctionsUpdaterFactory.getInstanceClass(asm, ownerGroupByFunctions.size());
@@ -136,13 +141,16 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
                 perWorkerMapValues.extendAndSet(i, new SimpleMapValue(valueCount));
             }
 
-            ownerAllocator = GroupByAllocatorFactory.createAllocator(configuration);
+            // Lazy variant: the allocator's chunk index is allocated by the first
+            // reopen() under the bound per-query tracker, keeping malloc/free symmetric
+            // on the per-query counter from the first cursor.
+            ownerAllocator = GroupByAllocatorFactory.createAllocator(configuration, false);
             // Make sure to set worker-local allocator for the group by functions.
             GroupByUtils.setAllocator(ownerGroupByFunctions, ownerAllocator);
             if (perWorkerGroupByFunctions != null) {
                 perWorkerAllocators = new ObjList<>(workerCount);
                 for (int i = 0; i < workerCount; i++) {
-                    final GroupByAllocator workerAllocator = GroupByAllocatorFactory.createAllocator(configuration);
+                    final GroupByAllocator workerAllocator = GroupByAllocatorFactory.createAllocator(configuration, false);
                     perWorkerAllocators.extendAndSet(i, workerAllocator);
                     GroupByUtils.setAllocator(perWorkerGroupByFunctions.getQuick(i), workerAllocator);
                 }
@@ -174,10 +182,26 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
         Misc.clear(ownerAllocator);
         Misc.clearObjList(perWorkerAllocators);
         filterCtx.clear();
+        memoryTracker = null;
     }
 
     @Override
     public void close() {
+        // The allocators' chunk index is retained across queries (restoreInitialCapacity()
+        // in clear()); their final free happens here, after the last query's tracker was
+        // released to the pool. Null the tracker so these frees charge the global counter
+        // only and do not underflow the released per-query block.
+        if (ownerAllocator != null) {
+            ownerAllocator.setMemoryTracker(null);
+        }
+        if (perWorkerAllocators != null) {
+            for (int i = 0, n = perWorkerAllocators.size(); i < n; i++) {
+                final GroupByAllocator allocator = perWorkerAllocators.getQuick(i);
+                if (allocator != null) {
+                    allocator.setMemoryTracker(null);
+                }
+            }
+        }
         Misc.free(ownerAllocator);
         Misc.freeObjList(perWorkerAllocators);
         Misc.free(ownerMapValue);
@@ -219,6 +243,10 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
         return perWorkerMapValues.getQuick(slotId);
     }
 
+    public MemoryTracker getMemoryTracker() {
+        return memoryTracker;
+    }
+
     // Thread-unsafe, should be used by query owner thread only.
     public SimpleMapValue getOwnerMapValue() {
         return ownerMapValue;
@@ -235,6 +263,7 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
 
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        memoryTracker = executionContext.getMemoryTracker();
         filterCtx.initFilters(symbolTableSource, executionContext);
 
         if (perWorkerGroupByFunctions != null) {
@@ -272,10 +301,16 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
 
     @Override
     public void reopen() {
+        // init() runs before reopen() (frameSequence.of() -> atom.init(), then cursor.of()
+        // -> atom.reopen()), so memoryTracker is available here to bind on the allocators
+        // before worker threads allocate any backing.
+        ownerAllocator.setMemoryTracker(memoryTracker);
         ownerAllocator.reopen();
         if (perWorkerAllocators != null) {
             for (int i = 0, n = perWorkerAllocators.size(); i < n; i++) {
-                perWorkerAllocators.getQuick(i).reopen();
+                final GroupByAllocator allocator = perWorkerAllocators.getQuick(i);
+                allocator.setMemoryTracker(memoryTracker);
+                allocator.reopen();
             }
         }
     }

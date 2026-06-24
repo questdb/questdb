@@ -1539,7 +1539,9 @@ public class QueryModel implements IQueryModel {
                     }
                     n = n.lhs;
                 } else {
-                    addParsedWhereNode(n, false);
+                    // preserve the predicate's origin: an inner-join ON conjunct pushed onto the
+                    // master model's WHERE must stay distinguishable from a real WHERE predicate
+                    addParsedWhereNode(n, n.innerPredicate);
                     n = null;
                 }
             } else {

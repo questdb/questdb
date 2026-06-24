@@ -82,10 +82,10 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
         try {
             this.masterKeySink = masterKeySink;
             this.slaveKeySink = slaveKeySink;
-            Map joinKeyMapA = MapFactory.createUnorderedMap(configuration, mapKeyTypes, mapValueTypes);
+            Map joinKeyMapA = MapFactory.createUnorderedMap(configuration, mapKeyTypes, mapValueTypes, false, false);
             // if toleranceInterval is not set, we do not need a second map for evacuation. since evacuations are only
             // executed when TOLERANCE_INTERVAL is set
-            Map joinKeyMapB = toleranceInterval != Numbers.LONG_NULL ? MapFactory.createUnorderedMap(configuration, mapKeyTypes, mapValueTypes) : null;
+            Map joinKeyMapB = toleranceInterval != Numbers.LONG_NULL ? MapFactory.createUnorderedMap(configuration, mapKeyTypes, mapValueTypes, false, false) : null;
             int slaveWrappedOverMaster = slaveColumnTypes.getColumnCount() - masterTableKeyColumns.getColumnCount();
             this.cursor = new LtJoinRecordCursor(
                     columnSplit,
@@ -122,11 +122,13 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
         RecordCursor slaveCursor = null;
         try {
             slaveCursor = slaveFactory.getCursor(executionContext);
-            cursor.of(masterCursor, slaveCursor);
+            cursor.of(masterCursor, slaveCursor, executionContext);
             return cursor;
         } catch (Throwable e) {
             Misc.free(slaveCursor);
             Misc.free(masterCursor);
+            // of() may breach after reopening tracker-charged join key map(s); close() frees them and resets isOpen for reuse
+            Misc.free(cursor);
             throw e;
         }
     }
@@ -164,6 +166,7 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
         private final SymbolWrapOverJoinRecord record;
         private final int slaveTimestampIndex;
         private final RecordValueSink valueSink;
+        private SqlExecutionCircuitBreaker circuitBreaker;
         private Map currentJoinKeyMap;
         private boolean danglingSlaveRecord = false;
         private boolean isOpen;
@@ -193,7 +196,7 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
             this.masterTimestampIndex = masterTimestampIndex;
             this.slaveTimestampIndex = slaveTimestampIndex;
             this.valueSink = valueSink;
-            this.isOpen = true;
+            this.isOpen = false;
         }
 
         @Override
@@ -220,6 +223,7 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
 
         @Override
         public boolean hasNext() {
+            circuitBreaker.statefulThrowExceptionIfTripped();
             if (masterCursor.hasNext()) {
                 final long masterTimestamp = scaleTimestamp(masterRecord.getTimestamp(masterTimestampIndex), masterTimestampScale);
                 final long minSlaveTimestamp = toleranceInterval == Numbers.LONG_NULL ? Long.MIN_VALUE : masterTimestamp - toleranceInterval;
@@ -337,15 +341,18 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
             record.hasSlave(hasSlave);
         }
 
-        private void of(RecordCursor masterCursor, RecordCursor slaveCursor) {
+        private void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext executionContext) {
             if (!isOpen) {
                 isOpen = true;
+                joinKeyMapA.setMemoryTracker(executionContext.getMemoryTracker());
                 joinKeyMapA.reopen();
                 if (joinKeyMapB != null) {
                     // reopen joinKeyMapB only if it was created
+                    joinKeyMapB.setMemoryTracker(executionContext.getMemoryTracker());
                     joinKeyMapB.reopen();
                 }
             }
+            this.circuitBreaker = executionContext.getCircuitBreaker();
             currentJoinKeyMap = joinKeyMapA;
             this.masterCursor = masterCursor;
             this.slaveCursor = slaveCursor;

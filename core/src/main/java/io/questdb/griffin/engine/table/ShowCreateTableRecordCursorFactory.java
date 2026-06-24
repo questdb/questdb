@@ -101,6 +101,12 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
         sink.put(text, lo, hi);
     }
 
+    public static void tableFormatToSink(int format, CharSink<?> sink) {
+        if (format == TableUtils.TABLE_FORMAT_PARQUET) {
+            sink.putAscii(" FORMAT PARQUET");
+        }
+    }
+
     public static void ttlToSink(int ttl, CharSink<?> sink) {
         if (ttl == 0) {
             return;
@@ -132,6 +138,7 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
         return cursor.of(executionContext, tableToken, tokenPosition);
     }
 
@@ -190,6 +197,12 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
         ) throws SqlException {
             this.tableToken = tableToken;
             this.executionContext = executionContext;
+            // The token is resolved from the synchronously loaded registry, but the
+            // metadata cache is hydrated lazily; hydrate this table on demand so we do
+            // not report a registered-but-not-yet-cached table as non-existent during
+            // the startup hydration window (or before any catalogue query has warmed an
+            // embedded engine).
+            executionContext.getCairoEngine().getMetadataCache().hydrateTableOnDemand(tableToken);
             try (MetadataCacheReader metadataRO = executionContext.getCairoEngine().getMetadataCache().readLock()) {
                 this.table = metadataRO.getTable(tableToken);
                 if (this.table == null) {
@@ -235,6 +248,8 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
                 putPartitionBy();
                 // TTL n unit
                 ttlToSink(sink);
+                // FORMAT PARQUET (only emitted when not the default NATIVE)
+                tableFormatToSink(table.getTableFormat(), sink);
                 // (BYPASS) WAL
                 putWal();
             }

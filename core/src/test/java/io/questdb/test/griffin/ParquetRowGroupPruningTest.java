@@ -27,6 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.MetadataCacheReader;
+import io.questdb.cairo.MetadataCacheWriter;
 import io.questdb.cairo.TableToken;
 import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
 import io.questdb.test.AbstractCairoTest;
@@ -39,6 +40,56 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     public void setUp() {
         ParquetRowGroupFilter.resetRowGroupsSkipped();
         super.setUp();
+    }
+
+    @Test
+    public void testRowGroupPruningSurvivesEmptyMetadataCacheWindow() throws Exception {
+        // Regression for the parquet pruning probe
+        // (AbstractPartitionFrameCursorFactory#hasParquetFormatPartitions). The table
+        // token is resolved from the synchronously loaded registry, but the metadata
+        // cache hydrates lazily (async at startup, or after a clearCache()). The probe
+        // must hydrate the table on demand before reading the cache; otherwise it sees
+        // the table as missing, returns false, and row-group pruning is silently skipped
+        // during the hydration window. Pruning is an optimization, not a correctness
+        // feature, so the regression does NOT change query results - it can only be
+        // caught by asserting on the pruning signal (rowGroupsSkipped).
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x
+                    SELECT CAST(x AS INT), timestamp_sequence('2024-01-01', 100_000)
+                    FROM long_sequence(5000)
+                    """);
+            // Second partition makes 2024-01-01 a non-active partition so it converts.
+            execute("""
+                    INSERT INTO x VALUES
+                    (8000, '2024-01-02T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
+
+            // Reproduce the registered-but-not-yet-cached window: evict the table from
+            // the metadata cache so the query below is the first reader to need it.
+            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                metadataRW.clearCache();
+            }
+            // Precondition: the table really is absent from the cache. getTable() reads
+            // the map without hydrating, so it stays null until the pruning probe
+            // hydrates on demand.
+            final TableToken token = engine.getTableTokenIfExists("x");
+            try (MetadataCacheReader metadataRO = engine.getMetadataCache().readLock()) {
+                Assert.assertNull(metadataRO.getTable(token));
+            }
+
+            // The filtered query must still skip row groups: hasParquetFormatPartitions()
+            // hydrates the table on demand, so pruning is applied even though the cache
+            // started empty. Without the on-demand hydrate this assertion fails (0 skipped).
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT val FROM x WHERE val = -991 ORDER BY ts DESC")
+                    .noLeakCheck()
+                    .returns("val\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 1);
+        });
     }
 
     @Test
@@ -764,6 +815,48 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBloomFilterSymbolRenamedColumn() throws Exception {
+        // Regression: the row-group bloom-filter pushdown resolved the filtered column
+        // by its parquet name. Parquet column names are frozen at conversion time, so a
+        // rename leaves them stale. When another column already bears the query's current
+        // name, the pushdown checked the WRONG column's bloom filter and wrongly skipped
+        // row groups, silently dropping valid rows. The fix resolves by stable column id.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (a SYMBOL, b SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // 'gamma' lives only in column a; column b never holds it.
+            execute("""
+                    INSERT INTO x VALUES
+                    ('gamma', 'p', '2024-01-01T00:00:00.000000Z'),
+                    ('delta', 'q', '2024-01-01T01:00:00.000000Z'),
+                    ('gamma', 'r', '2024-01-02T01:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'a,b')");
+
+            // Swap names: free 'b', then rename a -> b. Now the live column 'b' is the
+            // original column 'a' (holds 'gamma'), while the parquet still carries a
+            // frozen column literally named 'b' (the original b, which never held 'gamma').
+            execute("ALTER TABLE x RENAME COLUMN b TO c");
+            execute("ALTER TABLE x RENAME COLUMN a TO b");
+
+            // Equality on the renamed column must find its rows, not be pruned away.
+            assertQuery("SELECT b FROM x WHERE b = 'gamma' ORDER BY ts")
+                    .noLeakCheck()
+                    .returns("""
+                            b
+                            gamma
+                            gamma
+                            """);
+
+            // A value genuinely absent from the renamed column must still prune.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT b FROM x WHERE b = 'nope'")
+                    .noLeakCheck()
+                    .returns("b\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
     public void testBloomFilterTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (val TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -1407,6 +1500,84 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                             val
                             
                             world
+                            """);
+        });
+    }
+
+    @Test
+    public void testIntervalScanStringMultiBlockPage() throws Exception {
+        // Force a large row-group size so all 300 rows land in one row group (one
+        // data page) regardless of execution order. The property is a static
+        // override that persists across test methods (reset only in @AfterClass),
+        // and many sibling tests lower it to 100; a value below 128 would split the
+        // rows into single-block row groups whose length stream never spans multiple
+        // blocks, silently bypassing the partial multi-block read path this guards.
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100_000);
+        // A STRING column read over a partial row-group range. 300 rows land in a
+        // single row group whose one data page holds a DELTA_LENGTH_BYTE_ARRAY
+        // length stream that spans several 128-value blocks. An interval ending
+        // inside the row group makes the column read stop before the later blocks
+        // (rowGroupHi < the page's value count). The data offset must still skip
+        // the whole length stream; it used to under-count the unread blocks and
+        // return shifted values (e.g. "v1" decoded as a string with leading NULs).
+        // Existing STRING tests miss this: they filter on the value column (a
+        // different, immune decode path) and use only a handful of rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x
+                    SELECT 'v' || x, timestamp_sequence('2024-01-01', 60_000_000)
+                    FROM long_sequence(300)
+                    """);
+            // A row in the next partition so 2024-01-01 is not the active partition
+            // and CONVERT actually rewrites it to parquet.
+            execute("INSERT INTO x VALUES ('tail', '2024-01-02T00:00:00.000000Z')");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQuery("SELECT val FROM x WHERE ts < '2024-01-01T00:05:00.000000Z'")
+                    .noLeakCheck()
+                    .returns("""
+                            val
+                            v1
+                            v2
+                            v3
+                            v4
+                            v5
+                            """);
+        });
+    }
+
+    @Test
+    public void testIntervalScanStringMultiBlockPageBackward() throws Exception {
+        // Force a large row-group size for the same reason as
+        // testIntervalScanStringMultiBlockPage: keep all 300 rows in one multi-block
+        // page so a sibling test's lowered override cannot mask the partial-read path.
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100_000);
+        // As testIntervalScanStringMultiBlockPage but with descending timestamp
+        // order, which drives the backward page-frame cursor. It computes the same
+        // partial (rowGroupHi < value count) frame and reads the STRING column over
+        // it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x
+                    SELECT 'v' || x, timestamp_sequence('2024-01-01', 60_000_000)
+                    FROM long_sequence(300)
+                    """);
+            // A row in the next partition so 2024-01-01 is not the active partition
+            // and CONVERT actually rewrites it to parquet.
+            execute("INSERT INTO x VALUES ('tail', '2024-01-02T00:00:00.000000Z')");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQuery("SELECT val FROM x WHERE ts < '2024-01-01T00:05:00.000000Z' ORDER BY ts DESC")
+                    .noLeakCheck()
+                    .returns("""
+                            val
+                            v5
+                            v4
+                            v3
+                            v2
+                            v1
                             """);
         });
     }
@@ -4004,6 +4175,200 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testRenamedColumnBetween() throws Exception {
+        // Companion to testBloomFilterSymbolRenamedColumn for the min/max-stats path: a BETWEEN
+        // range on a renamed column must resolve to the right parquet column by stable id, not
+        // by the frozen (now stale) parquet name.
+        assertMemoryLeak(() -> {
+            createRenamedNumericParquetTable();
+
+            // The match lives in the renamed column's low row group; the stale name maps to the
+            // high-range column whose stats do not overlap [15000, 25000], wrongly pruning it.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT b FROM x WHERE b BETWEEN 15_000 AND 25_000 ORDER BY ts")
+                    .noLeakCheck()
+                    .returns("""
+                            b
+                            15000
+                            25000
+                            """);
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            // A range genuinely absent from the renamed column must still prune.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT b FROM x WHERE b BETWEEN 1_000 AND 5_000")
+                    .noLeakCheck()
+                    .returns("b\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
+    public void testRenamedColumnInList() throws Exception {
+        // Companion to testBloomFilterSymbolRenamedColumn for the min/max-stats path: an IN list
+        // on a renamed column must resolve by stable column id.
+        assertMemoryLeak(() -> {
+            createRenamedNumericParquetTable();
+
+            // 15_000 and 25_000 both live in the renamed column's first row group; the stale
+            // name maps to the high-range column whose stats exclude both, so the buggy
+            // resolution wrongly pruned that row group and dropped the matches.
+            assertQuery("SELECT b FROM x WHERE b IN (15_000, 25_000) ORDER BY ts")
+                    .noLeakCheck()
+                    .returns("""
+                            b
+                            15000
+                            25000
+                            """);
+
+            // Values genuinely absent from the renamed column must still prune.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT b FROM x WHERE b IN (1_000, 5_000)")
+                    .noLeakCheck()
+                    .returns("b\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
+    public void testRenamedColumnIsNull() throws Exception {
+        // Companion to testBloomFilterSymbolRenamedColumn for the null-count path: IS [NOT] NULL
+        // pushdown resolved the filtered column by its frozen parquet name, so after a rename it
+        // consulted the wrong column's null-count stats and wrongly pruned. The fix resolves by
+        // stable column id.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (a INT, b INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // Column a (the future 'b') is non-null in the first partition and null in the second;
+            // column b is the mirror image. The third partition keeps the first two non-active so
+            // they convert to parquet.
+            execute("""
+                    INSERT INTO x VALUES
+                    (100, NULL, '2024-01-01T00:00:00.000000Z'),
+                    (NULL, 200, '2024-01-02T00:00:00.000000Z'),
+                    (300, 400, '2024-01-03T00:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+            execute("ALTER TABLE x RENAME COLUMN b TO c");
+            execute("ALTER TABLE x RENAME COLUMN a TO b");
+
+            // IS NOT NULL must return the renamed column's non-null rows. The stale name maps to
+            // the all-null frozen column in the first partition, which wrongly pruned row 100.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT b FROM x WHERE b IS NOT NULL ORDER BY ts")
+                    .noLeakCheck()
+                    .returns("""
+                            b
+                            100
+                            300
+                            """);
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            // IS NULL must return the renamed column's null row. The stale name maps to the
+            // no-nulls frozen column in the second partition, which wrongly pruned that null.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT count() AS cnt FROM x WHERE b IS NULL")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("cnt\n1\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
+    public void testRenamedColumnMinMaxEquality() throws Exception {
+        // Companion to testBloomFilterSymbolRenamedColumn: that test covers the bloom-filter
+        // equality path; this one covers equality resolved through min/max statistics (no bloom
+        // filter on the column). Both share the same prepareFilterList column resolution.
+        assertMemoryLeak(() -> {
+            createRenamedNumericParquetTable();
+
+            // 25_000 lives in the renamed column's first row group; the stale name maps to the
+            // high-range column whose min/max excludes it, which wrongly pruned the match away.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT b FROM x WHERE b = 25_000")
+                    .noLeakCheck()
+                    .returns("""
+                            b
+                            25000
+                            """);
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            // A value genuinely absent from the renamed column must still prune.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT b FROM x WHERE b = 5_000")
+                    .noLeakCheck()
+                    .returns("b\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
+    public void testRenamedColumnOrEquality() throws Exception {
+        // Companion to testBloomFilterSymbolRenamedColumn for the min/max-stats path: an
+        // OR-of-equalities on a renamed column must resolve by stable column id.
+        assertMemoryLeak(() -> {
+            createRenamedNumericParquetTable();
+
+            // 15_000 and 25_000 both live in the renamed column's first row group; the stale
+            // name maps to the high-range column whose stats exclude both, so the buggy
+            // resolution wrongly pruned that row group and dropped the matches.
+            assertQuery("SELECT b FROM x WHERE b = 15_000 OR b = 25_000 ORDER BY ts")
+                    .noLeakCheck()
+                    .returns("""
+                            b
+                            15000
+                            25000
+                            """);
+
+            // Values genuinely absent from the renamed column must still prune.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT b FROM x WHERE b = 1_000 OR b = 5_000")
+                    .noLeakCheck()
+                    .returns("b\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
+    public void testRenamedColumnRange() throws Exception {
+        // Companion to testBloomFilterSymbolRenamedColumn for the min/max-stats path: range
+        // predicates on a renamed column must resolve by stable column id.
+        assertMemoryLeak(() -> {
+            createRenamedNumericParquetTable();
+
+            // '< 30_000' matches only the renamed column's low row group; the stale name maps to
+            // the high-range column whose min is above 30_000, which wrongly pruned the match.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT b FROM x WHERE b < 30_000 ORDER BY ts")
+                    .noLeakCheck()
+                    .returns("""
+                            b
+                            15000
+                            25000
+                            """);
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT b FROM x WHERE b <= 25_000 ORDER BY ts")
+                    .noLeakCheck()
+                    .returns("""
+                            b
+                            15000
+                            25000
+                            """);
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            // A range below every value in the renamed column must still prune.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT b FROM x WHERE b < 10_000")
+                    .noLeakCheck()
+                    .returns("b\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
     private void assertHasParquetPartitions(String tableName, boolean expected) {
         TableToken tableToken = engine.verifyTableName(tableName);
         try (MetadataCacheReader reader = engine.getMetadataCache().readLock()) {
@@ -4011,5 +4376,25 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             Assert.assertNotNull(table);
             Assert.assertEquals(expected, table.hasParquetPartitions());
         }
+    }
+
+    // Builds a parquet table whose live column 'b' is the original low-range column 'a', while
+    // the frozen parquet column still literally named 'b' is the original high-range column.
+    // Resolving a filter by the stale parquet name targets the wrong column's stats and wrongly
+    // prunes; resolving by stable column id keeps it correct. The third partition stays active so
+    // the first two convert to parquet.
+    private void createRenamedNumericParquetTable() throws Exception {
+        execute("CREATE TABLE x (a INT, b INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("""
+                INSERT INTO x VALUES
+                (15_000, 75_000, '2024-01-01T00:00:00.000000Z'),
+                (25_000, 85_000, '2024-01-01T01:00:00.000000Z'),
+                (35_000, 95_000, '2024-01-02T00:00:00.000000Z'),
+                (45_000, 99_000, '2024-01-02T01:00:00.000000Z'),
+                (55_000, 65_000, '2024-01-03T00:00:00.000000Z')
+                """);
+        execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+        execute("ALTER TABLE x RENAME COLUMN b TO c");
+        execute("ALTER TABLE x RENAME COLUMN a TO b");
     }
 }

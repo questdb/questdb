@@ -498,6 +498,74 @@ public class WalPurgeJobTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGracefulBailWhenEngineClosing() throws Exception {
+        // Regression test for a teardown race: during a primary->replica demote, ServerMain.close()
+        // signals the engine closing, bounds the worker-pool halt, then frees the sequencer/metadata
+        // mappings even if a WalPurgeJob worker is still mid-sweep. A worker that opens a TxReader on
+        // the sequencer tx-log while the engine concurrently tears it down closes an already-evicted fd
+        // and double-unmaps a tx-log region, which trips the FD_PARANOIA assert / the native-mem
+        // counter under -ea.
+        //
+        // The fix makes fetchSequencerPairs() bail cleanly once engine.isClosing() is observed, mirroring
+        // how the same job already skips a table that was dropped underneath it. This test sets the engine
+        // closing flag and asserts the sweep does NOT open the table _txn reader (the crash site). It also
+        // asserts the sweep does not throw. Before the fix the sweep opens the _txn reader; after the fix
+        // it skips it. The closing flag is reset in a finally so the shared engine stays usable.
+        final String tableName = testName.getMethodName();
+        final String tableDirName = tableName + "~1";
+        final AtomicInteger txnReaderOpens = new AtomicInteger();
+        final FilesFacade testFf = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ path) {
+                // The crash-site reader: WalPurgeJob.setTxnPath builds <dbRoot>/<table>/_txn (NOT under
+                // the sequencer SEQ_DIR). Count only that open.
+                if (Utf8s.containsAscii(path, tableDirName)
+                        && !Utf8s.containsAscii(path, SEQ_DIR)
+                        && Utf8s.endsWithAscii(path, TXN_FILE_NAME)) {
+                    txnReaderOpens.incrementAndGet();
+                }
+                return super.openRO(path);
+            }
+        };
+
+        assertMemoryLeak(testFf, () -> {
+            execute("create table " + tableName + " as (" +
+                    "select x, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " from long_sequence(5)" +
+                    ") timestamp(ts) partition by DAY WAL");
+
+            drainWalQueue();
+
+            // Sanity: with the engine NOT closing the sweep opens the _txn reader, proving the test's
+            // matcher actually catches the crash-site open (otherwise the closing-case assertion below
+            // would pass vacuously).
+            txnReaderOpens.set(0);
+            TestUtils.drainPurgeJob(engine, testFf);
+            Assert.assertTrue(
+                    "control: a normal sweep must open the table _txn reader for the matcher to be valid",
+                    txnReaderOpens.get() > 0
+            );
+
+            // Now flip the engine to the closing state and sweep again. The fixed sweep must bail before
+            // opening the _txn reader (the torn-down mapping). The unfixed sweep opens it -> RED.
+            txnReaderOpens.set(0);
+            engine.setClosing(true);
+            try {
+                TestUtils.drainPurgeJob(engine, testFf);
+            } finally {
+                engine.setClosing(false);
+            }
+            Assert.assertEquals(
+                    "WAL purge sweep must not open the sequencer tx-log reader once the engine is closing"
+                            + " -- it would race the engine teardown into an evicted file descriptor",
+                    0,
+                    txnReaderOpens.get()
+            );
+        });
+    }
+
+    @Test
     public void testInterval() throws Exception {
         AtomicInteger counter = new AtomicInteger();
         final FilesFacade ff = new TestFilesFacadeImpl() {
@@ -522,21 +590,21 @@ public class WalPurgeJobTest extends AbstractCairoTest {
                 counter.set(0);
 
                 walPurgeJob.delayByHalfInterval();
-                walPurgeJob.run(0);
+                walPurgeJob.run();
                 Assert.assertEquals(0, counter.get());
                 setCurrentMicros(currentMicros + interval / 2 + 1);
-                walPurgeJob.run(0);
+                walPurgeJob.run();
                 Assert.assertEquals(1, counter.get());
                 setCurrentMicros(currentMicros + interval / 2 + 1);
-                walPurgeJob.run(0);
-                walPurgeJob.run(0);
-                walPurgeJob.run(0);
+                walPurgeJob.run();
+                walPurgeJob.run();
+                walPurgeJob.run();
                 Assert.assertEquals(1, counter.get());
                 setCurrentMicros(currentMicros + interval);
-                walPurgeJob.run(0);
+                walPurgeJob.run();
                 Assert.assertEquals(2, counter.get());
                 setCurrentMicros(currentMicros + 10 * interval);
-                walPurgeJob.run(0);
+                walPurgeJob.run();
                 Assert.assertEquals(3, counter.get());
             }
         });
@@ -649,6 +717,89 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
         int evIndex = 0;
         assertNoMoreEvents(deleter, evIndex);
+    }
+
+    @Test
+    public void testNoWalDeletionWhenEngineClosesMidSweep() throws Exception {
+        // Regression test for a data-loss hole in the engine-close tolerance: a replica downloads a WAL
+        // segment ahead of WAL apply, then a primary->replica demote starts closing the engine while a
+        // WalPurgeJob worker is mid-sweep. fetchSequencerPairs() must bail without touching the torn-down
+        // sequencer mappings, so it returns before populating the next-to-apply set. If broadSweep() then
+        // still runs the deletion pass, every discovered segment looks "already applied" (next-to-apply is
+        // empty) and the whole WAL directory is deleted -- including the downloaded-but-unapplied segment.
+        // That suspends the table once apply reaches the missing seqTxn (the ReplicationFuzzTest symptom).
+        //
+        // The fix makes broadSweep() skip the deletion pass (release the locks and stop) once it observes
+        // engine.isClosing() after the sweep, since a sweep that never tracked next-to-apply must never
+        // delete. This test reproduces the race deterministically: it flips the engine to closing DURING
+        // the sweep's discovery phase (after broadSweep's own entry guard has already let the sweep in),
+        // then asserts the unapplied WAL and both its segments survive and the data still applies. Before
+        // the fix the closing sweep deletes wal1; after the fix it leaves it untouched.
+        final String tableName = testName.getMethodName();
+        final String tableDirName = tableName + "~1";
+        final AtomicBoolean armed = new AtomicBoolean(false);
+        final FilesFacade testFf = new TestFilesFacadeImpl() {
+            @Override
+            public long findFirst(LPSZ path) {
+                // Discovery scans the table's WAL directories. This runs after broadSweep's entry guard
+                // (which saw isClosing()==false) but before fetchSequencerPairs(), so flipping the flag
+                // here opens exactly the mid-sweep race window the fix must tolerate.
+                if (armed.get() && Utf8s.containsAscii(path, tableDirName)) {
+                    engine.setClosing(true);
+                }
+                return super.findFirst(path);
+            }
+        };
+
+        assertMemoryLeak(testFf, () -> {
+            execute("create table " + tableName + "("
+                    + "x long,"
+                    + "ts timestamp"
+                    + ") timestamp(ts) partition by DAY WAL");
+            execute("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
+            execute("alter table " + tableName + " add column s1 string");
+            execute("insert into " + tableName + " values (2, '2022-02-24T00:00:01.000000Z', 'x')");
+
+            // Release the writer so both segments are unlocked, but leave the txns UNAPPLIED. The sequencer
+            // still tracks segment 0 as next-to-apply, so a normal sweep must protect the WAL.
+            engine.releaseInactive();
+            assertWalNotLocked(tableName, 1);
+            assertWalExistence(true, tableName, 1);
+            assertSegmentExistence(true, tableName, 1, 0);
+            assertSegmentExistence(true, tableName, 1, 1);
+
+            // Control: a normal (not-closing) sweep leaves the unapplied WAL alone. This proves the witness
+            // is not vacuous -- the WAL is genuinely on disk and protected by next-to-apply tracking.
+            TestUtils.drainPurgeJob(engine, testFf);
+            assertWalExistence(true, tableName, 1);
+            assertSegmentExistence(true, tableName, 1, 0);
+            assertSegmentExistence(true, tableName, 1, 1);
+
+            // Arm the mid-sweep flip and sweep again. The fixed sweep observes isClosing() after discovery
+            // and bails without deleting; the unfixed sweep deletes wal1 with the unapplied segment.
+            armed.set(true);
+            try {
+                TestUtils.drainPurgeJob(engine, testFf);
+            } finally {
+                armed.set(false);
+                engine.setClosing(false);
+            }
+            assertWalExistence(true, tableName, 1);
+            assertSegmentExistence(true, tableName, 1, 0);
+            assertSegmentExistence(true, tableName, 1, 1);
+
+            // The unapplied txns must still apply after the engine reopens -- no data was lost.
+            drainWalQueue();
+            assertQuery(tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            x\tts\ts1
+                            1\t2022-02-24T00:00:00.000000Z\t
+                            2\t2022-02-24T00:00:01.000000Z\tx
+                            """);
+        });
     }
 
     @Test
