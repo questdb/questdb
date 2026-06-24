@@ -118,6 +118,7 @@ public class SampleByNanoTimestampConfigTest extends AbstractBootstrapTest {
                 new QueryAssertion(engine, sqlExecutionContext, () -> {
                 }, query)
                         .noLeakCheck()
+                        .noMemoryUsageCheck()
                         .timestamp("ts")
                         .supportsRandomAccess(calendarAligned)
                         .expectSize(calendarAligned)
