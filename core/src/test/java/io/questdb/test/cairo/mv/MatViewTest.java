@@ -3071,8 +3071,7 @@ public class MatViewTest extends AbstractCairoTest {
             // Positive witness: the deletion above must make a WAL-gap scan over the affected range
             // actually throw, so the hydrate path's catch is genuinely exercised (not silently bypassed
             // via a clean no-truncate read on a platform where the deletion did not take effect).
-            final MatViewState mvState = ((MatViewStateStoreImpl) engine.getMatViewStateStore())
-                    .getViewState(engine.verifyTableName("mv"));
+            final MatViewState mvState = store.getViewState(engine.verifyTableName("mv"));
             Assert.assertNotNull(mvState);
             final long baseLastTxn = engine.getTableSequencerAPI().getTxnTracker(baseTableToken).getWriterTxn();
             try (

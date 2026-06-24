@@ -214,7 +214,6 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
         // the promote-hydrate path does. All other tests cover only the promote-hydrate path.
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain main1 = startMainPortsDisabled()) {
-                main1.getEngine(); // boot
                 execute(main1, "create table b (sym symbol, val double, ts timestamp) timestamp(ts) partition by DAY WAL");
                 execute(main1, "create materialized view bm as (select ts, count() cnt from b sample by 1h) partition by DAY");
                 execute(main1, "insert into b values ('a', 1.0, '2024-09-10T12:00')");
