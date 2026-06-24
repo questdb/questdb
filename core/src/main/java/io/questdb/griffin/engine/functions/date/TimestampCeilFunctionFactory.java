@@ -122,7 +122,11 @@ public class TimestampCeilFunctionFactory implements FunctionFactory {
                 if (mulOverflows(q, fixedSize)) {
                     return NONE;
                 }
-                hi = q * fixedSize - 1;
+                final long prod = q * fixedSize;
+                if (prod == Long.MIN_VALUE) {
+                    return NONE;
+                }
+                hi = prod - 1;
             }
             io.of(lo, hi);
             return EXACT;

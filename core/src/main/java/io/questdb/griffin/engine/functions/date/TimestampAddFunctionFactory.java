@@ -155,19 +155,20 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
                 return SUPERSET;
             }
             if (isFixedUnit(period)) {
+                // a fixed unit adds the same constant to every timestamp, so the inverse
+                // subtracts it back, bailing out when that would overflow
+                final long shift = periodAddFunction.add(0, stride);
                 if (lo != Numbers.LONG_NULL) {
-                    final long invLo = periodAddFunction.add(lo, -stride);
-                    if (periodAddFunction.add(invLo, stride) != lo) {
+                    if ((shift > 0 && lo < Long.MIN_VALUE + shift) || (shift < 0 && lo > Long.MAX_VALUE + shift)) {
                         return NONE;
                     }
-                    lo = invLo;
+                    lo -= shift;
                 }
                 if (hi != Long.MAX_VALUE) {
-                    final long invHi = periodAddFunction.add(hi, -stride);
-                    if (periodAddFunction.add(invHi, stride) != hi) {
+                    if ((shift > 0 && hi < Long.MIN_VALUE + shift) || (shift < 0 && hi > Long.MAX_VALUE + shift)) {
                         return NONE;
                     }
-                    hi = invHi;
+                    hi -= shift;
                 }
                 io.of(lo, hi);
                 return EXACT;

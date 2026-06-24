@@ -65,12 +65,12 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     private boolean betweenNegated;
     private CairoConfiguration configuration;
     private boolean intervalApplied = false;
-    private boolean ownershipTransferred;
+    private boolean isOwnershipTransferred;
     private int partitionBy;
     private TimestampDriver timestampDriver;
 
     public RuntimeIntrinsicIntervalModel build() {
-        ownershipTransferred = true;
+        isOwnershipTransferred = true;
         return new RuntimeIntervalModel(
                 timestampDriver,
                 partitionBy,
@@ -81,9 +81,9 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
     @Override
     public void clear() {
-        if (ownershipTransferred) {
+        if (isOwnershipTransferred) {
             // build() handed the dynamic functions to a RuntimeIntervalModel, which now owns them
-            ownershipTransferred = false;
+            isOwnershipTransferred = false;
             staticIntervals.clear();
             dynamicRangeList.clear();
             intervalApplied = false;
@@ -100,7 +100,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
      * otherwise this double-frees Functions still owned by the built model.
      */
     public void freeAndClear() {
-        ownershipTransferred = false;
+        isOwnershipTransferred = false;
         if (betweenBoundaryFunc != null && dynamicRangeList.indexOf(betweenBoundaryFunc) < 0) {
             betweenBoundaryFunc.close();
         }

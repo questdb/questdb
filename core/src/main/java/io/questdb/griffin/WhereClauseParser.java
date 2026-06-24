@@ -92,8 +92,8 @@ public final class WhereClauseParser implements Mutable {
     private static final int INTRINSIC_OP_NOT_EQ = 7;
     private static final CharSequenceIntHashMap intrinsicOps = new CharSequenceIntHashMap();
     private final ObjectPool<FlyweightCharSequence> csPool = new ObjectPool<>(FlyweightCharSequence.FACTORY, 64);
-    private final StringSink intervalSink = new StringSink();
     private final Interval intervalScratch = new Interval();
+    private final StringSink intervalSink = new StringSink();
     private final ObjList<ExpressionNode> keyExclNodes = new ObjList<>();
     private final ObjList<ExpressionNode> keyNodes = new ObjList<>();
     private final ObjectPool<IntrinsicModel> models = new ObjectPool<>(IntrinsicModel.FACTORY, 4);
@@ -1353,8 +1353,8 @@ public final class WhereClauseParser implements Mutable {
      * Recognizes {@code g(ts) IN '<interval>'} where the constant denotes a timestamp interval
      * (a partial date such as '2022-01' spans a whole month), matching the runtime
      * {@code in()} semantics rather than a single point. The interval is inverted onto the
-     * timestamp axis for partition pruning while the predicate stays a residual row filter, so
-     * a wider-than-exact inversion can never drop matching rows.
+     * timestamp axis for partition pruning while the predicate is kept as a residual row filter
+     * unless the inversion is exact, so a wider-than-exact inversion can never drop matching rows.
      */
     private boolean analyzeMonotonicTimestampInInterval(
             IntrinsicModel model,
@@ -2744,7 +2744,7 @@ public final class WhereClauseParser implements Mutable {
     }
 
     private boolean referencesTimestamp(ExpressionNode node) {
-        if (node == null) {
+        if (node == null || timestamp == null) {
             return false;
         }
         if (node.type == ExpressionNode.LITERAL) {
