@@ -125,11 +125,14 @@ public class AlterOperationBuilder implements Mutable {
         this.extraStrInfo.add(columnName);
         this.extraInfo.add(indexValueBlockSize);
         this.extraInfo.add(indexType);
-        // Replica-only flag slot (1 = replica-only, 0 = normal); precedes coverCount
-        this.extraInfo.add(replicaOnly ? 1 : 0);
-        // Covering column count followed by names (0 means no covering)
+        // Covering column count (slot 2) precedes the replicaOnly flag (slot 3) so
+        // that old binaries reading [blockSize, indexType, coverCount] still decode
+        // coverCount correctly and simply ignore the unknown trailing slot. A new
+        // binary reading an old 3-slot event treats the absent slot 3 as false.
         int coverCount = coveringColumnNames != null ? coveringColumnNames.size() : 0;
         this.extraInfo.add(coverCount);
+        // Replica-only flag is a trailing optional slot (1 = replica-only, 0 = normal).
+        this.extraInfo.add(replicaOnly ? 1 : 0);
         if (coverCount > 0) {
             for (int i = 0; i < coverCount; i++) {
                 this.extraStrInfo.add(coveringColumnNames.get(i));
