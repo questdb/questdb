@@ -323,6 +323,23 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
         throw new AssertionError("Failed to get static symbol table from " + symbolTable);
     }
 
+    /**
+     * Computes the upper timestamp bound (in master timestamp units) for building
+     * the per-symbol slave index. {@link #INDEX_LOOKAHEAD} prefetches slave rows
+     * past the current master row's window so later master rows can reuse the
+     * in-memory index without a rebuild. The prefetch must never pull this bound
+     * below the window's own upper bound ({@code masterTimestamp + windowHi}):
+     * that happens when {@code windowHi} is negative -- the whole window lies in
+     * the master row's past, e.g. {@code RANGE BETWEEN 4 HOURS PRECEDING AND 2
+     * HOURS PRECEDING} -- and would leave the window's most recent slave rows out
+     * of the index, undercounting the aggregate. Clamping to {@code windowHi}
+     * keeps the index covering at least the full window, at the cost of a per-row
+     * index rebuild for such past-only windows (which are rare).
+     */
+    private static long indexLookaheadHi(long masterTimestamp, long windowHi) {
+        return masterTimestamp + Math.max(windowHi * INDEX_LOOKAHEAD, windowHi);
+    }
+
     private abstract class AbstractWindowJoinFastRecordCursor implements NoRandomAccessRecordCursor {
         protected final GroupByFunctionsUpdater groupByFunctionsUpdater;
         // Stores metadata about storage of slave underlying records
@@ -508,7 +525,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
             // We build the timestamp interval over which we will aggregate the matching slave rows [slaveTimestampLo; slaveTimestampHi]
             long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
             long slaveTimestampLo = scaleTimestamp(masterTimestamp - windowLo, masterTimestampScale);
-            long slaveTimestampHi = scaleTimestamp(masterTimestamp + windowHi * INDEX_LOOKAHEAD, masterTimestampScale);
+            long slaveTimestampHi = scaleTimestamp(indexLookaheadHi(masterTimestamp, windowHi), masterTimestampScale);
             long masterTimestampHi = scaleTimestamp(masterTimestamp + windowHi, masterTimestampScale);
 
             if (masterTimestampHi > lastSlaveTimestamp) {
@@ -791,7 +808,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
             // We build the timestamp interval over which we will aggregate the matching slave rows [slaveTimestampLo; slaveTimestampHi]
             long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
             long slaveTimestampLo = scaleTimestamp(masterTimestamp - windowLo, masterTimestampScale);
-            long slaveTimestampHi = scaleTimestamp(masterTimestamp + windowHi * INDEX_LOOKAHEAD, masterTimestampScale);
+            long slaveTimestampHi = scaleTimestamp(indexLookaheadHi(masterTimestamp, windowHi), masterTimestampScale);
             long masterTimestampHi = scaleTimestamp(masterTimestamp + windowHi, masterTimestampScale);
 
             final Record slaveRecord = slaveTimeFrameHelper.getRecord();
@@ -1036,7 +1053,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
             // We build the timestamp interval over which we will aggregate the matching slave rows [slaveTimestampLo; slaveTimestampHi]
             long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
             long slaveTimestampLo = scaleTimestamp(masterTimestamp - windowLo, masterTimestampScale);
-            long slaveTimestampHi = scaleTimestamp(masterTimestamp + windowHi * INDEX_LOOKAHEAD, masterTimestampScale);
+            long slaveTimestampHi = scaleTimestamp(indexLookaheadHi(masterTimestamp, windowHi), masterTimestampScale);
             long masterTimestampHi = scaleTimestamp(masterTimestamp + windowHi, masterTimestampScale);
 
             if (masterTimestampHi > lastSlaveTimestamp) {
@@ -1271,7 +1288,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
             // We build the timestamp interval over which we will aggregate the matching slave rows [slaveTimestampLo; slaveTimestampHi]
             long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
             long slaveTimestampLo = scaleTimestamp(masterTimestamp - windowLo, masterTimestampScale);
-            long slaveTimestampHi = scaleTimestamp(masterTimestamp + windowHi * INDEX_LOOKAHEAD, masterTimestampScale);
+            long slaveTimestampHi = scaleTimestamp(indexLookaheadHi(masterTimestamp, windowHi), masterTimestampScale);
             long masterTimestampHi = scaleTimestamp(masterTimestamp + windowHi, masterTimestampScale);
             final Record slaveRecord = slaveTimeFrameHelper.getRecord();
 

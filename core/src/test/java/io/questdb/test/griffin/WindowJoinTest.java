@@ -4761,6 +4761,75 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowJoinKeyedBothBoundsPreceding() throws Exception {
+        // RANGE BETWEEN <lo> PRECEDING AND <hi> PRECEDING puts the whole window in the
+        // master row's past, so the window's upper-bound offset (windowHi) is negative. The
+        // single-threaded keyed (fast) factory sized its slave-index scan upper bound as
+        // windowHi * INDEX_LOOKAHEAD; for a negative windowHi that lands BELOW the window's
+        // own upper bound (masterTimestamp + windowHi) and drops the window's most recent
+        // slave rows from the index, undercounting every aggregate. Both native and parquet
+        // slaves undercount (differently), so the differential fuzzer flagged it as a storage
+        // divergence. Cross-check the keyed WINDOW JOIN against a plain LEFT JOIN reference
+        // (EXCLUDE PREVAILING) and across the single-threaded and parallel paths, for native
+        // and parquet slaves; it undercounts on HEAD without the fix.
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (sym SYMBOL INDEX, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices (sym SYMBOL, x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices_pq (sym SYMBOL, x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // Master rows every 30 min; slave rows every 20 min so each [M-4h, M-2h] window
+            // (2 h wide) spans several slave rows, including ones the buggy index scan dropped.
+            // Integer x keeps sum() order-independent so the oracle compares exactly.
+            execute("INSERT INTO trades SELECT rnd_symbol('a','b','c'), " +
+                    "timestamp_sequence('2024-01-01T08:00:00.000000Z', 30 * 60 * 1000000L) FROM long_sequence(60)");
+            execute("INSERT INTO prices SELECT rnd_symbol('a','b','c'), rnd_long(0, 1000, 0), " +
+                    "timestamp_sequence('2024-01-01T00:00:00.000000Z', 20 * 60 * 1000000L) FROM long_sequence(180)");
+            execute("INSERT INTO prices_pq SELECT * FROM prices");
+            execute("ALTER TABLE prices_pq CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            // Independent oracle: a plain LEFT JOIN over the same [M-4h, M-2h] slave window,
+            // which is exactly EXCLUDE PREVAILING semantics.
+            sink.clear();
+            printSql("SELECT t.sym, t.ts, sum(p.x) AS a0, count(p.x) AS a1 " +
+                    "FROM trades t LEFT JOIN prices p " +
+                    "ON t.sym = p.sym AND p.ts >= dateadd('h', -4, t.ts) AND p.ts <= dateadd('h', -2, t.ts) " +
+                    "GROUP BY t.sym, t.ts ORDER BY t.sym, t.ts", sink);
+            final String expected = sink.toString();
+
+            for (boolean parallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelWindowJoinEnabled(parallel);
+                for (String slave : new String[]{"prices", "prices_pq"}) {
+                    final String q = "SELECT t.sym, t.ts, sum(p.x) AS a0, count(p.x) AS a1 " +
+                            "FROM trades t WINDOW JOIN " + slave + " p ON (t.sym = p.sym) " +
+                            "RANGE BETWEEN 4 HOURS PRECEDING AND 2 HOURS PRECEDING EXCLUDE PREVAILING " +
+                            "ORDER BY t.sym, t.ts";
+                    sink.clear();
+                    printSql(q, sink);
+                    TestUtils.assertEquals("parallel=" + parallel + " slave=" + slave, expected, sink);
+                }
+            }
+
+            // INCLUDE PREVAILING has no simple plain-SQL oracle; cross-check the single-threaded
+            // and parallel keyed paths against each other, for native and parquet slaves.
+            for (String slave : new String[]{"prices", "prices_pq"}) {
+                final String incl = "SELECT t.sym, t.ts, sum(p.x) AS a0, count(p.x) AS a1 " +
+                        "FROM trades t WINDOW JOIN " + slave + " p ON (t.sym = p.sym) " +
+                        "RANGE BETWEEN 4 HOURS PRECEDING AND 2 HOURS PRECEDING INCLUDE PREVAILING " +
+                        "ORDER BY t.sym, t.ts";
+                sqlExecutionContext.setParallelWindowJoinEnabled(false);
+                sink.clear();
+                printSql(incl, sink);
+                final String single = sink.toString();
+                sqlExecutionContext.setParallelWindowJoinEnabled(true);
+                sink.clear();
+                printSql(incl, sink);
+                TestUtils.assertEquals("include prevailing slave=" + slave, single, sink);
+            }
+        });
+    }
+
+    @Test
     public void testWindowJoinMasterTimestampMultiIntervalWhere() throws Exception {
         // A master designated-timestamp predicate that extracts to MULTIPLE disjoint intervals
         // (t.ts != literal, NOT BETWEEN, OR of ranges) must not collapse the slave page-frame scan
