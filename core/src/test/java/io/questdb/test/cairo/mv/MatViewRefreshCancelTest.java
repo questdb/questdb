@@ -24,9 +24,11 @@
 
 package io.questdb.test.cairo.mv;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.mv.MatViewRefreshSqlExecutionContext;
 import io.questdb.griffin.QueryRegistry;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 /**
@@ -44,8 +46,23 @@ import org.junit.Test;
  * deterministically: a {@link QueryRegistry.Listener} fires inside {@code register()}, before the
  * cursor starts, so the very first circuit breaker check trips. This needs no product code - it
  * exercises the same registration and circuit breaker path that {@code cancel_query()} drives.
+ * <p>
+ * The circuit breaker throttle is pinned to 0 so the cancelled flag is tested on the very first
+ * circuit breaker check. Otherwise the cancel only reliably trips on the parallel group-by path,
+ * whose page-frame dispatch runs a non-throttled check; the serial group-by path (used when mat
+ * view parallel SQL is off, which defaults to off on hosts with fewer than 4 CPUs) only runs the
+ * throttled check, and a single-row refresh query never reaches the default throttle, so the
+ * injected cancel would be silently ignored and the refresh would complete.
  */
 public class MatViewRefreshCancelTest extends AbstractCairoTest {
+
+    @BeforeClass
+    public static void setUpStatic() throws Exception {
+        // Test the cancelled flag on every circuit breaker check so the cancel trips deterministically
+        // on both the serial and parallel group-by execution paths, regardless of the host CPU count.
+        setProperty(PropertyKey.CIRCUIT_BREAKER_THROTTLE, 0);
+        AbstractCairoTest.setUpStatic();
+    }
 
     @Test
     public void testCancelInFlightRefreshTripsCircuitBreaker() throws Exception {
