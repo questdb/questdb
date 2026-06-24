@@ -231,6 +231,41 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCastToLongDoubleBoundFallsBack() throws Exception {
+        assertMemoryLeak(() -> {
+            createTrades();
+            // a DOUBLE bound cannot be read via getLong(); the predicate stays a row filter
+            // rather than throwing, and the result is the same as a plain long comparison
+            assertQuery("SELECT * FROM trades WHERE timestamp::long >= cast(1_641_211_200_000_000 AS double)")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Frame forward scan on: trades")
+                    .returns("""
+                            price\ttimestamp
+                            200.0\t2022-01-03T12:00:00.000000Z
+                            250.0\t2022-01-04T12:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testCastToLongRuntimeDoubleBoundFallsBack() throws Exception {
+        assertMemoryLeak(() -> {
+            createTrades();
+            bindVariableService.clear();
+            bindVariableService.setDouble(0, 1_641_211_200_000_000.0);
+            // a runtime DOUBLE bind cannot be read via getLong() at scan open; it stays a row filter
+            assertQuery("SELECT * FROM trades WHERE timestamp::long >= $1")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Frame forward scan on: trades")
+                    .returns("""
+                            price\ttimestamp
+                            200.0\t2022-01-03T12:00:00.000000Z
+                            250.0\t2022-01-04T12:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testChainOnRightHandSide() throws Exception {
         assertMemoryLeak(() -> {
             createTrades();
@@ -1166,6 +1201,23 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
                     .timestamp("timestamp")
                     .withPlanContaining("Interval forward scan on: y")
                     .withPlanNotContaining("filter:")
+                    .returns("""
+                            price\ttimestamp
+                            3.0\t2023-06-01T00:00:00.000000Z
+                            4.0\t2024-06-01T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testYearDoubleBoundFallsBack() throws Exception {
+        assertMemoryLeak(() -> {
+            createYears();
+            // a DOUBLE bound on year() cannot be read via getLong(); the predicate stays a row
+            // filter rather than throwing, and still returns the correct rows
+            assertQuery("SELECT * FROM y WHERE year(timestamp) >= cast(2023 AS double)")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Frame forward scan on: y")
                     .returns("""
                             price\ttimestamp
                             3.0\t2023-06-01T00:00:00.000000Z

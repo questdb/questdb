@@ -72,11 +72,11 @@ import static io.questdb.griffin.SqlKeywords.*;
  **/
 public final class WhereClauseParser implements Mutable {
     // Resolution outcomes for a single scalar bound of a monotonic-timestamp predicate.
-    private static final int BOUND_CONST = 0;     // usable compile-time constant (resolvedBoundConst)
-    private static final int BOUND_EMPTY = 1;     // a NULL-valued bound: the predicate matches no rows
-    private static final int BOUND_FAIL = 2;      // not a usable scalar bound: fall back to a row filter
-    private static final int BOUND_FALSE = 3;     // a NULL keyword bound: the predicate is always false
-    private static final int BOUND_FUNC = 4;      // deferred runtime function (resolvedBoundFunc)
+    private static final int BOUND_CONST = 0;
+    private static final int BOUND_EMPTY = 1;
+    private static final int BOUND_FAIL = 2;
+    private static final int BOUND_FALSE = 3;
+    private static final int BOUND_FUNC = 4;
     // Internal optimization marker for timestamp predicates pushed through dateadd transforms.
     // and_offset(predicate, unit, offset) wraps predicates that need offset adjustment.
     // This is NOT a user-facing function - it's injected by SqlOptimiser during predicate pushdown.
@@ -304,6 +304,11 @@ public final class WhereClauseParser implements Mutable {
         return n.type == ExpressionNode.FUNCTION
                 || n.type == ExpressionNode.BIND_VARIABLE
                 || n.type == ExpressionNode.OPERATION;
+    }
+
+    private static boolean isIntegerType(int type) {
+        final int tag = ColumnType.tagOf(type);
+        return tag == ColumnType.BYTE || tag == ColumnType.SHORT || tag == ColumnType.INT || tag == ColumnType.LONG;
     }
 
     /**
@@ -1240,6 +1245,9 @@ public final class WhereClauseParser implements Mutable {
         if (head == null) {
             return false;
         }
+        // resolveScalarBound below compiles the bound, which may re-enter compileMonotonicChain
+        // for a nested subquery and overwrite tempMonotonicChain, so snapshot it now
+        final ObjList<MonotonicTimestampFunction> chain = new ObjList<>(tempMonotonicChain);
         Function loBound = null;
         Function hiBound = null;
         try {
@@ -1299,7 +1307,7 @@ public final class WhereClauseParser implements Mutable {
                     hiConst = t;
                 }
                 intervalScratch.of(loConst, hiConst);
-                final int soundness = foldInvert(tempMonotonicChain, intervalScratch);
+                final int soundness = foldInvert(chain, intervalScratch);
                 if (soundness == MonotonicTimestampFunction.NONE) {
                     return false;
                 }
@@ -1318,13 +1326,13 @@ public final class WhereClauseParser implements Mutable {
 
             // A constant end of a mixed BETWEEN is carried into the inverter (as a point) rather than
             // applied statically, so both ends are resolved and normalized together at scan open.
-            final int soundness = foldInvertProbe(tempMonotonicChain);
+            final int soundness = foldInvertProbe(chain);
             if (soundness == MonotonicTimestampFunction.NONE) {
                 return false;
             }
             model.intersectMonotonicTimestamp(new TimestampMonotonicInverter(
                     head,
-                    new ObjList<>(tempMonotonicChain),
+                    chain,
                     loBound,
                     loBound != null ? adjustComparison(equalsTo, true) : 0,
                     loConst,
@@ -2956,6 +2964,8 @@ public final class WhereClauseParser implements Mutable {
             try {
                 if (isTimestamp) {
                     checkFunctionCanBeTimestamp(metadata, executionContext, bound, boundNode.position);
+                } else if (!isIntegerType(bound.getType())) {
+                    return BOUND_FAIL;
                 }
                 if (bound.isConstant()) {
                     // int and long bounds both read as long: IntFunction.getLong() widens
