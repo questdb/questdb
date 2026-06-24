@@ -330,9 +330,9 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
 
     @Override
     public void close() {
-        // clear() frees the data chunks and ASOF maps per cursor while the tracker is bound (the
-        // index stays on the global counter), so teardown frees nothing tracked here. Null the
-        // tracker first to guard a mid-query teardown of live chunks: those frees hit global only.
+        // clear() already freed the data chunks and ASOF maps under the bound tracker (the index
+        // is on the global counter), so close() has nothing tracked to free. Nulling is defensive:
+        // any stray free hits the global counter and cannot underflow an already-recycled block.
         if (ownerAllocator != null) {
             ownerAllocator.setMemoryTracker(null);
         }

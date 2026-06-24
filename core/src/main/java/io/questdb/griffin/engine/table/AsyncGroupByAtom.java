@@ -259,9 +259,9 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     public void close() {
         Misc.free(shardingCtx);
         Misc.freeObjList(ownerKeyFunctions);
-        // clear() frees the data chunks per cursor while the tracker is bound (the index stays on
-        // the global counter), so teardown frees nothing tracked here. Null the tracker first to
-        // guard a mid-query teardown of live chunks, so those frees hit the global counter only.
+        // clear() already freed the data chunks under the bound tracker (the index is on the
+        // global counter), so close() has nothing tracked to free. Nulling is defensive: any
+        // stray free hits the global counter and cannot underflow an already-recycled block.
         if (ownerAllocator != null) {
             ownerAllocator.setMemoryTracker(null);
         }
