@@ -2063,8 +2063,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             rewriteAndSwapMetadata(metadata);
             clearTodoAndCommitMeta();
 
-            // remove indexer — skip seal since the index is being dropped
-            ColumnIndexer columnIndexer = indexers.getQuick(columnIndex);
+            // remove indexer — skip seal since the index is being dropped.
+            // getQuiet() is bounds- and null-safe: on a skipping primary a
+            // replica-only-indexed column has no wired indexer, so the indexers
+            // list can be shorter than columnCount (or hold a null slot).
+            ColumnIndexer columnIndexer = indexers.getQuiet(columnIndex);
             if (columnIndexer != null) {
                 columnIndexer.discardAndClose();
                 indexers.setQuick(columnIndex, null);
@@ -12520,7 +12523,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         int plen = path.size();
         try {
             for (int colIdx = 0; colIdx < columnCount; colIdx++) {
+                // On a skipping primary a replica-only POSTING column has no wired indexer,
+                // so indexers can be shorter than columnCount (or hold a null slot); guard
+                // the get with colIdx >= indexers.size() like the fast-lag posting path.
                 if (metadata.getColumnType(colIdx) <= 0 || !metadata.isColumnIndexed(colIdx)
+                        || colIdx >= indexers.size()
                         || !IndexType.isPosting(metadata.getColumnIndexType(colIdx))) {
                     continue;
                 }
@@ -12812,7 +12819,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long parquetSize = 0;
         try (RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_TABLE_WRITER)) {
             for (int colIdx = 0; colIdx < columnCount; colIdx++) {
+                // On a skipping primary a replica-only POSTING column has no wired indexer,
+                // so indexers can be shorter than columnCount (or hold a null slot); guard
+                // the getQuick below with colIdx >= indexers.size() like the fast-lag path.
                 if (metadata.getColumnType(colIdx) <= 0 || !metadata.isColumnIndexed(colIdx)
+                        || colIdx >= indexers.size()
                         || !IndexType.isPosting(metadata.getColumnIndexType(colIdx))) {
                     continue;
                 }
@@ -12953,7 +12964,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long partitionSize = txWriter.getPartitionRowCountByTimestamp(partitionTimestamp);
         try {
             for (int colIdx = 0; colIdx < columnCount; colIdx++) {
+                // On a skipping primary a replica-only POSTING column has no wired indexer,
+                // so indexers can be shorter than columnCount (or hold a null slot); guard
+                // the getQuick below with colIdx >= indexers.size() like the fast-lag path.
                 if (metadata.getColumnType(colIdx) <= 0 || !metadata.isColumnIndexed(colIdx)
+                        || colIdx >= indexers.size()
                         || !IndexType.isPosting(metadata.getColumnIndexType(colIdx))) {
                     continue;
                 }

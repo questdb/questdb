@@ -338,6 +338,125 @@ public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
         });
     }
 
+    // DROP INDEX on a replica-only-indexed column reaches TableWriter.removeIndex, which unwires the
+    // indexer via indexers.getQuick(columnIndex). On a skipping primary the replica-only column has NO
+    // wired indexer, so indexers can be shorter than columnCount: a raw getQuick(columnIndex) is an
+    // out-of-bounds access (AssertionError under -ea / stale read in prod). The fix uses the bounds-
+    // and null-safe getQuiet. BYPASS WAL: DROP INDEX runs on the writer directly.
+    @Test
+    public void testDropIndexOnReplicaOnlyIndexDoesNotCrash() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (s symbol index capacity 256 replica only, ts timestamp) timestamp(ts) partition by day bypass wal");
+            execute("insert into x values ('a', 0), ('b', 1000000), ('a', 2000000)");
+            engine.releaseAllWriters();
+
+            // Nothing built on the skipping primary at insert time.
+            Assert.assertFalse("no index files expected on skipping primary before DROP INDEX", indexFilesExist("x", "s"));
+
+            // DROP INDEX must not OOB on the absent indexer slot.
+            execute("alter table x alter column s drop index");
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+
+            // The index is gone: column flagged un-indexed AND the replica-only flag cleared.
+            final TableToken token = engine.verifyTableName("x");
+            try (TableReader reader = engine.getReader(token)) {
+                final int colIdx = reader.getMetadata().getColumnIndex("s");
+                Assert.assertFalse("column should no longer be indexed after DROP INDEX",
+                        reader.getMetadata().isColumnIndexed(colIdx));
+                Assert.assertFalse("replica-only flag should be cleared after DROP INDEX",
+                        reader.getMetadata().isColumnReplicaOnlyIndex(colIdx));
+            }
+            Assert.assertFalse("no index files expected after DROP INDEX", indexFilesExist("x", "s"));
+
+            // table remains queryable
+            sink.clear();
+            printSql("select s, ts from x where s = 'a'", sink);
+            io.questdb.test.tools.TestUtils.assertEquals(
+                    "s\tts\n" +
+                            "a\t1970-01-01T00:00:00.000000Z\n" +
+                            "a\t1970-01-01T00:00:02.000000Z\n",
+                    sink);
+        });
+    }
+
+    // O3 commit on a table with a replica-only POSTING index drives the posting-seal housekeeping
+    // sweep (TableWriter.sealPostingIndexesForO3Partitions -> sealPostingIndexForPartition ->
+    // restorePostingIndexersToLastPartition). hasPostingIndex() keys off raw isColumnIndexed, so the
+    // sweep DOES run on a skipping primary, and its per-column loop calls indexers.getQuick(colIdx)
+    // over columnCount. The skipped replica-only column has no wired indexer, so that get is an
+    // out-of-bounds access (AssertionError under -ea). The fix bounds-guards each posting loop with
+    // colIdx >= indexers.size(), mirroring the fast-lag posting path.
+    @Test
+    public void testO3PostingSealSweepReplicaOnlyDoesNotCrash() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (s symbol index type posting replica only, v double, ts timestamp) timestamp(ts) partition by day wal");
+            // In-order seed in two partitions.
+            execute("insert into x values ('a', 1, 0), ('b', 2, 1000000), ('c', 3, 86400000000)");
+            drainWalQueue();
+
+            // Out-of-order insert into an already-committed partition: forces the O3 path and the
+            // subsequent posting-seal sweep over the (un-wired) replica-only posting column.
+            execute("insert into x values ('a', 4, 500000), ('b', 5, 1500000), ('a', 6, 86400500000)");
+            drainWalQueue();
+
+            final TableToken token = engine.verifyTableName("x");
+            Assert.assertFalse(
+                    "WAL table must not be suspended by O3 posting-seal sweep over a replica-only index",
+                    engine.getTableSequencerAPI().isSuspended(token)
+            );
+            Assert.assertFalse("no posting index files expected on skipping primary after O3", indexFilesExist("x", "s"));
+            assertMetadataFlags("x", "s");
+
+            // Full-scan correctness across both partitions.
+            sink.clear();
+            printSql("select s, v, ts from x where s = 'a' order by ts", sink);
+            io.questdb.test.tools.TestUtils.assertEquals(
+                    "s\tv\tts\n" +
+                            "a\t1.0\t1970-01-01T00:00:00.000000Z\n" +
+                            "a\t4.0\t1970-01-01T00:00:00.500000Z\n" +
+                            "a\t6.0\t1970-01-02T00:00:00.500000Z\n",
+                    sink);
+        });
+    }
+
+    // Covering POSTING reseal over a parquet partition (TableWriter.resealParquetCoveringForPartition,
+    // reached when sealPostingIndexForPartition sees a parquet partition) also loops every indexed
+    // posting column and calls indexers.getQuick(colIdx). A replica-only covering-posting column on a
+    // skipping primary has no wired indexer -> out-of-bounds get without the bounds guard.
+    @Test
+    public void testParquetCoveringPostingResealReplicaOnlyDoesNotCrash() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (s symbol index type posting include (v) replica only, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into x values ('a', 1, 0), ('b', 2, 1000000), ('c', 3, 2000000)");
+            drainWalQueue();
+
+            // Round-trip the partition through parquet so a later O3 seal hits the parquet covering path.
+            execute("alter table x convert partition to parquet where ts >= 0");
+            drainWalQueue();
+
+            // O3 insert into the (now parquet) partition: drives the covering-posting reseal sweep.
+            execute("insert into x values ('a', 4, 500000), ('b', 5, 1500000)");
+            drainWalQueue();
+
+            final TableToken token = engine.verifyTableName("x");
+            Assert.assertFalse(
+                    "WAL table must not be suspended by parquet covering-posting reseal over a replica-only index",
+                    engine.getTableSequencerAPI().isSuspended(token)
+            );
+            Assert.assertFalse("no posting index files expected on skipping primary", indexFilesExist("x", "s"));
+            assertMetadataFlags("x", "s");
+
+            sink.clear();
+            printSql("select s, v, ts from x where s = 'a' order by ts", sink);
+            io.questdb.test.tools.TestUtils.assertEquals(
+                    "s\tv\tts\n" +
+                            "a\t1.0\t1970-01-01T00:00:00.000000Z\n" +
+                            "a\t4.0\t1970-01-01T00:00:00.500000Z\n",
+                    sink);
+        });
+    }
+
     // The metadata must still record indexed=true and replicaOnly=true so a replica or a promoted
     // node (skipReplicaOnlyIndexes()==false) can build the bitmap index later.
     private void assertMetadataFlags(String table, String col) {
