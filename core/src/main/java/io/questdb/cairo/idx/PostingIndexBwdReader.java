@@ -110,7 +110,17 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             } else {
                 nc = new NullCursor();
             }
-            nc.of(key, minValue, indexMaxValue);
+            // of() can throw (e.g. OOM growing the block buffer). The cursor has
+            // been popped from the pool (or freshly created) but is not yet owned
+            // by the caller, so release its retained native buffers on failure;
+            // the reader's close() only drains freeNullCursors and would never
+            // reclaim a cursor stranded mid-of().
+            try {
+                nc.of(key, minValue, indexMaxValue);
+            } catch (Throwable th) {
+                nc.releaseResources();
+                throw th;
+            }
             final long hi = maxValue == Long.MAX_VALUE ? Long.MAX_VALUE : maxValue + 1;
             nc.nullCount = Math.min(columnTop, hi);
             nc.nullPos = nc.nullCount;
@@ -126,7 +136,14 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             } else {
                 c = new Cursor();
             }
-            c.of(key, minValue, indexMaxValue);
+            // See the NullCursor branch above: release the cursor's native buffers
+            // if of() throws so a mid-of() failure cannot strand them.
+            try {
+                c.of(key, minValue, indexMaxValue);
+            } catch (Throwable th) {
+                c.releaseResources();
+                throw th;
+            }
             return c;
         }
 

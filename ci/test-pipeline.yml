@@ -14,7 +14,20 @@ variables:
   includeTests: "%regex[.*[^o].class]"
   MAVEN_CACHE_FOLDER: $(HOME)/.m2/repository
   MAVEN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx3g -XX:+UseParallelGC"
-  MAVEN_RUN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Dmaven.resolver.transport=wagon -Dmaven.wagon.httpconnectionManager.ttlSeconds=30 "
+  # Cache connect resilience. The self-hosted Reposilite cache is a single IP reached over
+  # the Hetzner vSwitch; under the fleet's cold-build connection bursts a fraction of TCP
+  # SYNs to it are dropped, and the failover-less mirror turns one black-holed connect into
+  # a dead build ("Connect to maven.internal:8081 ... Connection timed out").
+  #   * retryHandler.count=3 retries failed resolves, BUT wagon's default retry handler puts
+  #     ConnectException (and other connect-phase errors) on its non-retryable list, so a
+  #     connect-phase failure was NOT actually retried. nonRetryableClasses overrides that
+  #     default set with a single never-thrown class, which re-enables retry on connect
+  #     failures (the case we actually hit). connectionTimeout (in maven-settings-hetzner.xml)
+  #     bounds each connect attempt to ~10s instead of the ~127s OS SYN-retransmit budget, so
+  #     a retried connect re-attempts on a fresh source port instead of hanging out the build.
+  # The cache-box fix (nginx front-end + enlarged upstream keepalive pool) reduces the drop
+  # rate at the source; these client flags are the backstop for any residual lost SYN.
+  MAVEN_RUN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Dmaven.resolver.transport=wagon -Dmaven.wagon.httpconnectionManager.ttlSeconds=30 -Dmaven.wagon.http.retryHandler.count=3 -Dmaven.wagon.http.retryHandler.nonRetryableClasses=java.io.NotSerializableException "
   MAVEN_VERSION: "version"
   MAVEN_VERSION_OPTION: "Default"
   # Full-reactor defaults for the self-hosted Linux jobs. The hosted mac/windows

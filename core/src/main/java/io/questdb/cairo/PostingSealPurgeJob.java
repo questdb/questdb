@@ -120,7 +120,7 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 this.tableToken = createLogTable(configuration, compiler, sqlExecutionContext);
             }
-            this.writer = engine.getWriter(tableToken, "QuestDB system");
+            this.writer = engine.getWriter(tableToken, TableUtils.SYSTEM_WRITER_LOCK_REASON);
             this.completedWriterIndex = writer.getMetadata().getColumnIndex("completed");
             this.operator = new PostingSealPurgeOperator(engine);
             recoverOpenTasks(engine);
@@ -293,7 +293,7 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 logTableToken = createLogTable(configuration, compiler, sqlExecutionContext);
             }
-            logWriter = engine.getWriter(logTableToken, "QuestDB system");
+            logWriter = engine.getWriter(logTableToken, TableUtils.SYSTEM_WRITER_LOCK_REASON);
             long scheduledAt = configuration.getMicrosecondClock().getTicks();
             for (int i = lo, n = Math.min(hi, tasks.size()); i < n; i++) {
                 PostingSealPurgeTask task = tasks.getQuick(i);

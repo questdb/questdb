@@ -928,6 +928,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
         engine.releaseInactiveTableSequencers();
         engine.resetNameRegistryMemory();
         engine.getTxnScoreboardPool().clear();
+        // Drain the per-workload memory-tracker pool: a tracker acquired by a
+        // registered query is returned to the pool (not freed) and would
+        // otherwise trip the leak checker as a retained native block.
+        engine.getMemoryTrackerProvider().clear();
         Assert.assertEquals("busy writer count", 0, engine.getBusyWriterCount());
         Assert.assertEquals("busy reader count", 0, engine.getBusyReaderCount());
     }

@@ -75,8 +75,11 @@ public class SampleByFillNoneRecordCursorFactory extends AbstractSampleByRecordC
         try {
             // sink will be storing record columns to map key
             final RecordSink mapSink = RecordSinkFactory.getInstance(configuration, asm, base.getMetadata(), listColumnFilter);
-            // this is the map itself, which we must not forget to free when factory closes
-            map = MapFactory.createOrderedMap(configuration, keyTypes, valueTypes);
+            // this is the map itself, which we must not forget to free when factory closes.
+            // Lazy variant (openOnInit=false): the native backing is allocated by the first
+            // reopen() in the cursor's of(), after the per-query MemoryTracker is bound, so the
+            // map's malloc and the matching free at cursor close balance on the per-query counter.
+            map = MapFactory.createOrderedMap(configuration, keyTypes, valueTypes, false);
             final GroupByFunctionsUpdater groupByFunctionsUpdater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
             cursor = new SampleByFillNoneRecordCursor(
                     configuration,

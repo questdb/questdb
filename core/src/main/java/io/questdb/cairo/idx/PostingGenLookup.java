@@ -62,14 +62,8 @@ public class PostingGenLookup implements Closeable {
     // observable state.
     private final Snapshot bufA = new Snapshot();
     private final Snapshot bufB = new Snapshot();
-    private final DirectLongList cacheEntries = new DirectLongList(CACHE_ENTRIES_INITIAL_CAPACITY, MemoryTag.NATIVE_INDEX_READER);
-    private final DirectIntLongHashMap keyToCacheSlot = new DirectIntLongHashMap(
-            KEY_TO_SLOT_INITIAL_CAPACITY,
-            KEY_TO_SLOT_LOAD_FACTOR,
-            NO_ENTRY_KEY,
-            CACHE_NOT_PRESENT,
-            MemoryTag.NATIVE_INDEX_READER
-    );
+    private final DirectLongList cacheEntries;
+    private final DirectIntLongHashMap keyToCacheSlot;
     private Snapshot active = bufA;
     private long cacheBudget = DEFAULT_CACHE_BUDGET;
     private long cacheUsedBytes;
@@ -78,6 +72,30 @@ public class PostingGenLookup implements Closeable {
     // strictly read-only (workers replay it concurrently); putCacheEntries asserts on a write.
     private boolean frozen;
     private Snapshot staging = bufB;
+
+    public PostingGenLookup() {
+        DirectLongList cacheEntries = null;
+        DirectIntLongHashMap keyToCacheSlot = null;
+        try {
+            cacheEntries = new DirectLongList(CACHE_ENTRIES_INITIAL_CAPACITY, MemoryTag.NATIVE_INDEX_READER);
+            keyToCacheSlot = new DirectIntLongHashMap(
+                    KEY_TO_SLOT_INITIAL_CAPACITY,
+                    KEY_TO_SLOT_LOAD_FACTOR,
+                    NO_ENTRY_KEY,
+                    CACHE_NOT_PRESENT,
+                    MemoryTag.NATIVE_INDEX_READER
+            );
+        } catch (Throwable th) {
+            // Free whichever buffer was allocated before the failure: a half-built
+            // PostingGenLookup is never assigned to the reader, so close() can't
+            // reach these.
+            Misc.free(cacheEntries);
+            Misc.free(keyToCacheSlot);
+            throw th;
+        }
+        this.cacheEntries = cacheEntries;
+        this.keyToCacheSlot = keyToCacheSlot;
+    }
 
     public static long packCacheEntry(int gen, int posInGen) {
         return ((long) gen << 32) | (posInGen & 0xFFFFFFFFL);

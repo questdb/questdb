@@ -24,6 +24,9 @@
 
 package io.questdb.griffin.engine.functions.window;
 
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.VirtualRecord;
@@ -44,6 +47,17 @@ public abstract class AbstractWindowFunctionFactory implements FunctionFactory {
     @Override
     public boolean isWindow() {
         return true;
+    }
+
+    // Snapshots the partition key types. The code generator hands out a reusable buffer it clears and
+    // rebuilds for each window column's PARTITION BY, so a partitioned function that reads the types
+    // back later (e.g. when it builds its map lazily in initRecordComparator) must copy them up front.
+    static ArrayColumnTypes copyKeyTypes(ColumnTypes keyTypes) {
+        final ArrayColumnTypes copy = new ArrayColumnTypes();
+        for (int i = 0, n = keyTypes.getColumnCount(); i < n; i++) {
+            copy.add(keyTypes.getColumnType(i));
+        }
+        return copy;
     }
 
     static void expandRingBuffer(MemoryARW memory, RingBufferDesc desc, int recordSize) {
@@ -368,6 +382,12 @@ public abstract class AbstractWindowFunctionFactory implements FunctionFactory {
         TimestampNullFunction(Function arg, String name, long rowLo, long rowHi, boolean isRange, VirtualRecord partitionByRecord, long zeroValue) {
             super(arg, name, rowLo, rowHi, isRange, partitionByRecord);
             this.zeroValue = zeroValue;
+        }
+
+        @Override
+        public long getDate(Record rec) {
+            // zeroValue is always LONG_NULL, which is the NULL sentinel for both DATE and TIMESTAMP results.
+            return zeroValue;
         }
 
         @Override

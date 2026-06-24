@@ -1145,6 +1145,13 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     ) {
         int plen = path.size();
         try {
+            // A rowid-only reader (null metadata) can't map writer indices to dense
+            // columns, so it serves no covered reads: skip sidecar setup and leave
+            // coverCount at 0. Otherwise denseIndexFromWriter() NPEs on the null
+            // metadata and the propagating catch below fails the query.
+            if (metadata == null) {
+                return;
+            }
             LPSZ pciFile = PostingIndexUtils.coverInfoFileName(path, columnName, columnNameTxn);
             if (!ff.exists(pciFile)) {
                 return;
@@ -1188,8 +1195,12 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             }
             coverCount = count;
         } catch (Throwable e) {
+            // The covered read path has no base-table fallback, so degrading here
+            // would leave a covered read walking an absent sidecar. Propagate so
+            // the caller fails the query and closes the reader.
             LOG.error().$("failed to open sidecar files").$(e).$();
             closeSidecarMems();
+            throw e;
         } finally {
             Misc.free(infoMem);
             path.trimTo(plen);

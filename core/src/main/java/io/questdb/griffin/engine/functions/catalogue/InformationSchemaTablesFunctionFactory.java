@@ -37,6 +37,7 @@ import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
@@ -84,6 +85,7 @@ public class InformationSchemaTablesFunctionFactory implements FunctionFactory {
         private final boolean hideTelemetryTable;
         private final CharSequence sysTablePrefix;
         private final CharSequence tempPendingRenameTablePrefix;
+        private SqlExecutionCircuitBreaker circuitBreaker;
         private CairoEngine engine;
         private TableToken tableToken;
 
@@ -96,6 +98,8 @@ public class InformationSchemaTablesFunctionFactory implements FunctionFactory {
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
+            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
+            circuitBreaker = executionContext.getCircuitBreaker();
             engine = executionContext.getCairoEngine();
             cursor.toTop();
             return cursor;
@@ -114,6 +118,7 @@ public class InformationSchemaTablesFunctionFactory implements FunctionFactory {
         @Override
         protected void _close() {
             cursor.close();
+            circuitBreaker = null;
             engine = null;
         }
 
@@ -134,6 +139,7 @@ public class InformationSchemaTablesFunctionFactory implements FunctionFactory {
 
             @Override
             public boolean hasNext() {
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 if (tableIndex < 0) {
                     engine.getTableTokens(tableBucket, false);
                     tableIndex = -1;

@@ -439,11 +439,18 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
             @Transient ColumnMapping columnMapping,
             boolean external
     ) {
-        // Reopen off-heap lists in case they were closed.
-        pageAddresses.reopen();
-        pageSizes.reopen();
-        auxPageAddresses.reopen();
-        auxPageSizes.reopen();
+        // Reopen off-heap lists atomically: reopen() can trip the memory limit, so if a
+        // later one fails, close the ones already reopened. A caller that propagates the
+        // failure without ever reaching close() then leaks nothing.
+        try {
+            pageAddresses.reopen();
+            pageSizes.reopen();
+            auxPageAddresses.reopen();
+            auxPageSizes.reopen();
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
         // Reset frame-derived state and external flag.
         clear();
 
