@@ -222,6 +222,26 @@ public final class TableUtils {
     public static final String WAL_2_TABLE_RESUME_REASON = "Resume WAL Data Application";
     public static final String WAL_2_TABLE_WRITE_REASON = "WAL Data Application";
     static final int COLUMN_VERSION_FILE_HEADER_SIZE = 40;
+    // Magic prefix of the per-area _cv body-checksum trailer. The trailer is 16 bytes laid out at
+    // [offset + size, offset + size + 16): an 8-byte MAGIC followed by the 8-byte checksum. A real
+    // checksum is "present" ONLY when the file is long enough AND this exact MAGIC sits at offset+size.
+    //
+    // WHY a magic (back-compat, the whole point): a legacy pre-checksum _cv is page-rounded (its writer
+    // closes with close(false) => NO truncation) so its real on-disk length runs well past offset+size,
+    // and the old no-gap allocator packs the next area right after the live one - so the 8 bytes at
+    // offset+size are frequently NON-ZERO adjacent-area data, not zero. An EOF guard plus a zero sentinel
+    // therefore both fail to recognise "absent", and the reader would run a checksum verify over an
+    // unchecksummed legacy area and falsely throw on a HEALTHY old table. Gating presence on a 64-bit
+    // MAGIC makes garbage trailing bytes match with probability ~2^-64 (negligible), while a real new
+    // file always writes the MAGIC. Additive: no migration, no _meta version bump; downgrade-safe because
+    // OFFSET_SIZE_{A,B} still records data-only size and old readers never look at the trailer.
+    //
+    // Value spells the ASCII bytes " CVCHKSM" on disk (little-endian putLong: ' ','C','V','C','H','K',
+    // 'S','M'), chosen to be distinctive and vanishingly unlikely to occur as real column-version data
+    // (partition timestamps / column indices / txns / column tops).
+    public static final long CV_CHECKSUM_MAGIC = 0x4D534B4843564320L; // on-disk bytes (LE): ' ','C','V','C','H','K','S','M'
+    // On-disk size of the _cv body-checksum trailer: 8-byte MAGIC + 8-byte checksum.
+    public static final int CV_CHECKSUM_TRAILER_SIZE = 2 * Long.BYTES;
     // Column flag bit layout (on-disk in _meta).
     // Bits 0, 2, 3 match the pre-posting-index layout, so tables written by
     // older versions keep meaning when read by new binaries, and tables
@@ -360,6 +380,46 @@ public final class TableUtils {
         }
         h = xxh3Avalanche64(h);
         // 0 is the "absent" sentinel; never emit it for a real record.
+        return h != 0 ? h : 1L;
+    }
+
+    /**
+     * Computes a 64-bit checksum over the ENTIRE committed {@code _cv} (column-version) area
+     * {@code [0, size)}, used to detect a torn/partially-written area (e.g. a reordered or partial msync
+     * under NOSYNC) that the existing A/B version protocol alone cannot catch. Unlike {@code _txn}, the
+     * {@code _cv} area is ALWAYS fully rewritten per commit (see {@link ColumnVersionWriter#doCommit()} -
+     * the whole area is written to a fresh {@code writeOffset}, then the header offset/size is updated and
+     * the version bumped); there is NO in-place stable-version mutation of a published area, so the whole
+     * contiguous area is commit-immutable and can be covered with zero exclusions. The checksum long is
+     * stored on disk immediately AFTER the area, at {@code [offset + size, offset + size + 8)}; the
+     * {@code OFFSET_SIZE_{A,B}} header field continues to record {@code size} (the data length only, a
+     * multiple of {@code BLOCK_SIZE_BYTES}) so older readers still parse the blocks unchanged.
+     * <p>
+     * Uses the SAME polynomial-over-little-endian-words + avalanche as
+     * {@link #calculateTxnBodyChecksum(long, long, long)} ({@code hashTxnBodyRange} / {@code xxh3Avalanche64}),
+     * applied to the single contiguous range {@code [0, size)} (any alignment is handled by the helper, so
+     * the write and read sides agree as long as they pass the same {@code size}).
+     * <p>
+     * PRESENCE / BACK-COMPAT: the checksum is part of a 16-byte trailer
+     * {@code [offset + size, offset + size + 16)} = {@code [MAGIC | checksum]}. The reader treats a
+     * checksum as PRESENT only when the file is long enough AND {@link #CV_CHECKSUM_MAGIC} sits at
+     * {@code offset + size}; otherwise it skips the verify. This is what keeps page-rounded legacy
+     * pre-checksum files (whose trailing bytes are non-zero adjacent-area data) from being mis-read as
+     * checksummed. Because presence is magic-gated rather than content/zero-gated, the genuine-{@code 0}
+     * -> {@code 1} remap below is no longer load-bearing; it is kept (harmless) only so the stored value
+     * is never the bare {@code 0} an even older reader might have treated as "absent".
+     *
+     * @param areaBaseAddr native address of the area body (offset 0 of the active A/B area, i.e. the
+     *                     mapped address of the on-disk {@code offset})
+     * @param size         the committed area length in bytes ({@code OFFSET_SIZE_{A,B}}; a multiple of 32)
+     * @return a non-zero 64-bit checksum
+     */
+    public static long calculateCvAreaChecksum(long areaBaseAddr, long size) {
+        // The whole area is commit-immutable (fully rewritten each commit, never mutated in place under a
+        // stable version), so cover [0, size) with no exclusions.
+        long h = hashTxnBodyRange(areaBaseAddr, 0, size, 0);
+        h = xxh3Avalanche64(h);
+        // 0 is the "absent" sentinel; never emit it for a real area.
         return h != 0 ? h : 1L;
     }
 
