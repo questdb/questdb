@@ -75,13 +75,15 @@ public class SyncCostProfiler {
         System.out.println("DB root: $HOME (real disk)");
         System.out.println();
 
-        // Header
+        // Header. The flush-batching optimization moves cost between these columns: MS_SYNC msync/cmt and
+        // fdatasync/cmt should DROP (columns no longer per-file device-flush), while MS_ASYNC msync/cmt and
+        // the new sfr/cmt (sync_file_range) should RISE (the kick+drain that replace them).
         String hdr = String.format(
-                "%-10s  %7s  %10s  %12s  %10s  %12s  %13s  %14s",
+                "%-10s  %7s  %10s  %12s  %11s  %11s  %8s  %10s  %13s",
                 "Mode", "Commits",
                 "msync/cmt", "msyncMB/cmt",
-                "fsync/cmt", "fdatasync/cmt",
-                "msync total", "msync MB total");
+                "MS_SYNC/cmt", "MS_ASYN/cmt", "sfr/cmt",
+                "fsync/cmt", "fdatasync/cmt");
         System.out.println(hdr);
         System.out.println("-".repeat(hdr.length()));
 
@@ -174,6 +176,9 @@ public class SyncCostProfiler {
 
         long msyncCalls = cff.msyncCalls;
         long msyncBytesTotal = cff.msyncBytesTotal;
+        long msyncSyncCalls = cff.msyncSyncCalls;
+        long msyncAsyncCalls = cff.msyncAsyncCalls;
+        long syncFileRangeCalls = cff.syncFileRangeCalls;
         long fsyncCalls = cff.fsyncCalls;
         long fdatasyncCalls = cff.fdatasyncCalls;
 
@@ -189,15 +194,18 @@ public class SyncCostProfiler {
         double msyncPerCommit = (double) msyncCalls / commits;
         double msyncMBTotal = msyncBytesTotal / (1024.0 * 1024.0);
         double msyncMBPerCommit = msyncMBTotal / commits;
+        double msyncSyncPerCommit = (double) msyncSyncCalls / commits;
+        double msyncAsyncPerCommit = (double) msyncAsyncCalls / commits;
+        double sfrPerCommit = (double) syncFileRangeCalls / commits;
         double fsyncPerCommit = (double) fsyncCalls / commits;
         double fdatasyncPerCommit = (double) fdatasyncCalls / commits;
 
         System.out.printf(
-                "%-10s  %7d  %10.2f  %12.4f  %10.2f  %13.2f  %13d  %14.2f%n",
+                "%-10s  %7d  %10.2f  %12.4f  %11.2f  %11.2f  %8.2f  %10.2f  %13.2f%n",
                 modeName, commits,
                 msyncPerCommit, msyncMBPerCommit,
-                fsyncPerCommit, fdatasyncPerCommit,
-                msyncCalls, msyncMBTotal
+                msyncSyncPerCommit, msyncAsyncPerCommit, sfrPerCommit,
+                fsyncPerCommit, fdatasyncPerCommit
         );
     }
 
@@ -213,6 +221,7 @@ public class SyncCostProfiler {
         long msyncBytesTotal = 0;
         long msyncAsyncCalls = 0;
         long msyncSyncCalls = 0;
+        long syncFileRangeCalls = 0;
         long fsyncCalls = 0;
         long fdatasyncCalls = 0;
         long fsyncAndCloseCalls = 0;
@@ -222,6 +231,7 @@ public class SyncCostProfiler {
             msyncBytesTotal = 0;
             msyncAsyncCalls = 0;
             msyncSyncCalls = 0;
+            syncFileRangeCalls = 0;
             fsyncCalls = 0;
             fdatasyncCalls = 0;
             fsyncAndCloseCalls = 0;
@@ -243,6 +253,12 @@ public class SyncCostProfiler {
         public void fsync(long fd) {
             fsyncCalls++;
             super.fsync(fd);
+        }
+
+        @Override
+        public int syncFileRange(long fd, long offset, long nbytes, int flags) {
+            syncFileRangeCalls++;
+            return super.syncFileRange(fd, offset, nbytes, flags);
         }
 
         @Override

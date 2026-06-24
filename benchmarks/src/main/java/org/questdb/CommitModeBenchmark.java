@@ -85,11 +85,21 @@ public class CommitModeBenchmark {
     @Param({"1", "1000"})
     public int rowsPerCommit;
 
+    /**
+     * Total data columns (excluding the designated timestamp). The flush-batching optimization replaces
+     * N per-file device flushes with ~2 per commit, so the SYNC win is expected to GROW with this value.
+     * The schema is: ts + (columnCount - 2) long columns + 1 varchar + 1 symbol.
+     */
+    @Param({"5", "25", "100"})
+    public int columnCount;
+
     private CairoEngine writerEngine;
     private TableWriter writer;
     private final Rnd rnd = new Rnd();
     private final Utf8StringSink varcharSink = new Utf8StringSink();
     private long ts;
+    private int varcharColIndex;
+    private int symbolColIndex;
     private String dbRoot;
 
     public static void main(String[] args) throws RunnerException {
@@ -104,8 +114,10 @@ public class CommitModeBenchmark {
 
     @Setup(Level.Trial)
     public void setupTrial() {
-        // Use $HOME (ext4 real disk) so fsync is a real syscall.
-        dbRoot = System.getProperty("user.home") + "/qdb-commitbench-" + System.nanoTime();
+        // Use a real (non-tmpfs) disk so msync/fdatasync are real device syscalls. Prefer /data when present
+        // (ext4 with free space); otherwise fall back to $HOME.
+        final String baseDir = new java.io.File("/data").isDirectory() ? "/data" : System.getProperty("user.home");
+        dbRoot = baseDir + "/qdb-commitbench-" + System.nanoTime();
         new java.io.File(dbRoot).mkdirs();
 
         final int mode = parseCommitMode(commitMode);
@@ -126,12 +138,19 @@ public class CommitModeBenchmark {
             }
         };
 
-        // Step 1: create table schema via a throw-away engine (same pattern as TableWriterBenchmark)
-        executeDdl(
-                "create table " + TABLE_NAME + " (ts timestamp, l long, d double, v varchar, s symbol)" +
-                " timestamp(ts) partition by DAY bypass wal",
-                cfg
-        );
+        // Step 1: create table schema via a throw-away engine (same pattern as TableWriterBenchmark).
+        // Build columnCount data columns: (columnCount - 2) longs, then 1 varchar + 1 symbol, so every
+        // run exercises fixed-width data files plus a var-size (data+aux) column and a symbol (char/offset
+        // + index). Widening columnCount is what scales the number of per-commit column flushes.
+        final int longCols = Math.max(0, columnCount - 2);
+        final StringBuilder ddl = new StringBuilder("create table ").append(TABLE_NAME).append(" (ts timestamp");
+        for (int c = 0; c < longCols; c++) {
+            ddl.append(", c").append(c).append(" long");
+        }
+        varcharColIndex = 1 + longCols;       // col 0 is ts
+        symbolColIndex = varcharColIndex + 1;
+        ddl.append(", v varchar, s symbol) timestamp(ts) partition by DAY bypass wal");
+        executeDdl(ddl.toString(), cfg);
 
         // Step 2: open a direct TableWriter on the same config (bypasses WAL / sequencer overhead)
         // Table token must match what the DDL stored; tableId=0 is the bench table with no WAL.
@@ -173,21 +192,23 @@ public class CommitModeBenchmark {
 
     @Benchmark
     public void insertAndCommit() {
+        final int varIdx = varcharColIndex;
+        final int symIdx = symbolColIndex;
         for (int i = 0; i < rowsPerCommit; i++) {
             // ts monotonically increasing (append-only pattern)
             TableWriter.Row row = writer.newRow(ts++);
 
-            // col 1 = l (long)
-            row.putLong(1, rnd.nextLong());
-            // col 2 = d (double)
-            row.putDouble(2, rnd.nextDouble());
-            // col 3 = v (varchar, 8–64 bytes, varied length exercises data+aux vectors)
+            // fixed-width long columns 1..varIdx-1
+            for (int c = 1; c < varIdx; c++) {
+                row.putLong(c, rnd.nextLong());
+            }
+            // varchar (8–64 bytes, varied length exercises data+aux vectors)
             int varLen = 8 + (rnd.nextPositiveInt() % 57);
             varcharSink.clear();
             rnd.nextUtf8AsciiStr(varLen, varcharSink);
-            row.putVarchar(3, varcharSink);
-            // col 4 = s (symbol, small dictionary)
-            row.putSym(4, SYMBOLS[rnd.nextPositiveInt() % SYMBOLS.length]);
+            row.putVarchar(varIdx, varcharSink);
+            // symbol (small dictionary)
+            row.putSym(symIdx, SYMBOLS[rnd.nextPositiveInt() % SYMBOLS.length]);
 
             row.append();
         }
