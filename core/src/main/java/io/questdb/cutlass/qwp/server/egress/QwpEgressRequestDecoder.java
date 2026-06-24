@@ -80,6 +80,7 @@ public class QwpEgressRequestDecoder {
      */
     private final QwpVarint.DecodeResult varintScratch = new QwpVarint.DecodeResult();
     public long initialCredit;
+    public long queryFlags;
     public long requestId;
     /**
      * Reusable scratch for the parsed null flag that {@link #readNullFlag} writes
@@ -198,6 +199,14 @@ public class QwpEgressRequestDecoder {
         for (int i = 0; i < (int) bindCount; i++) {
             p = decodeBind(p, limit, i, bindVars);
         }
+
+        // Optional query_flags trailer; a baseline client leaves p == limit.
+        queryFlags = 0;
+        if (p < limit) {
+            QwpVarint.decode(p, limit, varintScratch);
+            queryFlags = varintScratch.value;
+            p += varintScratch.bytesRead;
+        }
     }
 
     /**
@@ -215,6 +224,7 @@ public class QwpEgressRequestDecoder {
         selectCacheKey.clear();
         requestId = 0;
         initialCredit = 0;
+        queryFlags = 0;
     }
 
     private long decodeBind(long start, long limit, int index, BindVariableService bindVars)

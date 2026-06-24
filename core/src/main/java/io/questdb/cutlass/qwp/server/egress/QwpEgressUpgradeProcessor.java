@@ -1047,6 +1047,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         try {
             decoder.decodeQueryRequest(payload, length, state.getBindVariableService());
             requestId = decoder.requestId;
+            boolean forceResetDict = (decoder.queryFlags & QwpEgressMsgKind.QUERY_FLAG_RESET_DICT) != 0;
             metrics.markQueryStarted();
             // Check connection-scoped cache caps BEFORE processing the new
             // query. If any soft cap is over, apply the matching local reset
@@ -1057,7 +1058,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             // apply here -- between queries, not between batches -- guarantees
             // the reset fires at a clean frame boundary and never interleaves
             // with a RESULT_BATCH already staged in the response buffer.
-            applyCacheResetForUpcomingQuery(context, state);
+            applyCacheResetForUpcomingQuery(context, state, forceResetDict);
             LOG.info().$("Egress QUERY_REQUEST [fd=").$(context.getFd())
                     .$(", requestId=").$(requestId)
                     .$(", sqlLen=").$(decoder.sql.length()).I$();
@@ -1280,9 +1281,10 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
      */
     private void applyCacheResetForUpcomingQuery(
             HttpConnectionContext context,
-            QwpEgressProcessorState state
+            QwpEgressProcessorState state,
+            boolean forceResetDict
     ) {
-        byte resetMask = state.computeCacheResetMask();
+        byte resetMask = state.computeCacheResetMask(forceResetDict);
         if (resetMask == 0) {
             return;
         }

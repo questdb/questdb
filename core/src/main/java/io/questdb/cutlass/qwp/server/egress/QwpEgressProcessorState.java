@@ -533,12 +533,22 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      * safe to emit the frame; this method has no side effects.
      */
     public byte computeCacheResetMask() {
+        return computeCacheResetMask(false);
+    }
+
+    /**
+     * As {@link #computeCacheResetMask()}, plus a forced SYMBOL dict reset when
+     * {@code forceDict} is set and the dict is non-empty (an empty dict needs no
+     * {@code CACHE_RESET} frame).
+     */
+    public byte computeCacheResetMask(boolean forceDict) {
         byte mask = 0;
         int dictEntriesCap = maxDictEntriesOverride >= 0
                 ? maxDictEntriesOverride : QwpConstants.DEFAULT_MAX_EGRESS_DICT_ENTRIES;
         int dictHeapCap = maxDictHeapBytesOverride >= 0
                 ? maxDictHeapBytesOverride : QwpConstants.DEFAULT_MAX_EGRESS_DICT_HEAP_BYTES;
-        if (connSymbolDict.size() >= dictEntriesCap || connSymbolDict.heapBytes() >= dictHeapCap) {
+        boolean capExceeded = connSymbolDict.size() >= dictEntriesCap || connSymbolDict.heapBytes() >= dictHeapCap;
+        if (capExceeded || (forceDict && connSymbolDict.size() > 0)) {
             mask |= QwpEgressMsgKind.RESET_MASK_DICT;
         }
         return mask;
