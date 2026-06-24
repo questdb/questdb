@@ -91,6 +91,11 @@ public class NoOpMatViewStateStore implements MatViewStateStore {
     }
 
     @Override
+    public void reenqueueRefreshTask(MatViewRefreshTask task) {
+        // No-op: a read-only/replica node discards its refresh queue and rebuilds from disk on promote.
+    }
+
+    @Override
     public void removeViewState(TableToken matViewToken) {
     }
 

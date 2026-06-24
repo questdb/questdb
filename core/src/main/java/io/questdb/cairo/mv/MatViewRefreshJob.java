@@ -1438,6 +1438,17 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             return false;
         }
         while (stateStore.tryDequeueRefreshTask(refreshTask)) {
+            // Re-read the suspend gate AFTER the dequeue. A promote can set the gate, swap in the real
+            // store, and enqueue the hydrate kickstart between this pass's top-of-method gate read and
+            // this dequeue. The dequeue synchronizes-with that enqueue, which the promoter ordered
+            // after the gate-set, so this read is guaranteed to observe the set gate -- a re-check in
+            // the while condition would NOT (it is ordered before the dequeue). Put the task back and
+            // stop: executing it now would refuse the view WalWriter on the still-read-only engine and
+            // drop it. It runs after the gate clears (writes open).
+            if (engine.isMatViewRefreshSuspended()) {
+                stateStore.reenqueueRefreshTask(refreshTask);
+                break;
+            }
             if (checkIfBaseTableDropped(refreshTask)) {
                 continue;
             }
