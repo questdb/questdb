@@ -79,6 +79,17 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     }
 
     @Override
+    public void fdatasync(long fd) {
+        super.fdatasync(fd);
+        String p = fdToPath.get(fd);
+        if (p != null) {
+            syncOrder.add(p);
+        }
+        recordDurable(fd);
+        bumpDurabilityOp();
+    }
+
+    @Override
     public void fsync(long fd) {
         super.fsync(fd);
         String p = fdToPath.get(fd);

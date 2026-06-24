@@ -126,6 +126,12 @@ public class SymbolMapWriter implements Closeable, MapWriter {
                     MemoryTag.MMAP_INDEX_WRITER,
                     configuration.getWriterFileOpenOpts()
             );
+            // Symbol CHAR memory stores symbol string values strictly by appending (charMem.putStr)
+            // and moving the cursor with jumpTo/truncate; it never does in-place put*(offset,..).
+            // Safe to narrow the SYNC msync to the written range. NOTE: only charMem is append-only;
+            // offsetMem stays full-extent (updateNullFlag does an in-place putBool at offset 0) and
+            // the bitmap index .k/.v stay full-extent (random-access writes below the high-water mark).
+            charMem.setAppendOnly(true);
 
             // move append pointer for symbol values in the correct place
             jumpCharMemToSymbolCount(symbolCount);

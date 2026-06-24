@@ -40,6 +40,11 @@ import org.jetbrains.annotations.TestOnly;
 public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     private static final Log LOG = LogFactory.getLog(MemoryPMARImpl.class);
     private final CairoConfiguration configuration;
+    // When true this memory is strictly append-only, so sync() narrows the current-page msync to the
+    // bytes actually written into that page instead of flushing the whole page window. NARROW-ONLY:
+    // we do not skip msync for PMAR (see sync()), so there is no cross-sync offset state to go stale.
+    // Defaults to false: the non-appendOnly path is byte-identical to the original full-page msync.
+    private boolean appendOnly = false;
     private long fd = -1;
     private FilesFacade ff;
     private long lastSyncedSize = 0;
@@ -132,6 +137,11 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     }
 
     @Override
+    public void setAppendOnly(boolean appendOnly) {
+        this.appendOnly = appendOnly;
+    }
+
+    @Override
     public void switchTo(FilesFacade ff, long fd, long extendSegmentSize, long offset, boolean truncate, byte truncateMode) {
         this.ff = ff;
         setExtendSegmentSize(extendSegmentSize);
@@ -143,13 +153,36 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
 
     public void sync(boolean async) {
         if (pageAddress != 0) {
-            ff.msync(pageAddress, getPageSize(), async);
+            if (appendOnly) {
+                // NARROW: flush only the bytes written into the currently mapped page, not the whole
+                // page window. The append cursor is always within the mapped page (jumpTo remaps to
+                // the target page), so the in-page written length is appendOffset - pageStart, clamped
+                // to [0, pageSize]. This is the main win: the active partition's partial last page is
+                // synced on every commit, and most of it is unwritten/clean. We recompute the length
+                // from the live append offset each call, so prior jumpTo/rollback cannot make it stale
+                // (NARROW-ONLY: no msync skip for PMAR). The page-flip release() still msyncs the full
+                // page it releases, so completed pages are fully flushed.
+                final long pageStart = pageOffset(mappedPage);
+                long inPageWritten = getAppendOffset() - pageStart;
+                if (inPageWritten < 0) {
+                    inPageWritten = 0;
+                } else if (inPageWritten > getPageSize()) {
+                    inPageWritten = getPageSize();
+                }
+                if (inPageWritten > 0) {
+                    ff.msync(pageAddress, inPageWritten, async);
+                }
+            } else {
+                ff.msync(pageAddress, getPageSize(), async);
+            }
             if (!async) {
                 // File size after mapping page `mappedPage` is (mappedPage+1)*extendSegmentSize
-                // (each mapPage posix_fallocates that length). fsync the extend in SYNC mode.
+                // (each mapPage posix_fallocates that length). fdatasync the extend in SYNC mode.
+                // fdatasync persists data + i_size but skips mtime/ctime — cheaper than fsync,
+                // same durability guarantee for file content and size on Linux.
                 long currentFileSize = (long) (mappedPage + 1) * getExtendSegmentSize();
                 if (currentFileSize > lastSyncedSize) {
-                    ff.fsync(fd);
+                    ff.fdatasync(fd);
                     lastSyncedSize = currentFileSize;
                 }
             }

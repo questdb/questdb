@@ -43,6 +43,17 @@ public interface MemoryMA extends MemoryM, MemoryA {
 
     void of(FilesFacade ff, LPSZ name, long extendSegmentSize, int memoryTag, int opts);
 
+    /**
+     * Marks this memory as strictly append-only so that {@link #sync(boolean)} may narrow the
+     * msync to the written range (and skip when nothing new was appended) instead of flushing the
+     * full mapped extent. Only safe for memories whose writes are exclusively appends
+     * ({@code put*(value)} / {@code jumpTo} / {@code truncate}); memories that perform in-place
+     * {@code put*(offset, value)} updates below the high-water mark must stay full-extent (default).
+     * Default is a no-op so implementations that always full-sync are unaffected.
+     */
+    default void setAppendOnly(boolean appendOnly) {
+    }
+
     default void setSize(long size) {
         jumpTo(size);
     }

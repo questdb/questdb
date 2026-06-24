@@ -8653,6 +8653,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     configuration.getWriterFileOpenOpts(),
                     Files.POSIX_MADV_RANDOM
             );
+            // Column DATA (primary) vector is strictly append-only: TableWriter only ever appends
+            // row values (put*(value)) and moves the cursor with jumpTo/truncate; it never does an
+            // in-place put*(offset,..) below the high-water mark. Safe to narrow the SYNC msync to
+            // the written range. (Set after of(): of() re-opens the file and the flag is per-object.)
+            mem1.setAppendOnly(true);
             if (mem2 != null) {
                 mem2.of(
                         ff,
@@ -8663,6 +8668,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         configuration.getWriterFileOpenOpts(),
                         Files.POSIX_MADV_RANDOM
                 );
+                // Column AUX (secondary) vector is likewise strictly append-only (one fixed-width
+                // entry appended per row); same narrowing applies.
+                mem2.setAppendOnly(true);
             }
         } finally {
             path.trimTo(pathTrimToLen);

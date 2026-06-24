@@ -47,12 +47,21 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     private static final Log LOG = LogFactory.getLog(MemoryCMARWImpl.class);
     private final Long256Acceptor long256Acceptor = this::putLong256;
     private long appendAddress = 0;
+    // When true this memory is strictly append-only (no in-place put*(offset,..) below the
+    // high-water mark), so sync() may narrow the msync to the appended range and skip when
+    // nothing new was appended. Defaults to false: the non-appendOnly path is byte-identical
+    // to the original full-extent msync.
+    private boolean appendOnly = false;
     private boolean closeFdOnClose = true;
     private long extendSegmentMsb;
     private long fd = -1;
+    // Append offset covered by the last msync (append-only path only). Kept in lock-step with the
+    // skip decision in sync(): it can only ever be stale-LOW (a fresh/remapped/truncated memory
+    // resets it to 0), never stale-HIGH, so the worst case is one extra harmless msync.
+    private long lastSyncedAppendOffset = 0;
+    private long lastSyncedSize = 0;
     private int madviseOpts = -1;
     private int memoryTag = MemoryTag.MMAP_DEFAULT;
-    private long lastSyncedSize = 0;
     private long minMappedMemorySize = -1;
 
     public MemoryCMARWImpl(FilesFacade ff, LPSZ name, long extendSegmentSizePow2, long size, int memoryTag, int opts) {
@@ -305,6 +314,17 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
         long tLastSynced = this.lastSyncedSize;
         this.lastSyncedSize = other.lastSyncedSize;
         other.lastSyncedSize = tLastSynced;
+
+        // The last-synced append offset describes the swapped page/append cursor, so it must travel
+        // with them (alongside lastSyncedSize) to stay consistent. appendOnly is the per-file policy
+        // and likewise belongs to the identity being swapped.
+        long tLastSyncedAo = this.lastSyncedAppendOffset;
+        this.lastSyncedAppendOffset = other.lastSyncedAppendOffset;
+        other.lastSyncedAppendOffset = tLastSyncedAo;
+
+        boolean tAppendOnly = this.appendOnly;
+        this.appendOnly = other.appendOnly;
+        other.appendOnly = tAppendOnly;
     }
 
     @Override
@@ -317,14 +337,38 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     public void sync(boolean async) {
-        ff.msync(pageAddress, size, async);
+        if (appendOnly) {
+            // Append-only memory: the only durable-relevant dirty bytes are those between the last
+            // synced append offset and the current append offset. Narrow the msync to the written
+            // range, and skip entirely when nothing new was appended since the last sync.
+            final long ao = getAppendOffset();
+            if (ao == lastSyncedAppendOffset && size == lastSyncedSize) {
+                // C: nothing appended and no extend since last sync -> no dirty data to flush.
+                return;
+            }
+            if (ao > 0) {
+                // D: flush only [0, appendOffset). Starting at the mapping base keeps the call simple
+                // and page-aligned; the tail beyond appendOffset is never written so it stays clean.
+                ff.msync(pageAddress, ao, async);
+            }
+            lastSyncedAppendOffset = ao;
+        } else {
+            ff.msync(pageAddress, size, async);
+        }
         // SYNC mode: also make a file EXTEND durable. msync flushes data pages but not the inode
-        // size after a posix_fallocate/ftruncate grow; fsync the fd when the file grew since the
-        // last sync so a crash cannot lose the just-committed extent (P2). ASYNC stays non-blocking.
+        // size after a posix_fallocate/ftruncate grow; fdatasync the fd when the file grew since the
+        // last sync so a crash cannot lose the just-committed extent (P2). fdatasync is cheaper than
+        // fsync (skips mtime/ctime inode metadata) but still persists data + i_size on Linux. ASYNC
+        // stays non-blocking.
         if (!async && size > lastSyncedSize) {
-            ff.fsync(fd);
+            ff.fdatasync(fd);
             lastSyncedSize = size;
         }
+    }
+
+    @Override
+    public void setAppendOnly(boolean appendOnly) {
+        this.appendOnly = appendOnly;
     }
 
     @Override
@@ -362,6 +406,9 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
 
             this.size = sz;
             lastSyncedSize = sz;
+            // truncate() resets the append cursor to the mapping base (appendOffset == 0) and zeroes
+            // the page, so the last-synced append offset must reset too -> stale-LOW, never -HIGH.
+            lastSyncedAppendOffset = 0;
             this.lim = pageAddress + sz;
             appendAddress = pageAddress;
             Vect.memset(pageAddress, sz, 0);
@@ -452,6 +499,12 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
             this.appendAddress = pageAddress + size;
         }
         this.lastSyncedSize = this.size;
+        // Fresh mapping (open / remap via of()/switchTo()): the append cursor is back at the file's
+        // existing size, so nothing in the new mapping has been synced by THIS object yet. Resetting
+        // to 0 keeps lastSyncedAppendOffset stale-LOW (never stale-HIGH): the first sync after a
+        // remap cannot skip and will re-msync the live range. Append offset for a re-opened file is
+        // its current size; we conservatively reset to 0 so the first sync flushes [0, appendOffset).
+        this.lastSyncedAppendOffset = 0;
         if (name != null) {
             LOG.debug().$("open [file=").$(name)
                     .$(", fd=").$(fd)

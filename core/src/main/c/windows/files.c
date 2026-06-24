@@ -370,6 +370,15 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_fsync(JNIEnv *e, jclass cl, jin
     return -1;
 }
 
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_fdatasync0(JNIEnv *e, jclass cl, jint fd) {
+    /* Windows has no fdatasync; FlushFileBuffers is the equivalent primitive */
+    if (FlushFileBuffers(FD_TO_HANDLE(fd))) {
+        return 0;
+    }
+    SaveLastError();
+    return -1;
+}
+
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_sync(JNIEnv *e, jclass cl) {
     // Windows does not seem to have sync.
     return -1;
