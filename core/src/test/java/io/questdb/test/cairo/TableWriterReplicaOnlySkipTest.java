@@ -155,6 +155,71 @@ public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
         });
     }
 
+    // native -> parquet conversion (TableWriter.copyOrRebuildColumnIndexes, reached from
+    // convertPartitionNativeToParquet) copies/rebuilds the per-partition bitmap index for indexed
+    // symbol columns: it hard-links the existing .k/.v trio when columnTop==0, and rebuilds the
+    // index (synthesizing the NULL prefix) when columnTop>0. On a skipping primary a REPLICA ONLY
+    // index was never built, so BOTH branches must be skipped -- otherwise the colTop==0 link branch
+    // throws "index files do not exist" and the colTop>0 branch wrongly materializes the index.
+    // This test exercises both branches in one partition: column s exists for the whole partition
+    // (colTop==0) while column s2 is added via ALTER after rows already exist (colTop>0).
+    @Test
+    public void testPrimarySkipsReplicaOnlyIndexBuildOnNativeToParquetConversion() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (s symbol index capacity 256 replica only, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into x values ('a', 0), ('b', 1000000), ('a', 2000000), ('c', 3000000)");
+            drainWalQueue();
+
+            // Add a SECOND symbol column AFTER rows exist, then flag it replica-only-indexed, so its
+            // column top in the already-populated partition is > 0 (exercises the rebuild branch of
+            // the loop, while s exercises the hard-link branch with columnTop == 0).
+            execute("alter table x add column s2 symbol capacity 256");
+            drainWalQueue();
+            execute("alter table x alter column s2 add index replica only");
+            drainWalQueue();
+            execute("insert into x (s, ts, s2) values ('a', 4000000, 'x'), ('b', 5000000, 'y')");
+            drainWalQueue();
+
+            final TableToken token = engine.verifyTableName("x");
+
+            // No index files for either replica-only column on the skipping primary before conversion.
+            Assert.assertFalse("no s index files expected before conversion", indexFilesExist("x", "s"));
+            Assert.assertFalse("no s2 index files expected before conversion", indexFilesExist("x", "s2"));
+
+            // Convert the populated partition native -> parquet. Without the guard in
+            // copyOrRebuildColumnIndexes the link branch (colTop==0, column s) throws
+            // "index files do not exist", suspending the WAL table.
+            execute("alter table x convert partition to parquet where ts >= 0");
+            drainWalQueue();
+
+            // The conversion must have succeeded (table not suspended) and built no index files.
+            Assert.assertFalse(
+                    "WAL table must not be suspended by native->parquet conversion of replica-only index",
+                    engine.getTableSequencerAPI().isSuspended(token)
+            );
+            Assert.assertFalse(
+                    "no s index files expected after native->parquet conversion",
+                    indexFilesExist("x", "s")
+            );
+            Assert.assertFalse(
+                    "no s2 index files expected after native->parquet conversion",
+                    indexFilesExist("x", "s2")
+            );
+            assertMetadataFlags("x", "s");
+            assertMetadataFlags("x", "s2");
+
+            // Full-scan correctness over the parquet partition: results must be unaffected.
+            sink.clear();
+            printSql("select s, s2, ts from x where s = 'a'", sink);
+            io.questdb.test.tools.TestUtils.assertEquals(
+                    "s\ts2\tts\n" +
+                            "a\t\t1970-01-01T00:00:00.000000Z\n" +
+                            "a\t\t1970-01-01T00:00:02.000000Z\n" +
+                            "a\tx\t1970-01-01T00:00:04.000000Z\n",
+                    sink);
+        });
+    }
+
     @Test
     public void testPrimarySkipsReplicaOnlyIndexBuild() throws Exception {
         assertMemoryLeak(() -> {

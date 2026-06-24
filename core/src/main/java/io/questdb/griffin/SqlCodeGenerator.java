@@ -8455,6 +8455,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 aliasedColumn.setParquetEncodingConfig(
                         metadata.getColumnMetadata(index).getParquetEncodingConfig()
                 );
+                // preserve the replica-only-index flag so the planner's index-eligibility
+                // guards (isColumnIndexActive) treat a skipped replica-only index as un-indexed
+                // on a skipping primary even when the column is referenced via an alias.
+                aliasedColumn.setReplicaOnlyIndex(metadata.isColumnReplicaOnlyIndex(index));
                 queryMetadata.add(aliasedColumn);
             }
 
@@ -8484,6 +8488,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     metadata
             );
             implicitTs.setParquetEncodingConfig(colMetadata.getParquetEncodingConfig());
+            implicitTs.setReplicaOnlyIndex(metadata.isColumnReplicaOnlyIndex(timestampIndex));
             queryMetadata.add(implicitTs);
             queryMetadata.setTimestampIndex(queryMetadata.getColumnCount() - 1);
             columnCrossIndex.add(timestampIndex);

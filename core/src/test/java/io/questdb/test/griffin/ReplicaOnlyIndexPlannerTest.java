@@ -72,6 +72,35 @@ public class ReplicaOnlyIndexPlannerTest extends AbstractCairoTest {
         });
     }
 
+    // An aliased projection over a replica-only-indexed symbol column (SqlCodeGenerator's
+    // generateSelectChoose alias branch) must carry the replicaOnly flag onto the projected
+    // metadata. If the flag is dropped, the alias (s2) looks like a normal materialized index,
+    // and a WHERE = over the projection picks a symbol index scan over the absent index, which
+    // fails / returns wrong results on a skipping primary. With the flag preserved, the planner
+    // must full-scan and return correct rows.
+    @Test
+    public void testAliasedProjectionPreservesReplicaOnlyFlagAndFullScans() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (s symbol index capacity 256 replica only, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into x values ('a',1,0),('b',2,1000000),('a',3,2000000)");
+            drainWalQueue();
+
+            final String query = "select s2, v, ts from (select s as s2, v, ts from x) where s2 = 'a'";
+            sink.clear();
+            printSql(query, sink);
+            TestUtils.assertEquals(
+                    "s2\tv\tts\n" +
+                            "a\t1.0\t1970-01-01T00:00:00.000000Z\n" +
+                            "a\t3.0\t1970-01-01T00:00:02.000000Z\n",
+                    sink);
+
+            // plan must NOT use a symbol index scan over the aliased column on a skipping primary
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlanNotContaining("Index forward scan", "Index backward scan", "DeferredSingleSymbolFilterPageFrame");
+        });
+    }
+
     @Test
     public void testWhereEqualsFullScansCorrectly() throws Exception {
         assertMemoryLeak(() -> {

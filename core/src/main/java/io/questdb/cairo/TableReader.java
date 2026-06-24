@@ -1066,7 +1066,6 @@ public class TableReader implements Closeable, SymbolTableSource {
                 // untouched: a missing index file there remains genuine corruption (critical).
                 if (metadata.isColumnReplicaOnlyIndex(columnIndex)
                         && !ff.exists(IndexFactory.keyFileName(indexType, path, metadata.getColumnName(columnIndex), columnNameTxn))) {
-                    path.trimTo(partitionPathLen);
                     throw CairoException.nonCritical()
                             .put("replica-only index not materialized on this node [column=")
                             .put(metadata.getColumnName(columnIndex))
@@ -1098,7 +1097,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                     // (non-critical) error as the pre-check. Normal indexed columns are left untouched:
                     // a missing index file there remains genuine corruption (critical), as does any
                     // non-file-not-found failure (e.g. unknown format) on a replica-only column.
-                    if (metadata.isColumnReplicaOnlyIndex(columnIndex) && Files.isErrnoFileCannotRead(e.getErrno())) {
+                    if (metadata.isColumnReplicaOnlyIndex(columnIndex) && Files.isErrnoFileDoesNotExist(e.getErrno())) {
                         throw CairoException.nonCritical()
                                 .put("replica-only index not materialized on this node [column=")
                                 .put(metadata.getColumnName(columnIndex))

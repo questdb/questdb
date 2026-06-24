@@ -5184,6 +5184,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (!ColumnType.isSymbol(metadata.getColumnType(columnIndex)) || !IndexType.isIndexed(indexType)) {
                     continue;
                 }
+                // A skipping primary never built the .k/.v (or posting) files for a replica-only
+                // index, so on native->parquet conversion there is nothing to hard-link (colTop==0
+                // would throw "index files do not exist") and nothing to rebuild (colTop>0 would
+                // wrongly materialize an index). Mirror the gate in rebuildPartitionIndexFiles /
+                // linkPartitionIndexFiles and skip the column entirely.
+                if (metadata.isColumnReplicaOnlyIndex(columnIndex) && configuration.skipReplicaOnlyIndexes()) {
+                    continue;
+                }
                 final long colTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
                 if (colTop == -1 || colTop >= partitionRowCount) {
                     continue; // column does not exist or has no data in this partition
