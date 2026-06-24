@@ -588,6 +588,7 @@ public class MetadataCache implements QuietCloseable {
                 column.setType(columnType);
                 column.setIndexType(TableUtils.getColumnIndexType(metaMem, writerIndex));
                 column.setIndexBlockCapacity(TableUtils.getIndexBlockCapacity(metaMem, writerIndex));
+                column.setReplicaOnlyIndex(TableUtils.isColumnReplicaOnlyIndex(metaMem, writerIndex));
                 column.setSymbolTableStaticFlag(true);
                 column.setDedupKeyFlag(TableUtils.isColumnDedupKey(metaMem, writerIndex));
                 // Pre-9.3.4 _meta files can carry non-zero bytes at column-entry offset 20 from
@@ -1053,6 +1054,7 @@ public class MetadataCache implements QuietCloseable {
                 column.setPosition(replacingIndex > -1 ? replacingIndex : i);
                 column.setIndexType(columnMetadata.getIndexType());
                 column.setIndexBlockCapacity(columnMetadata.getIndexValueBlockCapacity());
+                column.setReplicaOnlyIndex(columnMetadata.isReplicaOnlyIndex());
                 // Translate from writer to dense after the column list is
                 // finalized (post-sort) below.
                 column.setCoveringColumnIndices(columnMetadata.getCoveringColumnIndices());

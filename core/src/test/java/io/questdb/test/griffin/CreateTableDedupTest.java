@@ -65,11 +65,11 @@ public class CreateTableDedupTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
-                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\t\t
-                            x\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
-                            s\tSYMBOL\ttrue\t256\ttrue\t128\t0\tfalse\ttrue\tBITMAP\t
-                            i\tINT\tfalse\t0\tfalse\t0\t0\tfalse\ttrue\t\t
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\tindexReplicaOnly
+                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\t\t\tfalse
+                            x\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\tfalse
+                            s\tSYMBOL\ttrue\t256\ttrue\t128\t0\tfalse\ttrue\tBITMAP\t\tfalse
+                            i\tINT\tfalse\t0\tfalse\t0\t0\tfalse\ttrue\t\t\tfalse
                             """);
 
             execute("alter table " + tableName + " alter column s drop index");
@@ -86,11 +86,11 @@ public class CreateTableDedupTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
-                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\t\t
-                            x\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
-                            s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\ttrue\t\t
-                            i\tINT\tfalse\t0\tfalse\t0\t0\tfalse\ttrue\t\t
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\tindexReplicaOnly
+                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\t\t\tfalse
+                            x\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\tfalse
+                            s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\ttrue\t\t\tfalse
+                            i\tINT\tfalse\t0\tfalse\t0\t0\tfalse\ttrue\t\t\tfalse
                             """);
         });
     }
@@ -188,9 +188,9 @@ public class CreateTableDedupTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
-                            Status\tSYMBOL\tfalse\t256\ttrue\t16\t0\tfalse\tfalse\t\t
-                            Reported time\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\t\t
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\tindexReplicaOnly
+                            Status\tSYMBOL\tfalse\t256\ttrue\t16\t0\tfalse\tfalse\t\t\tfalse
+                            Reported time\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\t\t\tfalse
                             """);
             execute("alter table '" + tableName + "' DEDUP DISABLE;");
             execute("alter table '" + tableName + "' DEDUP ENABLE UPSERT KEYS(\"Reported time\");");
@@ -199,9 +199,9 @@ public class CreateTableDedupTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
-                            Status\tSYMBOL\tfalse\t256\ttrue\t16\t0\tfalse\tfalse\t\t
-                            Reported time\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\t\t
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\tindexReplicaOnly
+                            Status\tSYMBOL\tfalse\t256\ttrue\t16\t0\tfalse\tfalse\t\t\tfalse
+                            Reported time\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\t\t\tfalse
                             """);
         });
     }
@@ -493,11 +493,11 @@ public class CreateTableDedupTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
-                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\t\t
-                            x\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
-                            s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\ttrue\t\t
-                            i\tINT\tfalse\t0\tfalse\t0\t0\tfalse\ttrue\t\t
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\tindexReplicaOnly
+                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\t\t\tfalse
+                            x\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\tfalse
+                            s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\ttrue\t\t\tfalse
+                            i\tINT\tfalse\t0\tfalse\t0\t0\tfalse\ttrue\t\t\tfalse
                             """);
         });
     }
@@ -554,10 +554,10 @@ public class CreateTableDedupTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
-                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\t\t
-                            x\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
-                            s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\ttrue\t\t
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\tindexReplicaOnly
+                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\t\t\tfalse
+                            x\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\tfalse
+                            s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\ttrue\t\t\tfalse
                             """);
 
             execute("ALTER table " + tableName + " dedup disable");
@@ -574,10 +574,10 @@ public class CreateTableDedupTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
-                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t
-                            x\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
-                            s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\tfalse\t\t
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\tindexReplicaOnly
+                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t\tfalse
+                            x\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\tfalse
+                            s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\tfalse\t\t\tfalse
                             """);
 
             execute("ALTER table " + tableName + " dedup UPSERT KEYS(ts)");
@@ -594,10 +594,10 @@ public class CreateTableDedupTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
-                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\t\t
-                            x\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
-                            s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\tfalse\t\t
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\tindexReplicaOnly
+                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\t\t\tfalse
+                            x\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\tfalse
+                            s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\tfalse\t\t\tfalse
                             """);
 
             execute("ALTER table " + tableName + " dedup disable");
@@ -616,9 +616,9 @@ public class CreateTableDedupTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
-                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\t\t
-                            s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\ttrue\t\t
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\tindexReplicaOnly
+                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\t\t\tfalse
+                            s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\ttrue\t\t\tfalse
                             """);
 
             execute("ALTER table " + tableName + " dedup disable");
@@ -655,10 +655,10 @@ public class CreateTableDedupTest extends AbstractCairoTest {
                 .noLeakCheck()
                 .noRandomAccess()
                 .returns("""
-                        column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
-                        ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\t\t
-                        x\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
-                        s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\ttrue\t\t
+                        column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\tindexReplicaOnly
+                        ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\t\t\tfalse
+                        x\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\tfalse
+                        s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\ttrue\t\t\tfalse
                         """);
         execute("alter table " + tableName + " dedup disable");
         drainWalQueue();
@@ -683,10 +683,10 @@ public class CreateTableDedupTest extends AbstractCairoTest {
                 .noLeakCheck()
                 .noRandomAccess()
                 .returns("""
-                        column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
-                        ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\t\t
-                        x\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
-                        s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\tfalse\t\t
+                        column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\tindexReplicaOnly
+                        ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\t\t\tfalse
+                        x\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\tfalse
+                        s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\tfalse\t\t\tfalse
                         """);
     }
 

@@ -63,6 +63,7 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
     private static final int N_UPSERT_KEY_COL = N_DESIGNATED_COL + 1;
     private static final int N_INDEX_TYPE_COL = N_UPSERT_KEY_COL + 1;
     private static final int N_INDEX_INCLUDE_COL = N_INDEX_TYPE_COL + 1;
+    private static final int N_INDEX_REPLICA_ONLY_COL = N_INDEX_INCLUDE_COL + 1;
     private static final RecordMetadata METADATA;
     private final ShowColumnsCursor cursor = new ShowColumnsCursor();
     private final TableToken tableToken;
@@ -98,6 +99,9 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
         private CairoColumn cairoColumn = new CairoColumn();
         private CairoTable cairoTable;
         private int columnIndex;
+        // Node-role flag captured from CairoConfiguration; drives the EFFECTIVE
+        // value of the "indexed" output column for replica-only indexes.
+        private boolean skipReplicaOnlyIndexes;
 
         @Override
         public void close() {
@@ -145,6 +149,7 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
 
         public ShowColumnsCursor of(SqlExecutionContext executionContext, TableToken tableToken, int tokenPosition) {
             final CairoEngine engine = executionContext.getCairoEngine();
+            this.skipReplicaOnlyIndexes = engine.getConfiguration().skipReplicaOnlyIndexes();
             // The token is resolved from the synchronously loaded registry, but the
             // metadata cache is hydrated lazily; hydrate this table on demand so we do
             // not report a registered-but-not-yet-cached table as non-existent during
@@ -186,7 +191,10 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
             @Override
             public boolean getBool(int col) {
                 if (col == N_INDEXED_COL) {
-                    return cairoColumn.isIndexed();
+                    // Effective, role-aware availability: a replica-only index is
+                    // reported un-indexed on a node that skips replica-only indexes.
+                    return cairoColumn.isIndexed()
+                            && !(skipReplicaOnlyIndexes && cairoColumn.isReplicaOnlyIndex());
                 }
                 if (col == N_SYMBOL_CACHED_COL) {
                     return cairoColumn.isSymbolCached();
@@ -196,6 +204,10 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
                 }
                 if (col == N_UPSERT_KEY_COL) {
                     return cairoColumn.isDedupKey();
+                }
+                if (col == N_INDEX_REPLICA_ONLY_COL) {
+                    // Raw schema flag — independent of node role.
+                    return cairoColumn.isReplicaOnlyIndex();
                 }
                 throw new UnsupportedOperationException();
             }
@@ -309,6 +321,9 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
         // 0..8 stable with pre-posting-index builds.
         metadata.add(new TableColumnMetadata("indexType", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("indexInclude", ColumnType.STRING));
+        // Raw schema flag (REPLICA ONLY modifier) — true regardless of node role.
+        // Appended at the end to keep earlier JDBC ordinals stable.
+        metadata.add(new TableColumnMetadata("indexReplicaOnly", ColumnType.BOOLEAN));
         METADATA = metadata;
     }
 }
