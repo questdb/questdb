@@ -904,6 +904,72 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinKeyedLong256AggregatesOnMissingSymbol() throws Exception {
+        // A keyed HORIZON JOIN that aggregates a LONG256 slave column for a master
+        // symbol with no ASOF match used to NPE in the reduce path: the combined
+        // HorizonJoinRecord returned a Java-null Long256 for the absent slave row,
+        // so count(p.val) tripped Long256Impl.isNull(null) (NULL_LONG256.equals(null)
+        // dereferencing the null arg), and first/last(p.val) - which fall back to
+        // the LONG overload and read the low 64-bit word via getLong256A(rec).getLong0()
+        // - tripped getLong256A(null).getLong0(). The record now returns the
+        // NULL_LONG256 sentinel, matching the contract a real record honours, so the
+        // absent slave LONG256 reads as null. Run both the parallel and the
+        // single-threaded factories explicitly so the fix is pinned on both paths.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts) PARTITION BY HOUR",
+                    leftTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, val LONG256) TIMESTAMP(ts) PARTITION BY HOUR",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('2024-01-01T00:00:01.000000Z', 'A', 10.0),
+                                ('2024-01-01T00:00:02.000000Z', 'B', 20.0),
+                                ('2024-01-01T00:00:03.000000Z', 'A', 30.0),
+                                ('2024-01-01T00:00:04.000000Z', 'C', 40.0)
+                            """
+            );
+
+            // Slave has A and C but not B, so B's master row has no ASOF match
+            // and its LONG256 aggregates read an absent slave record.
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('2024-01-01T00:00:00.500000Z', 'A', 0x10),
+                                ('2024-01-01T00:00:00.500000Z', 'C', 0x30),
+                                ('2024-01-01T00:00:02.500000Z', 'A', 0x15),
+                                ('2024-01-01T00:00:03.500000Z', 'C', 0x35)
+                            """
+            );
+
+            String sql = "SELECT t.sym, count(p.val) AS n, first(p.val) AS fst, last(p.val) AS lst, sum(p.val) AS s " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "LIST (0) AS h " +
+                    "GROUP BY t.sym " +
+                    "ORDER BY t.sym";
+
+            for (boolean parallel : new boolean[]{true, false}) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(parallel);
+                assertQuery(sql)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                sym\tn\tfst\tlst\ts
+                                A\t2\t16\t21\t0x25
+                                B\t0\tnull\tnull\t
+                                C\t1\t53\t53\t0x35
+                                """);
+            }
+        });
+    }
+
+    @Test
     public void testHorizonJoinKeyedMissingSymbolsMultipleOffsets() throws Exception {
         // Mixed existing and missing symbols with multiple horizon offsets.
         // Ensures forward/backward scan state isn't corrupted by missing symbols.
