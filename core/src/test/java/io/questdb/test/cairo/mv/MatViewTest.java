@@ -8077,6 +8077,58 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTruncateBarrierInvalidatesChainedMatView() throws Exception {
+        // A truncate barrier that invalidates a mat-view must cascade to mat-views chained on top of it.
+        // The refresh-path barrier invalidates view A inline; A's dependent view B (built on A) is then
+        // stale and must be invalidated too -- the same cascade invalidateView performs on a successful
+        // invalidation. Without the cascade, B is silently left valid with stale pre-truncate rows.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, val double, ts timestamp) timestamp(ts) partition by DAY WAL");
+            createMatView("mv_a", "select ts, count() cnt from base sample by 1h");
+            // View B is chained on top of A (a mat-view on a mat-view).
+            createMatView("mv_b", "select ts, sum(cnt) cnt from mv_a sample by 1d");
+            execute("insert into base values ('a', 1.0, '2024-09-10T12:00'), ('a', 2.0, '2024-09-10T12:30')");
+            drainQueues();
+
+            final TableToken viewA = engine.verifyTableName("mv_a");
+            final TableToken viewB = engine.verifyTableName("mv_b");
+            final MatViewStateStoreImpl store = (MatViewStateStoreImpl) engine.getMatViewStateStore();
+            final MatViewState stateA = store.getViewState(viewA);
+            final MatViewState stateB = store.getViewState(viewB);
+            Assert.assertNotNull(stateA);
+            Assert.assertNotNull(stateB);
+            Assert.assertFalse("precondition: view A converged and valid", stateA.isInvalid());
+            Assert.assertFalse("precondition: view B converged and valid", stateB.isInvalid());
+            Assert.assertTrue("precondition: view A refreshed", stateA.getLastRefreshBaseTxn() > -1);
+
+            // Truncate the base then add a later bucket. Apply only the base WAL so the truncate sits in the
+            // gap A's next incremental refresh scans.
+            execute("truncate table base");
+            execute("insert into base values ('a', 9.0, '2024-09-10T20:00')");
+            drainWalQueue();
+
+            // Drop any queued mat-view task (including the apply-time INVALIDATE that already cascades) so
+            // the refresh-path barrier on A -- not a separately-queued INVALIDATE -- is the sole trigger.
+            final MatViewRefreshTask discard = new MatViewRefreshTask();
+            while (store.tryDequeueRefreshTask(discard)) {
+                // drop
+            }
+            Assert.assertFalse("view B must still look valid before the barrier refresh", stateB.isInvalid());
+
+            // Drive A's incremental refresh: it hits the truncate barrier and invalidates A inline, which
+            // must cascade an INVALIDATE to B. Drain so B's INVALIDATE is processed.
+            store.enqueueIncrementalRefresh(viewA);
+            drainWalAndMatViewQueues();
+
+            Assert.assertTrue("view A must be invalidated by the truncate barrier", stateA.isInvalid());
+            Assert.assertTrue(
+                    "a chained mat-view must be invalidated when its base mat-view is invalidated by a truncate barrier",
+                    stateB.isInvalid()
+            );
+        });
+    }
+
+    @Test
     public void testTruncateBarrierHoldsWatermarkForPeriodMatView() throws Exception {
         // The truncate barrier must hold the refresh watermark for PERIOD mat-views too, not only plain
         // ones. A period view's incremental refresh synthesizes a fresh range from the period bounds, so

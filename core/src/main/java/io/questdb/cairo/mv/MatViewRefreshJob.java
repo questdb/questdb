@@ -2000,6 +2000,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                             }
                             throw ex;
                         }
+                        // Cascade to chained views the same way invalidateView does on a successful mint:
+                        // a mat-view built on top of this one is now stale and must be invalidated too. The
+                        // enqueued tasks target only child tokens, so this is safe while still holding this
+                        // view's lock. Runs only on a successful invalidation (the fence-refusal path above
+                        // re-throws before reaching here).
+                        enqueueInvalidateDependentViews(viewToken, "base materialized view is invalidated");
                     }
                     // Signal the surrounding refresh to stop without committing a no-rows watermark advance.
                     refreshContext.hasTruncateBarrier = true;
