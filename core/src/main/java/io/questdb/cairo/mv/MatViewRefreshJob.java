@@ -860,6 +860,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         stateStore.enqueueFullRefresh(viewToken);
                     } else if (refreshTask.operation == MatViewRefreshTask.RANGE_REFRESH) {
                         stateStore.enqueueRangeRefresh(viewToken, refreshTask.rangeFrom, refreshTask.rangeTo);
+                    } else if (refreshTask.operation == MatViewRefreshTask.UPDATE_REFRESH_INTERVALS) {
+                        stateStore.enqueueUpdateRefreshIntervals(viewToken);
                     } else {
                         return false;
                     }
@@ -1932,8 +1934,17 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 final long lastTxn = baseSeqTracker.getWriterTxn();
                 updateRefreshIntervals0(lastTxn, baseTableToken, viewDefinition, viewState, walWriter);
             } catch (Throwable th) {
-                // If we're here, we couldn't obtain the WAL writer.
-                // Update the in-memory state and call it a day.
+                if (handleErrorRetryRefresh(th, viewToken, stateStore, refreshTask)) {
+                    // A read-only refusal (a demote racing this interval update; the writer acquire or
+                    // the inline-mint commit fence refuses) or an in-progress base-table rename is a
+                    // transient condition, not a refresh failure. handleErrorRetryRefresh re-enqueues
+                    // the task when still writable and returns true. Mirror the incremental path: do NOT
+                    // invalidate. Without this the refusal routes to refreshFailState below, freezing the
+                    // view invalid-in-memory / valid-on-disk and firing a spurious dependent cascade.
+                    return;
+                }
+                // If we're here, we couldn't obtain the WAL writer or commit the interval state for a
+                // non-transient reason. Update the in-memory state and call it a day.
                 LOG.error()
                         .$("could not update refresh intervals, unexpected error [view=").$(viewToken)
                         .$(", ex=").$(th)
