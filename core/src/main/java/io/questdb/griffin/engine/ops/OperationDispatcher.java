@@ -119,7 +119,7 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
             // wraps the externalization. A strict no-op in production (the observer field is null) and on
             // the existing fenced path (the post-fence preApplyObserver still fires).
             engine.fireRoleSwitchMintObserver();
-            final long result = applyFenced(operation, writer);
+            final long result = applyFenced(operation, writer, forceWalBypass);
             isDone = true;
             return doneFuture.of(result);
         } catch (EntryUnavailableException busyException) {
@@ -147,8 +147,10 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
             // re-check and the enqueue serializes the externalization against the role flip, which
             // takes the WRITE side around its REPLICA flag publish: either the flip ran first (the
             // in-lock re-check sees read-only and refuses without enqueuing) or the enqueue runs fully
-            // as PRIMARY and the flip's write acquire waits for this read hold to release.
-            if (engine.isReadOnlyMode()) {
+            // as PRIMARY and the flip's write acquire waits for this read hold to release. The
+            // authorized force/WAL-bypass break-glass path is exempt for the same reason as in
+            // applyFenced (see isWriteRefused).
+            if (isWriteRefused(forceWalBypass)) {
                 throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
             }
             // Both-trees pre-externalization fire-point for the async-enqueue fallback, mirroring the
@@ -159,7 +161,7 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
             final Lock lock = engine.getRoleSwitchReadLock();
             lock.lock();
             try {
-                if (engine.isReadOnlyMode()) {
+                if (isWriteRefused(forceWalBypass)) {
                     throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
                 }
                 OperationFutureImpl future = futurePool.pop();
@@ -230,8 +232,15 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
      * symmetric with this fence: the re-check and the enqueue are atomic against the flip's flag
      * publish, refusing cleanly on a demote. The inline-apply success path is the one fenced here.
      */
-    private long applyFenced(T operation, TableWriterAPI writer) {
-        if (engine.isReadOnlyMode()) {
+    private long applyFenced(T operation, TableWriterAPI writer, boolean forceWalBypass) {
+        // An authorized force/WAL-bypass break-glass alter (a system-admin FORCE alter on a
+        // hard-suspended table) is exempt from the replica read-only fence via isWriteRefused: it
+        // applies directly through the exclusive writer acquired above and mints no replicated
+        // sequencer txn, so it carries none of the demote acked-loss risk this fence guards against,
+        // and a steady-state replica is always read-only. An instance-level read-only lockdown
+        // (cairo.read.only) still refuses it. Structural changes are denied earlier, so only
+        // non-structural force-alters reach here.
+        if (isWriteRefused(forceWalBypass)) {
             throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
         }
         final Lock lock = engine.getRoleSwitchReadLock();
@@ -240,7 +249,7 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
             // Authoritative in-lock re-check against the role flip, which holds the WRITE side of this
             // lock around the REPLICA flag publish. apply() runs inside the read hold so the flip cannot
             // interleave (its write acquire waits), while other commits share the read side.
-            if (engine.isReadOnlyMode()) {
+            if (isWriteRefused(forceWalBypass)) {
                 throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
             }
             firePreApplyObserver();
@@ -248,6 +257,16 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
         } finally {
             lock.unlock();
         }
+    }
+
+    private boolean isWriteRefused(boolean forceWalBypass) {
+        // The fence refuses while the node refuses writes, EXCEPT an authorized force/WAL-bypass
+        // break-glass alter the engine still permits (isForceAlterAllowed): that alter applies directly
+        // via the exclusive writer and mints no replicated sequencer txn, so it carries none of the
+        // demote/replica acked-loss risk this fence guards against. isForceAlterAllowed() is true on a
+        // read-only replica (the authorized maintenance path for a frozen replica table) but false under
+        // an instance-level read-only lockdown (cairo.read.only), which refuses every write.
+        return engine.isReadOnlyMode() && !(forceWalBypass && engine.isForceAlterAllowed());
     }
 
     protected abstract long apply(T operation, TableWriterAPI writerFronted);

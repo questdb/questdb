@@ -261,7 +261,8 @@ public class WriteFenceEntryPointMatrixTest extends AbstractCairoTest {
                 OperationDispatcher.class.getDeclaredMethod(
                         "applyFenced",
                         AbstractOperation.class,
-                        TableWriterAPI.class
+                        TableWriterAPI.class,
+                        boolean.class
                 )
         );
         Assert.assertNotNull(

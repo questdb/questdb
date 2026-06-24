@@ -1571,6 +1571,25 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     /**
+     * Reports whether the node still permits a force/WAL-bypass break-glass alter (e.g. FORCE DROP
+     * PARTITION on a hard-suspended table) while it otherwise refuses ordinary writes via
+     * {@link #isReadOnlyMode()}. Such an alter applies directly through the exclusive writer and
+     * mints no replicated sequencer txn, so it carries none of the demote/replica acked-loss risk
+     * the read-only fence guards against. Only consulted while {@link #isReadOnlyMode()} is true; on
+     * a writable node the fence never engages.
+     * <p>
+     * The base engine never permits it: the sole read-only state OSS knows is the instance-level
+     * {@code cairo.read.only} lockdown ({@link #isReadOnlyMode()} answers purely from
+     * {@code isReadOnlyInstance()}), a hard operator refusal of every write. Enterprise overrides
+     * this to permit it while the node is a read-only replica (the authorized maintenance path for a
+     * frozen replica table), still refusing under the {@code cairo.read.only} lockdown -- the exact
+     * mirror of how the enterprise engine widens {@link #isReadOnlyMode()} with the replica leg.
+     */
+    public boolean isForceAlterAllowed() {
+        return false;
+    }
+
+    /**
      * Reports whether this engine currently refuses writes. Reads the LIVE state on every
      * call so callers can re-check it per write batch rather than trusting a value captured
      * earlier (for example, a SecurityContext cached at connection time). The base engine
