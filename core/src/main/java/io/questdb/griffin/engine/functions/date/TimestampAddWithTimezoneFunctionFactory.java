@@ -174,6 +174,10 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory 
             // calendar units add a further +/-1 unit of day-clamping slack.
             final long margin = timestampDriver.fromDays(2);
             final boolean isCalendar = period == 'M' || period == 'y';
+            // a fixed unit is a constant local shift, exact when no transition splits source and target
+            if (!isCalendar && tryExactShift(io, margin)) {
+                return EXACT;
+            }
             long lo = io.getLo();
             long hi = io.getHi();
             if (lo != Numbers.LONG_NULL) {
@@ -197,6 +201,42 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory 
         @Override
         public void toPlan(PlanSink sink) {
             sink.val("dateadd('").val(period).val("',").val(stride).val(',').val(timestampFunc).val(',').val(tzFunc).val(')');
+        }
+
+        private boolean tryExactShift(Interval io, long margin) {
+            final long k = periodAddFunction.add(0, stride);
+            final long lo = io.getLo();
+            final long hi = io.getHi();
+            final boolean isLoFinite = lo != Numbers.LONG_NULL;
+            final boolean isHiFinite = hi != Long.MAX_VALUE;
+            long newLo = Numbers.LONG_NULL;
+            long newHi = Long.MAX_VALUE;
+            long spanLo = Long.MAX_VALUE;
+            long spanHi = Long.MIN_VALUE;
+            if (isLoFinite) {
+                if ((k > 0 && lo < Long.MIN_VALUE + k) || (k < 0 && lo > Long.MAX_VALUE + k)) {
+                    return false;
+                }
+                newLo = lo - k;
+                spanLo = Math.min(lo, newLo);
+                spanHi = Math.max(lo, newLo);
+            }
+            if (isHiFinite) {
+                if ((k > 0 && hi < Long.MIN_VALUE + k) || (k < 0 && hi > Long.MAX_VALUE + k)) {
+                    return false;
+                }
+                newHi = hi - k;
+                spanLo = Math.min(spanLo, Math.min(hi, newHi));
+                spanHi = Math.max(spanHi, Math.max(hi, newHi));
+            }
+            if (spanLo > spanHi || spanLo < Long.MIN_VALUE + margin || spanHi > Long.MAX_VALUE - margin) {
+                return false;
+            }
+            if (timeZoneRules.getNextDST(spanLo - margin) <= spanHi + margin) {
+                return false;
+            }
+            io.of(newLo, newHi);
+            return true;
         }
     }
 

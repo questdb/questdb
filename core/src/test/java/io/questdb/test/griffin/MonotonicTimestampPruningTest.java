@@ -301,12 +301,50 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDateAddTimezoneSuperset() throws Exception {
+    public void testDateAddTimezoneSpringForwardSuperset() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tz (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            // adding 2h in local time across the 2022-03-27T01:00Z spring-forward shifts the rows by
+            // different amounts; the constant-shift inverse is invalid, so it must stay SUPERSET
+            execute("INSERT INTO tz VALUES " +
+                    "(1, '2022-03-27T00:00:00.000000Z')," +
+                    "(2, '2022-03-27T03:00:00.000000Z');");
+            assertQuery("SELECT * FROM tz WHERE dateadd('h', 2, timestamp, 'Europe/London') >= '2022-03-27T02:00:00.000000Z'")
+                    .timestamp("timestamp")
+                    .withPlanContaining("filter:")
+                    .returns("""
+                            price\ttimestamp
+                            2.0\t2022-03-27T03:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testDateAddTimezoneSummerExact() throws Exception {
+        assertMemoryLeak(() -> {
+            createTzSummer();
+            // BST is +1h on both ends and July is far from any transition, so dateadd reduces to a
+            // constant shift and inverts exactly: the filter is dropped
+            assertQuery("SELECT * FROM tz WHERE dateadd('h', 5, timestamp, 'Europe/London') >= '2022-07-15T18:00:00.000000Z'")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Interval forward scan on: tz")
+                    .withPlanNotContaining("filter:")
+                    .returns("""
+                            price\ttimestamp
+                            3.0\t2022-07-15T20:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testDateAddTimezoneWinterExact() throws Exception {
         assertMemoryLeak(() -> {
             createTrades();
+            // January is far from any London transition (offset 0), so the inverse is exact
             assertQuery("SELECT * FROM trades WHERE dateadd('h', 5, timestamp, 'Europe/London') >= '2022-01-03T17:00:00.000000Z'")
                     .timestamp("timestamp")
                     .withPlanContaining("Interval forward scan on: trades")
+                    .withPlanNotContaining("filter:")
                     .returns("""
                             price\ttimestamp
                             200.0\t2022-01-03T12:00:00.000000Z
@@ -493,12 +531,84 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFloorTimezoneSuperset() throws Exception {
+    public void testFloorTimezoneFixedOffsetExact() throws Exception {
+        assertMemoryLeak(() -> {
+            createTzSummer();
+            // a fixed-offset zone is a constant shift with no DST, so the local-hour floor is exact
+            assertQuery("SELECT * FROM tz WHERE timestamp_floor('1h', timestamp, null, '00:00', '+01:00') >= '2022-07-15T13:00:00.000000Z'")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Interval forward scan on: tz")
+                    .withPlanNotContaining("filter:")
+                    .returns("""
+                            price\ttimestamp
+                            2.0\t2022-07-15T12:30:00.000000Z
+                            3.0\t2022-07-15T20:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testFloorTimezoneSpringForwardSuperset() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tz (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            // the bound's window straddles the 2022-03-27T01:00Z spring-forward, so the local floor
+            // is not a constant shift here and the inversion must stay SUPERSET with the filter kept
+            execute("INSERT INTO tz VALUES " +
+                    "(1, '2022-03-27T00:30:00.000000Z')," +
+                    "(2, '2022-03-27T03:30:00.000000Z');");
+            assertQuery("SELECT * FROM tz WHERE timestamp_floor('1h', timestamp, null, '00:00', 'Europe/London') >= '2022-03-27T03:00:00.000000Z'")
+                    .timestamp("timestamp")
+                    .withPlanContaining("filter:")
+                    .returns("""
+                            price\ttimestamp
+                            2.0\t2022-03-27T03:30:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testFloorTimezoneSummerExact() throws Exception {
+        assertMemoryLeak(() -> {
+            createTzSummer();
+            // BST +1h, far from any transition: the local-hour floor reduces to a constant shift
+            assertQuery("SELECT * FROM tz WHERE timestamp_floor('1h', timestamp, null, '00:00', 'Europe/London') >= '2022-07-15T13:00:00.000000Z'")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Interval forward scan on: tz")
+                    .withPlanNotContaining("filter:")
+                    .returns("""
+                            price\ttimestamp
+                            2.0\t2022-07-15T12:30:00.000000Z
+                            3.0\t2022-07-15T20:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testFloorTimezoneUtcSuperset() throws Exception {
+        assertMemoryLeak(() -> {
+            createTzSummer();
+            // timestamp_floor_utc (returnUtc) is a different output domain and is never graded EXACT;
+            // it must stay SUPERSET with the filter kept even far from any transition
+            assertQuery("SELECT * FROM tz WHERE timestamp_floor_utc('1h', timestamp, null, '00:00', 'Europe/London') >= '2022-07-15T12:00:00.000000Z'")
+                    .timestamp("timestamp")
+                    .withPlanContaining("filter:")
+                    .returns("""
+                            price\ttimestamp
+                            2.0\t2022-07-15T12:30:00.000000Z
+                            3.0\t2022-07-15T20:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testFloorTimezoneWinterExact() throws Exception {
         assertMemoryLeak(() -> {
             createTrades();
+            // January is far from any London transition (offset 0), so the inverse is exact
             assertQuery("SELECT * FROM trades WHERE timestamp_floor('1h', timestamp, null, '00:00', 'Europe/London') >= '2022-01-03T13:00:00.000000Z'")
                     .timestamp("timestamp")
                     .withPlanContaining("Interval forward scan on: trades")
+                    .withPlanNotContaining("filter:")
                     .returns("""
                             price\ttimestamp
                             250.0\t2022-01-04T12:00:00.000000Z
@@ -866,6 +976,25 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
                             price\ttimestamp
                             200.0\t2022-01-03T12:00:00.000000Z
                             250.0\t2022-01-04T12:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testToTimezoneFirstTransitionSuperset() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tz (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            // Antarctica/Troll's first-ever DST transition is 2005-03-27 (+0 -> +2); the bound's window
+            // straddles it, so the offset is not constant and the inversion must stay SUPERSET
+            execute("INSERT INTO tz VALUES " +
+                    "(1, '2005-03-27T00:30:00.000000Z')," +
+                    "(2, '2005-03-27T01:30:00.000000Z');");
+            assertQuery("SELECT * FROM tz WHERE to_timezone(timestamp, 'Antarctica/Troll') BETWEEN '2005-03-27T00:00:00.000000Z' AND '2005-03-27T02:00:00.000000Z'")
+                    .timestamp("timestamp")
+                    .withPlanContaining("filter:")
+                    .returns("""
+                            price\ttimestamp
+                            1.0\t2005-03-27T00:30:00.000000Z
                             """);
         });
     }

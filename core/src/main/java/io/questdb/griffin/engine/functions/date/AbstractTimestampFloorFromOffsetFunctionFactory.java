@@ -179,10 +179,31 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
         throw SqlException.$(timezonePos, "const or runtime const expected");
     }
 
+    // A named zone is a constant shift where no transition falls in the bound's window, so the
+    // return-local floor inverts exactly there, otherwise it stays SUPERSET.
+    static int invertFloorNamedTz(
+            Interval io,
+            TimestampDriver timestampDriver,
+            TimeZoneRules tzRules,
+            TimestampDriver.TimestampFloorWithOffsetMethod floorFunc,
+            char unit,
+            int stride,
+            long effectiveOffset,
+            boolean returnUtc
+    ) {
+        if (!returnUtc
+                && effectiveOffset == 0
+                && isFloorExactlyInvertible(timestampDriver, floorFunc, unit, stride, effectiveOffset)
+                && tryFloorNamedTzExact(io, timestampDriver, tzRules, floorFunc, unit, stride)) {
+            return MonotonicTimestampFunction.EXACT;
+        }
+        return invertFloorSuperset(io, timestampDriver, unit, stride, effectiveOffset);
+    }
+
     // 48h bounds any zone offset difference (e.g. Samoa's 2011 date-line shift); the
     // floor can drop the input by up to two buckets (DST-gap re-flooring).
     static int invertFloorSuperset(Interval io, TimestampDriver timestampDriver, char unit, int stride, long effectiveOffset) {
-        if (!isFixedStrideUnit(unit)) {
+        if (isNotFixedStrideUnit(unit)) {
             return MonotonicTimestampFunction.NONE;
         }
         final long margin = timestampDriver.fromDays(2);
@@ -362,9 +383,114 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
         return result;
     }
 
-    private static boolean isFixedStrideUnit(char unit) {
-        return unit == 's' || unit == 'm' || unit == 'h' || unit == 'd'
-                || unit == 'T' || unit == 'U' || unit == 'n';
+    private static boolean floorPreimageShifted(
+            Interval io,
+            TimestampDriver timestampDriver,
+            TimestampDriver.TimestampFloorWithOffsetMethod floorFunc,
+            char addUnit,
+            int stride,
+            long offset,
+            long shift
+    ) {
+        long lo = io.getLo();
+        long hi = io.getHi();
+        if (offset != 0) {
+            if (hi < offset) {
+                io.of(Long.MAX_VALUE, Numbers.LONG_NULL);
+                return true;
+            }
+            if (lo != Numbers.LONG_NULL && lo <= offset) {
+                lo = Numbers.LONG_NULL;
+            }
+        }
+        if (lo != Numbers.LONG_NULL) {
+            final long b = floorFunc.floor(lo, stride, offset);
+            final long bound = b == lo ? lo : timestampDriver.add(b, addUnit, stride);
+            if ((shift > 0 && bound < Long.MIN_VALUE + shift) || (shift < 0 && bound > Long.MAX_VALUE + shift)) {
+                return false;
+            }
+            lo = bound - shift;
+        }
+        if (hi != Long.MAX_VALUE) {
+            final long bound = timestampDriver.add(floorFunc.floor(hi, stride, offset), addUnit, stride) - 1;
+            if ((shift > 0 && bound < Long.MIN_VALUE + shift) || (shift < 0 && bound > Long.MAX_VALUE + shift)) {
+                return false;
+            }
+            hi = bound - shift;
+        }
+        io.of(lo, hi);
+        return true;
+    }
+
+    private static boolean isFloorExactlyInvertible(
+            TimestampDriver timestampDriver,
+            TimestampDriver.TimestampFloorWithOffsetMethod floorFunc,
+            char unit,
+            int stride,
+            long offset
+    ) {
+        if (isNotFixedStrideUnit(unit)) {
+            return false;
+        }
+        final char addUnit = unit == 'U' ? 'u' : unit;
+        final long b0 = floorFunc.floor(offset, stride, offset);
+        final long next = timestampDriver.add(b0, addUnit, stride);
+        return next > b0 && floorFunc.floor(next, stride, offset) == next && floorFunc.floor(next - 1, stride, offset) == b0;
+    }
+
+    private static boolean isNotFixedStrideUnit(char unit) {
+        return unit != 's' && unit != 'm' && unit != 'h' && unit != 'd'
+                && unit != 'T' && unit != 'U' && unit != 'n';
+    }
+
+    private static boolean tryFloorNamedTzExact(
+            Interval io,
+            TimestampDriver timestampDriver,
+            TimeZoneRules tzRules,
+            TimestampDriver.TimestampFloorWithOffsetMethod floorFunc,
+            char unit,
+            int stride
+    ) {
+        final long loBound = io.getLo();
+        final long hiBound = io.getHi();
+        final boolean isLoFinite = loBound != Numbers.LONG_NULL;
+        final boolean isHiFinite = hiBound != Long.MAX_VALUE;
+        if (!isLoFinite && !isHiFinite) {
+            return false;
+        }
+        final long c = tzRules.getOffset(isLoFinite ? loBound : hiBound);
+        if (!floorPreimageShifted(io, timestampDriver, floorFunc, unit == 'U' ? 'u' : unit, stride, 0, c)) {
+            return false;
+        }
+        final long tsLo = io.getLo();
+        final long tsHi = io.getHi();
+        if (tsLo > tsHi) {
+            return true;
+        }
+        final long margin = timestampDriver.fromHours(24);
+        long spanLo = Long.MAX_VALUE;
+        long spanHi = Long.MIN_VALUE;
+        if (isLoFinite) {
+            spanLo = loBound;
+            spanHi = loBound;
+        }
+        if (isHiFinite) {
+            spanLo = Math.min(spanLo, hiBound);
+            spanHi = Math.max(spanHi, hiBound);
+        }
+        if (tsLo != Numbers.LONG_NULL) {
+            spanLo = Math.min(spanLo, tsLo);
+            spanHi = Math.max(spanHi, tsLo);
+        }
+        if (tsHi != Long.MAX_VALUE) {
+            spanLo = Math.min(spanLo, tsHi);
+            spanHi = Math.max(spanHi, tsHi);
+        }
+        if (spanLo < Long.MIN_VALUE + margin || spanHi > Long.MAX_VALUE - margin || tzRules.getNextDST(spanLo - margin) <= spanHi + margin) {
+            io.of(loBound, hiBound);
+            return false;
+        }
+        return true;
     }
 
     private static void validateUnit(char unit, int unitPos) throws SqlException {
@@ -450,7 +576,7 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
 
         @Override
         public int invertTimestampInterval(Interval io) {
-            return invertFloorSuperset(io, timestampDriver, unit, stride, effectiveOffset);
+            return invertFloorNamedTz(io, timestampDriver, tzRules, floorFunc, unit, stride, effectiveOffset, returnUtc);
         }
 
         @Override
@@ -537,6 +663,11 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
 
         @Override
         public int invertTimestampInterval(Interval io) {
+            if (!returnUtc
+                    && isFloorExactlyInvertible(timestampDriver, floorFunc, unit, stride, effectiveOffset)
+                    && floorPreimageShifted(io, timestampDriver, floorFunc, unit == 'U' ? 'u' : unit, stride, effectiveOffset, tzOffset)) {
+                return MonotonicTimestampFunction.EXACT;
+            }
             return invertFloorSuperset(io, timestampDriver, unit, stride, effectiveOffset);
         }
 
@@ -622,7 +753,7 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
 
         @Override
         public int invertTimestampInterval(Interval io) {
-            return invertFloorSuperset(io, timestampDriver, unit, stride, effectiveOffset);
+            return invertFloorNamedTz(io, timestampDriver, tzRules, floorFunc, unit, stride, effectiveOffset, returnUtc);
         }
 
         @Override
