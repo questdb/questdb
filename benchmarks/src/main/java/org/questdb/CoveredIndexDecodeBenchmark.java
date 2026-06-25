@@ -68,15 +68,20 @@ import java.util.concurrent.TimeUnit;
  * and filter") across a broad battery of query shapes. The covered table carries
  * DOUBLE / LONG / SYMBOL / VARCHAR covered columns so every decode path is exercised.
  * <p>
- * {@code config} selects one of three comparison points, each filtered on a hot symbol key:
+ * {@code config} selects one of three comparison points:
  * <ul>
  *   <li>{@code PARALLEL_COV} — the new path: N workers over the covering index.</li>
- *   <li>{@code SERIAL_COV} — the same covered query at 1 worker (the parallelism this branch unlocks).</li>
- *   <li>{@code PARALLEL_REF} — the same query over a NON-indexed twin at N workers (a full parallel scan;
- *       the parity target the covered path should reach).</li>
+ *   <li>{@code SERIAL_COV} — the same covered query at 1 worker (the parallelism this branch unlocks;
+ *       PARALLEL_COV / SERIAL_COV is the parallelism speedup).</li>
+ *   <li>{@code PARALLEL_REF} — the same query over a NON-indexed twin at N workers (a full parallel
+ *       scan; PARALLEL_REF / PARALLEL_COV is whether the covering index is actually the better plan).</li>
  * </ul>
+ * {@code selectivity} sweeps the filtered key's row fraction (0.1% … 50%): each value maps to a
+ * distinct symbol present at exactly that fraction, so a single table serves the whole sweep. This
+ * is the dimension that decides covered-vs-scan — a covering index only wins below some selectivity.
+ * <p>
  * The data is built ONCE in {@link #main} into a fixed db root and reused by every trial's engine.
- * Tunables (system properties): {@code covered.bench.rows} (default 12,000,000),
+ * Tunables (system properties): {@code covered.bench.rows} (default 50,000,000),
  * {@code covered.bench.workers} (default 8).
  * <p>
  * Build (note {@code -am} so the benchmark links the in-tree core, not the installed jar) and run
@@ -107,9 +112,8 @@ import java.util.concurrent.TimeUnit;
 })
 public class CoveredIndexDecodeBenchmark {
 
-    private static final String HOT_KEY = "HOT";
     private static final int PARALLEL_WORKERS = Integer.getInteger("covered.bench.workers", 8);
-    private static final long ROWS = Long.getLong("covered.bench.rows", 12_000_000L);
+    private static final long ROWS = Long.getLong("covered.bench.rows", 50_000_000L);
     private static final String ROOT = System.getProperty("java.io.tmpdir") + java.io.File.separator + "covered-index-decode-bench";
     private static final CairoConfiguration configuration = new DefaultCairoConfiguration(ROOT) {
         @Override
@@ -124,11 +128,17 @@ public class CoveredIndexDecodeBenchmark {
         }
     };
 
-    @Param({"sum", "multi_agg", "sum_long", "first_last", "count", "residual", "groupby_symbol", "groupby_varchar", "filter_project"})
+    @Param({"sum", "multi_agg", "first_last", "count", "groupby_symbol", "filter_project"})
     public String shape;
 
     @Param({"PARALLEL_COV", "SERIAL_COV", "PARALLEL_REF"})
     public String config;
+
+    // Selectivity of the filtered key, as a percentage of rows. Each value maps to a distinct
+    // symbol present at exactly that fraction (see the data generator), so the sweep isolates how
+    // covered-vs-scan changes with selectivity.
+    @Param({"0.1", "1", "5", "10", "25", "50"})
+    public String selectivity;
 
     private SqlCompiler compiler;
     private SqlExecutionContext ctx;
@@ -156,10 +166,21 @@ public class CoveredIndexDecodeBenchmark {
             // Spread the rows over ~16 day-partitions (so frames distribute across workers without
             // drowning in per-partition overhead), regardless of the configured row count.
             final long spacingUs = Math.max(1L, 16L * 86_400_000_000L / ROWS);
+            // Controlled selectivity via permille (x % 1000) buckets: each value of the selectivity
+            // @Param maps to a distinct symbol present at exactly that fraction of rows, so a single
+            // table serves the whole sweep. 0.1% + 1% + 5% + 10% + 25% + 50% = 91.1%; the remaining
+            // ~8.9% spreads over 64 noise keys (a realistic symbol table, not one giant key).
             final String gen =
                     "SELECT" +
                             " ('2024-01-01'::TIMESTAMP + (x - 1) * " + spacingUs + "L)::timestamp," +
-                            " (CASE WHEN (x % 10) < 4 THEN '" + HOT_KEY + "' ELSE 'C' || (x % 11) END)::symbol," +
+                            " (CASE" +
+                            "   WHEN (x % 1000) = 0 THEN 'sel0_1'" +
+                            "   WHEN (x % 1000) BETWEEN 1 AND 10 THEN 'sel1'" +
+                            "   WHEN (x % 1000) BETWEEN 11 AND 60 THEN 'sel5'" +
+                            "   WHEN (x % 1000) BETWEEN 61 AND 160 THEN 'sel10'" +
+                            "   WHEN (x % 1000) BETWEEN 161 AND 410 THEN 'sel25'" +
+                            "   WHEN (x % 1000) BETWEEN 411 AND 910 THEN 'sel50'" +
+                            "   ELSE 'noise' || (x % 64) END)::symbol," +
                             " (x % 997)::double," +
                             " (x % 1000)::long," +
                             " ('G' || (x % 8))::symbol," +
@@ -242,7 +263,19 @@ public class CoveredIndexDecodeBenchmark {
         }
         ctx = newContext(engine, workerCount);
         compiler = engine.getSqlCompiler();
-        factory = compiler.compile(query(shape, table), ctx).getRecordCursorFactory();
+        factory = compiler.compile(query(shape, table, keyFor(selectivity)), ctx).getRecordCursorFactory();
+    }
+
+    private static String keyFor(String selectivity) {
+        switch (selectivity) {
+            case "0.1": return "sel0_1";
+            case "1": return "sel1";
+            case "5": return "sel5";
+            case "10": return "sel10";
+            case "25": return "sel25";
+            case "50": return "sel50";
+            default: throw new IllegalArgumentException("unknown selectivity: " + selectivity);
+        }
     }
 
     @TearDown(Level.Trial)
@@ -270,8 +303,8 @@ public class CoveredIndexDecodeBenchmark {
         );
     }
 
-    private static String query(String shape, String table) {
-        final String w = " WHERE sym = '" + HOT_KEY + "'";
+    private static String query(String shape, String table, String key) {
+        final String w = " WHERE sym = '" + key + "'";
         switch (shape) {
             case "sum":
                 return "SELECT sum(px) FROM " + table + w;
