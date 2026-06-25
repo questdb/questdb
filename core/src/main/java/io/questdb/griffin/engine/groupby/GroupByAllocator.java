@@ -56,10 +56,10 @@ public interface GroupByAllocator extends QuietCloseable, Mutable, Reopenable {
 
     /**
      * Binds the per-query native memory tracker. Must be called before the
-     * backing chunks are (re)allocated via {@link #reopen()} so that the
-     * tracker observes both the allocator's chunks and all GROUP BY function
-     * state allocated through it. A {@code null} tracker degrades to
-     * global-only accounting.
+     * allocator hands out any data chunk so that the tracker observes the data
+     * chunks and the GROUP BY function state allocated through them. The
+     * internal chunk index stays on the global counter and is never bound here.
+     * A {@code null} tracker degrades to global-only accounting.
      */
     void setMemoryTracker(@Nullable MemoryTracker tracker);
 }
