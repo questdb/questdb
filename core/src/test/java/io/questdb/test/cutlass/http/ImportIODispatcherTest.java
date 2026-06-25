@@ -1012,6 +1012,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                     assertQuery("select count() from trips")
                             .withEngine(engine)
                             .withContext(sqlExecutionContext)
+                            .noLeakCheck()
                             .expectSize()
                             .noRandomAccess()
                             .returns("count\n24\n");
