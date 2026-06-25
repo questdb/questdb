@@ -369,6 +369,72 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * (h) B1 — {@code fsyncMaterializedState()} forces the column flush + commit-pointer fsync
+     * INDEPENDENT of commit mode, even under ADAPTIVE (whose apply path skips column sync), AND
+     * persists the durable epoch copies {@code _txn.epoch} / {@code _cv.epoch}.
+     *
+     * <p>Under ADAPTIVE, test (e) proved the lazy apply issues ZERO column syncs. This test resets
+     * the sync counters AFTER drainWalQueue (so the lazy apply's zero is the baseline), then calls
+     * {@code writer.fsyncMaterializedState()} and asserts:
+     * <ol>
+     *   <li>table partition column files WERE synced (the durable cut forces the flush the SYNC path
+     *       proves, regardless of ADAPTIVE);</li>
+     *   <li>the two durable epoch copies exist on disk in the table dir.</li>
+     * </ol>
+     */
+    @Test
+    public void testFsyncMaterializedStateForcesFlushAndWritesEpochCopies() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 16);
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+
+        final TableSyncTrackingFacade trackFf = new TableSyncTrackingFacade();
+        assertMemoryLeak(trackFf, () -> {
+            execute("create table tab_h (ts timestamp, v long) timestamp(ts) partition by day wal");
+            execute("insert into tab_h values ('2024-08-01T00:00:00.000000Z', 1)");
+            execute("insert into tab_h values ('2024-08-01T01:00:00.000000Z', 2)");
+            drainWalQueue(); // lazy apply: zero column syncs (proven by test (e))
+
+            io.questdb.cairo.TableToken tt = engine.verifyTableName("tab_h");
+
+            // Reset AFTER the lazy apply so the zero-sync apply is the baseline; only the
+            // fsyncMaterializedState() syncs below are counted.
+            trackFf.resetTableColumnSyncs();
+
+            try (io.questdb.cairo.TableWriter writer = getWriter(tt)) {
+                writer.fsyncMaterializedState();
+            }
+
+            long tableColumnSyncs = trackFf.getTableColumnSyncCount();
+            Assert.assertTrue(
+                    "fsyncMaterializedState() must flush table partition column files even under ADAPTIVE, but got 0",
+                    tableColumnSyncs > 0
+            );
+
+            // The durable epoch copies must exist in the table dir.
+            assertEpochCopyExists(tt, io.questdb.cairo.TableUtils.TXN_FILE_NAME);
+            assertEpochCopyExists(tt, io.questdb.cairo.TableUtils.COLUMN_VERSION_FILE_NAME);
+
+            // Data still correct after the durable cut.
+            assertQuery("select * from tab_h order by ts")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tv\n" +
+                            "2024-08-01T00:00:00.000000Z\t1\n" +
+                            "2024-08-01T01:00:00.000000Z\t2\n");
+        });
+    }
+
+    private void assertEpochCopyExists(io.questdb.cairo.TableToken tt, String baseFileName) {
+        try (io.questdb.std.str.Path p = new io.questdb.std.str.Path()) {
+            p.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(baseFileName).put(".epoch");
+            Assert.assertTrue(
+                    "durable epoch copy must exist: " + p,
+                    engine.getConfiguration().getFilesFacade().exists(p.$())
+            );
+        }
+    }
+
     // ---------- helpers ----------
 
     /**

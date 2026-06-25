@@ -74,6 +74,19 @@ public class ColumnVersionWriter extends ColumnVersionReader {
         hasChanges = false;
     }
 
+    /**
+     * Make the backing {@code _cv} file hard-durable INDEPENDENT of commit mode: msync(MS_SYNC) the
+     * mapping (flush dirty pages + journal the extent) then fsync the fd (the durability anchor).
+     * Used by the adaptive durable-epoch cut ({@link TableWriter#fsyncMaterializedState()}) so the
+     * committed column-version pointer survives a crash, after the column data is already durable
+     * and before {@code _txn} (data-before-pointer ordering). Under NOSYNC/ADAPTIVE the last
+     * {@link #commit()} did not sync, so both calls are required here.
+     */
+    public void fsync() {
+        mem.sync(false);
+        configuration.getFilesFacade().fsync(mem.getFd());
+    }
+
     public void copyColumnVersions(long srcTimestamp, long dstTimestamp) {
         int index = copyColumnVersions(srcTimestamp, dstTimestamp, cachedColumnVersionList);
         if (index > -1) {

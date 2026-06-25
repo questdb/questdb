@@ -221,6 +221,18 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         }
     }
 
+    /**
+     * Make the backing {@code _txn} file hard-durable INDEPENDENT of commit mode: msync(MS_SYNC) the
+     * mapping then fsync the fd. Used by the adaptive durable-epoch cut
+     * ({@link TableWriter#fsyncMaterializedState()}) to make the visibility pointer survive a crash,
+     * strictly AFTER the column data and {@code _cv} are durable (data-before-pointer ordering).
+     * Under NOSYNC/ADAPTIVE the last {@link #commit()} did not sync, so both calls are required.
+     */
+    public void fsync() {
+        txMemBase.sync(false);
+        ff.fsync(txMemBase.getFd());
+    }
+
     public void finishPartitionSizeUpdate(long minTimestamp, long maxTimestamp) {
         this.minTimestamp = minTimestamp;
         this.maxTimestamp = maxTimestamp;

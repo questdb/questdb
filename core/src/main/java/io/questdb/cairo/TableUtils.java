@@ -190,6 +190,11 @@ public final class TableUtils {
     // Magic sentinel for the epoch-marker slot checksum trailer (mirrors CV_CHECKSUM_MAGIC approach).
     // Spells " EPOCHKSM" on disk (LE) — distinctive, vanishingly unlikely to collide with epoch data.
     public static final long SNAPSHOT_CHECKSUM_MAGIC = 0x4D534B4843504F45L; // " EPOCHKSM" LE
+    // Suffix appended to _txn / _cv to name the DURABLE EPOCH COPIES that the adaptive durable-epoch
+    // cut (TableWriter.fsyncMaterializedState, Plan 3B) writes into the table dir: _txn.epoch / _cv.epoch.
+    // These are immutable, fsync'd, self-consistent copies of the commit pointers AS OF the epoch, used
+    // by recovery (Plan 3C) as the anchor to restore _txn/_cv and re-apply from. Option 2 of the design.
+    public static final String EPOCH_COPY_SUFFIX = ".epoch";
     // transaction file structure
     // @formatter:off
     public static final int TX_BASE_HEADER_SECTION_PADDING = 12; // Add some free space into header for future use

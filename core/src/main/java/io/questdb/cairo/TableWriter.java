@@ -13745,6 +13745,114 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    /**
+     * Persist a DURABLE EPOCH COPY of a commit-pointer file ({@code _txn} or {@code _cv}) into the
+     * table dir as {@code <name>.epoch} via {@code dumpTo} (the same canonical single-A/B-record dump
+     * {@link DatabaseCheckpointAgent} uses), then msync + fsync it. These immutable copies are the
+     * recovery anchor (Plan 3C): they capture the commit pointers AS OF the epoch, independent of the
+     * live files which keep advancing under lazy apply. {@code dumper} is the writer-side reader
+     * ({@link TxWriter}/{@link ColumnVersionWriter}) whose {@code dumpTo} emits the canonical bytes.
+     */
+    private void writeEpochCopy(String baseFileName, EpochDumper dumper) {
+        path.trimTo(pathSize).concat(baseFileName).put(TableUtils.EPOCH_COPY_SUFFIX);
+        // Remove any prior epoch copy first so each cut writes a FRESH file sized exactly by dumpTo
+        // (mirrors DatabaseCheckpointAgent, which always dumps into a fresh .checkpoint dir). This
+        // avoids a stale tail if a later dump were ever shorter than an earlier one. The dump is also
+        // self-describing via its A/B version word, but a fresh file keeps the copy unambiguous.
+        if (ff.exists(path.$())) {
+            ff.removeQuiet(path.$());
+        }
+        final MemoryMARW epochMem = Vm.getCMARWInstance();
+        try {
+            // smallFile opens the (now absent => 0-length) sibling; dumpTo's positional writes grow
+            // the mapping to the dumped extent, exactly as the checkpoint metadata dump does.
+            epochMem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
+            dumper.dumpTo(epochMem);
+            // Make the copy hard-durable: msync the mapping then fsync the fd. The copy is immutable
+            // once written, so a single durability barrier here is the recovery anchor.
+            epochMem.sync(false);
+            ff.fsync(epochMem.getFd());
+        } finally {
+            // close(false): no truncate-to-append-offset. dumpTo uses positional putLong (which does
+            // NOT advance the append offset), so a truncating close would wrongly shrink the file;
+            // the checkpoint path likewise closes its dumped _txn/_cv with close(false).
+            epochMem.close(false);
+            path.trimTo(pathSize);
+        }
+    }
+
+    /**
+     * Make the CURRENT committed materialized state of this table FULLY DURABLE, INDEPENDENT of the
+     * configured commit mode, then persist durable copies of the commit pointers. This is the
+     * "durable cut" the adaptive durable epoch (Plan 3B) records so recovery can land exactly on it.
+     * <p>
+     * Under {@link CommitMode#ADAPTIVE} the apply path skips the per-column flush (the table is a
+     * rebuildable cache of the durable WAL — see {@link #appliesColumnSync}), so partition columns
+     * can be non-durable while {@code _txn}/{@code _cv} are only msync'd. This method forces the
+     * flush the SYNC path proves and adds the explicit fsync anchors, in strict DATA-BEFORE-POINTER
+     * order:
+     * <ol>
+     *   <li>columns durable: the same 3-pass KICK -> DRAIN -> {@code syncfs} machinery
+     *       ({@link #syncColumnsBatchedSync()} on Linux, else per-file {@code msync(MS_SYNC)} +
+     *       symbol-map sync), called UNCONDITIONALLY (not gated on commit mode). {@code syncfs}
+     *       journals every column's extent conversions + i_size in one device flush;</li>
+     *   <li>dense symbol map writers durable (as {@code syncColumns0} does for the non-batched path;
+     *       the batched path already syncs them in its passes);</li>
+     *   <li>{@code _cv} durable: {@code columnVersionWriter.fsync()} (msync + fsync);</li>
+     *   <li>{@code _txn} durable LAST: {@code txWriter.fsync()} (msync + fsync) — the visibility
+     *       pointer becomes durable only after everything it exposes;</li>
+     *   <li>durable epoch copies {@code _txn.epoch} / {@code _cv.epoch} written + fsync'd (the
+     *       immutable recovery anchor).</li>
+     * </ol>
+     * The cut's identity is the writer's current {@link #getSeqTxn()} / {@link #getTxn()} right after
+     * its A/B commit point; the caller ({@code advance()}) reads them after this returns.
+     * <p>
+     * Pre-publishes the indexers and pending posting-seal purges exactly as {@link #syncColumns()}
+     * does, so a durable cut is self-consistent with respect to index state too.
+     */
+    public void fsyncMaterializedState() {
+        // Publish buffered index writes (PostingIndexWriter / BitmapIndexWriter) just like
+        // syncColumns(): without this readers (and the durable cut) could see keyCount=0.
+        final long publishTxn = txWriter.getTxn() + 1;
+        for (int i = 0, n = denseIndexers.size(); i < n; i++) {
+            ColumnIndexer indexer = denseIndexers.getQuick(i);
+            indexer.getWriter().setNextTxnAtSeal(publishTxn);
+            try {
+                indexer.getWriter().commit();
+            } catch (CairoException e) {
+                throwDistressException(e);
+            }
+        }
+
+        // Step 1+2: columns (and symbol maps) durable, UNCONDITIONALLY — the durable cut forces the
+        // flush regardless of commit mode. Reuse the proven machinery.
+        if (Os.isLinux() && configuration.isBatchedColumnSyncEnabled()) {
+            syncColumnsBatchedSync(); // 3-pass KICK/DRAIN/syncfs; also syncs symbol writers
+        } else {
+            syncColumns0(false /* sync, not async */);
+            for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
+                denseSymbolMapWriters.getQuick(i).sync(false);
+            }
+        }
+
+        // Step 3+4: commit pointers durable, data-before-pointer: _cv before _txn.
+        columnVersionWriter.fsync();
+        txWriter.fsync();
+
+        // Step 5: durable epoch copies (immutable recovery anchor) — _txn.epoch then _cv.epoch.
+        writeEpochCopy(TableUtils.TXN_FILE_NAME, txWriter::dumpTo);
+        writeEpochCopy(TableUtils.COLUMN_VERSION_FILE_NAME, columnVersionWriter::dumpTo);
+
+        // Mirror syncColumns(): forward indexer purge entries safe for the committed txn.
+        publishPendingPostingSealPurges(txWriter.getTxn());
+    }
+
+    /** Functional adapter over the {@code dumpTo(MemoryW)} of TxWriter / ColumnVersionWriter. */
+    @FunctionalInterface
+    private interface EpochDumper {
+        void dumpTo(io.questdb.cairo.vm.api.MemoryW mem);
+    }
+
     private void throwApplyBlockColumnShuffleFailed(int columnIndex, int columnType, long totalRows, long rowCount) {
         LOG.error().$("wal block apply failed [table=").$(tableToken)
                 .$(", column=").$safe(metadata.getColumnName(columnIndex))
