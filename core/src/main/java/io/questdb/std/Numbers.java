@@ -644,6 +644,32 @@ public final class Numbers {
         return Byte.toUnsignedInt(a) - Byte.toUnsignedInt(b);
     }
 
+    // Pearson correlation coefficient from the three accumulated deviation sums:
+    // sumXY = Sum((x-mx)(y-my)), sumXX = Sum((x-mx)^2), sumYY = Sum((y-my)^2).
+    // Prefer the single-rounding sqrt(sumXX * sumYY), the accurate denominator for
+    // normal inputs. Fall back to the split sqrt(sumXX)*sqrt(sumYY) only when the
+    // product is unusable: it overflows to +Infinity (large inputs, ~1e153) or
+    // underflows to 0.0 (small inputs, ~1e-150), while each factor stays in range
+    // (both are sums of squared deviations, so >= 0). A genuine zero factor (zero
+    // variance) keeps the product at 0.0 and returns NaN. The result is clamped to
+    // [-1, 1] to absorb the 1-2 ULP the split path costs (two sqrt roundings vs one).
+    public static double corrFromSums(double sumXY, double sumXX, double sumYY) {
+        double prod = sumXX * sumYY;
+        boolean splitDenom = !Double.isFinite(prod) || (prod == 0.0 && sumXX != 0.0 && sumYY != 0.0);
+        double denom = splitDenom ? Math.sqrt(sumXX) * Math.sqrt(sumYY) : Math.sqrt(prod);
+        if (denom == 0.0) {
+            return Double.NaN;
+        }
+        double r = sumXY / denom;
+        if (r > 1.0) {
+            return 1.0;
+        }
+        if (r < -1.0) {
+            return -1.0;
+        }
+        return r;
+    }
+
     public static int decodeHighInt(long val) {
         return (int) (val >> 32);
     }
