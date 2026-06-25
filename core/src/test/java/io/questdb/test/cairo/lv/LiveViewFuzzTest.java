@@ -73,11 +73,12 @@ import org.junit.Test;
  */
 public class LiveViewFuzzTest extends AbstractCairoTest {
 
-    // Variants 0..4 are ORDER BY ts bounded-frame aggregates over LONG/DOUBLE
-    // columns; the decimal variant (DECIMAL_VARIANT) is the same bounded-frame
-    // shape over a DECIMAL column (a random width + aggregate per run). Their
-    // output is a total deterministic function of the (unique-ts) row set, so the
-    // recompute oracle holds under any ingestion order, including O3 and restart.
+    // Variants 0..4 and 6 are ORDER BY ts bounded-frame aggregates over
+    // LONG/DOUBLE columns (sum/max/first_value/count/avg/min); the decimal variant
+    // (DECIMAL_VARIANT) is the same bounded-frame shape over a DECIMAL column (a
+    // random width + aggregate per run). Their output is a total deterministic
+    // function of the (unique-ts) row set, so the recompute oracle holds under any
+    // ingestion order, including O3 and restart.
     // Variant 5 is ranking row_number() OVER () with no ORDER BY. Its numbering
     // follows scan order; the incremental engine always (re)scans the base in
     // ts-ascending order - forward-append in ts order, head-miss replay from the
@@ -100,9 +101,12 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
     private static final int DECIMAL_FUNC_COUNT = 6; // sum, max, min, first_value, avg, avg(d, scale)
     private static final int[] DECIMAL_PRECISION = {2, 4, 9, 18, 38, 60};
     private static final int[] DECIMAL_SCALE = {0, 0, 3, 2, 6, 0};
-    private static final int DECIMAL_VARIANT = 6;
-    private static final int MAX_FRAME = 8;
-    private static final String[] SYMBOLS = {"AA", "BB", "CC", "DD"};
+    private static final int DECIMAL_VARIANT = 7;
+    private static final int MAX_FRAME = 20;
+    private static final String[] SYMBOLS = {
+            "AA", "BB", "CC", "DD", "EE", "FF", "GG", "HH",
+            "II", "JJ", "KK", "LL", "MM", "NN", "OO", "PP"
+    };
 
     @Test
     public void testFuzzBackfill() throws Exception {
@@ -161,14 +165,30 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
         // A single fully-random configuration per CI run; seed is logged for
         // reproduction. Explores combinations the pinned tests do not.
         final Rnd rnd = TestUtils.generateRandom(LOG);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1 + rnd.nextInt(4));
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1 + rnd.nextInt(8));
         assertMemoryLeak(() -> {
             final boolean o3 = rnd.nextBoolean();
             // BACKFILL now combines with O3 (the merge bug forcing them apart is fixed).
             final boolean backfill = rnd.nextBoolean();
             final int variant = rnd.nextInt(variantCount());
             final boolean restart = o3 && rnd.nextBoolean();
-            runFuzz(rnd, variant, 80 + rnd.nextInt(320), o3, restart, backfill, rnd.nextBoolean());
+            runFuzz(rnd, variant, 80 + rnd.nextInt(520), o3, restart, backfill, rnd.nextBoolean());
+        });
+    }
+
+    @Test
+    public void testFuzzWidened() throws Exception {
+        // Concentrated heavy corner: larger datasets with O3 + restart + backfill +
+        // in-mem all on together, across every variant. Per-run symbol cardinality
+        // and partition spread (chosen inside runFuzz) still vary, so a batch of
+        // runs samples the high-cardinality / many-partition corners the pinned
+        // tests rarely hit all at once. Seed is logged for reproduction.
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1 + rnd.nextInt(4));
+        assertMemoryLeak(() -> {
+            for (int v = 0; v < variantCount(); v++) {
+                runFuzz(rnd, v, 300 + rnd.nextInt(400), true, true, true, true);
+            }
         });
     }
 
@@ -249,10 +269,11 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
     // shape is grammar-legal in a live view and deterministic under a
     // unique-timestamp total order. The fuzzed set is exactly the window shapes
     // that carry the incremental-snapshot contract: PARTITION BY rows-frame
-    // sum/max/first_value/count/avg, plus ranking OVER (). Un-partitioned
+    // sum/max/min/first_value/count/avg, plus ranking OVER (). Un-partitioned
     // aggregate windows and last_value over a CURRENT ROW frame are rejected at
-    // CREATE (no snapshot support), so they are not fuzzed here. N is the
-    // bounded-frame radius.
+    // CREATE (no snapshot support), so they are not fuzzed here. min reuses Max's
+    // migrated MaxMinOver* classes, so it carries the same snapshot contract. N is
+    // the bounded-frame radius.
     private static String projection(int variant, int n) {
         final String frame = "PARTITION BY sym ORDER BY ts ROWS BETWEEN " + n + " PRECEDING AND CURRENT ROW";
         return switch (variant) {
@@ -262,6 +283,7 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
             case 3 -> "ts, sym, count() OVER (" + frame + ") AS v";
             case 4 -> "ts, sym, x, avg(x) OVER (" + frame + ") AS v";
             case 5 -> "ts, sym, row_number() OVER () AS rn";
+            case 6 -> "ts, sym, i, min(i) OVER (" + frame + ") AS v";
             default -> throw new IllegalArgumentException("variant=" + variant);
         };
     }
@@ -397,6 +419,18 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
         }
 
         final int n = 1 + rnd.nextInt(MAX_FRAME);
+        // Per-run partition cardinality: 1..16 distinct symbols (plus an occasional
+        // NULL symbol partition). High cardinality means many window partitions,
+        // each with few rows, stressing the partition-map snapshot/restore path.
+        final int symCount = 1 + rnd.nextInt(SYMBOLS.length);
+        // Per-run partition spread along the time axis (see the generation loop):
+        // tight (sub-5s steps, rare day jumps) .. wide (sub-15min steps, frequent
+        // day jumps), so a run's data spans from one tightly-packed partition to a
+        // few dozen. The wide regime stresses O3 / REPLACE_RANGE across many
+        // partition boundaries (the Finding 2 territory).
+        final int stepMode = rnd.nextInt(3);
+        final int baseStepMax = stepMode == 0 ? 5_000_000 : stepMode == 1 ? 60_000_000 : 900_000_000;
+        final int dayJumpEvery = stepMode == 0 ? 20 : 12;
         final boolean withWhere = rnd.nextInt(3) == 0;
         final boolean isDecimal = variant == DECIMAL_VARIANT;
         final int decimalWidth = isDecimal ? rnd.nextInt(DECIMAL_PRECISION.length) : -1;
@@ -423,7 +457,8 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
                 + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
         LOG.info().$("LV fuzz: variant=").$(variant).$(", rows=").$(rowCount)
-                .$(", n=").$(n).$(", o3=").$(o3).$(", restart=").$(restart)
+                .$(", n=").$(n).$(", symCount=").$(symCount).$(", stepMode=").$(stepMode)
+                .$(", o3=").$(o3).$(", restart=").$(restart)
                 .$(", backfill=").$(backfill).$(", inMem=").$(inMemory)
                 .$(", where=").$(withWhere).$(", decimalType=").$(decimalType)
                 .$(", sql=").$(viewSql).$();
@@ -436,14 +471,17 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
         final double[] xv = new double[rowCount];
         final boolean[] xNull = new boolean[rowCount];
         final String[] dLit = isDecimal ? new String[rowCount] : null;
+        final int maxDayJumps = 30; // cap partition spread so a wide-step run stays fast
+        int dayJumps = 0;
         long ts = MicrosTimestampDriver.floor("2026-01-01T00:00:00.000000Z");
         for (int k = 0; k < rowCount; k++) {
-            ts += 1 + rnd.nextInt(5_000_000); // 1us .. 5s, keeps ts strictly increasing
-            if (rnd.nextInt(20) == 0) {
-                ts += 86_400_000_000L; // occasional full-day jump to span more partitions
+            ts += 1 + rnd.nextInt(baseStepMax); // keeps ts strictly increasing
+            if (dayJumps < maxDayJumps && rnd.nextInt(dayJumpEvery) == 0) {
+                ts += 86_400_000_000L; // full-day jump to span more partitions
+                dayJumps++;
             }
             tsv[k] = ts;
-            symIdx[k] = rnd.nextInt(20) == 0 ? -1 : rnd.nextInt(SYMBOLS.length); // -1 => NULL symbol
+            symIdx[k] = rnd.nextInt(20) == 0 ? -1 : rnd.nextInt(symCount); // -1 => NULL symbol
             iv[k] = rnd.nextInt(20) == 0 ? Numbers.LONG_NULL : (rnd.nextInt(2001) - 1000);
             xNull[k] = rnd.nextInt(20) == 0;
             xv[k] = rnd.nextDouble() * 1000.0;
