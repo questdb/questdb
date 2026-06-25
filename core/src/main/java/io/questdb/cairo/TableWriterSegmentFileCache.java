@@ -242,17 +242,8 @@ public class TableWriterSegmentFileCache {
 
                         // Guard: aux file must cover all rowHi entries before mapping.
                         if (rowHi > 0) {
-                            final long requiredAuxSize = columnTypeDriver.getAuxVectorSize(rowHi);
-                            final long actualAuxSize = auxFd != -1 ? ff.length(auxFd) : ff.length(ifile);
-                            if (actualAuxSize < requiredAuxSize) {
-                                throw CairoException.critical(METADATA_VALIDATION)
-                                        .put("WAL segment column too short for committed row range")
-                                        .put(" [col=").put(metadata.getColumnName(columnIndex))
-                                        .put(", file=").put(ifile)
-                                        .put(", required=").put(requiredAuxSize)
-                                        .put(", actual=").put(actualAuxSize)
-                                        .put(']');
-                            }
+                            validateSegmentFileLength(auxFd, ifile, metadata.getColumnName(columnIndex),
+                                    columnTypeDriver.getAuxVectorSize(rowHi));
                         }
 
                         columnTypeDriver.configureAuxMemOM(
@@ -279,17 +270,8 @@ public class TableWriterSegmentFileCache {
                         // Uses the aux fd (now open inside auxMem) to read the data-end offset from disk
                         // without requiring the aux to be mmap-ed yet (lazy mapping defers the mmap call).
                         if (rowHi > 0) {
-                            final long requiredDataSize = columnTypeDriver.getDataVectorSizeAtFromFd(ff, auxMem.getFd(), rowHi - 1);
-                            final long actualDataSize = dataFd != -1 ? ff.length(dataFd) : ff.length(dfile);
-                            if (actualDataSize < requiredDataSize) {
-                                throw CairoException.critical(METADATA_VALIDATION)
-                                        .put("WAL segment column too short for committed row range")
-                                        .put(" [col=").put(metadata.getColumnName(columnIndex))
-                                        .put(", file=").put(dfile)
-                                        .put(", required=").put(requiredDataSize)
-                                        .put(", actual=").put(actualDataSize)
-                                        .put(']');
-                            }
+                            validateSegmentFileLength(dataFd, dfile, metadata.getColumnName(columnIndex),
+                                    columnTypeDriver.getDataVectorSizeAtFromFd(ff, auxMem.getFd(), rowHi - 1));
                         }
 
                         columnTypeDriver.configureDataMemOM(
@@ -319,17 +301,8 @@ public class TableWriterSegmentFileCache {
 
                         // Guard: fixed-width column file must cover all rowHi rows before mapping.
                         if (rowHi > 0 && sizeBitsPow2 >= 0) {
-                            final long requiredSize = rowHi << sizeBitsPow2;
-                            final long actualSize = fd != -1 ? ff.length(fd) : ff.length(dfile);
-                            if (actualSize < requiredSize) {
-                                throw CairoException.critical(METADATA_VALIDATION)
-                                        .put("WAL segment column too short for committed row range")
-                                        .put(" [col=").put(metadata.getColumnName(columnIndex))
-                                        .put(", file=").put(dfile)
-                                        .put(", required=").put(requiredSize)
-                                        .put(", actual=").put(actualSize)
-                                        .put(']');
-                            }
+                            validateSegmentFileLength(fd, dfile, metadata.getColumnName(columnIndex),
+                                    rowHi << sizeBitsPow2);
                         }
 
                         primary.ofOffset(
@@ -402,6 +375,20 @@ public class TableWriterSegmentFileCache {
             }
         } finally {
             path.trimTo(pathSize1);
+        }
+    }
+
+    private void validateSegmentFileLength(long fd, LPSZ file, CharSequence columnName, long required) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        final long actual = fd != -1 ? ff.length(fd) : ff.length(file);
+        if (actual < required) {
+            throw CairoException.critical(METADATA_VALIDATION)
+                    .put("WAL segment column too short for committed row range")
+                    .put(" [col=").put(columnName)
+                    .put(", file=").put(file)
+                    .put(", required=").put(required)
+                    .put(", actual=").put(actual)
+                    .put(']');
         }
     }
 

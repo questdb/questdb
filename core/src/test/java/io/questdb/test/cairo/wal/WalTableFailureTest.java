@@ -2117,6 +2117,13 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     "Table should be suspended after short fixed-width segment",
                     engine.getTableSequencerAPI().isSuspended(tableToken)
             );
+            // True negative control: assert OUR early guard is the detector, not a downstream path.
+            String fixedErrMsg = engine.getTableSequencerAPI().getTxnTracker(tableToken).getErrorMessage();
+            Assert.assertTrue(
+                    "Suspension errorMessage must contain our guard string 'WAL segment column too short', got: "
+                            + fixedErrMsg,
+                    fixedErrMsg != null && fixedErrMsg.contains("WAL segment column too short")
+            );
         });
     }
 
@@ -2154,6 +2161,13 @@ public class WalTableFailureTest extends AbstractCairoTest {
             Assert.assertTrue(
                     "Table should be suspended after short varchar aux segment",
                     engine.getTableSequencerAPI().isSuspended(tableToken)
+            );
+            // True negative control: assert OUR early guard is the detector, not a downstream path.
+            String auxErrMsg = engine.getTableSequencerAPI().getTxnTracker(tableToken).getErrorMessage();
+            Assert.assertTrue(
+                    "Suspension errorMessage must contain our guard string 'WAL segment column too short', got: "
+                            + auxErrMsg,
+                    auxErrMsg != null && auxErrMsg.contains("WAL segment column too short")
             );
         });
     }
@@ -2194,6 +2208,13 @@ public class WalTableFailureTest extends AbstractCairoTest {
             Assert.assertTrue(
                     "Table should be suspended after short varchar data segment",
                     engine.getTableSequencerAPI().isSuspended(tableToken)
+            );
+            // True negative control: assert OUR early guard is the detector, not a downstream path.
+            String dataErrMsg = engine.getTableSequencerAPI().getTxnTracker(tableToken).getErrorMessage();
+            Assert.assertTrue(
+                    "Suspension errorMessage must contain our guard string 'WAL segment column too short', got: "
+                            + dataErrMsg,
+                    dataErrMsg != null && dataErrMsg.contains("WAL segment column too short")
             );
         });
     }
