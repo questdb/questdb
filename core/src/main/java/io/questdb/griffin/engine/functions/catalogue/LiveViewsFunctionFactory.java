@@ -39,6 +39,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
@@ -124,6 +125,8 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
+            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
+            cursor.circuitBreaker = executionContext.getCircuitBreaker();
             cursor.toTop(executionContext.getCairoEngine());
             return cursor;
         }
@@ -146,6 +149,7 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
         private static class LiveViewsListCursor implements NoRandomAccessRecordCursor {
             private final LiveViewsRecord record = new LiveViewsRecord();
             private final ObjList<LiveViewInstance> viewInstances = new ObjList<>();
+            private SqlExecutionCircuitBreaker circuitBreaker;
             private CairoEngine engine;
             private int viewIndex = 0;
 
@@ -161,6 +165,7 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
             @Override
             public boolean hasNext() {
                 if (viewIndex < viewInstances.size()) {
+                    circuitBreaker.statefulThrowExceptionIfTripped();
                     record.of(engine, viewInstances.getQuick(viewIndex++));
                     return true;
                 }
