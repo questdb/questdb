@@ -351,6 +351,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // captured before configureAppendPosition fabricates empty index files. Consulted once by the
     // open-time reconcile, then cleared. Empty during runtime (role-flip) reconciles.
     private final IntList replicaOnlyIndexAbsentAtOpen = new IntList();
+    // Scratch buffer used to snapshot/restore the shared Path.PATH thread-local content around a
+    // covering-POSTING replica-only reconcile BUILD (see reconcileReplicaOnlyIndexes); the build's
+    // covered-column read helpers clobber that thread-local, which the very next WAL-segment mmap
+    // reuses as its walPath. Single-threaded under the writer lock, so a single shared buffer is safe.
+    private final Utf8StringSink replicaOnlyReconcileWalPathSnapshot = new Utf8StringSink();
     private LifecycleManager lifecycleManager;
     private long lockFd = -2;
     private long masterRef = 0L;
@@ -903,8 +908,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
             metadataRW.hydrateTable(metadata);
         }
-        LOG.info().$("ADDED index to '").$safe(columnName).$('[').$(ColumnType.nameOf(existingType))
-                .$("]' to ").$substr(pathRootSize, path).$();
+        if (skipBuild) {
+            LOG.info().$("registered replica-only index metadata, build skipped on primary [column=").$safe(columnName)
+                    .$(", type=").$(ColumnType.nameOf(existingType))
+                    .$(", path=").$substr(pathRootSize, path).I$();
+        } else {
+            LOG.info().$("ADDED index to '").$safe(columnName).$('[').$(ColumnType.nameOf(existingType))
+                    .$("]' to ").$substr(pathRootSize, path).$();
+        }
     }
 
     public void addPhysicallyWrittenRows(long rows) {
@@ -11960,6 +11971,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 final byte indexType = metadata.getColumnIndexType(i);
                 final int indexValueBlockCapacity = metadata.getIndexValueBlockCapacity(i);
                 final SymbolColumnIndexer indexer = new SymbolColumnIndexer(configuration, indexType);
+                // Snapshot the SHARED thread-local Path (Path.PATH) CONTENT before the build.
+                //
+                // Unlike the normal ADD INDEX flow -- a structural ALTER applied OUTSIDE the WAL
+                // row-mmap sequence -- this reconcile build runs INSIDE commitWalInsertTransactions,
+                // immediately before processWalCommit() -> TableWriterSegmentFileCache.mmapSegments().
+                // mmapSegments reuses the very same Path.PATH thread-local as its `walPath`
+                // ("<table>/wal<id>/<seg>"). The covering-POSTING build's covered-column read setup
+                // (PostingIndexWriter.ensureCoveredColumnReadMaps -> mapColumnFile) grabs
+                // Path.getThreadLocal(...) (== Path.PATH) and OVERWRITES it with the last covered
+                // column's data file ("<partition>/ts.d"). mmapSegments then appends to that stale
+                // buffer and opens a bogus "<partition>/ts.d/s.d", failing the apply and suspending
+                // the table. A length-only trimTo is not enough: the build rewrites the buffer
+                // CONTENT, so we snapshot the full string and restore it. Keeps the build
+                // path-neutral to its WAL-apply caller; also protects the BITMAP / plain-POSTING
+                // build paths.
+                final Path sharedPath = Path.PATH.get();
+                replicaOnlyReconcileWalPathSnapshot.clear();
+                replicaOnlyReconcileWalPathSnapshot.put(sharedPath);
                 try {
                     LOG.info().$("reconcile: building replica-only index [table=").$(tableToken)
                             .$(", column=").$safe(columnName).I$();
@@ -11969,6 +11998,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 } catch (Throwable th) {
                     Misc.free(indexer);
                     throw th;
+                } finally {
+                    // Restore the writer's own path (mirrors writeIndex's finally) AND the shared
+                    // Path.PATH thread-local content the covering build may have clobbered.
+                    path.trimTo(pathSize);
+                    sharedPath.of(replicaOnlyReconcileWalPathSnapshot);
                 }
             } else {
                 // PURGE: unwire the indexer and remove the on-disk index sidecars for all

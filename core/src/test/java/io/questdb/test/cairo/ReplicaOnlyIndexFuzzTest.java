@@ -92,23 +92,22 @@ public class ReplicaOnlyIndexFuzzTest extends AbstractCairoTest {
         AbstractCairoTest.setUpStatic();
     }
 
-    // Deterministically cover the index shapes BITMAP, BITMAP+covering INCLUDE, and POSTING.
-    // Each shape is a fresh DB (assertMemoryLeak resets state) driven by its own fixed sub-seed.
+    // Deterministically cover ALL four index shapes: BITMAP, BITMAP+covering INCLUDE, POSTING, and
+    // POSTING+covering INCLUDE. Each shape is a fresh DB (assertMemoryLeak resets state) driven by its
+    // own fixed sub-seed.
     //
-    // The fourth shape -- POSTING + covering INCLUDE -- is intentionally NOT driven by this fuzz yet.
-    // It surfaces a SEPARATE, PRE-EXISTING defect (reproduces with this feature's fixes reverted): the
-    // WAL-apply reconcile that BUILDS a covering-posting replica-only index over an existing partition
-    // leaves the writer's shared `path` field pointing at a covered-column data file (e.g.
+    // The fourth shape -- POSTING + covering INCLUDE -- previously surfaced a path-restoration defect:
+    // the WAL-apply reconcile that BUILDS a covering-posting replica-only index over an existing
+    // partition left the shared Path.PATH thread-local pointing at a covered-column data file (e.g.
     // "<partition>/ts.d"); the very next WAL-segment mmap (TableWriterSegmentFileCache.mmapSegments)
-    // then appends to that stale path and opens a bogus "<partition>/ts.d/s.d", suspending the table.
-    // That covering-posting path-restoration bug is independent of the replica-only reconcile invariant
-    // under test here and is reported separately for a dedicated fix; including it would make this
-    // suite red for an unrelated reason. See ReplicaOnlyCoveringPostingRepro for the minimal repro.
+    // reuses that same thread-local as its walPath, appended to the stale buffer and opened a bogus
+    // "<partition>/ts.d/s.d", suspending the table. Fixed by snapshotting/restoring Path.PATH around
+    // the reconcile build in TableWriter.reconcileReplicaOnlyIndexes; this shape is now exercised here.
     @Test
     public void testFuzzReconcileInvariantUnderRoleFlips() throws Exception {
         int shape = 0;
-        // {posting, covering}: BITMAP, BITMAP+cover, POSTING (no cover).
-        final boolean[][] shapes = {{false, false}, {false, true}, {true, false}};
+        // {posting, covering}: BITMAP, BITMAP+cover, POSTING (no cover), POSTING+cover.
+        final boolean[][] shapes = {{false, false}, {false, true}, {true, false}, {true, true}};
         for (boolean[] s : shapes) {
             runScenario(s[0], s[1], SEED1 + 0x9E3779B97F4A7C15L * shape++);
         }

@@ -409,7 +409,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                                 .put("replica-only index not materialized on this node [column=")
                                 .put(metadata.getColumnName(columnIndex))
                                 .put(", partitionTimestamp=").put(partitionTimestamp)
-                                .put(']');
+                                .put("]; transient during restore/promote, retry shortly");
                     }
                     throw e;
                 } finally {
@@ -1088,7 +1088,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                             .put("replica-only index not materialized on this node [column=")
                             .put(metadata.getColumnName(columnIndex))
                             .put(", partitionTimestamp=").put(partitionTimestamp)
-                            .put(']');
+                            .put("]; transient during restore/promote, retry shortly");
                 }
                 path.trimTo(partitionPathLen);
                 try {
@@ -1120,7 +1120,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                                 .put("replica-only index not materialized on this node [column=")
                                 .put(metadata.getColumnName(columnIndex))
                                 .put(", partitionTimestamp=").put(partitionTimestamp)
-                                .put(']');
+                                .put("]; transient during restore/promote, retry shortly");
                     }
                     throw e;
                 }
