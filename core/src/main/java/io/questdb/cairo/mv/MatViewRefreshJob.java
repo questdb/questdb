@@ -69,6 +69,7 @@ import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.locks.Lock;
 
@@ -91,6 +92,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private final MatViewGraph graph;
     private final LongList intervals = new LongList();
     private final MicrosecondClock microsecondClock;
+    private Runnable onRefreshHoldingLockForTest;
     private final RefreshContext refreshContext = new RefreshContext();
     private final MatViewRefreshSqlExecutionContext refreshSqlExecutionContext;
     private final MatViewRefreshTask refreshTask = new MatViewRefreshTask();
@@ -174,6 +176,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     @Override
     public boolean run(@NotNull WorkerContext workerContext) {
         return processNotifications();
+    }
+
+    @TestOnly
+    public void setOnRefreshHoldingLockForTest(Runnable onRefreshHoldingLockForTest) {
+        this.onRefreshHoldingLockForTest = onRefreshHoldingLockForTest;
     }
 
     private static long approxStepDuration(long step, long approxBucketSize) {
@@ -473,6 +480,30 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         for (int v = 0, n = childViewSink2.size(); v < n; v++) {
             stateStore.enqueueInvalidate(childViewSink2.get(v), invalidationReason);
         }
+    }
+
+    private void finalizeDeferredInvalidation(TableToken viewToken, MatViewState viewState) {
+        // A refresh just completed while holding this view's lock. If a concurrent INVALIDATE deferred in
+        // that window it called markAsPendingInvalidation() and re-enqueued a task that the invalidateView
+        // top guard then swallowed (the guard skips a view that is already pending), so nothing else would
+        // finalize it and the view would stay valid on disk with stale rows. Clear the pending marker and
+        // re-enqueue a fresh INVALIDATE: with the marker cleared the guard no longer swallows it, and the
+        // lock is now free, so it mints durably through the normal path. A null reason marks a full-refresh
+        // reschedule (see fullRefresh), not an invalidation, so leave it for the queued full refresh. Skip
+        // while read-only: a demote rebuilds derived state from disk on promote, and re-enqueueing here
+        // would self-feed the demote quiesce drain. Mirrors invalidateView's own
+        // force || getLastRefreshBaseTxn() != -1 gate: a base-scoped (non-forced) invalidate does not mint
+        // for a view that never had an incremental/full refresh (e.g. range-only-populated), so such a view
+        // is not base-invalidated even without contention; finalize intentionally matches that.
+        if (!viewState.isPendingInvalidation() || viewState.isInvalid() || viewState.isDropped()) {
+            return;
+        }
+        final String invalidationReason = viewState.getPendingInvalidationReason();
+        if (invalidationReason == null || engine.isReadOnlyMode() || viewState.getLastRefreshBaseTxn() == -1) {
+            return;
+        }
+        viewState.markAsValid();
+        stateStore.enqueueInvalidate(viewToken, invalidationReason);
     }
 
     private RefreshContext findRefreshIntervals(
@@ -1378,12 +1409,15 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
     private void invalidateView(TableToken viewToken, String invalidationReason, boolean force) {
         final MatViewState viewState = stateStore.getViewState(viewToken);
-        // Known limitation (tracked follow-up): the pendingInvalidation term skips a view whose earlier
-        // invalidation deferred (read-only node, or the lock was held by a concurrent refresh) and was
-        // re-enqueued -- so a deferred enqueued INVALIDATE that loses the lock race can leave the view
-        // pending in memory while its on-disk state stays valid until a restart, REFRESH FULL, or role
-        // switch rebuilds the store. The truncate barrier no longer relies on this path (it invalidates
-        // inline while holding the lock + writer); the residual is the apply-time INVALIDATE race.
+        // The pendingInvalidation guard skips a re-enqueued INVALIDATE when an earlier deferral marked the
+        // view pending (read-only node, or the lock was held by a concurrent refresh). Incremental, range,
+        // and interval-update refresh holders now finalize a deferred invalidation on completion, clearing
+        // this guard for re-delivery. Residuals: a read-only deferral rebuilds from disk on promote; a
+        // fullRefresh-holder deferral self-resolves only for a pending set before the full refresh's reader
+        // snapshot (markAsValid clears pending at truncateSoft time), but an invalidation deferring after
+        // that snapshot is a tracked residual (fullRefresh does not call finalizeDeferredInvalidation); and
+        // the narrow window between a holder's finalize check and its unlock where a concurrent INVALIDATE
+        // can defer again.
         if (viewState != null && !viewState.isDropped() && !viewState.isInvalid() && !viewState.isPendingInvalidation()) {
             if (engine.isReadOnlyMode()) {
                 // The node is, or just became, a replica: marking the view invalid acquires a WalWriter
@@ -1392,7 +1426,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 // halt-on-error pool would stop). Defer instead -- mark the view pending and re-enqueue so
                 // the invalidation retries after a re-promote, mirroring the refresh face's read-only
                 // deferral. A materialized view is derived state.
-                viewState.markAsPendingInvalidation();
+                viewState.markAsPendingInvalidation(invalidationReason);
                 stateStore.enqueueInvalidate(viewToken, invalidationReason);
                 return;
             }
@@ -1407,7 +1441,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             }
             if (!viewState.tryLock()) {
                 LOG.debug().$("skipping materialized view invalidation, locked by another refresh run [view=").$(viewToken).I$();
-                viewState.markAsPendingInvalidation();
+                viewState.markAsPendingInvalidation(invalidationReason);
                 stateStore.enqueueInvalidate(viewToken, invalidationReason);
                 return;
             }
@@ -1452,7 +1486,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                 // (its in-memory start would otherwise sit ahead of the persisted finish).
                                 viewState.markAsValid();
                                 viewState.setLastRefreshStartTimestampUs(prevRefreshStartTimestampUs);
-                                viewState.markAsPendingInvalidation();
+                                viewState.markAsPendingInvalidation(invalidationReason);
                                 stateStore.enqueueInvalidate(viewToken, invalidationReason);
                                 return;
                             }
@@ -1555,6 +1589,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             return false;
         }
 
+        if (onRefreshHoldingLockForTest != null) {
+            onRefreshHoldingLockForTest.run();
+        }
+
         try (WalWriter walWriter = engine.getWalWriter(viewToken)) {
             final TableToken baseTableToken;
             final String baseTableName = viewDefinition.getBaseTableName();
@@ -1628,6 +1666,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             refreshFailState(viewDefinition, viewState, null, th);
             return false;
         } finally {
+            finalizeDeferredInvalidation(viewToken, viewState);
             viewState.unlock();
             viewState.tryCloseIfDropped();
             viewState.tryCloseIfClosed();
@@ -1717,6 +1756,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                             .I$();
                     refreshFailState(viewDefinition, viewState, null, th);
                 } finally {
+                    finalizeDeferredInvalidation(viewToken, viewState);
                     viewState.incrementRefreshSeq();
                     viewState.unlock();
                     viewState.tryCloseIfDropped();
@@ -1859,6 +1899,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             refreshFailState(viewDefinition, viewState, null, th);
             return false;
         } finally {
+            finalizeDeferredInvalidation(viewToken, viewState);
             viewState.incrementRefreshSeq();
             viewState.unlock();
             viewState.tryCloseIfDropped();
@@ -1879,6 +1920,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             long refreshTriggerTimestamp
     ) throws SqlException {
         assert viewState.isLocked();
+        if (onRefreshHoldingLockForTest != null) {
+            onRefreshHoldingLockForTest.run();
+        }
 
         // Steps:
         // - compile view and execute with timestamp ranges from the unprocessed commits
@@ -2012,6 +2056,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 return;
             }
 
+            if (onRefreshHoldingLockForTest != null) {
+                onRefreshHoldingLockForTest.run();
+            }
+
             final MatViewDefinition viewDefinition = viewState.getViewDefinition();
             try (WalWriter walWriter = engine.getWalWriter(viewToken)) {
                 final TableToken baseTableToken = verifyBaseTableToken(viewDefinition, viewState, walWriter);
@@ -2046,6 +2094,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         .I$();
                 refreshFailState(viewDefinition, viewState, null, th);
             } finally {
+                finalizeDeferredInvalidation(viewToken, viewState);
                 viewState.unlock();
                 viewState.tryCloseIfDropped();
                 viewState.tryCloseIfClosed();

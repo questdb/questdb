@@ -127,6 +127,7 @@ public class MatViewState implements QuietCloseable {
     private volatile long lastRefreshFinishTimestampUs = Numbers.LONG_NULL;
     private volatile long lastRefreshStartTimestampUs = Numbers.LONG_NULL;
     private volatile boolean pendingInvalidation;
+    private volatile String pendingInvalidationReason;
     // Protected by this.latch.
     private long recordRowCopierMetadataVersion;
     // Protected by this.latch.
@@ -423,6 +424,10 @@ public class MatViewState implements QuietCloseable {
         return lastRefreshStartTimestampUs;
     }
 
+    public String getPendingInvalidationReason() {
+        return pendingInvalidationReason;
+    }
+
     public long getRecordRowCopierMetadataVersion() {
         return recordRowCopierMetadataVersion;
     }
@@ -508,12 +513,18 @@ public class MatViewState implements QuietCloseable {
     }
 
     public void markAsPendingInvalidation() {
+        markAsPendingInvalidation(null);
+    }
+
+    public void markAsPendingInvalidation(String invalidationReason) {
+        pendingInvalidationReason = invalidationReason;
         pendingInvalidation = true;
     }
 
     public void markAsValid() {
         this.invalid = false;
         this.pendingInvalidation = false;
+        this.pendingInvalidationReason = null;
     }
 
     public void rangeRefreshSuccess(
