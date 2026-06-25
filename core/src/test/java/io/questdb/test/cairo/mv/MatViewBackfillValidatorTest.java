@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.mv.MatViewBackfillValidator;
 import io.questdb.cairo.wal.WalTxnType;
 import io.questdb.cairo.wal.WalUtils;
@@ -283,6 +284,29 @@ public class MatViewBackfillValidatorTest extends AbstractCairoTest {
                 assertContains(e.getFlyweightMessage(), "backfill row falls in or past the managed zone");
             }
         });
+    }
+
+    @Test
+    public void testBoundaryFromAnchorNeverExceedsAnchorAndNeverThrows() {
+        final TimestampDriver driver = MicrosTimestampDriver.INSTANCE;
+        final long anchor = driver.parseFloorLiteral("2024-09-10T12:00:00.000000Z");
+
+        // Normal cases: boundary = anchor - LIMIT, strictly below the anchor.
+        Assert.assertEquals(anchor - driver.fromHours(1), MatViewBackfillValidator.boundaryFromAnchor(driver, anchor, 1));
+        Assert.assertTrue("months boundary must be before the anchor",
+                MatViewBackfillValidator.boundaryFromAnchor(driver, anchor, -3) < anchor);
+
+        // Safety contract that replaces the old assert: a REFRESH LIMIT only ever moves the
+        // boundary back from the anchor, so boundaryFromAnchor must NEVER return a value
+        // after the anchor and must NEVER throw -- even for absurd/corrupted limits whose
+        // duration arithmetic overflows. (An AssertionError here would be a non-CairoException
+        // that permanently distresses the mat-view WAL writer on a user commit.) When the
+        // arithmetic overflows it saturates to Long.MIN_VALUE -- the whole view frozen, the
+        // conservative direction.
+        for (int limit : new int[]{Integer.MAX_VALUE, Integer.MIN_VALUE, 1_000_000_000, -1_000_000_000, 100_000, -100_000}) {
+            final long boundary = MatViewBackfillValidator.boundaryFromAnchor(driver, anchor, limit);
+            Assert.assertTrue("boundary must be at-or-before the anchor for limit=" + limit, boundary <= anchor);
+        }
     }
 
     private static void createBaseAndView() throws Exception {

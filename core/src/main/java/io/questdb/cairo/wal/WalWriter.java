@@ -918,12 +918,14 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         // bucket-whole rule on user backfill; everyone else has preCommitValidator
         // == null and pays no cost.
         //
-        // Validator throwing anything other than CairoException is treated as an
-        // internal validator fault: the writer is marked distressed before the
-        // throwable propagates, so the pool expels this tenant and the next
-        // acquisition starts from a clean state. Either way we attempt rollback;
-        // if rollback itself throws, the original cause is preserved via
-        // addSuppressed so the validator's rejection is not lost in diagnostics.
+        // A CairoException is the sanctioned reject channel: we roll the txn back and
+        // rethrow, leaving the writer healthy and reusable. Any other Throwable is treated
+        // as an internal validator fault -- the writer is marked distressed first, so the
+        // pool expels this tenant and the next acquisition starts clean; rollback0() then
+        // short-circuits (it no-ops once distressed) since a distressed writer's segment is
+        // truncated on close anyway. Either way, if rollback itself throws, the original
+        // cause is preserved via addSuppressed so the validator's rejection is not lost in
+        // diagnostics.
         if (preCommitValidator != null) {
             try {
                 preCommitValidator.validate(txnType, dedupMode, txnMinTimestamp, txnMaxTimestamp);

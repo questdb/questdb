@@ -1368,6 +1368,12 @@ public class CairoEngine implements Closeable, WriterSource {
      * "cannot modify materialized view" error), and whenever the escape-hatch is on
      * (the entire feature is meant to be off).
      * <p>
+     * Backfill is allowed even before the first refresh (bootstrap workflow). The
+     * commit-time validator records each accepted backfill's anchor as a
+     * {@link MatViewState#getBackfillFrontier() backfill frontier} high-water mark, which
+     * the refresh job folds into its boundary anchor so a subsequently-retreating
+     * {@code max(base_ts)} cannot pull the boundary back over an already-accepted backfill.
+     * <p>
      * This is only the entry-point gate. Per-row bucket-whole enforcement happens later
      * at write/apply time using the boundary computed at commit time -- the compile-time
      * boundary cannot be trusted because the boundary keeps moving.

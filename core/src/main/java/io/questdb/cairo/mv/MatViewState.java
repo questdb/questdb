@@ -72,6 +72,15 @@ public class MatViewState implements QuietCloseable {
     // single outlier (GC pause, O3 partition rewrite) from poisoning the EMA
     // for the next several refreshes.
     static final int EMA_OUTLIER_MULTIPLIER = 5;
+    // Backfill frontier high-water mark in the base table's timestamp driver units:
+    // the largest boundary anchor (min(max(base_ts), now)) any accepted user backfill was
+    // validated against. Advanced lock-free from WAL commit threads via
+    // advanceBackfillFrontier; read by MatViewRefreshJob, which folds it into the refresh
+    // boundary anchor so a retreating max(base_ts) cannot wipe an already-accepted
+    // backfill. Long.MIN_VALUE until the first backfill is accepted. Not persisted: after a
+    // restart it resets, and protection falls back to max(view_ts) (which covers views that
+    // were refreshed before the restart); see MatViewRefreshJob.findRefreshIntervals.
+    private final AtomicLong backfillFrontier = new AtomicLong(Long.MIN_VALUE);
     // Used to avoid concurrent refresh runs.
     private final AtomicBoolean latch = new AtomicBoolean(false);
     // Protected by this.latch.
@@ -411,6 +420,10 @@ public class MatViewState implements QuietCloseable {
         return lastRefreshFinishTimestampUs;
     }
 
+    public long getBackfillFrontier() {
+        return backfillFrontier.get();
+    }
+
     public long getLastRefreshFrozenBoundaryFloor() {
         return lastRefreshFrozenBoundaryFloor;
     }
@@ -652,6 +665,29 @@ public class MatViewState implements QuietCloseable {
     public void setLastRefreshFrozenBoundaryFloor(long floor) {
         assert latch.get();
         lastRefreshFrozenBoundaryFloor = floor;
+    }
+
+    /**
+     * Advance the backfill frontier high-water mark to {@code anchor} (a monotonic max;
+     * lower values are ignored). Called from the WAL commit path
+     * ({@link MatViewBackfillValidator}) whenever a user backfill txn is accepted, with the
+     * boundary anchor the validator used ({@code min(max(base_ts), now)}). The refresh job
+     * folds this value into its boundary anchor (alongside {@code max(base_ts)} and
+     * {@code max(view_ts)}), so once a backfill has been accepted as frozen, a later
+     * {@code max(base_ts)} retreat (base partition drop / re-ingestion) cannot pull the
+     * boundary back over it -- the case {@code max(view_ts)} alone cannot cover because a
+     * backfilled row is older than the view's materialised frontier.
+     * <p>
+     * Lock-free CAS max: multiple WAL writer threads for the same view may call this
+     * concurrently with each other and with the refresh job's reads.
+     */
+    public void advanceBackfillFrontier(long anchor) {
+        long current;
+        while (anchor > (current = backfillFrontier.get())) {
+            if (backfillFrontier.compareAndSet(current, anchor)) {
+                break;
+            }
+        }
     }
 
     public void setLastRefreshStartTimestampUs(long timestampUs) {

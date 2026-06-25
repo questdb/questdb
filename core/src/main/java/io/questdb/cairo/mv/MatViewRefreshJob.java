@@ -602,20 +602,24 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             final int refreshLimitHoursOrMonths = viewDefinition.getRefreshLimitHoursOrMonths();
             if (refreshLimitHoursOrMonths != 0) {
                 // Anchor the boundary on the high-water mark of the data frontier,
-                // max(max(base_ts), max(view_ts)), then cap by `now`. max(view_ts) is the
-                // newest bucket the view has ever materialised; when the latest base
-                // partition is dropped (or a re-ingestion lowers max(base_ts)), max(base_ts)
-                // retreats but those view buckets stay put (orphans), so max(view_ts)
-                // preserves the frontier and the boundary cannot retreat below it and let a
-                // FULL refresh wipe frozen backfill. The frontier is monotonic because
-                // max(view_ts) never goes backwards: a refresh adds higher buckets as data
-                // grows and leaves older ones in place. (Routine TTL drops the OLDEST base
-                // partitions and lowers min(base_ts), not max, so it never moves the
-                // boundary.) The first refresh of an empty view sees max(view_ts)=MIN_VALUE
-                // and just uses max(base_ts) -- there is no frozen data to preserve yet.
-                // Capping by `now` keeps a stale-ingestion gap or future-dated base data from
-                // pushing the boundary past the present. The wall-clock escape hatch restores
-                // the pre-frozen-zone anchor (wall clock only).
+                // max(max(base_ts), max(view_ts), backfillFrontier), then cap by `now`.
+                // max(view_ts) is the newest bucket the view has ever materialised; when the
+                // latest base partition is dropped (or a re-ingestion lowers max(base_ts)),
+                // max(base_ts) retreats but those view buckets stay put (orphans), so
+                // max(view_ts) preserves the frontier and the boundary cannot retreat below it
+                // and let a FULL refresh wipe frozen backfill. The frontier is monotonic
+                // because max(view_ts) never goes backwards: a refresh adds higher buckets as
+                // data grows and leaves older ones in place. (Routine TTL drops the OLDEST base
+                // partitions and lowers min(base_ts), not max, so it never moves the boundary.)
+                // backfillFrontier extends the same idea to user backfill accepted BEFORE the
+                // first refresh: the backfilled row is older than max(view_ts) so max(view_ts)
+                // cannot protect it, but the validator records the anchor it accepted against
+                // (see MatViewState.advanceBackfillFrontier) and folding it in here keeps the
+                // boundary from retreating over it. The first refresh of an empty view with no
+                // backfill sees all three = MIN_VALUE and just uses max(base_ts) -- there is no
+                // frozen data to preserve yet. Capping by `now` keeps a stale-ingestion gap or
+                // future-dated base data from pushing the boundary past the present. The
+                // wall-clock escape hatch restores the pre-frozen-zone anchor (wall clock only).
                 final long boundaryAnchor;
                 if (configuration.isMatViewRefreshLimitWallClockEnabled()) {
                     boundaryAnchor = now;
@@ -627,6 +631,14 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                             frontier = viewMaxTs;
                         }
                     }
+                    // Fold in the backfill frontier: the largest anchor any accepted user
+                    // backfill was validated against (see MatViewState.advanceBackfillFrontier).
+                    // A backfilled row is older than max(view_ts), so max(view_ts) cannot keep
+                    // the boundary from retreating over it after a max(base_ts) drop; this can.
+                    final long backfillFrontier = viewState.getBackfillFrontier();
+                    if (backfillFrontier != Long.MIN_VALUE && (frontier == Long.MIN_VALUE || backfillFrontier > frontier)) {
+                        frontier = backfillFrontier;
+                    }
                     // Empty base AND empty view both report Long.MIN_VALUE; fall back to now to avoid underflow.
                     boundaryAnchor = frontier == Long.MIN_VALUE ? now : Math.min(frontier, now);
                 }
@@ -635,18 +647,15 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 // so refresh always processes whole buckets even when the boundary lands
                 // mid-bucket. The backfill validator (separate layer) replicates the same
                 // snap so the managed/frozen split is bucket-aligned on both sides.
-                final long rawBoundary;
-                if (refreshLimitHoursOrMonths > 0) { // hours
-                    rawBoundary = boundaryAnchor - driver.fromHours(refreshLimitHoursOrMonths);
-                } else { // months
-                    rawBoundary = driver.addMonths(boundaryAnchor, refreshLimitHoursOrMonths);
-                }
-                // A REFRESH LIMIT only ever moves the boundary back from the anchor; a boundary
-                // after the anchor means the duration arithmetic overflowed (e.g. an absurd
-                // multi-century hour limit on the nanosecond driver). Guard the otherwise silent
-                // corruption -- assertions run with -ea in tests and dev.
-                assert rawBoundary <= boundaryAnchor : "frozen-zone boundary after anchor (REFRESH LIMIT overflow) [limit="
-                        + refreshLimitHoursOrMonths + ", anchor=" + boundaryAnchor + ", boundary=" + rawBoundary + ']';
+                // boundaryFromAnchor saturates to Long.MIN_VALUE on overflow (absurd limit)
+                // instead of using a wrapped boundary -- see MatViewBackfillValidator. The
+                // boundary is already non-retreating: the anchor above folds in max(view_ts)
+                // and backfillFrontier, both monotonic, so round(rawBoundary) only ever
+                // advances as the view materialises or accepts backfill. An EXTEND/SHRINK of
+                // the limit is absorbed by the validator's min(own, published) clamp, so no
+                // extra monotonic floor clamp is needed here -- and adding one would wrongly
+                // pin the boundary across an EXTEND (which must move it down).
+                final long rawBoundary = MatViewBackfillValidator.boundaryFromAnchor(driver, boundaryAnchor, refreshLimitHoursOrMonths);
                 minTs = Math.max(minTs, rawBoundary);
                 // Stage the snapped REPLACE_RANGE.lo on the refresh context. The backfill
                 // validator and materialized_views().backfill_max_ts clamp their accepted

@@ -7369,6 +7369,137 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMatViewBackfillFrontierSurvivesBaseRetreatBeforeFirstRefresh() throws Exception {
+        // Regression for the pre-first-refresh data-loss window. A backfill accepted into a
+        // view that has NOT yet been refreshed cannot be protected by max(view_ts): the
+        // backfilled row IS the view's max, so anchoring on max(base_ts, view_ts) and then
+        // dropping the most-recent base partition would pull the boundary back over the
+        // backfill and a FULL refresh would wipe it. The validator records the anchor it
+        // accepted against (backfillFrontier); folding that into the refresh anchor pins the
+        // boundary at-or-above it, so the backfill survives.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "insert into base_price values" +
+                            "('a', 5.0, '2024-09-10T12:00')" +
+                            ",('a', 9.0, '2024-09-13T12:00')"
+            );
+            drainWalQueue();
+            execute(
+                    "create materialized view price_1h refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+            execute("alter materialized view price_1h set refresh limit 2 days;");
+            drainQueues();
+
+            // Wall clock 09-13T12:30; anchor = min(max(base)=09-13T12:00, now) = 09-13T12:00,
+            // boundary = 09-11T12:00. The view has NEVER been refreshed -- this is the
+            // bootstrap window. Backfill a frozen-zone row below the boundary: accepted, and
+            // the validator records backfillFrontier = 09-13T12:00.
+            currentMicros = parseFloorPartialTimestamp("2024-09-13T12:30:00.000000Z");
+            execute("insert into price_1h values('a', 1.0, '2024-09-10T18:00')");
+            drainQueues();
+
+            // Drop the most-recent base partition: max(base_ts) retreats to 09-10T12:00.
+            // Without the backfill frontier the refresh would anchor on max(base=09-10T12:00,
+            // view_ts=09-10T18:00) = 09-10T18:00, boundary 09-08T18:00, and REPLACE_RANGE
+            // [09-08T18:00,...) would recompute (wipe) the 09-10T18:00 backfill from a base
+            // that no longer has that row. The frontier pins the anchor at 09-13T12:00.
+            execute("alter table base_price drop partition list '2024-09-13'");
+            drainWalQueue();
+
+            execute("refresh materialized view price_1h full;");
+            drainQueues();
+
+            // The backfill at 09-10T18:00 survives (boundary stayed at 09-11T12:00, so the
+            // row remains in the frozen zone the refresh never touches).
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            a\t1.0\t2024-09-10T18:00:00.000000Z
+                            """),
+                    "price_1h order by ts",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testMatViewExtendRefreshLimitOverwritesBackfillInNewlyManagedRange() throws Exception {
+        // backfillFrontier must NOT wrongly pin the boundary across an ALTER that EXTENDS the
+        // limit. Extending grows the managed zone downward; a row backfilled into what used
+        // to be the frozen zone becomes managed under the new limit and is recomputed
+        // (overwritten) on the next refresh, as the PR documents. This guards that the
+        // frontier (and the absence of a monotonic floor clamp) keeps EXTEND working.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "insert into base_price values" +
+                            "('a', 7.0, '2024-09-10T08:00')" +
+                            ",('a', 9.0, '2024-09-10T12:00')"
+            );
+            drainWalQueue();
+            execute(
+                    "create materialized view price_1h refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+            execute("alter materialized view price_1h set refresh limit 1 hour;");
+            drainQueues();
+
+            // Under 1h: anchor = min(12:00, 12:30) = 12:00, boundary = 11:00. Backfill 09:00
+            // (frozen, below 11:00) is accepted; backfillFrontier records 12:00.
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T12:30:00.000000Z");
+            execute("insert into price_1h values('a', 1.0, '2024-09-10T09:00')");
+            drainQueues();
+
+            // Sanity: the backfilled 09:00 row is present before the extend.
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            a\t1.0\t2024-09-10T09:00:00.000000Z
+                            """),
+                    "price_1h order by ts",
+                    "ts",
+                    true,
+                    true
+            );
+
+            // Extend the limit so the managed zone now reaches down past 09:00.
+            execute("alter materialized view price_1h set refresh limit 12 hour;");
+            drainQueues();
+
+            // Refresh under 12h: anchor = 12:00 (base/view/frontier all <= 12:00), boundary
+            // 00:00. 09:00 is now in the managed zone and is recomputed from base, which has
+            // no 09:00 row -> the backfill is overwritten (removed). 08:00 and 12:00 are the
+            // base-derived managed-zone buckets.
+            execute("refresh materialized view price_1h full;");
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            a\t7.0\t2024-09-10T08:00:00.000000Z
+                            a\t9.0\t2024-09-10T12:00:00.000000Z
+                            """),
+                    "price_1h order by ts",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testMatViewBackfillRefreshDoesNotOverwriteAcceptedRow() throws Exception {
         // C1 regression: the validator and refresh must agree on a boundary so
         // the next refresh's REPLACE_RANGE never wipes a row that the

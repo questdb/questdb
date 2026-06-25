@@ -145,8 +145,34 @@ public final class MatViewBackfillValidator implements WalPreCommitValidator {
             // Surface no cutoff so the gate and the metadata stay consistent.
             return Numbers.LONG_NULL;
         }
-        sampler.setOffset(def.getFixedOffset());
         final long ownMaxBaseTs = readBaseMaxTimestamp(engine, def);
+        return computeFrozenBoundaryBucketFloor(engine, def, state, sampler, ownMaxBaseTs);
+    }
+
+    /**
+     * Overload that reuses both a caller-managed sampler AND a caller-supplied
+     * {@code max(base_ts)} snapshot, so the caller can open the base reader once and
+     * memoize the result across many views sharing the same base table (the
+     * {@code materialized_views()} cursor). {@code ownMaxBaseTs} must be
+     * {@link Long#MIN_VALUE} when the base table is empty or unreadable, matching
+     * {@link #readBaseMaxTimestamp}.
+     */
+    public static long computeFrozenBoundaryBucketFloor(
+            CairoEngine engine,
+            MatViewDefinition def,
+            @Nullable MatViewState state,
+            TimestampSampler sampler,
+            long ownMaxBaseTs
+    ) {
+        if (def.getRefreshLimitHoursOrMonths() == 0) {
+            return Numbers.LONG_NULL;
+        }
+        if (engine.getConfiguration().isMatViewRefreshLimitWallClockEnabled()) {
+            // Escape-hatch on: entire frozen-zone feature is meant to be off.
+            // Surface no cutoff so the gate and the metadata stay consistent.
+            return Numbers.LONG_NULL;
+        }
+        sampler.setOffset(def.getFixedOffset());
         return computeBoundaryBucketFloor(engine, def, sampler, state, ownMaxBaseTs);
     }
 
@@ -168,6 +194,25 @@ public final class MatViewBackfillValidator implements WalPreCommitValidator {
             // here is corruption.
             return null;
         }
+    }
+
+    /**
+     * Compute {@code anchor - LIMIT} with saturating arithmetic. A {@code REFRESH LIMIT}
+     * only ever moves the boundary back from the anchor; a result at-or-after the anchor
+     * means the duration arithmetic overflowed (an absurd multi-century limit on the
+     * nanosecond driver), so saturate to {@link Long#MIN_VALUE} -- the whole view is
+     * treated as frozen, the conservative direction -- instead of using a wrapped
+     * boundary. This replaces the previous {@code assert}: an AssertionError thrown from
+     * the validator would have been a non-CairoException and permanently distressed the
+     * WAL writer on a user commit (see {@link io.questdb.cairo.wal.WalPreCommitValidator}),
+     * and in a release build (assertions off) the wrapped boundary slipped through
+     * silently.
+     */
+    public static long boundaryFromAnchor(TimestampDriver driver, long anchor, int limitHoursOrMonths) {
+        final long boundary = limitHoursOrMonths > 0
+                ? anchor - driver.fromHours(limitHoursOrMonths)
+                : driver.addMonths(anchor, limitHoursOrMonths);
+        return boundary > anchor ? Long.MIN_VALUE : boundary;
     }
 
     @Override
@@ -249,6 +294,17 @@ public final class MatViewBackfillValidator implements WalPreCommitValidator {
                     .put("), boundaryBucketFloor=").ts(driver, boundaryBucketFloor)
                     .put("]; backfill bucket end must be at-or-before the boundary bucket floor");
         }
+
+        // Accepted: this backfill sits in the frozen zone of the anchor we used. Record
+        // that anchor as the backfill-frontier high-water mark so a later refresh whose
+        // max(base_ts) has retreated (base partition drop / re-ingestion) still anchors its
+        // boundary at-or-above here and cannot wipe this row. max(view_ts) alone cannot
+        // cover this -- the backfilled row is older than the view's materialised frontier --
+        // which is the pre-first-refresh data-loss window this closes. Uses the same anchor
+        // formula as computeBoundaryBucketFloor (min(max(base_ts), now), or now when the
+        // base reader was unavailable).
+        final long ownAnchor = ownMaxBaseTs == Long.MIN_VALUE ? driver.getTicks() : Math.min(ownMaxBaseTs, driver.getTicks());
+        state.advanceBackfillFrontier(ownAnchor);
     }
 
     /**
@@ -277,14 +333,7 @@ public final class MatViewBackfillValidator implements WalPreCommitValidator {
         final TimestampDriver driver = def.getBaseTableTimestampDriver();
         final long now = driver.getTicks();
         final long ownAnchor = ownMaxBaseTs == Long.MIN_VALUE ? now : Math.min(ownMaxBaseTs, now);
-        final long ownRawBoundary = limitHoursOrMonths > 0
-                ? ownAnchor - driver.fromHours(limitHoursOrMonths)
-                : driver.addMonths(ownAnchor, limitHoursOrMonths);
-        // A REFRESH LIMIT only ever moves the boundary back from the anchor; a boundary
-        // after the anchor means the duration arithmetic overflowed (absurd limit). Guard
-        // the otherwise silent corruption, matching MatViewRefreshJob.findRefreshIntervals.
-        assert ownRawBoundary <= ownAnchor : "frozen-zone boundary after anchor (REFRESH LIMIT overflow) [limit="
-                + limitHoursOrMonths + ", anchor=" + ownAnchor + ", boundary=" + ownRawBoundary + ']';
+        final long ownRawBoundary = boundaryFromAnchor(driver, ownAnchor, limitHoursOrMonths);
         final long ownFloor = sampler.round(ownRawBoundary);
         if (state != null) {
             final long publishedFloor = state.getLastRefreshFrozenBoundaryFloor();

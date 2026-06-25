@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TimestampDriver;
@@ -44,6 +45,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -172,6 +174,12 @@ public class MatViewsFunctionFactory implements FunctionFactory {
             private TimestampDriver cachedSamplerDriver;
             private long cachedSamplerInterval = Long.MIN_VALUE;
             private char cachedSamplerUnit;
+            // max(base_ts) memoized across rows keyed by (base token, base writer txn) so
+            // many views sharing a base table open the base reader once per cursor pass
+            // instead of once per row. Long.MIN_VALUE means empty/unreadable base.
+            private long cachedBaseMaxTs = Long.MIN_VALUE;
+            private TableToken cachedBaseMaxTsToken;
+            private long cachedBaseMaxTsTxn = Long.MIN_VALUE;
             private int viewIndex = 0;
 
             public ViewsListCursor(CairoEngine engine) {
@@ -274,9 +282,33 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                             cachedSamplerInterval = viewDefinition.getSamplingInterval();
                             cachedSamplerUnit = viewDefinition.getSamplingIntervalUnit();
                         }
-                        final long backfillBucketFloor = cachedSampler == null
+                        // Resolve max(base_ts) once per (base token, txn) and reuse it for
+                        // every view on that base table, so the cursor opens at most one base
+                        // reader per distinct base table per pass rather than one per row.
+                        // Only needed when a frozen-zone cutoff could exist; skip the reader
+                        // open (and the cache) entirely when there is no REFRESH LIMIT or the
+                        // escape-hatch is on.
+                        final boolean frozenZonePossible = cachedSampler != null
+                                && refreshLimitHoursOrMonths != 0
+                                && !configuration.isMatViewRefreshLimitWallClockEnabled();
+                        long baseMaxTs = Long.MIN_VALUE;
+                        if (frozenZonePossible && baseTableToken != null) {
+                            if (baseTableToken == cachedBaseMaxTsToken && lastAppliedBaseTxn == cachedBaseMaxTsTxn) {
+                                baseMaxTs = cachedBaseMaxTs;
+                            } else {
+                                try (TableReader baseReader = engine.getReader(baseTableToken)) {
+                                    baseMaxTs = baseReader.getMaxTimestamp();
+                                } catch (CairoException | TableReferenceOutOfDateException e) {
+                                    baseMaxTs = Long.MIN_VALUE;
+                                }
+                                cachedBaseMaxTsToken = baseTableToken;
+                                cachedBaseMaxTsTxn = lastAppliedBaseTxn;
+                                cachedBaseMaxTs = baseMaxTs;
+                            }
+                        }
+                        final long backfillBucketFloor = !frozenZonePossible
                                 ? Numbers.LONG_NULL
-                                : MatViewBackfillValidator.computeFrozenBoundaryBucketFloor(engine, viewDefinition, state, cachedSampler);
+                                : MatViewBackfillValidator.computeFrozenBoundaryBucketFloor(engine, viewDefinition, state, cachedSampler, baseMaxTs);
                         final long backfillMaxTs = backfillBucketFloor == Numbers.LONG_NULL
                                 ? Numbers.LONG_NULL
                                 : viewDefinition.getBaseTableTimestampDriver().toMicros(backfillBucketFloor);
