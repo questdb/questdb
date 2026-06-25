@@ -300,6 +300,13 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                                     baseMaxTs = baseReader.getMaxTimestamp();
                                 } catch (CairoException | TableReferenceOutOfDateException e) {
                                     baseMaxTs = Long.MIN_VALUE;
+                                    // Mirror the validator's advisory so operators polling backfill_max_ts
+                                    // can spot a persistent base-reader fallback (the column then reflects the
+                                    // wall-clock anchor rather than min(max(base_ts), now)).
+                                    LOG.advisory().$("mat view backfill_max_ts falling back to wall clock; base reader unavailable [view=").$(viewToken)
+                                            .$(", base=").$(baseTableToken)
+                                            .$(", reason=").$safe(e.getMessage())
+                                            .I$();
                                 }
                                 cachedBaseMaxTsToken = baseTableToken;
                                 cachedBaseMaxTsTxn = lastAppliedBaseTxn;
@@ -358,6 +365,13 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                 viewTokens.clear();
                 engine.getMatViewGraph().getViews(viewTokens);
                 viewIndex = 0;
+                // Defensively drop the per-(base token, base txn) max(base_ts) memo on restart.
+                // The cache key already captures freshness (the base writer txn is re-read live
+                // each pass), so this is not required for correctness today, but resetting here
+                // removes the dependency on that reasoning if the key ever changes.
+                cachedBaseMaxTsToken = null;
+                cachedBaseMaxTsTxn = Long.MIN_VALUE;
+                cachedBaseMaxTs = Long.MIN_VALUE;
             }
 
             private static class MatViewsRecord implements Record {

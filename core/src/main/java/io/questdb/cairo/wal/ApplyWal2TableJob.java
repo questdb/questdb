@@ -36,9 +36,11 @@ import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.mv.MatViewRefreshTask;
 import io.questdb.cairo.mv.MatViewState;
+import io.questdb.cairo.mv.MatViewStateReader;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.TableMetadataChange;
@@ -60,6 +62,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Transient;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
@@ -83,6 +86,11 @@ import static io.questdb.tasks.TableWriterTask.CMD_UPDATE_TABLE;
 
 public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificationTask> implements Closeable {
     private static final Log LOG = LogFactory.getLog(ApplyWal2TableJob.class);
+    // Reader + reusable state reader for the backfill-frontier read-modify-write of the _mv.s
+    // state file (preserves the existing refresh state + invalidation reason while bumping the
+    // persisted frozen-zone frontier). Lazily allocated on first backfill persist.
+    private final BlockFileReader matViewStateBlockReader;
+    private final MatViewStateReader matViewStateReader = new MatViewStateReader();
     private final BlockFileWriter blockFileWriter;
     private final CairoConfiguration config;
     private final CairoEngine engine;
@@ -114,6 +122,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         tableTimeQuotaMicros = configuration.getWalApplyTableTimeQuota() >= 0 ? configuration.getWalApplyTableTimeQuota() * 1000L : Micros.DAY_MICROS;
         config = engine.getConfiguration();
         blockFileWriter = new BlockFileWriter(config.getFilesFacade(), config.getCommitMode());
+        matViewStateBlockReader = new BlockFileReader(config);
     }
 
     @Override
@@ -121,6 +130,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         Misc.free(operationExecutor);
         Misc.free(walEventReader);
         Misc.free(blockFileWriter);
+        Misc.free(matViewStateBlockReader);
     }
 
     private static long calculateSkipTransactionCount(long initialSeqTxn, WalTxnDetails walTxnDetails) {
@@ -700,13 +710,15 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 engine.getRecentWriteTracker().recordWalProcessed(writer.getTableToken(), lastCommittedSeqTxn, lastCommittedRows, writer.getDedupRowsRemovedSinceLastCommit());
 
                 if (writer.getTableToken().isMatView()) {
+                    final TableToken token = writer.getTableToken();
+                    boolean refreshStateWritten = false;
                     for (long s = lastCommittedSeqTxn; s >= seqTxn; s--) {
                         byte txnType = txnDetails.getWalTxnType(s);
                         if (txnType == MAT_VIEW_DATA) {
                             try {
                                 final Path path = Path.PATH2.get();
-                                final TableToken token = writer.getTableToken();
                                 path.of(engine.getConfiguration().getDbRoot()).concat(token);
+                                final long backfillFrontier = matViewBackfillFrontier(token);
                                 updateMatViewRefreshState(
                                         path,
                                         txnDetails.getMatViewRefreshTxn(s),
@@ -716,8 +728,15 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                         txnDetails.getMatViewPeriodHi(s),
                                         // Mat view data commit means that cached intervals were applied and should be evicted.
                                         null,
-                                        -1
+                                        -1,
+                                        backfillFrontier,
+                                        matViewFrozenBoundaryFloor(token)
                                 );
+                                final MatViewState state = engine.getMatViewStateStore().getViewState(token);
+                                if (state != null) {
+                                    state.setPersistedBackfillFrontier(backfillFrontier);
+                                }
+                                refreshStateWritten = true;
                             } catch (CairoException e) {
                                 LOG.error().$("could not update state for materialized view [view=").$(writer.getTableToken())
                                         .$(", msg=").$safe(e.getFlyweightMessage())
@@ -725,6 +744,19 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                         .I$();
                             }
                             break; // we've found the latest mat view state, not need to check earlier transactions
+                        }
+                    }
+                    if (!refreshStateWritten) {
+                        // No refresh state landed in this batch. If a user backfill (plain DATA txn)
+                        // advanced the frozen-zone frontier, persist it so it survives a restart --
+                        // the only place a pre-first-refresh backfill becomes durable.
+                        try {
+                            persistMatViewBackfillFrontier(token);
+                        } catch (CairoException e) {
+                            LOG.error().$("could not persist backfill frontier for materialized view [view=").$(token)
+                                    .$(", msg=").$safe(e.getFlyweightMessage())
+                                    .$(", errno=").$(e.getErrno())
+                                    .I$();
                         }
                     }
                 }
@@ -770,7 +802,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             info.getInvalidationReason(),
                             info.getLastPeriodHi(),
                             info.getRefreshIntervals(),
-                            info.getRefreshIntervalsBaseTxn()
+                            info.getRefreshIntervalsBaseTxn(),
+                            matViewBackfillFrontier(token),
+                            matViewFrozenBoundaryFloor(token)
                     );
                 } catch (CairoException e) {
                     LOG.error().$("could not update state for materialized view [view=").$(writer.getTableToken())
@@ -915,7 +949,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             @Nullable CharSequence invalidationReason,
             long lastPeriodHi,
             @Nullable LongList refreshIntervals,
-            long refreshIntervalsBaseTxn
+            long refreshIntervalsBaseTxn,
+            long backfillFrontier,
+            long frozenBoundaryFloor
     ) {
         try (BlockFileWriter stateWriter = blockFileWriter) {
             stateWriter.of(tablePath.concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
@@ -927,9 +963,103 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     lastPeriodHi,
                     refreshIntervals,
                     refreshIntervalsBaseTxn,
+                    backfillFrontier,
+                    frozenBoundaryFloor,
                     stateWriter
             );
         }
+    }
+
+    /**
+     * Returns the live frozen-zone frontier for {@code viewToken}, or {@link Long#MIN_VALUE} when the
+     * view's in-memory state is unavailable. The validator advances this at backfill-commit time and
+     * the refresh job publishes the boundary floor; persisting them with every state-file write keeps
+     * an accepted backfill durable across a restart.
+     */
+    private long matViewBackfillFrontier(TableToken viewToken) {
+        final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
+        return state != null ? state.getBackfillFrontier() : Long.MIN_VALUE;
+    }
+
+    private long matViewFrozenBoundaryFloor(TableToken viewToken) {
+        final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
+        return state != null ? state.getLastRefreshFrozenBoundaryFloor() : Numbers.LONG_NULL;
+    }
+
+    /**
+     * Persists the live backfill frontier (and boundary floor) of a mat view to its {@code _mv.s}
+     * state file when a user backfill has advanced it since the last persist. This is the only place
+     * a pre-first-refresh backfill becomes durable: a plain user {@code DATA} txn carries no mat-view
+     * state, so neither the WAL event nor the refresh-driven state writes capture the frontier.
+     * <p>
+     * Reads the existing state file first (preserving the refresh state + invalidation reason) and
+     * rewrites it with the bumped frontier; when no state file exists yet (never refreshed, never
+     * invalidated -> not invalid) it writes a default record carrying just the frozen-zone fields.
+     * No-op when the frontier has not advanced, so refresh-only workloads pay nothing.
+     */
+    private void persistMatViewBackfillFrontier(TableToken viewToken) {
+        final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
+        if (state == null) {
+            return;
+        }
+        final long frontier = state.getBackfillFrontier();
+        if (frontier <= state.getPersistedBackfillFrontier()) {
+            return; // nothing new to persist
+        }
+        final long floor = state.getLastRefreshFrozenBoundaryFloor();
+        final Path path = Path.PATH2.get();
+        path.of(engine.getConfiguration().getDbRoot()).concat(viewToken);
+        final int rootLen = path.size();
+        final LPSZ statePath = path.concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$();
+        boolean haveExisting = false;
+        if (config.getFilesFacade().exists(statePath)) {
+            try {
+                matViewStateBlockReader.of(statePath);
+                matViewStateReader.of(matViewStateBlockReader, viewToken);
+                haveExisting = true;
+            } catch (Throwable th) {
+                LOG.error().$("could not read materialized view state for backfill-frontier persist [view=").$(viewToken)
+                        .$(", msg=").$safe(th.getMessage())
+                        .I$();
+                haveExisting = false;
+            } finally {
+                matViewStateBlockReader.close();
+            }
+        }
+        path.trimTo(rootLen);
+        try (BlockFileWriter stateWriter = blockFileWriter) {
+            stateWriter.of(path.concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
+            if (haveExisting) {
+                MatViewState.append(
+                        matViewStateReader.getLastRefreshTimestampUs(),
+                        matViewStateReader.getLastRefreshBaseTxn(),
+                        matViewStateReader.isInvalid(),
+                        matViewStateReader.getInvalidationReason(),
+                        matViewStateReader.getLastPeriodHi(),
+                        matViewStateReader.getRefreshIntervals(),
+                        matViewStateReader.getRefreshIntervalsBaseTxn(),
+                        frontier,
+                        floor,
+                        stateWriter
+                );
+            } else {
+                // No prior state file: the view was never refreshed and never invalidated (invalidation
+                // always writes the state file), so default refresh fields + null reason are correct.
+                MatViewState.append(
+                        Numbers.LONG_NULL,
+                        -1,
+                        false,
+                        null,
+                        Numbers.LONG_NULL,
+                        null,
+                        -1,
+                        frontier,
+                        floor,
+                        stateWriter
+                );
+            }
+        }
+        state.setPersistedBackfillFrontier(frontier);
     }
 
     /**

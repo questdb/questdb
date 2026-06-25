@@ -60,6 +60,10 @@ public class MatViewState implements QuietCloseable {
     // EMA-derived threshold takes over.
     public static final long COLD_START_GAP_THRESHOLD_MICROS = 2_000_000L;
     public static final String MAT_VIEW_STATE_FILE_NAME = "_mv.s";
+    // Frozen-zone runtime state: backfill frontier high-water mark + last published
+    // boundary floor. Written after the intervals block; absent in state files
+    // produced before the frozen-zone feature, so readers must default it.
+    public static final int MAT_VIEW_STATE_FORMAT_EXTRA_FROZEN_MSG_TYPE = 4;
     public static final int MAT_VIEW_STATE_FORMAT_EXTRA_INTERVALS_MSG_TYPE = 3;
     public static final int MAT_VIEW_STATE_FORMAT_EXTRA_PERIOD_MSG_TYPE = 2;
     public static final int MAT_VIEW_STATE_FORMAT_EXTRA_TS_MSG_TYPE = 1;
@@ -77,9 +81,13 @@ public class MatViewState implements QuietCloseable {
     // validated against. Advanced lock-free from WAL commit threads via
     // advanceBackfillFrontier; read by MatViewRefreshJob, which folds it into the refresh
     // boundary anchor so a retreating max(base_ts) cannot wipe an already-accepted
-    // backfill. Long.MIN_VALUE until the first backfill is accepted. Not persisted: after a
-    // restart it resets, and protection falls back to max(view_ts) (which covers views that
-    // were refreshed before the restart); see MatViewRefreshJob.findRefreshIntervals.
+    // backfill. Long.MIN_VALUE until the first backfill is accepted. Persisted to the
+    // _mv.s state file (block type MAT_VIEW_STATE_FORMAT_EXTRA_FROZEN_MSG_TYPE) by the
+    // apply path when a backfill advances it, and restored on restart via initFromReader.
+    // Persistence is required because max(view_ts) cannot protect a pre-first-refresh
+    // backfill (the backfilled row IS the view's max), so without it a restart in the
+    // bootstrap window would let a retreating max(base_ts) pull the boundary back over an
+    // already-accepted backfill; see MatViewRefreshJob.findRefreshIntervals.
     private final AtomicLong backfillFrontier = new AtomicLong(Long.MIN_VALUE);
     // Used to avoid concurrent refresh runs.
     private final AtomicBoolean latch = new AtomicBoolean(false);
@@ -142,6 +150,11 @@ public class MatViewState implements QuietCloseable {
     private volatile long lastRefreshFrozenBoundaryFloor = Numbers.LONG_NULL;
     private volatile long lastRefreshStartTimestampUs = Numbers.LONG_NULL;
     private volatile boolean pendingInvalidation;
+    // Highest backfillFrontier value already written to the _mv.s state file. Lets the
+    // backfill apply path skip a redundant state-file rewrite when no new backfill has
+    // advanced the frontier since the last persist. Mutated only from the (single-threaded
+    // per table) WAL apply path and seeded from disk in initFromReader.
+    private long persistedBackfillFrontier = Long.MIN_VALUE;
     // Protected by this.latch.
     private long recordRowCopierMetadataVersion;
     // Protected by this.latch.
@@ -167,6 +180,8 @@ public class MatViewState implements QuietCloseable {
             long lastPeriodHi,
             @Nullable LongList refreshIntervals,
             long refreshIntervalsBaseTxn,
+            long backfillFrontier,
+            long frozenBoundaryFloor,
             @NotNull BlockFileWriter writer
     ) {
         AppendableBlock block = writer.append();
@@ -181,6 +196,9 @@ public class MatViewState implements QuietCloseable {
         block = writer.append();
         appendRefreshIntervals(refreshIntervals, refreshIntervalsBaseTxn, block);
         block.commit(MAT_VIEW_STATE_FORMAT_EXTRA_INTERVALS_MSG_TYPE);
+        block = writer.append();
+        appendFrozenZoneState(backfillFrontier, frozenBoundaryFloor, block);
+        block.commit(MAT_VIEW_STATE_FORMAT_EXTRA_FROZEN_MSG_TYPE);
         writer.commit();
     }
 
@@ -195,6 +213,8 @@ public class MatViewState implements QuietCloseable {
                     refreshState.getLastPeriodHi(),
                     refreshState.getRefreshIntervals(),
                     refreshState.getRefreshIntervalsBaseTxn(),
+                    refreshState.getBackfillFrontier(),
+                    refreshState.getFrozenBoundaryFloor(),
                     writer
             );
         } else {
@@ -206,9 +226,17 @@ public class MatViewState implements QuietCloseable {
                     Numbers.LONG_NULL,
                     null,
                     -1,
+                    Long.MIN_VALUE,
+                    Numbers.LONG_NULL,
                     writer
             );
         }
+    }
+
+    // kept public for tests
+    public static void appendFrozenZoneState(long backfillFrontier, long frozenBoundaryFloor, @NotNull AppendableBlock block) {
+        block.putLong(backfillFrontier);
+        block.putLong(frozenBoundaryFloor);
     }
 
     // kept public for tests
@@ -428,6 +456,15 @@ public class MatViewState implements QuietCloseable {
         return lastRefreshFrozenBoundaryFloor;
     }
 
+    /**
+     * The highest {@link #getBackfillFrontier() backfill frontier} value already written to the
+     * {@code _mv.s} state file. The apply path persists the frontier only when it has advanced
+     * past this, so a stream of refresh-only applies pays no extra state-file write. Apply thread only.
+     */
+    public long getPersistedBackfillFrontier() {
+        return persistedBackfillFrontier;
+    }
+
     public long getLastRefreshStartTimestampUs() {
         return lastRefreshStartTimestampUs;
     }
@@ -482,6 +519,12 @@ public class MatViewState implements QuietCloseable {
         this.refreshIntervalsBaseTxn = reader.getRefreshIntervalsBaseTxn();
         refreshIntervals.clear();
         refreshIntervals.addAll(reader.getRefreshIntervals());
+        // Restore the frozen-zone runtime state. Defaults (MIN_VALUE / LONG_NULL) when the
+        // state file predates the frozen-zone feature or no backfill/refresh has persisted it.
+        final long frontier = reader.getBackfillFrontier();
+        this.backfillFrontier.set(frontier);
+        this.persistedBackfillFrontier = frontier;
+        this.lastRefreshFrozenBoundaryFloor = reader.getFrozenBoundaryFloor();
     }
 
     public boolean isDropped() {
@@ -665,6 +708,15 @@ public class MatViewState implements QuietCloseable {
     public void setLastRefreshFrozenBoundaryFloor(long floor) {
         assert latch.get();
         lastRefreshFrozenBoundaryFloor = floor;
+    }
+
+    /**
+     * Records that the {@code _mv.s} state file now holds {@code frontier} as the persisted
+     * backfill frontier. Called by the WAL apply path right after it (re)writes the state file.
+     * Apply thread only.
+     */
+    public void setPersistedBackfillFrontier(long frontier) {
+        persistedBackfillFrontier = frontier;
     }
 
     /**

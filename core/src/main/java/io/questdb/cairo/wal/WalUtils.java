@@ -283,27 +283,40 @@ public class WalUtils {
             // Since we are scanning the transaction log of a materialized view table,
             // we assume the last transaction is the one we are looking for (for the most cases).
             // As a result, fd and memory usage is not optimized.
+            boolean refreshStateLoaded = false;
             try (WalEventReader eventReader = walEventReader) {
                 WalEventCursor walEventCursor = eventReader.of(tablePath, segmentTxn);
                 if (walEventCursor.getType() == MAT_VIEW_DATA) {
                     matViewStateReader.of(walEventCursor.getMatViewDataInfo());
-                    return true;
-                }
-                if (walEventCursor.getType() == MAT_VIEW_INVALIDATE) {
+                    refreshStateLoaded = true;
+                } else if (walEventCursor.getType() == MAT_VIEW_INVALIDATE) {
                     matViewStateReader.of(walEventCursor.getMatViewInvalidationInfo());
-                    return true;
+                    refreshStateLoaded = true;
                 }
+                // else: the last txn is a plain user backfill (DATA) or another type that carries
+                // no mat-view state; fall back to the _mv.s state file below.
             } catch (Throwable th) {
-                // walEventReader may not be able to find/open the WAL-e files
-                try (BlockFileReader blockReader = blockFileReader) {
-                    tablePath.trimTo(tablePathLen).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME);
-                    blockReader.of(tablePath.$());
-                    matViewStateReader.of(blockReader, tableToken);
-                    return true;
-                } catch (Throwable ignored) {
-                }
-                return false;
+                // walEventReader may not be able to find/open the WAL-e files; fall back to file.
             }
+            // Consult the _mv.s state file. It is the authoritative source for the frozen-zone
+            // runtime fields (backfill frontier / boundary floor), which no WAL event carries, and
+            // the only source of any state when the last txn was a plain user backfill.
+            try (BlockFileReader blockReader = blockFileReader) {
+                tablePath.trimTo(tablePathLen).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME);
+                blockReader.of(tablePath.$());
+                if (refreshStateLoaded) {
+                    // Keep the refresh state from the WAL event; overlay only the frozen-zone fields.
+                    matViewStateReader.ofFrozenZoneOverlay(blockReader);
+                } else {
+                    // No usable WAL event: load the complete state (incl. frozen-zone fields) from file.
+                    matViewStateReader.of(blockReader, tableToken);
+                    refreshStateLoaded = true;
+                }
+            } catch (Throwable ignored) {
+                // _mv.s may not exist yet (never refreshed/backfilled). If the WAL event already
+                // provided refresh state, keep it with default frozen-zone fields.
+            }
+            return refreshStateLoaded;
         }
         return false;
     }
