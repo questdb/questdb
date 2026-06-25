@@ -38,13 +38,13 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
-import io.questdb.std.ThreadLocal;
+import io.questdb.std.CarrierLocal;
 
 
 public class GenerateSeriesTimestampStringRecordCursorFactory extends AbstractGenerateSeriesRecordCursorFactory {
     private static final RecordMetadata METADATA_MICROS;
     private static final RecordMetadata METADATA_NANOS;
-    private static final ThreadLocal<GenerateSeriesTimestampStringRecordCursor.GenerateSeriesPeriod> tlSampleByUnit = new ThreadLocal<>(GenerateSeriesTimestampStringRecordCursor.GenerateSeriesPeriod::new);
+    private static final CarrierLocal<GenerateSeriesTimestampStringRecordCursor.GenerateSeriesPeriod> tlSampleByUnit = new CarrierLocal<>(GenerateSeriesTimestampStringRecordCursor.GenerateSeriesPeriod::new);
     private final TimestampDriver timestampDriver;
     private GenerateSeriesTimestampStringRecordCursor cursor;
 
@@ -141,6 +141,7 @@ public class GenerateSeriesTimestampStringRecordCursorFactory extends AbstractGe
 
         @Override
         public boolean hasNext() {
+            circuitBreaker.statefulThrowExceptionIfTripped();
             recordA.of(adder.add(recordA.curr, stride));
             if (stride >= 0) {
                 return recordA.curr <= end;

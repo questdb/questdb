@@ -51,6 +51,7 @@ public class GroupByCharSink implements Utf16Sink, CharSequence, Mutable {
     private static final int MIN_CAPACITY = 8;
     private GroupByAllocator allocator;
     private long ptr;
+    private int[] ryuE10;
 
     /**
      * Returns capacity in chars.
@@ -128,6 +129,14 @@ public class GroupByCharSink implements Utf16Sink, CharSequence, Mutable {
     @Override
     public GroupByCharSink putNonAscii(long lo, long hi) {
         throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public int[] ryuScratch() {
+        if (ryuE10 == null) {
+            ryuE10 = new int[1];
+        }
+        return ryuE10;
     }
 
     public void setAllocator(GroupByAllocator allocator) {

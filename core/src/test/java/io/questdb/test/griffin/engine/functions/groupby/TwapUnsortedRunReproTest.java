@@ -36,6 +36,7 @@ import io.questdb.griffin.engine.functions.groupby.TwapGroupByFunction;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -199,14 +200,19 @@ public class TwapUnsortedRunReproTest extends AbstractCairoTest {
                     for (int t = 0; t < NUM_THREADS; t++) {
                         final int threadId = t;
                         new Thread(() -> {
-                            try {
+                            // SqlExecutionContext is not thread-safe (it carries a single
+                            // reader-pool supervisor slot, among other per-query state), so
+                            // every thread compiles and runs against its own context.
+                            try (SqlExecutionContext threadCtx =
+                                         TestUtils.createSqlExecutionCtx(engine, sqlExecutionContext.getSharedQueryWorkerCount())) {
                                 TestUtils.await(barrier);
                                 for (int iter = 0; iter < NUM_ITERATIONS; iter++) {
-                                    mismatches.addAndGet(countKeyedTwapMismatches(engine, sqlExecutionContext, keyCount));
+                                    mismatches.addAndGet(countKeyedTwapMismatches(engine, threadCtx, keyCount));
                                 }
                             } catch (Throwable th) {
                                 errors.put(threadId, th);
                             } finally {
+                                Path.clearThreadLocals();
                                 latch.countDown();
                             }
                         }, "twap-keyed-" + threadId).start();
@@ -393,10 +399,14 @@ public class TwapUnsortedRunReproTest extends AbstractCairoTest {
                         final int threadId = t;
                         new Thread(() -> {
                             int localMismatches = 0;
-                            try {
+                            // SqlExecutionContext is not thread-safe (it carries a single
+                            // reader-pool supervisor slot, among other per-query state), so
+                            // every thread compiles and runs against its own context.
+                            try (SqlExecutionContext threadCtx =
+                                         TestUtils.createSqlExecutionCtx(engine, sqlExecutionContext.getSharedQueryWorkerCount())) {
                                 TestUtils.await(barrier);
                                 for (int iter = 0; iter < NUM_ITERATIONS; iter++) {
-                                    double observed = runTwap(engine, sqlExecutionContext);
+                                    double observed = runTwap(engine, threadCtx);
                                     if (observed != EXPECTED_TWAP) {
                                         localMismatches++;
                                         sampleWrongValue.compareAndSet(null, observed);
@@ -409,6 +419,7 @@ public class TwapUnsortedRunReproTest extends AbstractCairoTest {
                                     threadsThatSawMismatches.incrementAndGet();
                                     mismatches.addAndGet(localMismatches);
                                 }
+                                Path.clearThreadLocals();
                                 latch.countDown();
                             }
                         }, "twap-repro-" + threadId).start();
@@ -494,10 +505,14 @@ public class TwapUnsortedRunReproTest extends AbstractCairoTest {
                     for (int t = 0; t < NUM_THREADS; t++) {
                         final int threadId = t;
                         new Thread(() -> {
-                            try {
+                            // SqlExecutionContext is not thread-safe (it carries a single
+                            // reader-pool supervisor slot, among other per-query state), so
+                            // every thread compiles and runs against its own context.
+                            try (SqlExecutionContext threadCtx =
+                                         TestUtils.createSqlExecutionCtx(engine, sqlExecutionContext.getSharedQueryWorkerCount())) {
                                 TestUtils.await(barrier);
                                 for (int iter = 0; iter < NUM_ITERATIONS; iter++) {
-                                    double observed = runTwap(engine, sqlExecutionContext);
+                                    double observed = runTwap(engine, threadCtx);
                                     if (observed != expected) {
                                         mismatches.incrementAndGet();
                                         sampleWrongValue.compareAndSet(null, observed);
@@ -506,6 +521,7 @@ public class TwapUnsortedRunReproTest extends AbstractCairoTest {
                             } catch (Throwable th) {
                                 errors.put(threadId, th);
                             } finally {
+                                Path.clearThreadLocals();
                                 latch.countDown();
                             }
                         }, "twap-dup-ts-" + threadId).start();

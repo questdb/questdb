@@ -28,7 +28,9 @@ import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.QuietCloseable;
+import org.jetbrains.annotations.Nullable;
 
 interface WindowSortBuffer extends QuietCloseable, Reopenable {
     void finishPut(SqlExecutionCircuitBreaker circuitBreaker);
@@ -40,6 +42,9 @@ interface WindowSortBuffer extends QuietCloseable, Reopenable {
     void of(RecordCursor cursor, long expectedRows);
 
     void put(Record record, long rowId);
+
+    // Binds the per-query tracker before the buffer's first allocation.
+    void setMemoryTracker(@Nullable MemoryTracker tracker);
 
     void toTop();
 }

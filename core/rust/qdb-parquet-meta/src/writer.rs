@@ -301,7 +301,10 @@ fn build_bloom_filter_footer_section(
 ///
 /// Unchanged row groups keep their original offsets in the new footer.
 pub struct ParquetMetaUpdateWriter<'a> {
-    /// Slice covering exactly `existing_parquet_meta_file_size` bytes.
+    /// The committed `_pm` plus any bytes up to the append base. Spans at least
+    /// `existing_parquet_meta_file_size` (the parse anchor) and, when an orphaned
+    /// dead footer precedes the append base, the dead tail too -- the cumulative
+    /// CRC in `finish_appending_at` folds those bytes in.
     existing: &'a [u8],
     existing_parquet_meta_file_size: u64,
     existing_footer_offset: u64,
@@ -331,16 +334,19 @@ enum RowGroupEntry {
 
 impl<'a> ParquetMetaUpdateWriter<'a> {
     /// Creates an update writer from the existing file slice and the committed
-    /// `_pm` file size from the header. The caller must pass a slice that
-    /// covers at least `existing_parquet_meta_file_size` bytes; trailing bytes beyond
-    /// that (e.g. from an in-progress append or filesystem padding) are
-    /// ignored.
+    /// `_pm` file size (the parse anchor). The slice must cover at least
+    /// `existing_parquet_meta_file_size` bytes; it may extend further to an
+    /// append base (see [`Self::finish_appending_at`]), which folds the bytes in
+    /// between into the cumulative CRC. Bytes beyond the append base are unused.
     pub fn new(
         existing: &'a [u8],
         existing_parquet_meta_file_size: u64,
     ) -> ParquetMetaResult<Self> {
+        // `existing` may span past the parse anchor (a dead-footer tail; see the
+        // `existing` field). Parse against the committed parse anchor -- which
+        // bounds from_file_size's own view -- and keep the full slice so
+        // finish_appending_at can fold the tail into the cumulative CRC.
         let reader = ParquetMetaReader::from_file_size(existing, existing_parquet_meta_file_size)?;
-        let existing = reader.data();
         let existing_footer_offset = reader.footer_offset();
         let existing_footer_length =
             Self::read_trailer_footer_length(existing, existing_parquet_meta_file_size)?;
@@ -483,24 +489,45 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
         ))
     }
 
-    /// Finishes the update.
-    ///
-    /// Returns `(append_bytes, new_parquet_meta_file_size)`:
-    /// - `append_bytes`: bytes to append to the file after the old footer/trailer
-    /// - `new_parquet_meta_file_size`: the total committed file size after the append
-    ///   (`existing_parquet_meta_file_size + append_bytes.len() as u64`). The caller
-    ///   must patch this value into the header at `HEADER_PARQUET_META_FILE_SIZE_OFF`
-    ///   as the last write — it is the MVCC commit signal for the new
-    ///   snapshot.
-    ///
-    /// The CRC32 for the new snapshot is already written at the correct
-    /// position inside `append_bytes`; it covers `[HEADER_CRC_AREA_OFF,
-    /// new_crc_field_offset)` of the entire file (existing + appended).
+    /// Finishes the update with `append_base == parse anchor` -- the common case,
+    /// no dead-footer tail before the new snapshot. See
+    /// [`Self::finish_appending_at`].
     #[must_use = "returns the append bytes and new parquet_meta_file_size"]
     pub fn finish(&self) -> ParquetMetaResult<(Vec<u8>, u64)> {
-        // The new data starts right after the old footer's trailer — which
-        // is exactly the current committed file size.
-        let append_start = self.existing_parquet_meta_file_size as usize;
+        self.finish_appending_at(self.existing_parquet_meta_file_size)
+    }
+
+    /// Finishes the update, writing the new snapshot starting at `append_base`.
+    ///
+    /// `append_base` is where the appended bytes land. It equals the parse anchor
+    /// (`existing_parquet_meta_file_size`) except in the crash window: a prior
+    /// update published a footer at `[parse anchor, append_base)` by patching the
+    /// header to `append_base`, then crashed before its `_txn` commit. New blocks
+    /// and the new footer land at/after `append_base`, so the writer never
+    /// overwrites that dead footer or any byte a stale reader mapped; the new
+    /// footer's `prev` still points at the parse anchor, orphaning the dead footer
+    /// out of the MVCC chain.
+    ///
+    /// Returns `(append_bytes, new_parquet_meta_file_size)`. The cumulative CRC
+    /// inside `append_bytes` covers the whole file through the new CRC field --
+    /// including any dead tail in `[parse anchor, append_base)`, since a reader
+    /// resolving the new footer re-hashes every physical byte up to it. The
+    /// caller publishes the snapshot by patching `new_parquet_meta_file_size` into
+    /// the header (offset 0) as the last write.
+    ///
+    /// The caller guarantees `parse anchor <= append_base <= existing.len()`;
+    /// `update_parquet_metadata` validates the header-derived `append_base`.
+    #[must_use = "returns the append bytes and new parquet_meta_file_size"]
+    pub fn finish_appending_at(&self, append_base: u64) -> ParquetMetaResult<(Vec<u8>, u64)> {
+        let append_start = append_base as usize;
+        debug_assert!(
+            append_base >= self.existing_parquet_meta_file_size,
+            "append base precedes parse anchor"
+        );
+        debug_assert!(
+            append_start <= self.existing.len(),
+            "retained slice shorter than append base"
+        );
 
         let mut append_buf = Vec::new();
 
@@ -618,11 +645,13 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
         fb.set_bloom_filter_section(bloom_section);
         fb.write_to(&mut append_buf);
 
-        // Resume CRC32 from the previous checksum. The CRC covers
-        // [HEADER_CRC_AREA_OFF, crc_field) of the entire (existing + appended) file.
-        // The old CRC covers [HEADER_CRC_AREA_OFF, old_crc_field) of the existing file.
-        // We continue from there, hashing the old CRC field + old trailer + new
-        // append data up to the new CRC field.
+        // Resume CRC32 from the committed footer's checksum. The old CRC covers
+        // [HEADER_CRC_AREA_OFF, old_crc_field) of the committed bytes; continue
+        // over the committed CRC field + trailer, then any dead-footer tail in
+        // [parse anchor, append_base), then the new append bytes up to the new
+        // CRC field -- the full physical range a reader re-hashes when resolving
+        // the new footer. from_file_size validated the committed footer, so its
+        // offset/length are in bounds.
         let footer_usize = self.existing_footer_offset as usize;
         let old_crc_field_offset =
             footer_usize + self.existing_footer_length as usize - FOOTER_CHECKSUM_SIZE;
@@ -634,9 +663,9 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
         let checksum_field_abs =
             append_start + append_buf.len() - FOOTER_TRAILER_SIZE - FOOTER_CHECKSUM_SIZE;
         let mut hasher = crc32fast::Hasher::new_with_initial(old_crc);
-        // Hash the old CRC field + old trailer (8 bytes not covered by old CRC).
+        // Committed CRC field + trailer + any dead-footer tail: [old_crc_field, append_base).
         hasher.update(&self.existing[old_crc_field_offset..append_start]);
-        // Hash new bytes up to (but not including) the new checksum field.
+        // New bytes up to (but not including) the new checksum field.
         let new_bytes_before_crc = checksum_field_abs - append_start;
         hasher.update(&append_buf[..new_bytes_before_crc]);
         let crc = hasher.finalize();
@@ -791,6 +820,85 @@ mod tests {
         let rg1 = reader.row_group(1).unwrap();
         assert_eq!(rg1.num_rows(), 500);
         assert_eq!(rg1.column_chunk(0).unwrap().codec().unwrap(), Codec::Zstd);
+    }
+
+    #[test]
+    fn update_appends_past_dead_footer() {
+        // Committed snapshot: 1 row group, size s0 (the parse anchor).
+        let (committed, s0) = make_simple_file();
+
+        // Crash window: a prior update appended a footer at [s0, s1) and
+        // published the header at s1, then crashed before its `_txn` commit. The
+        // committed head stays s0 (the dead footer never matched `_txn`); the
+        // header (the append base) is the dirty-ahead s1.
+        let dead = {
+            let mut u = ParquetMetaUpdateWriter::new(&committed, s0).unwrap();
+            let mut rg = RowGroupBlockBuilder::new(2);
+            rg.set_num_rows(111);
+            let mut c = ColumnChunkRaw::zeroed();
+            c.codec = Codec::Zstd as u8;
+            c.num_values = 111;
+            rg.set_column_chunk(0, c).unwrap();
+            u.add_row_group(rg);
+            u.parquet_footer(8192, 512);
+            u.finish().unwrap().0
+        };
+        let mut physical_after_fail = committed.clone();
+        physical_after_fail.extend_from_slice(&dead);
+        let s1 = physical_after_fail.len() as u64;
+        assert!(s1 > s0, "dead footer must extend the physical file");
+
+        // Next successful in-place update: parse the committed head (s0), append
+        // PAST the dead footer at the append base (the dirty-ahead header, s1).
+        let mut updater = ParquetMetaUpdateWriter::new(&physical_after_fail, s0).unwrap();
+        let mut rg = RowGroupBlockBuilder::new(2);
+        rg.set_num_rows(222);
+        let mut c = ColumnChunkRaw::zeroed();
+        c.codec = Codec::Snappy as u8;
+        c.num_values = 222;
+        rg.set_column_chunk(0, c).unwrap();
+        updater.add_row_group(rg);
+        updater.parquet_footer(9000, 256);
+        let (append_bytes, s2) = updater.finish_appending_at(s1).unwrap();
+
+        // The new bytes land at the append base (s1), not the committed head.
+        assert_eq!(s2, s1 + append_bytes.len() as u64);
+
+        let mut full = physical_after_fail.clone();
+        full.extend_from_slice(&append_bytes);
+        full[super::HEADER_PARQUET_META_FILE_SIZE_OFF
+            ..super::HEADER_PARQUET_META_FILE_SIZE_OFF + 8]
+            .copy_from_slice(&s2.to_le_bytes());
+
+        // The writer appended only past s1: every committed and dead byte
+        // (besides the header's patched size field at offset 0) is untouched.
+        assert_eq!(
+            &full[8..s1 as usize],
+            &physical_after_fail[8..s1 as usize],
+            "committed + dead region must be byte-identical (writer only appends)"
+        );
+        assert_eq!(
+            &full[s0 as usize..s1 as usize],
+            &dead[..],
+            "the orphaned dead footer must be left untouched"
+        );
+
+        // A reader resolving the new committed size validates the cumulative
+        // CRC -- which now spans the dead region -- and sees the committed row
+        // group plus the new one.
+        let reader = ParquetMetaReader::from_file_size(&full, s2).unwrap();
+        reader.verify_checksum().unwrap();
+        assert_eq!(reader.row_group_count(), 2);
+        // The new footer chains onto the committed head, orphaning the dead
+        // footer out of the MVCC chain.
+        assert_eq!(reader.prev_parquet_meta_file_size(), s0);
+        assert_eq!(reader.row_group(0).unwrap().num_rows(), 1000); // reused committed RG
+        assert_eq!(reader.row_group(1).unwrap().num_rows(), 222); // new RG past the dead footer
+
+        // The committed snapshot still resolves independently at s0.
+        let old = ParquetMetaReader::from_file_size(&committed, s0).unwrap();
+        assert_eq!(old.row_group_count(), 1);
+        old.verify_checksum().unwrap();
     }
 
     #[test]

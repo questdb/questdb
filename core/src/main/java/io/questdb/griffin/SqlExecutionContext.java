@@ -32,6 +32,7 @@ import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.pool.ResourcePoolSupervisor;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableRecordMetadata;
@@ -43,6 +44,7 @@ import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimal64;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Rnd;
 import io.questdb.std.Transient;
 import io.questdb.std.str.CharSink;
@@ -122,6 +124,17 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     int getJitMode();
 
+    /**
+     * Returns the tracker bound to the currently active workload, or
+     * {@code null} between workloads. The workload entry point sets it via
+     * {@link #setMemoryTracker(MemoryTracker)} on acquisition and clears it
+     * on workload end.
+     */
+    @Nullable
+    default MemoryTracker getMemoryTracker() {
+        return null;
+    }
+
     default @NotNull MessageBus getMessageBus() {
         return getCairoEngine().getMessageBus();
     }
@@ -157,11 +170,21 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     Rnd getRandom();
 
     default TableReader getReader(TableToken tableToken, long version) {
-        return getCairoEngine().getReader(tableToken, version);
+        return getCairoEngine().getReader(tableToken, version, this.getReaderPoolSupervisor());
     }
 
     default TableReader getReader(TableToken tableToken) {
-        return getCairoEngine().getReader(tableToken);
+        return getCairoEngine().getReader(tableToken, this.getReaderPoolSupervisor());
+    }
+
+    /**
+     * The reader-pool supervisor that table-reader borrows made through this context are
+     * attributed to (for query-scoped reader-leak detection). Carried on the execution
+     * context rather than a carrier/thread local so it survives a continuation that parks
+     * and resumes on a different worker. Returns {@code null} when no supervisor is active.
+     */
+    default ResourcePoolSupervisor<TableReader> getReaderPoolSupervisor() {
+        return null;
     }
 
     long getRequestFd();
@@ -232,15 +255,15 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     boolean isParallelGroupByEnabled();
 
-    boolean isParallelReadParquetEnabled();
+    boolean isParallelHorizonJoinEnabled();
 
-    boolean isParquetRowGroupPruningEnabled();
+    boolean isParallelReadParquetEnabled();
 
     boolean isParallelTopKEnabled();
 
-    boolean isParallelHorizonJoinEnabled();
-
     boolean isParallelWindowJoinEnabled();
+
+    boolean isParquetRowGroupPruningEnabled();
 
     boolean isTimestampRequired();
 
@@ -288,23 +311,42 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     void setJitMode(int jitMode);
 
+    /**
+     * Stashes the active per-workload memory tracker on this context. Set at
+     * workload start by the entry point that called
+     * {@code MemoryTrackerProvider.acquire(...)}; cleared (with {@code null})
+     * at workload end so the context is ready for the next workload.
+     */
+    default void setMemoryTracker(@Nullable MemoryTracker tracker) {
+    }
+
     void setNowAndFixClock(long now, int nowTimestampType);
 
     void setParallelFilterEnabled(boolean parallelFilterEnabled);
 
     void setParallelGroupByEnabled(boolean parallelGroupByEnabled);
 
-    void setParallelReadParquetEnabled(boolean parallelReadParquetEnabled);
+    void setParallelHorizonJoinEnabled(boolean parallelHorizonJoinEnabled);
 
-    void setParquetRowGroupPruningEnabled(boolean parquetRowGroupPruningEnabled);
+    void setParallelReadParquetEnabled(boolean parallelReadParquetEnabled);
 
     void setParallelTopKEnabled(boolean parallelTopKEnabled);
 
-    void setParallelHorizonJoinEnabled(boolean parallelHorizonJoinEnabled);
-
     void setParallelWindowJoinEnabled(boolean parallelWindowJoinEnabled);
 
+    void setParquetRowGroupPruningEnabled(boolean parquetRowGroupPruningEnabled);
+
     void setRandom(Rnd rnd);
+
+    /**
+     * Sets the reader-pool supervisor for table-reader borrows made through this context.
+     * {@link io.questdb.griffin.engine.QueryProgress} installs itself here for the duration
+     * of cursor open so that readers borrowed while building the cursor are attributed to
+     * the query, then restores the previous value. Default is a no-op for contexts that do
+     * not track reader leaks.
+     */
+    default void setReaderPoolSupervisor(@Nullable ResourcePoolSupervisor<TableReader> supervisor) {
+    }
 
     void setUseSimpleCircuitBreaker(boolean value);
 

@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.vm.api.MemoryMA;
+import io.questdb.cairo.vm.api.MemoryOM;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
@@ -42,6 +43,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.Sequence;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -70,9 +72,9 @@ import static io.questdb.cairo.TableWriter.*;
 public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
     private static final Log LOG = LogFactory.getLog(O3PartitionJob.class);
-    private static final io.questdb.std.ThreadLocal<O3ParquetMergeContext> PARQUET_MERGE_CONTEXT =
-            new io.questdb.std.ThreadLocal<>(O3ParquetMergeContext::new);
-    public static final Closeable THREAD_LOCAL_CLEANER = PARQUET_MERGE_CONTEXT;
+    private static final CarrierLocal<O3ParquetMergeContext> PARQUET_MERGE_CONTEXT =
+            new CarrierLocal<>(O3ParquetMergeContext::new);
+    public static final Closeable THREAD_LOCAL_CLEANER = PARQUET_MERGE_CONTEXT::removeAndFree;
     // High bit set on the column type signals the Rust parquet encoder that the
     // symbol column contains no nulls, so it can emit an all-ones RLE run for
     // definition levels instead of checking each row.  This is a write-time hint
@@ -300,7 +302,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         parquetMetaFd = TableUtils.openRW(ff, path.$(), LOG, opts);
                         parquetMetaFdOs = Files.detach(parquetMetaFd);
                         parquetMetaFd = -1;
-                        updaterParquetMetaFileSize = parquetMetaReader.getFileSize();
+                        // Parse anchor = committed head (resolved from _txn), not
+                        // the raw header: a rolled-back update can leave the
+                        // header ahead of _txn, and parsing from there would
+                        // build on dead row groups. The append base, passed
+                        // separately below as parquetMetaReader.getFileSize(), is
+                        // the raw _pm header (offset 0) where the new bytes land.
+                        updaterParquetMetaFileSize = parquetMetaReader.getResolvedFileSize();
                         // Restore path to parquet file.
                         path.trimTo(partitionDirLen).concat(PARQUET_PARTITION_NAME).$();
                     }
@@ -338,8 +346,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         bloomFilterFpp,
                         minCompressionRatio,
                         parquetMetaFdOs,
-                        updaterParquetMetaFileSize,
-                        parquetFileSize
+                        updaterParquetMetaFileSize, // parse anchor (committed head from _txn)
+                        parquetMetaReader.getFileSize(), // append base (_pm header at offset 0)
+                        parquetFileSize // existing parquet data-file size (gates first-time vs incremental)
                 );
 
                 if (hasSchemaChange) {
@@ -573,12 +582,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 }
                 newParquetSize = partitionUpdater.updateFileMetadata();
                 newParquetMetaFileSize = partitionUpdater.getResultParquetMetaFileSize();
-                // Persist _pm before _txn references the new parquet_meta_file_size.
-                // _txn commit follows in TableWriter; without this fsync a power
-                // loss could leave _txn pointing at a footer the page cache loses.
-                if (cairoConfiguration.getCommitMode() != CommitMode.NOSYNC) {
-                    partitionUpdater.syncParquetMeta();
-                }
                 final long resultUnusedBytes = partitionUpdater.getResultUnusedBytes();
                 LOG.info()
                         .$("parquet o3 partition [table=").$(tableWriter.getTableToken())
@@ -613,6 +616,17 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         rowGroupBuffers,
                         isRewrite
                 );
+
+                // Publish the new _pm last: patch its header (the MVCC commit
+                // signal) and fsync. Done after the index build so any failure
+                // before the header patch leaves the committed header intact,
+                // with the new footer an invisible dead tail past it that the
+                // next update overwrites. commitParquetMeta patches the header
+                // before its fsync, so a throw from the fsync alone still
+                // publishes the header; that is safe because _txn is unchanged
+                // and a pinned reader walks back to the committed footer (see
+                // commit_parquet_meta).
+                partitionUpdater.commitParquetMeta(cairoConfiguration.getCommitMode() != CommitMode.NOSYNC);
             } catch (Throwable e) {
                 if (isRewrite) {
                     // Rewrite mode: original is intact. Remove the new directory.
@@ -637,45 +651,51 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             // and on Windows the file is not locked by stale fds.
             partitionUpdater.close();
             if (!isRewrite) {
-                // Update mode: truncate both parquet and _pm to their pre-merge sizes.
+                // Update mode: truncate the parquet data file back to its
+                // pre-merge size. _pm is never truncated (see below).
                 path.of(pathToTable);
                 setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, srcNameTxn);
-                long fd = TableUtils.openRW(ff, path.$(), LOG, cairoConfiguration.getWriterFileOpenOpts());
-                if (!ff.truncate(fd, parquetSize)) {
-                    LOG.error().$("could not truncate partition file [path=").$(path).I$();
-                }
-                ff.close(fd);
-
-                if (parquetMetaReader.getAddr() != 0) {
-                    final long oldParquetMetaFileSize = parquetMetaReader.getFileSize();
-                    path.of(pathToTable);
-                    setPathForParquetPartitionMetadata(path.slash(), timestampType, partitionBy, partitionTimestamp, srcNameTxn);
-                    fd = TableUtils.openRW(ff, path.$(), LOG, cairoConfiguration.getWriterFileOpenOpts());
-                    // Rust patches parquet_meta_file_size at offset 0 last, so when
-                    // updateFileMetadata throws after that patch the on-disk header
-                    // claims a size larger than the pre-merge file. Restore the old
-                    // size header BEFORE truncating; otherwise readParquetMetaFileSize
-                    // would return the stale larger value and mapRO past EOF would
-                    // SIGBUS the JVM on the next open.
-                    final long tempMem8b = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_O3);
-                    try {
-                        Unsafe.putLong(tempMem8b, oldParquetMetaFileSize);
-                        if (ff.write(fd, tempMem8b, Long.BYTES, 0) != Long.BYTES) {
-                            LOG.error().$("could not restore _pm header on rollback [path=").$(path)
-                                    .$(", errno=").$(ff.errno()).I$();
-                        }
-                    } finally {
-                        Unsafe.free(tempMem8b, Long.BYTES, MemoryTag.NATIVE_O3);
-                    }
-                    if (!ff.truncate(fd, oldParquetMetaFileSize)) {
-                        LOG.error().$("could not truncate _pm file [path=").$(path).I$();
-                    }
-                    // Make the restored header durable so that crash recovery does
-                    // not resurrect the bad post-patch header out of the page cache.
-                    if (cairoConfiguration.getCommitMode() != CommitMode.NOSYNC) {
-                        ff.fsync(fd);
+                try {
+                    // Swallow any error (openRW throws on an FS fault): o3BumpErrorCount
+                    // below must still run to suspend the table. A failed truncate leaves
+                    // the failed update's appended bytes as a dead tail past the committed
+                    // parquetSize, which is harmless -- the committed _txn size is unchanged,
+                    // so readers ignore it and the next update overwrites it.
+                    long fd = TableUtils.openRW(ff, path.$(), LOG, cairoConfiguration.getWriterFileOpenOpts());
+                    if (!ff.truncate(fd, parquetSize)) {
+                        LOG.error().$("could not truncate partition file [path=").$(path).I$();
                     }
                     ff.close(fd);
+                } catch (Throwable dataErr) {
+                    LOG.error().$("could not truncate parquet data file on rollback [path=").$(path).$(", e=").$(dataErr).I$();
+                }
+
+                if (parquetMetaReader.getAddr() != 0) {
+                    // Leave _pm un-truncated, header unrestored. A failure before
+                    // commitParquetMeta leaves the header at the committed footer;
+                    // a failure inside it (header patched, then fsync threw)
+                    // leaves the header at the new footer. Either way the
+                    // committed _txn size is unchanged, so a reader walks the MVCC
+                    // chain back to the committed footer and the failed update's
+                    // bytes sit past it as a dead tail the next update overwrites.
+                    // Truncating would pull pages from under a concurrent reader's
+                    // mmap and SIGBUS the JVM -- the hazard this change removes.
+                    path.of(pathToTable);
+                    setPathForParquetPartitionMetadata(path.slash(), timestampType, partitionBy, partitionTimestamp, srcNameTxn);
+                    try {
+                        // Make the leftover _pm tail durable, but swallow any error:
+                        // o3BumpErrorCount below must still run to suspend the table.
+                        // fsyncAndClose closes the fd even on failure (no leak), and a
+                        // non-durable dead tail is harmless -- the next update rewrites it.
+                        long fd = TableUtils.openRW(ff, path.$(), LOG, cairoConfiguration.getWriterFileOpenOpts());
+                        if (cairoConfiguration.getCommitMode() != CommitMode.NOSYNC) {
+                            ff.fsyncAndClose(fd);
+                        } else {
+                            ff.close(fd);
+                        }
+                    } catch (Throwable pmErr) {
+                        LOG.error().$("could not fsync _pm tail on rollback [path=").$(path).$(", e=").$(pmErr).I$();
+                    }
                 }
             }
             // Rewrite mode: original is intact, new dir already removed by the inner catch.
@@ -1704,6 +1724,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         try {
             descriptor.of(tableWriter.getTableToken().getTableName(), rowCount, timestampIndex);
             populateO3DescriptorColumns(
+                    ctx,
                     descriptor,
                     tableWriterMetadata,
                     oooColumns,
@@ -2553,13 +2574,17 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
      * {@link io.questdb.griffin.engine.table.parquet.PartitionUpdater#addRowGroup}
      * (for appending a row group to an existing parquet file).
      * <p>
-     * All pointers handed to the descriptor reference O3 source memory owned
-     * by the {@code TableWriter} for the duration of the encode call:
+     * All pointers handed to the descriptor reference O3 source memory (or,
+     * for a rebased aux, the context scratch arena) owned by the
+     * {@code TableWriter} for the duration of the encode call:
      * <ul>
-     *     <li>Var-size columns: the full source data buffer as primary and
-     *     the aux slice starting at {@code o3Lo} as secondary; aux entries
-     *     keep their absolute offsets and resolve correctly against the
-     *     full data buffer.</li>
+     *     <li>Var-size columns: the data buffer as primary and the aux as
+     *     secondary. A 0-based source (copy+sort path) passes the full data
+     *     buffer with its absolute aux offsets. An offset-mapped WAL segment
+     *     ({@link MemoryOM}, in-order block apply) has a data window that does
+     *     not start at offset 0, so its aux holds offsets that overshoot the
+     *     window; that aux is rebased to window-relative offsets in the context
+     *     scratch arena so {@code primary_data} is a valid 0-based base.</li>
      *     <li>Designated timestamp: the merge-index slice as primary with
      *     {@code PARQUET_TIMESTAMP_STRIDED_16} set on the column type, so
      *     the Rust encoder reads timestamps in place from the 16-byte
@@ -2572,6 +2597,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
      * issuing the encode/addRowGroup, and for any descriptor cleanup.
      */
     private static void populateO3DescriptorColumns(
+            O3ParquetMergeContext ctx,
             PartitionDescriptor descriptor,
             TableRecordMetadata metadata,
             ReadOnlyObjList<? extends MemoryCR> oooColumns,
@@ -2583,6 +2609,24 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final int timestampIndex = metadata.getTimestampIndex();
         final long rowCount = o3Hi - o3Lo + 1;
         final int columnCount = metadata.getColumnCount();
+
+        // Size the rebase arena (see javadoc) once up front: the slots handed
+        // out below must keep stable addresses across the loop, and a later
+        // resize would move them.
+        long rebaseArenaSize = 0;
+        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+            final int columnType = metadata.getColumnType(columnIndex);
+            if (columnType > 0 && ColumnType.isVarSize(columnType)
+                    && oooColumns.getQuick(getPrimaryColumnIndex(columnIndex)) instanceof MemoryOM) {
+                rebaseArenaSize += ColumnType.getDriver(columnType).getAuxVectorSize(rowCount);
+            }
+        }
+        long rebaseArenaBase = 0;
+        long rebaseArenaBump = 0;
+        if (rebaseArenaSize > 0) {
+            rebaseArenaBase = ctx.getRebaseAuxMem().resize(rebaseArenaSize);
+        }
+
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
             final int columnType = metadata.getColumnType(columnIndex);
             if (columnType < 0) {
@@ -2597,7 +2641,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 final MemoryCR oooAuxMem = oooColumns.getQuick(getSecondaryColumnIndex(columnIndex));
                 final long srcOooAuxAddr = oooAuxMem.addressOf(0);
                 final ColumnTypeDriver ctd = ColumnType.getDriver(columnType);
-                final long srcAuxSliceAddr = srcOooAuxAddr + ctd.getAuxVectorOffset(o3Lo);
                 // Encoder reads rowCount aux entries; the N+1 sentinel that
                 // string-like types include in getAuxVectorSize is unused here.
                 final long auxSliceSize = ctd.auxRowsToBytes(rowCount);
@@ -2605,14 +2648,39 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // slice. Encoder asserts offset+size <= data.len().
                 final long dataExtent = ctd.getDataVectorSizeAt(srcOooAuxAddr, o3Hi);
 
+                final long dataAddr;
+                final long dataSize;
+                final long auxAddr;
+                if (oooDataMem instanceof MemoryOM) {
+                    // Windowed source: hand the encoder the data window and
+                    // rebase the aux by shift = dataLo (dest = src - shift).
+                    final long dataLo = ctd.getDataVectorOffset(srcOooAuxAddr, o3Lo);
+                    final long windowSize = dataExtent - dataLo;
+                    final long rebasedAuxSize = ctd.getAuxVectorSize(rowCount);
+                    final long scratch = rebaseArenaBase + rebaseArenaBump;
+                    ctd.shiftCopyAuxVector(dataLo, srcOooAuxAddr, o3Lo, o3Hi, scratch, rebasedAuxSize);
+                    rebaseArenaBump += rebasedAuxSize;
+                    auxAddr = scratch;
+                    // addressOf(dataLo) on an empty window extrapolates to a
+                    // bogus pointer; pass null when there is nothing to read.
+                    dataAddr = windowSize > 0 ? oooDataMem.addressOf(dataLo) : 0;
+                    dataSize = windowSize;
+                } else {
+                    // 0-based source (copy+sort path): addressOf(0) is the real
+                    // base and aux offsets are already correct.
+                    auxAddr = srcOooAuxAddr + ctd.getAuxVectorOffset(o3Lo);
+                    dataAddr = oooDataMem.addressOf(0);
+                    dataSize = dataExtent;
+                }
+
                 descriptor.addColumn(
                         columnName,
                         columnType,
                         columnId,
                         0,
-                        oooDataMem.addressOf(0),
-                        dataExtent,
-                        srcAuxSliceAddr,
+                        dataAddr,
+                        dataSize,
+                        auxAddr,
                         auxSliceSize,
                         0,
                         0,
@@ -3689,15 +3757,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         // encodings (Plain, DeltaBinaryPacked, RleDictionary), so no
         // encoding-aware fallback is needed.
         //
-        // For var-size columns we pass the full source data buffer as
-        // primary_data and the aux slice starting at srcOooLo as
-        // secondary_data; aux entries hold absolute offsets into the source
-        // data buffer, and the Rust encoder uses them as-is without assuming
-        // aux[0].offset == 0.
+        // populateO3DescriptorColumns handles var-column data/aux pointers
+        // (including rebasing offset-mapped WAL aux into the context arena).
         //
         // The descriptor itself is non-owning and does not free anything on
-        // clear — every pointer it carries references O3 source memory owned
-        // by the TableWriter for the duration of this call.
+        // clear -- every pointer it carries references O3 source memory (or the
+        // context rebase arena) owned by the TableWriter for this call.
         final O3ParquetMergeContext ctx = PARQUET_MERGE_CONTEXT.get();
         final PartitionDescriptor descriptor = ctx.getFreshPartitionDescriptor();
         descriptor.clear();
@@ -3716,6 +3781,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     : -1;
             descriptor.of(tableWriter.getTableToken().getTableName(), partitionRowCount, writerTimestampIndex);
             populateO3DescriptorColumns(
+                    ctx,
                     descriptor,
                     metadata,
                     oooColumns,
@@ -3856,7 +3922,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     }
 
     @Override
-    protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
+    protected boolean doRun(long cursor, WorkerContext workerContext) {
         processPartition(queue.get(cursor), cursor, subSeq);
         return true;
     }

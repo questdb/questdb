@@ -27,12 +27,12 @@ package io.questdb.griffin.engine.join;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 
-class WindowJoinSymbolTableSource implements SymbolTableSource {
+class JoinSymbolTableSource implements SymbolTableSource {
     private final int columnSplit;
     private SymbolTableSource masterSource;
     private SymbolTableSource slaveSource;
 
-    WindowJoinSymbolTableSource(int columnSplit) {
+    JoinSymbolTableSource(int columnSplit) {
         this.columnSplit = columnSplit;
     }
 

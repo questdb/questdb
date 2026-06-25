@@ -31,7 +31,9 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.pool.ResourcePoolSupervisor;
 import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.BindVariableService;
@@ -47,6 +49,7 @@ import io.questdb.std.Decimal256;
 import io.questdb.std.Decimal64;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntStack;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjStack;
 import io.questdb.std.Rnd;
@@ -90,6 +93,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private boolean expiryReadFilterEnabled = true;
     private int intervalFunctionType;
     private int jitMode;
+    private MemoryTracker memoryTracker;
     private long nowMicros;
     private long nowNanos;
     // Timestamp type only for now() function, used by NowFunctionFactory
@@ -105,6 +109,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private boolean parallelWindowJoinEnabled;
     private QueryFutureUpdateListener queryFutureUpdateListener = QueryFutureUpdateListener.EMPTY;
     private Rnd random;
+    private ResourcePoolSupervisor<TableReader> readerPoolSupervisor;
     private long requestFd = -1;
     private boolean useSimpleCircuitBreaker;
     private boolean validationOnly = false;
@@ -260,6 +265,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public @Nullable MemoryTracker getMemoryTracker() {
+        return memoryTracker;
+    }
+
+    @Override
     public long getMicrosecondTimestamp() {
         return clockUseNow ? nowMicros : microClock.getTicks();
     }
@@ -302,6 +312,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public Rnd getRandom() {
         return random != null ? random : SharedRandom.getRandom(cairoConfiguration);
+    }
+
+    @Override
+    public ResourcePoolSupervisor<TableReader> getReaderPoolSupervisor() {
+        return readerPoolSupervisor;
     }
 
     @Override
@@ -442,6 +457,14 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.allowNonDeterministicFunction = true;
         this.validationOnly = false;
         this.validationSecurityContext = null;
+        // QueryRegistry owns the tracker lifecycle; null it defensively so an error
+        // unwinding between register() and unregister() cannot leak it into reuse.
+        this.memoryTracker = null;
+        // Defensive: a query reusing this per-connection context must never inherit a
+        // stale supervisor from a prior query. QueryProgress restores it in the finally of
+        // cursor open; reset() is a backstop for reused per-connection contexts if that
+        // restore is ever bypassed.
+        this.readerPoolSupervisor = null;
         this.timestampRequiredStack.clear();
         this.hasIntervalStack.clear();
         this.intervalModelObjStack.clear();
@@ -488,6 +511,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void setJitMode(int jitMode) {
         this.jitMode = jitMode;
+    }
+
+    @Override
+    public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        this.memoryTracker = tracker;
     }
 
     @Override
@@ -541,6 +569,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void setRandom(Rnd rnd) {
         this.random = rnd;
+    }
+
+    @Override
+    public void setReaderPoolSupervisor(@Nullable ResourcePoolSupervisor<TableReader> supervisor) {
+        this.readerPoolSupervisor = supervisor;
     }
 
     @Override

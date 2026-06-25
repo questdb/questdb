@@ -8432,7 +8432,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         final GroupByVectorAggregateJob job = new GroupByVectorAggregateJob(engine.getMessageBus());
         new Thread(() -> {
             while (running.get()) {
-                job.run(0);
+                job.run();
             }
             haltLatch.countDown();
         }).start();
@@ -8474,7 +8474,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         final GroupByVectorAggregateJob job = new GroupByVectorAggregateJob(engine.getMessageBus());
         new Thread(() -> {
             while (running.get()) {
-                job.run(0);
+                job.run();
             }
             haltLatch.countDown();
         }).start();

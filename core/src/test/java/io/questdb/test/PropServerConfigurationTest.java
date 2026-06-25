@@ -951,6 +951,14 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testParquetExportTablePrefixNonBlankLoads() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_PARQUET_EXPORT_TABLE_PREFIX.getPropertyPath(), "qdb.export.");
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        TestUtils.assertEquals("qdb.export.", configuration.getCairoConfiguration().getParquetExportTableNamePrefix());
+    }
+
+    @Test
     public void testSortValuePageSizeClampedToOne() throws Exception {
         // sort.value.page.size is a divisor-only RecordChain page (no fixed block), so 0 clamps to 1
         // rather than being rejected - see testPageSizeBelowBlockSizeRejected for the heap-backed keys.
@@ -1407,6 +1415,32 @@ public class PropServerConfigurationTest {
         Properties properties = new Properties();
         properties.setProperty("cairo.idle.check.interval", "1234a");
         newPropServerConfiguration(properties);
+    }
+
+    @Test
+    public void testInvalidParquetExportTablePrefixBlank() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_PARQUET_EXPORT_TABLE_PREFIX.getPropertyPath(), "");
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "cairo.parquet.export.table.prefix");
+            TestUtils.assertContains(e.getMessage(), "prefix must not be blank");
+        }
+    }
+
+    @Test
+    public void testInvalidParquetExportTablePrefixWhitespace() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_PARQUET_EXPORT_TABLE_PREFIX.getPropertyPath(), "   ");
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "cairo.parquet.export.table.prefix");
+            TestUtils.assertContains(e.getMessage(), "prefix must not be blank");
+        }
     }
 
     @Test

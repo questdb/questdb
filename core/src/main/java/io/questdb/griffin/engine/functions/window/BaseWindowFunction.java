@@ -24,7 +24,9 @@
 
 package io.questdb.griffin.engine.functions.window;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -34,10 +36,15 @@ import io.questdb.std.Misc;
 
 public abstract class BaseWindowFunction implements WindowFunction {
     protected final Function arg;
+    // Whether arg reads back as a DATE (milliseconds) rather than a TIMESTAMP (ticks). The value
+    // window functions are specialized into DATE and TIMESTAMP subclasses, so this is invariant per
+    // instance; readArgValue caches it here to avoid re-deriving the tag from arg.getType() per row.
+    protected final boolean argIsDate;
     protected int columnIndex;
 
     public BaseWindowFunction(Function arg) {
         this.arg = arg;
+        this.argIsDate = arg != null && ColumnType.tagOf(arg.getType()) == ColumnType.DATE;
     }
 
     @Override
@@ -60,6 +67,17 @@ public abstract class BaseWindowFunction implements WindowFunction {
         if (arg != null) {
             arg.init(symbolTableSource, executionContext);
         }
+    }
+
+    /**
+     * Reads a value-window function's argument as a native long. A DATE argument is read as
+     * milliseconds; everything else (TIMESTAMP ticks, or a SYMBOL/STRING/VARCHAR parsed to a
+     * timestamp) goes through getTimestamp(). The max/min/first_value/last_value/nth_value value
+     * functions store and write this native long, and report getType() = arg.getType(), so the
+     * cached chain column reads it back at the right scale for both DATE and TIMESTAMP results.
+     */
+    protected final long readArgValue(Record rec) {
+        return argIsDate ? arg.getDate(rec) : arg.getTimestamp(rec);
     }
 
     @Override

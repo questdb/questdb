@@ -33,7 +33,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.std.Chars;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.ObjList;
-import io.questdb.std.ThreadLocal;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
@@ -44,7 +44,7 @@ import static io.questdb.std.datetime.CommonUtils.TIMESTAMP_UNIT_NANOS;
 
 public class TableStructureAdapter implements TableStructure {
     private static final String DEFAULT_TIMESTAMP_FIELD = "timestamp";
-    private static final ThreadLocal<StringSink> tempSink = new ThreadLocal<>(StringSink::new);
+    private static final CarrierLocal<StringSink> tempSink = new CarrierLocal<>(StringSink::new);
     private final CairoConfiguration cairoConfiguration;
     private final DefaultColumnTypes defaultColumnTypes;
     private final int defaultPartitionBy;

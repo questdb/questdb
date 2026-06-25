@@ -348,14 +348,14 @@ public class MatViewRowExpiryFuzzTest extends AbstractFuzzTest {
         final Thread th = new Thread(() -> {
             try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(workerId, engine, 0)) {
                 while (!stop.get()) {
-                    refreshJob.run(workerId);
+                    refreshJob.run();
                     Os.sleep(rnd.nextInt(50));
                 }
                 // Drain the remainder, interleaving WAL apply so the refresh has base data to consume.
                 try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
                     do {
                         drainWalQueue(walApplyJob, engine);
-                    } while (refreshJob.run(workerId));
+                    } while (refreshJob.run());
                 }
             } catch (Throwable throwable) {
                 LOG.error().$("refresh job failed: ").$(throwable).$();

@@ -33,7 +33,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.ThreadLocal;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.datetime.AbstractDateFormat;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
@@ -131,7 +131,7 @@ public class DateFormatCompiler {
     private static final int P_LO = 2;
     private static final int P_LOCALE = 4;
     private static final ObjList<String> opList;
-    private final static ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);
+    private final static CarrierLocal<StringSink> tlSink = new CarrierLocal<>(StringSink::new);
     private final BytecodeAssembler asm = new BytecodeAssembler();
     private final IntList delimiterIndexes = new IntList();
     private final ObjList<String> delimiters = new ObjList<>();

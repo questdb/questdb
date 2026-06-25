@@ -124,7 +124,7 @@ public class CopyExportTest extends AbstractCairoTest {
             drainWalQueue();
 
             Thread insertThread = new Thread(() -> {
-                try {
+                try (SqlExecutionContext threadCtx = TestUtils.createSqlExecutionCtx(engine)) {
                     for (int batch = 0; batch < 50; batch++) {
                         StringBuilder batchInsert = new StringBuilder("insert into fuzz_table values (");
                         for (int i = 0; i < 100; i++) {
@@ -141,7 +141,7 @@ public class CopyExportTest extends AbstractCairoTest {
                         }
 
                         batchInsert.append(')');
-                        execute(batchInsert);
+                        engine.execute(batchInsert, threadCtx);
                         drainWalQueue();
 //                        Os.sleep(10);
                     }
@@ -3980,7 +3980,7 @@ public class CopyExportTest extends AbstractCairoTest {
         return new Thread(() -> {
             try {
                 while (!stop.get()) {
-                    if (job.run(workerId)) {
+                    if (job.run()) {
                         break;
                     }
                     Os.sleep(10);
