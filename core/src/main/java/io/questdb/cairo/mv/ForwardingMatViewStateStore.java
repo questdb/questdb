@@ -130,6 +130,11 @@ public class ForwardingMatViewStateStore implements MatViewStateStore {
     }
 
     @Override
+    public void reenqueueRefreshTask(MatViewRefreshTask task) {
+        delegate.reenqueueRefreshTask(task);
+    }
+
+    @Override
     public void removeViewState(TableToken matViewToken) {
         delegate.removeViewState(matViewToken);
     }

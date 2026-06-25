@@ -255,6 +255,11 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
     }
 
     @Override
+    public void reenqueueRefreshTask(MatViewRefreshTask task) {
+        taskQueue.enqueue(task);
+    }
+
+    @Override
     public void removeViewState(TableToken matViewToken) {
         final MatViewState state = stateByTableDirName.remove(matViewToken.getDirName());
         if (state != null) {
