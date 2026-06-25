@@ -37,6 +37,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
 import java.util.Arrays;
 
 public class MonotonicTimestampPruningTest extends AbstractCairoTest {
@@ -1058,6 +1059,46 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testToTimezoneFallBackOverlapSuperset() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tz (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            // London falls back at 2022-10-30T01:00Z: local 01:30 occurs twice (BST then GMT),
+            // so both rows map to the same wall-clock value. A wrong EXACT would keep only one;
+            // the transition inside the window forces SUPERSET, the filter stays, both rows match
+            execute("INSERT INTO tz VALUES " +
+                    "(1, '2022-10-30T00:30:00.000000Z')," +
+                    "(2, '2022-10-30T01:30:00.000000Z');");
+            assertQuery("SELECT * FROM tz WHERE to_timezone(timestamp, 'Europe/London') = '2022-10-30T01:30:00.000000Z'")
+                    .timestamp("timestamp")
+                    .withPlanContaining("filter:")
+                    .returns("""
+                            price\ttimestamp
+                            1.0\t2022-10-30T00:30:00.000000Z
+                            2.0\t2022-10-30T01:30:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testToTimezoneFirstTransitionSuperset() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tz (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            // Antarctica/Troll's first-ever DST transition is 2005-03-27 (+0 -> +2); the bound's window
+            // straddles it, so the offset is not constant and the inversion must stay SUPERSET
+            execute("INSERT INTO tz VALUES " +
+                    "(1, '2005-03-27T00:30:00.000000Z')," +
+                    "(2, '2005-03-27T01:30:00.000000Z');");
+            assertQuery("SELECT * FROM tz WHERE to_timezone(timestamp, 'Antarctica/Troll') BETWEEN '2005-03-27T00:00:00.000000Z' AND '2005-03-27T02:00:00.000000Z'")
+                    .timestamp("timestamp")
+                    .withPlanContaining("filter:")
+                    .returns("""
+                            price\ttimestamp
+                            1.0\t2005-03-27T00:30:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testToTimezoneFixedOffset() throws Exception {
         assertMemoryLeak(() -> {
             createTrades();
@@ -1086,79 +1127,6 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
                             price\ttimestamp
                             200.0\t2022-01-03T12:00:00.000000Z
                             250.0\t2022-01-04T12:00:00.000000Z
-                            """);
-        });
-    }
-
-    @Test
-    public void testToUtcFixedOffset() throws Exception {
-        assertMemoryLeak(() -> {
-            createTrades();
-            assertQuery("SELECT * FROM trades WHERE to_utc(timestamp, '+02:00') >= '2022-01-03T10:00:00.000000Z'")
-                    .timestamp("timestamp")
-                    .withPlanContaining("Interval forward scan on: trades")
-                    .returns("""
-                            price\ttimestamp
-                            200.0\t2022-01-03T12:00:00.000000Z
-                            250.0\t2022-01-04T12:00:00.000000Z
-                            """);
-        });
-    }
-
-    @Test
-    public void testToUtcNamedZoneWinterExact() throws Exception {
-        assertMemoryLeak(() -> {
-            createTrades();
-            // January is far from any London DST transition, so the offset is provably constant
-            // (0) across the preimage: the inversion is exact and the row filter is dropped
-            assertQuery("SELECT * FROM trades WHERE to_utc(timestamp, 'Europe/London') >= '2022-01-03T12:00:00.000000Z'")
-                    .timestamp("timestamp")
-                    .withPlanContaining("Interval forward scan on: trades")
-                    .withPlanNotContaining("filter:")
-                    .returns("""
-                            price\ttimestamp
-                            200.0\t2022-01-03T12:00:00.000000Z
-                            250.0\t2022-01-04T12:00:00.000000Z
-                            """);
-        });
-    }
-
-    @Test
-    public void testToTimezoneFirstTransitionSuperset() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tz (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
-            // Antarctica/Troll's first-ever DST transition is 2005-03-27 (+0 -> +2); the bound's window
-            // straddles it, so the offset is not constant and the inversion must stay SUPERSET
-            execute("INSERT INTO tz VALUES " +
-                    "(1, '2005-03-27T00:30:00.000000Z')," +
-                    "(2, '2005-03-27T01:30:00.000000Z');");
-            assertQuery("SELECT * FROM tz WHERE to_timezone(timestamp, 'Antarctica/Troll') BETWEEN '2005-03-27T00:00:00.000000Z' AND '2005-03-27T02:00:00.000000Z'")
-                    .timestamp("timestamp")
-                    .withPlanContaining("filter:")
-                    .returns("""
-                            price\ttimestamp
-                            1.0\t2005-03-27T00:30:00.000000Z
-                            """);
-        });
-    }
-
-    @Test
-    public void testToTimezoneFallBackOverlapSuperset() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tz (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
-            // London falls back at 2022-10-30T01:00Z: local 01:30 occurs twice (BST then GMT),
-            // so both rows map to the same wall-clock value. A wrong EXACT would keep only one;
-            // the transition inside the window forces SUPERSET, the filter stays, both rows match
-            execute("INSERT INTO tz VALUES " +
-                    "(1, '2022-10-30T00:30:00.000000Z')," +
-                    "(2, '2022-10-30T01:30:00.000000Z');");
-            assertQuery("SELECT * FROM tz WHERE to_timezone(timestamp, 'Europe/London') = '2022-10-30T01:30:00.000000Z'")
-                    .timestamp("timestamp")
-                    .withPlanContaining("filter:")
-                    .returns("""
-                            price\ttimestamp
-                            1.0\t2022-10-30T00:30:00.000000Z
-                            2.0\t2022-10-30T01:30:00.000000Z
                             """);
         });
     }
@@ -1232,6 +1200,39 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
                     .returns("""
                             price\ttimestamp
                             2.0\t2022-07-15T12:30:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testToUtcFixedOffset() throws Exception {
+        assertMemoryLeak(() -> {
+            createTrades();
+            assertQuery("SELECT * FROM trades WHERE to_utc(timestamp, '+02:00') >= '2022-01-03T10:00:00.000000Z'")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Interval forward scan on: trades")
+                    .returns("""
+                            price\ttimestamp
+                            200.0\t2022-01-03T12:00:00.000000Z
+                            250.0\t2022-01-04T12:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testToUtcNamedZoneWinterExact() throws Exception {
+        assertMemoryLeak(() -> {
+            createTrades();
+            // January is far from any London DST transition, so the offset is provably constant
+            // (0) across the preimage: the inversion is exact and the row filter is dropped
+            assertQuery("SELECT * FROM trades WHERE to_utc(timestamp, 'Europe/London') >= '2022-01-03T12:00:00.000000Z'")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Interval forward scan on: trades")
+                    .withPlanNotContaining("filter:")
+                    .returns("""
+                            price\ttimestamp
+                            200.0\t2022-01-03T12:00:00.000000Z
+                            250.0\t2022-01-04T12:00:00.000000Z
                             """);
         });
     }
@@ -1528,10 +1529,12 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
                     + ", null, '00:00', '" + TZ_POOL[rnd.nextInt(TZ_POOL.length)] + "')";
             // timestamp_ceil takes a bare unit char, not a stride multiplier
             case 4 -> "timestamp_ceil('" + STRIDE_UNITS_ALL[rnd.nextInt(STRIDE_UNITS_ALL.length)] + "', " + inner + ")";
-            case 5 -> "dateadd('" + ADD_UNITS[rnd.nextInt(ADD_UNITS.length)] + "', " + (rnd.nextInt(73) - 36) + ", " + inner + ")";
+            case 5 ->
+                    "dateadd('" + ADD_UNITS[rnd.nextInt(ADD_UNITS.length)] + "', " + (rnd.nextInt(73) - 36) + ", " + inner + ")";
             case 6 -> "dateadd('" + ADD_UNITS[rnd.nextInt(ADD_UNITS.length)] + "', " + (rnd.nextInt(49) - 24)
                     + ", " + inner + ", '" + TZ_POOL[rnd.nextInt(TZ_POOL.length)] + "')";
-            case 7 -> (rnd.nextBoolean() ? "to_timezone(" : "to_utc(") + inner + ", '" + TZ_POOL[rnd.nextInt(TZ_POOL.length)] + "')";
+            case 7 ->
+                    (rnd.nextBoolean() ? "to_timezone(" : "to_utc(") + inner + ", '" + TZ_POOL[rnd.nextInt(TZ_POOL.length)] + "')";
             default -> {
                 final String castType = rnd.nextBoolean() ? "timestamp" : "timestamp_ns";
                 yield rnd.nextBoolean() ? "cast(" + inner + " AS " + castType + ")" : inner + "::" + castType;
