@@ -34,6 +34,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.ObjObjHashMap;
@@ -51,7 +52,8 @@ public class ShowParametersCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
-        return cursor.of(executionContext.getCairoEngine().getConfiguration().getAllPairs());
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
+        return cursor.of(executionContext.getCircuitBreaker(), executionContext.getCairoEngine().getConfiguration().getAllPairs());
     }
 
     @Override
@@ -80,6 +82,7 @@ public class ShowParametersCursorFactory extends AbstractRecordCursorFactory {
 
     private static class ShowParametersRecordCursor implements NoRandomAccessRecordCursor {
         private ObjObjHashMap<ConfigPropertyKey, ConfigPropertyValue> allPairs;
+        private SqlExecutionCircuitBreaker circuitBreaker;
         private ObjObjHashMap.Entry<ConfigPropertyKey, ConfigPropertyValue> entry;
         private final Record record = new Record() {
             @Override
@@ -139,6 +142,7 @@ public class ShowParametersCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public boolean hasNext() {
+            circuitBreaker.statefulThrowExceptionIfTripped();
             if (iterator.hasNext()) {
                 entry = iterator.next();
                 return true;
@@ -162,7 +166,8 @@ public class ShowParametersCursorFactory extends AbstractRecordCursorFactory {
             entry = null;
         }
 
-        private ShowParametersRecordCursor of(ObjObjHashMap<ConfigPropertyKey, ConfigPropertyValue> allPairs) {
+        private ShowParametersRecordCursor of(SqlExecutionCircuitBreaker circuitBreaker, ObjObjHashMap<ConfigPropertyKey, ConfigPropertyValue> allPairs) {
+            this.circuitBreaker = circuitBreaker;
             this.allPairs = allPairs;
             toTop();
             return this;

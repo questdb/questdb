@@ -74,6 +74,7 @@ class LatestByValuesIndexedRecordCursor extends AbstractPageFrameRecordCursor {
 
     @Override
     public boolean hasNext() {
+        circuitBreaker.statefulThrowExceptionIfTripped();
         buildTreeMapConditionally();
         if (index < rows.size()) {
             final long rowId = rows.get(index++);

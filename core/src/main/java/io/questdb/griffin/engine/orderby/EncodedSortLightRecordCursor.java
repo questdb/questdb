@@ -230,6 +230,8 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor, RecordCurs
     }
 
     private void buildAndSort() {
+        // Consult the breaker before consuming the base, so an empty base scan still observes cancellation.
+        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
         final boolean isVariable = keyType.isVariable();
         if (isVariable) {
             // Reset the key heap so a re-execution does not accrue stale key bytes;
