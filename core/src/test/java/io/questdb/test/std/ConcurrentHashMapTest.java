@@ -28,6 +28,7 @@ import io.questdb.std.ConcurrentHashMap;
 import org.junit.Test;
 
 import java.util.Map;
+import java.util.function.Function;
 
 import static org.junit.Assert.*;
 
@@ -125,6 +126,39 @@ public class ConcurrentHashMapTest {
             fail("Null key");
         } catch (NullPointerException ignored) {
         }
+    }
+
+    @Test
+    public void testComputeIfAbsentReturnsExistingWithoutInvokingMapping() {
+        // Exercises the lock-free first-node fast path: when the key is already present,
+        // computeIfAbsent must return the stored value and must NOT invoke the mapping function.
+        ConcurrentHashMap<String> map = new ConcurrentHashMap<>(4);
+        final int n = 256;
+        for (int i = 0; i < n; i++) {
+            map.put("k" + i, "v" + i);
+        }
+        assertEquals(n, map.size());
+
+        final Function<CharSequence, String> failing = k -> {
+            throw new AssertionError("mapping function must not run for present key: " + k);
+        };
+        // Every present key (whether bin head or further down a chain/tree) resolves without the mapping.
+        // A fresh String instance forces the keyEquals comparison rather than reference equality.
+        for (int i = 0; i < n; i++) {
+            assertEquals("v" + i, map.computeIfAbsent(new StringBuilder("k").append(i).toString(), failing));
+        }
+        assertEquals(n, map.size());
+
+        // The token (BiFunction) overload makes the same guarantee for a present key.
+        assertEquals("v0", map.computeIfAbsent("k0", new Object(), (k, token) -> {
+            throw new AssertionError("mapping function must not run for present key");
+        }));
+        assertEquals(n, map.size());
+
+        // An absent key still falls through to the locked path and inserts.
+        assertEquals("inserted", map.computeIfAbsent("absent", k -> "inserted"));
+        assertTrue(map.containsKey("absent"));
+        assertEquals(n + 1, map.size());
     }
 
     @Test
