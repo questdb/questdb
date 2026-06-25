@@ -334,7 +334,18 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             if (exactMin > maxValueClamped) {
                 continue;
             }
-            // Partially clipped (genuine MIXED): bail to the traverse fallback.
+            // Fully below the low bound: every posting in this gen is < minValue, so the
+            // cursor filters them all out and the gen contributes 0 — skip it (the symmetric
+            // counterpart of the fully-above-clamp case above). Without this, such a gen would
+            // trip the exactMin < minValue MIXED check below and force the whole (key,
+            // partition) onto the O(rows) traverse, even though it is cleanly empty here.
+            if (exactMax < minValue) {
+                continue;
+            }
+            // Partially clipped (genuine MIXED — straddles minValue or the clamp): bail to the
+            // traverse fallback. exactMax >= minValue here, so exactMin < minValue means a true
+            // straddle (some postings below minValue, some at/above), which the full count would
+            // over-count.
             if (exactMax > maxValueClamped || exactMin < minValue) {
                 return Numbers.LONG_NULL;
             }
@@ -455,7 +466,15 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             if (exactMin > maxValueClamped) {
                 continue;
             }
-            // Partially clipped (genuine MIXED): bail to the traverse fallback.
+            // Fully below the low bound: every posting is < minValue, so the cursor skips the
+            // whole gen and it contributes 0 matches — skip it without disturbing the running
+            // acc (the symmetric counterpart of the fully-above-clamp case). Must mirror
+            // countMatchesClamped exactly, or the k-th-match index would desync from the count.
+            if (exactMax < minValue) {
+                continue;
+            }
+            // Partially clipped (genuine MIXED — straddles minValue or the clamp): bail to the
+            // traverse fallback.
             if (exactMax > maxValueClamped || exactMin < minValue) {
                 return Numbers.LONG_NULL;
             }

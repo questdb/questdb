@@ -38,6 +38,7 @@ import io.questdb.cairo.idx.AbstractPostingIndexReader;
 import io.questdb.cairo.idx.CoveringRowCursor;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.ColumnMapping;
+import io.questdb.cairo.sql.CoveredColumnDecoder;
 import io.questdb.cairo.sql.DataSource;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrame;
@@ -1316,32 +1317,13 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 int includeIdx = queryColToIncludeIdx[q];
                 if (includeIdx < 0) continue;
                 long addr = addrs[q];
-                switch (columnTypeTags[q]) {
-                    case ColumnType.DOUBLE -> Unsafe.putDouble(
-                            addr + (long) count * Double.BYTES, crc.getCoveredDouble(includeIdx));
-                    case ColumnType.FLOAT -> Unsafe.putFloat(
-                            addr + (long) count * Float.BYTES, crc.getCoveredFloat(includeIdx));
-                    case ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.GEOLONG,
-                         ColumnType.DECIMAL64 ->
-                            Unsafe.putLong(addr + (long) count * Long.BYTES, crc.getCoveredLong(includeIdx));
-                    case ColumnType.INT, ColumnType.IPv4, ColumnType.GEOINT, ColumnType.SYMBOL, ColumnType.DECIMAL32 ->
-                            Unsafe.putInt(addr + (long) count * Integer.BYTES, crc.getCoveredInt(includeIdx));
-                    case ColumnType.SHORT, ColumnType.CHAR, ColumnType.GEOSHORT, ColumnType.DECIMAL16 ->
-                            Unsafe.putShort(addr + (long) count * Short.BYTES, crc.getCoveredShort(includeIdx));
-                    case ColumnType.BYTE, ColumnType.BOOLEAN, ColumnType.GEOBYTE, ColumnType.DECIMAL8 ->
-                            Unsafe.putByte(addr + count, crc.getCoveredByte(includeIdx));
-                    case ColumnType.UUID, ColumnType.DECIMAL128 -> {
-                        long off128 = (long) count * 16;
-                        Unsafe.putLong(addr + off128, crc.getCoveredLong128Lo(includeIdx));
-                        Unsafe.putLong(addr + off128 + 8, crc.getCoveredLong128Hi(includeIdx));
-                    }
-                    case ColumnType.LONG256, ColumnType.DECIMAL256 -> {
-                        long off256 = (long) count * 32;
-                        Unsafe.putLong(addr + off256, crc.getCoveredLong256_0(includeIdx));
-                        Unsafe.putLong(addr + off256 + 8, crc.getCoveredLong256_1(includeIdx));
-                        Unsafe.putLong(addr + off256 + 16, crc.getCoveredLong256_2(includeIdx));
-                        Unsafe.putLong(addr + off256 + 24, crc.getCoveredLong256_3(includeIdx));
-                    }
+                final int tag = columnTypeTags[q];
+                // Fixed-width covered values go through the single shared layout (the worker
+                // path uses the same); only the var-size sink below is path-specific.
+                if (CoveredColumnDecoder.writeFixedWidthCovered(addr, count, tag, crc, includeIdx)) {
+                    continue;
+                }
+                switch (tag) {
                     case ColumnType.VARCHAR ->
                             writeVarcharToFrame(addrs[q], varDataAddrs, varDataPos, varDataCap, q, count, crc.getCoveredVarcharA(includeIdx));
                     case ColumnType.STRING ->

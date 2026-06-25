@@ -31,6 +31,7 @@ import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.idx.CoveringRowCursor;
 import io.questdb.cairo.idx.PostingGenLookup;
+import io.questdb.cairo.idx.PostingIndexBwdReader;
 import io.questdb.cairo.idx.PostingIndexFwdReader;
 import io.questdb.cairo.idx.PostingIndexWriter;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -792,6 +793,133 @@ public class PostingReaderConcurrentReadTest extends AbstractCairoTest {
         Field f = base.getDeclaredField("chainSequence");
         f.setAccessible(true);
         return f.getLong(reader);
+    }
+
+    /**
+     * Concurrent-path coverage for the BACKWARD reader's {@code getDetachedCursor}, which is
+     * provided for API symmetry but is not exercised by the (forward-only) covered-decode
+     * pipeline. Two threads each open a detached BWD cursor over the same warmed reader and the
+     * same key and iterate in lockstep; each must reproduce the cold backward cursor's full
+     * (descending) (rowId, coveredValue) sequence, and neither may push to the shared cursor pool.
+     */
+    @Test
+    public void testTwoDetachedBwdCursorsSameKeyConcurrent() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final String name = "detached_bwd_posting";
+                final int plen = path.size();
+
+                final int keyCount = 4;
+                final int extraGens = 4;
+                final int sparseKeyCount = 2;
+                final int baseRows = keyCount * 3;
+                final int extraRowsPerGen = sparseKeyCount * 3;
+                final int totalRows = baseRows + extraGens * extraRowsPerGen;
+
+                final long colBytes = (long) totalRows * Long.BYTES;
+                final long colAddr = Unsafe.malloc(colBytes, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    for (int i = 0; i < totalRows; i++) {
+                        Unsafe.putLong(colAddr + (long) i * Long.BYTES, 1000L + i);
+                    }
+                    try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                        writer.configureCovering(
+                                new long[]{colAddr}, new long[]{0}, new int[]{3}, new int[]{1}, new int[]{ColumnType.LONG}, 1);
+                        int row = 0;
+                        for (int j = 0; j < baseRows; j++) {
+                            writer.add(j % keyCount, row++);
+                        }
+                        writer.setMaxValue(row - 1);
+                        writer.commit();
+                        for (int g = 0; g < extraGens; g++) {
+                            for (int j = 0; j < extraRowsPerGen; j++) {
+                                writer.add(j % sparseKeyCount, row++);
+                            }
+                            writer.setMaxValue(row - 1);
+                            writer.commit();
+                        }
+                    }
+
+                    final RecordMetadata md = coveringMetadata(new int[]{1}, new int[]{ColumnType.LONG});
+                    final int[] keys = new int[keyCount];
+                    for (int k = 0; k < keyCount; k++) {
+                        keys[k] = k;
+                    }
+                    final int[] required = {0};
+                    final int probeKey = 0;
+
+                    // Cold single-threaded BACKWARD reference (descending row ids).
+                    final LongList expectedRows = new LongList();
+                    final LongList expectedVals = new LongList();
+                    try (PostingIndexBwdReader cold = new PostingIndexBwdReader(
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0, md, EMPTY_CVR, 0)) {
+                        CoveringRowCursor cc = (CoveringRowCursor) cold.getCursor(probeKey, 0, Long.MAX_VALUE, required);
+                        while (cc.hasNext()) {
+                            expectedRows.add(cc.next());
+                            expectedVals.add(cc.getCoveredLong(0));
+                        }
+                        Misc.free(cc);
+                    }
+                    assertTrue("probe key must yield rows for a meaningful test", expectedRows.size() > 0);
+
+                    try (PostingIndexBwdReader warm = new PostingIndexBwdReader(
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0, md, EMPTY_CVR, 0)) {
+                        warm.warmForKeys(keys, required);
+                        final int poolSizeAfterWarm = bwdFreeCursorsSize(warm);
+
+                        final CyclicBarrier barrier = new CyclicBarrier(2);
+                        final AtomicReference<Throwable> error = new AtomicReference<>();
+                        final Runnable worker = () -> {
+                            try {
+                                barrier.await();
+                                CoveringRowCursor cc = (CoveringRowCursor)
+                                        warm.getDetachedCursor(probeKey, 0, Long.MAX_VALUE, required);
+                                try {
+                                    int i = 0;
+                                    while (cc.hasNext()) {
+                                        long r = cc.next();
+                                        long v = cc.getCoveredLong(0);
+                                        assertTrue("detached bwd cursor produced more rows than cold (idx " + i + ")",
+                                                i < expectedRows.size());
+                                        assertEquals("bwd row id mismatch at idx " + i, expectedRows.getQuick(i), r);
+                                        assertEquals("bwd covered value mismatch at idx " + i, expectedVals.getQuick(i), v);
+                                        i++;
+                                    }
+                                    assertEquals("detached bwd cursor produced fewer rows than cold",
+                                            expectedRows.size(), i);
+                                } finally {
+                                    cc.close();
+                                }
+                            } catch (Throwable t) {
+                                error.compareAndSet(null, t);
+                            }
+                        };
+
+                        Thread t1 = new Thread(worker, "detached-bwd-1");
+                        Thread t2 = new Thread(worker, "detached-bwd-2");
+                        t1.start();
+                        t2.start();
+                        t1.join();
+                        t2.join();
+
+                        Throwable t = error.get();
+                        if (t != null) {
+                            throw new AssertionError("concurrent detached bwd cursor failure", t);
+                        }
+                        assertEquals("detached bwd cursors must not push to freeCursors",
+                                poolSizeAfterWarm, bwdFreeCursorsSize(warm));
+                    }
+                } finally {
+                    Unsafe.free(colAddr, colBytes, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    private static int bwdFreeCursorsSize(PostingIndexBwdReader reader) throws Exception {
+        Field f = reader.getClass().getDeclaredField("freeCursors");
+        f.setAccessible(true);
+        return ((ObjList<?>) f.get(reader)).size();
     }
 
     private static RecordMetadata coveringMetadata(int[] coveredIndices, int[] coveredTypes) {

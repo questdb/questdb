@@ -147,9 +147,17 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     // Unlike parquet's cachedBytes this is NOT an eviction budget: covered buffers are
     // query-lifetime and cannot be LRU-evicted mid-query (zero-copy first()/last()
     // aggregates retain raw pointers into them for the merge phase, so evicting a still
-    // referenced frame would be a use-after-free). The per-query MemoryTracker captured
-    // by each CoveringBuffers is the enforced ceiling; this counter is for observability
-    // and tests. Always == the sum of every retained CoveringBuffers' allocation.
+    // referenced frame would be a use-after-free). For observability and tests only;
+    // always == the sum of every retained CoveringBuffers' live allocation.
+    //
+    // Covered buffers deliberately use GLOBAL native accounting (MemoryTag.NATIVE_INDEX_READER,
+    // no per-query MemoryTracker), exactly like the eager covering production path. They cannot
+    // be charged to the per-query tracker: a CoveringBuffers is freed lazily at the NEXT query's
+    // clear()/of() (the reduce task that owns the pool is reset on reuse, not at the owning
+    // query's teardown), which is after the owning query's tracker has been recycled — charging
+    // it would then decrement an unrelated workload's recycled tracker block and trip
+    // PerQueryMemoryTracker.acquire()'s used==0 guard. So per-query limits do not see covered
+    // decode memory (a documented limitation shared with the eager path), not a buggy charge.
     private long coveredCachedBytes;
     private ParquetDecodeHint decodeHint = ParquetDecodeHint.MONOTONIC;
     private long effectiveBudgetBytes;
@@ -1467,13 +1475,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         // null-pad / projection wrapper over the covered frame — published as a NULL column.
         private boolean[] coveredColumn;
         private int frameIndex = -1;
-        // The per-query MemoryTracker captured at decode time so this frame's native
-        // decode buffers charge the owning workload's memory limit. Captured per
-        // CoveringBuffers (like RowGroupBuffers captures its allocator) so every free
-        // accounts against the exact tracker its alloc charged, even if the pool's
-        // current tracker has since been cleared at a query boundary. Null leaves the
-        // buffers on global-only accounting (context-less / no per-query limit).
-        private MemoryTracker bufferTracker;
         // Synthesized symbol-key column (broadcast int), shared by every DIRECT
         // (indexed key) column of the covered frame. 0 when unallocated.
         private long symAddr;
@@ -1532,10 +1533,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             if (this.frameIndex == frameIndex) {
                 return;
             }
-            // Capture the owning query's tracker before the first allocation. decode()
-            // is idempotent and a CoveringBuffers decodes exactly one frame, so this is
-            // assigned once and stays valid through freeColumnBuffers()/close().
-            bufferTracker = memoryTracker;
             ensureColumnBuffers(frameIndex, rowCount);
             // Open a detached cursor this worker owns; drain it fully, then close
             // it so it never outlives the decode. rowHi is exclusive at the frame
@@ -1558,12 +1555,18 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     }
                 }
                 // The detached re-scan must reproduce production's chunk row-for-row:
-                // downstream aggregation reads exactly getFrameSize() (== rowCount)
-                // values from these buffers regardless of how many the cursor yielded,
-                // so an under-fill would read the uninitialized buffer tail. Assert exact
-                // equality (the loop above already caps over-fill) to fail loud rather
-                // than silently publish a short count over uninitialized memory.
-                assert count == rowCount : "covered re-decode row count mismatch: decoded " + count + " of " + rowCount;
+                // downstream aggregation reads exactly getFrameSize() (== rowCount) values
+                // from these buffers regardless of how many the cursor yielded, so an
+                // under-fill would read the uninitialized buffer tail. The loop above caps
+                // over-fill, so count <= rowCount here; a short count is an invariant break
+                // (frozen-reader or reseal corruption). Fail loud as a hard error — NOT just
+                // an -ea assert — so a release build rejects the query instead of silently
+                // aggregating uninitialized memory.
+                if (count != rowCount) {
+                    throw CairoException.critical(0)
+                            .put("covered re-decode row count mismatch: decoded ").put(count)
+                            .put(" of ").put(rowCount).put(" [frameIndex=").put(frameIndex).put(']');
+                }
                 // Single resolved key per covered frame: broadcast it across the
                 // synthesized symbol column.
                 CoveredColumnDecoder.fillSymbolKey(symAddr, key, count);
@@ -1588,7 +1591,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                             .put("covered var-data column too large [bytes=").put(newCapLong).put(']');
                 }
                 final int newCap = (int) newCapLong;
-                varDataAddr[q] = Unsafe.realloc(varDataAddr[q], varDataCap[q], newCap, MemoryTag.NATIVE_INDEX_READER, bufferTracker);
+                varDataAddr[q] = Unsafe.realloc(varDataAddr[q], varDataCap[q], newCap, MemoryTag.NATIVE_INDEX_READER);
                 coveredCachedBytes += newCap - varDataCap[q];
                 varDataCap[q] = newCap;
             }
@@ -1705,13 +1708,13 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             if (colAddr != null) {
                 for (int q = 0, n = colAddr.length; q < n; q++) {
                     if (colAddr[q] != 0) {
-                        Unsafe.free(colAddr[q], colCap[q], MemoryTag.NATIVE_INDEX_READER, bufferTracker);
+                        Unsafe.free(colAddr[q], colCap[q], MemoryTag.NATIVE_INDEX_READER);
                         coveredCachedBytes -= colCap[q];
                         colAddr[q] = 0;
                         colCap[q] = 0;
                     }
                     if (varDataAddr[q] != 0) {
-                        Unsafe.free(varDataAddr[q], varDataCap[q], MemoryTag.NATIVE_INDEX_READER, bufferTracker);
+                        Unsafe.free(varDataAddr[q], varDataCap[q], MemoryTag.NATIVE_INDEX_READER);
                         coveredCachedBytes -= varDataCap[q];
                         varDataAddr[q] = 0;
                         varDataCap[q] = 0;
@@ -1719,7 +1722,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 }
             }
             if (symAddr != 0) {
-                Unsafe.free(symAddr, symCap, MemoryTag.NATIVE_INDEX_READER, bufferTracker);
+                Unsafe.free(symAddr, symCap, MemoryTag.NATIVE_INDEX_READER);
                 coveredCachedBytes -= symCap;
                 symAddr = 0;
                 symCap = 0;
@@ -1737,7 +1740,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             if (addr != 0 && oldBytes >= newBytes) {
                 return addr;
             }
-            final long result = Unsafe.realloc(addr, oldBytes, newBytes, MemoryTag.NATIVE_INDEX_READER, bufferTracker);
+            final long result = Unsafe.realloc(addr, oldBytes, newBytes, MemoryTag.NATIVE_INDEX_READER);
             coveredCachedBytes += newBytes - oldBytes;
             return result;
         }

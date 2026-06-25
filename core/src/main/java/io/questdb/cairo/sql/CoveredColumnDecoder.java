@@ -98,44 +98,66 @@ public final class CoveredColumnDecoder {
                 continue;
             }
             final long addr = addrs[q];
-            switch (columnTypeTags[q]) {
-                case ColumnType.DOUBLE -> Unsafe.putDouble(
-                        addr + (long) count * Double.BYTES, crc.getCoveredDouble(includeIdx));
-                case ColumnType.FLOAT -> Unsafe.putFloat(
-                        addr + (long) count * Float.BYTES, crc.getCoveredFloat(includeIdx));
-                case ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.GEOLONG,
-                     ColumnType.DECIMAL64 ->
-                        Unsafe.putLong(addr + (long) count * Long.BYTES, crc.getCoveredLong(includeIdx));
-                case ColumnType.INT, ColumnType.IPv4, ColumnType.GEOINT, ColumnType.SYMBOL, ColumnType.DECIMAL32 ->
-                        Unsafe.putInt(addr + (long) count * Integer.BYTES, crc.getCoveredInt(includeIdx));
-                case ColumnType.SHORT, ColumnType.CHAR, ColumnType.GEOSHORT, ColumnType.DECIMAL16 ->
-                        Unsafe.putShort(addr + (long) count * Short.BYTES, crc.getCoveredShort(includeIdx));
-                case ColumnType.BYTE, ColumnType.BOOLEAN, ColumnType.GEOBYTE, ColumnType.DECIMAL8 ->
-                        Unsafe.putByte(addr + count, crc.getCoveredByte(includeIdx));
-                case ColumnType.UUID, ColumnType.DECIMAL128 -> {
-                    long off128 = (long) count * 16;
-                    Unsafe.putLong(addr + off128, crc.getCoveredLong128Lo(includeIdx));
-                    Unsafe.putLong(addr + off128 + 8, crc.getCoveredLong128Hi(includeIdx));
-                }
-                case ColumnType.LONG256, ColumnType.DECIMAL256 -> {
-                    long off256 = (long) count * 32;
-                    Unsafe.putLong(addr + off256, crc.getCoveredLong256_0(includeIdx));
-                    Unsafe.putLong(addr + off256 + 8, crc.getCoveredLong256_1(includeIdx));
-                    Unsafe.putLong(addr + off256 + 16, crc.getCoveredLong256_2(includeIdx));
-                    Unsafe.putLong(addr + off256 + 24, crc.getCoveredLong256_3(includeIdx));
-                }
-                case ColumnType.VARCHAR ->
-                        writeVarchar(addr, varData, q, count, crc.getCoveredVarcharA(includeIdx));
-                case ColumnType.STRING ->
-                        writeString(addr, varData, q, count, crc.getCoveredStrA(includeIdx));
-                case ColumnType.BINARY ->
-                        writeBinary(addr, varData, q, count, crc.getCoveredBin(includeIdx));
-                case ColumnType.ARRAY ->
-                        writeArray(addr, varData, q, count, crc.getCoveredArray(includeIdx, columnTypes[q]));
-                default -> {
+            final int tag = columnTypeTags[q];
+            // Fixed-width types share the SAME layout in the eager and worker paths, so they
+            // go through the single source of truth below; only the var-size sink differs.
+            if (!writeFixedWidthCovered(addr, count, tag, crc, includeIdx)) {
+                switch (tag) {
+                    case ColumnType.VARCHAR ->
+                            writeVarchar(addr, varData, q, count, crc.getCoveredVarcharA(includeIdx));
+                    case ColumnType.STRING ->
+                            writeString(addr, varData, q, count, crc.getCoveredStrA(includeIdx));
+                    case ColumnType.BINARY ->
+                            writeBinary(addr, varData, q, count, crc.getCoveredBin(includeIdx));
+                    case ColumnType.ARRAY ->
+                            writeArray(addr, varData, q, count, crc.getCoveredArray(includeIdx, columnTypes[q]));
+                    default -> {
+                    }
                 }
             }
         }
+    }
+
+    /**
+     * Writes one FIXED-WIDTH covered value to {@code addr} at slot {@code count}. Returns
+     * {@code true} if {@code columnTypeTag} is a fixed-width type written here, or {@code false}
+     * for a var-size type (VARCHAR / STRING / BINARY / ARRAY) — or an unknown tag — which the
+     * caller must handle via its own var-data sink. This is the single source of truth for the
+     * fixed-width covered layout, shared by the worker decode (above) and the eager
+     * multi-key merge in {@code CoveringIndexRecordCursorFactory}, so the two cannot drift.
+     */
+    public static boolean writeFixedWidthCovered(long addr, int count, int columnTypeTag, CoveringRowCursor crc, int includeIdx) {
+        switch (columnTypeTag) {
+            case ColumnType.DOUBLE -> Unsafe.putDouble(
+                    addr + (long) count * Double.BYTES, crc.getCoveredDouble(includeIdx));
+            case ColumnType.FLOAT -> Unsafe.putFloat(
+                    addr + (long) count * Float.BYTES, crc.getCoveredFloat(includeIdx));
+            case ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.GEOLONG,
+                 ColumnType.DECIMAL64 ->
+                    Unsafe.putLong(addr + (long) count * Long.BYTES, crc.getCoveredLong(includeIdx));
+            case ColumnType.INT, ColumnType.IPv4, ColumnType.GEOINT, ColumnType.SYMBOL, ColumnType.DECIMAL32 ->
+                    Unsafe.putInt(addr + (long) count * Integer.BYTES, crc.getCoveredInt(includeIdx));
+            case ColumnType.SHORT, ColumnType.CHAR, ColumnType.GEOSHORT, ColumnType.DECIMAL16 ->
+                    Unsafe.putShort(addr + (long) count * Short.BYTES, crc.getCoveredShort(includeIdx));
+            case ColumnType.BYTE, ColumnType.BOOLEAN, ColumnType.GEOBYTE, ColumnType.DECIMAL8 ->
+                    Unsafe.putByte(addr + count, crc.getCoveredByte(includeIdx));
+            case ColumnType.UUID, ColumnType.DECIMAL128 -> {
+                long off128 = (long) count * 16;
+                Unsafe.putLong(addr + off128, crc.getCoveredLong128Lo(includeIdx));
+                Unsafe.putLong(addr + off128 + 8, crc.getCoveredLong128Hi(includeIdx));
+            }
+            case ColumnType.LONG256, ColumnType.DECIMAL256 -> {
+                long off256 = (long) count * 32;
+                Unsafe.putLong(addr + off256, crc.getCoveredLong256_0(includeIdx));
+                Unsafe.putLong(addr + off256 + 8, crc.getCoveredLong256_1(includeIdx));
+                Unsafe.putLong(addr + off256 + 16, crc.getCoveredLong256_2(includeIdx));
+                Unsafe.putLong(addr + off256 + 24, crc.getCoveredLong256_3(includeIdx));
+            }
+            default -> {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static void writeArray(long auxAddr, VarDataSink varData, int q, int count, @Nullable ArrayView value) {

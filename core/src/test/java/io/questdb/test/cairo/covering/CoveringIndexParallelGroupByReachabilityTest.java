@@ -240,13 +240,15 @@ public class CoveringIndexParallelGroupByReachabilityTest extends AbstractCairoT
 
     @Test
     public void testCoveredAsyncGroupByTrackerBalancedAcrossManyQueries() throws Exception {
-        // M1 accounting check: run the covered async keyed GROUP BY many times so the
-        // per-query MemoryTracker is acquired, charged with covered decode buffers, released,
-        // and recycled repeatedly. CoveringBuffers captures the tracker at decode and frees
-        // against it later; if that free lands after the tracker is recycled (cross-query
-        // mis-charge), PerQueryMemoryTracker.acquire()'s `assert getUsed() == 0` trips on the
-        // next acquisition of the recycled block. A clean run proves covered buffers are
-        // uncharged before their tracker is recycled.
+        // Regression for the covered-buffer / per-query-tracker lifetime: run the covered async
+        // keyed GROUP BY many times under a real per-query MemoryTracker so the tracker is
+        // acquired, used, released, and recycled repeatedly. Covered decode buffers are
+        // query-lifetime and are freed only at the NEXT query's clear()/of() — AFTER the owning
+        // query's tracker has been recycled. They therefore must NOT be charged to that tracker
+        // (they use global NATIVE_INDEX_READER accounting); if they were, the deferred free would
+        // decrement a recycled block and PerQueryMemoryTracker.acquire()'s `assert getUsed() == 0`
+        // would trip on a later query. A clean run confirms covered buffers stay off the per-query
+        // tracker and the limit path is leak-free.
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(

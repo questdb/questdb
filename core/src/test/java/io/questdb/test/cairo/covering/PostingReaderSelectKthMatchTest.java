@@ -723,6 +723,109 @@ public class PostingReaderSelectKthMatchTest extends AbstractCairoTest {
 
     // ---- helpers ----
 
+    /**
+     * An early gen whose postings for the key are ENTIRELY below minValue must be skipped
+     * by the cheap path (it contributes 0, exactly as the cursor skips it), NOT trip the
+     * MIXED bail. Layout: key 0 has gen 0 at rows 0,2,..,98 (all &lt; 1000) and gen 1 at rows
+     * 1000,1002,..,1098 (all &gt;= 1000). For any minValue in (98, 1000] the early gen is fully
+     * below and the late gen is fully covered, so selectKthMatch/countMatchesClamped must
+     * equal the cursor exactly (NON-sentinel). Before the fully-below optimization this
+     * returned the LONG_NULL sentinel and forced the whole partition onto the O(rows) traverse.
+     */
+    @Test
+    public void testEarlyGenFullyBelowMinValueUsesCheapPath() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final String name = "skm_below_min";
+                final int plen = path.size();
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    // Gen 0: rows 0..99, key = row % 2 -> key 0 at 0,2,..,98 (all < 1000).
+                    for (long rowId = 0; rowId < 100; rowId++) {
+                        writer.add((int) (rowId % 2), rowId);
+                    }
+                    writer.setMaxValue(99);
+                    writer.commit();
+                    // Gen 1: rows 1000..1099, key = row % 2 -> key 0 at 1000,1002,..,1098.
+                    for (long rowId = 1000; rowId < 1100; rowId++) {
+                        writer.add((int) (rowId % 2), rowId);
+                    }
+                    writer.setMaxValue(1099);
+                    writer.commit();
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 0, 0)) {
+                    reader.reloadConditionally();
+                    final long clamp = entryMaxValue(reader);
+
+                    // Sweep minValues where the early gen (max 98) is fully below and the late
+                    // gen (1000..1098, within clamp) is fully covered: 0 (no skip) plus
+                    // interior values that skip only the early gen. Each must match the cursor
+                    // exactly and NEVER produce the sentinel. (minValue > clamp is a separate,
+                    // pre-existing empty-range bail and is not what this optimization touches.)
+                    for (long minValue : new long[]{0, 200, 500, 999, 1000}) {
+                        assertSelectMatchesCursor(reader, 0, minValue, Long.MAX_VALUE);
+                    }
+
+                    // Loud, explicit teeth: at minValue=500 the cheap path must SUCCEED with the
+                    // exact count (50: rows 1000,1002,..,1098), not bail to the sentinel.
+                    assertNotEquals("fully-below early gen must not force the sentinel",
+                            Numbers.LONG_NULL, reader.countMatchesClamped(0, 500, Long.MAX_VALUE, clamp));
+                    assertEquals("cheap-path count must equal the cursor's drained count",
+                            50L, reader.countMatchesClamped(0, 500, Long.MAX_VALUE, clamp));
+                    assertEquals("first match at minValue=500 must be row 1000",
+                            1000L, reader.selectKthMatch(0, 500, Long.MAX_VALUE, clamp, 0));
+                    assertEquals("last match at minValue=500 must be row 1098",
+                            1098L, reader.selectKthMatch(0, 500, Long.MAX_VALUE, clamp, 49));
+                }
+            }
+        });
+    }
+
+    /**
+     * A gen that STRADDLES minValue (some postings below, some at/above) must still bail to
+     * the sentinel — the full per-gen count would over-count the below-minValue postings the
+     * cursor filters out. This guards the precision of the fully-below optimization: only a
+     * gen entirely below minValue may be skipped, never a straddling one.
+     */
+    @Test
+    public void testGenStraddlingMinValueStillBailsToSentinel() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final String name = "skm_straddle";
+                final int plen = path.size();
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    // Single gen: key 0 at rows 0,2,..,98.
+                    for (long rowId = 0; rowId < 100; rowId++) {
+                        writer.add((int) (rowId % 2), rowId);
+                    }
+                    writer.setMaxValue(99);
+                    writer.commit();
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 0, 0)) {
+                    reader.reloadConditionally();
+                    final long clamp = entryMaxValue(reader);
+
+                    // minValue=50 lands inside the gen (postings 0..48 below, 50..98 at/above):
+                    // a genuine straddle -> the metadata count diverges from the cursor, so the
+                    // cheap path MUST return the sentinel and let the caller traverse.
+                    assertEquals("a gen straddling minValue must still yield the fallback sentinel",
+                            Numbers.LONG_NULL, reader.countMatchesClamped(0, 50, Long.MAX_VALUE, clamp));
+                    for (int k = 0; k < 25; k++) {
+                        assertEquals("straddling gen must yield the sentinel for every k (k=" + k + ")",
+                                Numbers.LONG_NULL, reader.selectKthMatch(0, 50, Long.MAX_VALUE, clamp, k));
+                    }
+                }
+            }
+        });
+    }
+
     private static void assertSelectMatchesCursor(PostingIndexFwdReader reader, int key, long minValue, long callerMax) {
         LongList gt = drain(reader, key, minValue, callerMax);
         // The cursor clamps internally to min(callerMax, entryMaxValue). Mirror that
