@@ -182,6 +182,14 @@ public final class TableUtils {
      */
     public static final String TXN_FILE_NAME = "_txn";
     public static final String TXN_SCOREBOARD_FILE_NAME = "_txn_scoreboard";
+    // Per-table epoch marker file: records the last durably committed epoch (epochSeqTxn, epochTxn, ts).
+    // Resides in the table directory as a sibling of _txn and _cv. NOT to be confused with the legacy
+    // checkpoint snapshot file (CHECKPOINT_LEGACY_META_FILE_NAME = "_snapshot"), which lives inside the
+    // .checkpoint directory and has a completely different format.
+    public static final String SNAPSHOT_FILE_NAME = "_snapshot";
+    // Magic sentinel for the epoch-marker slot checksum trailer (mirrors CV_CHECKSUM_MAGIC approach).
+    // Spells " EPOCHKSM" on disk (LE) — distinctive, vanishingly unlikely to collide with epoch data.
+    public static final long SNAPSHOT_CHECKSUM_MAGIC = 0x4D534B4843504F45L; // " EPOCHKSM" LE
     // transaction file structure
     // @formatter:off
     public static final int TX_BASE_HEADER_SECTION_PADDING = 12; // Add some free space into header for future use
