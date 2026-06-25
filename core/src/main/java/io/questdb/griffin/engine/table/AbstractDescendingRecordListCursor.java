@@ -69,12 +69,16 @@ abstract class AbstractDescendingRecordListCursor extends AbstractPageFrameRecor
     @Override
     public void close() {
         this.isOpen = false;
+        // Free against the per-query tracker bound in of(); reopened on the next cursor.
+        rows.close();
         super.close();
     }
 
     @Override
     public boolean hasNext() {
         if (!isTreeMapBuilt) {
+            // Consult the breaker before building, so an empty base scan still observes cancellation.
+            circuitBreaker.statefulThrowExceptionIfTripped();
             buildTreeMap();
             rowIndex = rows.size() - 1;
             isTreeMapBuilt = true;
@@ -98,11 +102,12 @@ abstract class AbstractDescendingRecordListCursor extends AbstractPageFrameRecor
         recordA.of(pageFrameCursor);
         recordB.of(pageFrameCursor);
         circuitBreaker = executionContext.getCircuitBreaker();
-        rows.clear();
+        rows.setMemoryTracker(executionContext.getMemoryTracker());
+        rows.reopen();
         isTreeMapBuilt = false;
         isOpen = true;
         // prepare for page frame iteration
-        super.init();
+        super.init(executionContext.getMemoryTracker());
     }
 
     @Override

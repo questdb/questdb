@@ -60,6 +60,8 @@ import io.questdb.std.ObjHashSet;
 import io.questdb.std.Os;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.concurrent.atomic.AtomicBoolean;
+
 public class Services {
     public static final Services INSTANCE = new Services();
 
@@ -71,6 +73,16 @@ public class Services {
             ServerConfiguration serverConfiguration,
             CairoEngine cairoEngine,
             WorkerPoolManager workerPoolManager
+    ) {
+        return createHttpServer(serverConfiguration, cairoEngine, workerPoolManager, new AtomicBoolean(true));
+    }
+
+    @Nullable
+    public HttpServer createHttpServer(
+            ServerConfiguration serverConfiguration,
+            CairoEngine cairoEngine,
+            WorkerPoolManager workerPoolManager,
+            AtomicBoolean acceptOpen
     ) {
         HttpFullFatServerConfiguration httpServerConfiguration = serverConfiguration.getHttpServerConfiguration();
         if (!httpServerConfiguration.isEnabled()) {
@@ -84,7 +96,8 @@ public class Services {
                 serverConfiguration,
                 cairoEngine,
                 workerPoolManager.getSharedPoolNetwork(httpServerConfiguration, Requester.HTTP_SERVER),
-                workerPoolManager.getSharedQueryWorkerCount()
+                workerPoolManager.getSharedQueryWorkerCount(),
+                acceptOpen
         );
     }
 
@@ -95,6 +108,17 @@ public class Services {
             WorkerPool networkSharedPool,
             int sharedQueryWorkerCount
     ) {
+        return createHttpServer(serverConfiguration, cairoEngine, networkSharedPool, sharedQueryWorkerCount, new AtomicBoolean(true));
+    }
+
+    @Nullable
+    public HttpServer createHttpServer(
+            ServerConfiguration serverConfiguration,
+            CairoEngine cairoEngine,
+            WorkerPool networkSharedPool,
+            int sharedQueryWorkerCount,
+            AtomicBoolean acceptOpen
+    ) {
         final HttpFullFatServerConfiguration httpServerConfiguration = serverConfiguration.getHttpServerConfiguration();
         if (!httpServerConfiguration.isEnabled()) {
             return null;
@@ -103,7 +127,8 @@ public class Services {
         final HttpServer server = new HttpServer(
                 httpServerConfiguration,
                 networkSharedPool,
-                httpServerConfiguration.getFactoryProvider().getHttpSocketFactory()
+                httpServerConfiguration.getFactoryProvider().getHttpSocketFactory(),
+                acceptOpen
         );
         HttpServer.HttpRequestHandlerBuilder jsonQueryProcessorBuilder = () -> new JsonQueryProcessor(
                 httpServerConfiguration.getJsonQueryProcessorConfiguration(),
@@ -140,6 +165,16 @@ public class Services {
             CairoEngine cairoEngine,
             WorkerPoolManager workerPoolManager
     ) {
+        return createLineTcpReceiver(config, cairoEngine, workerPoolManager, new AtomicBoolean(true));
+    }
+
+    @Nullable
+    public LineTcpReceiver createLineTcpReceiver(
+            LineTcpReceiverConfiguration config,
+            CairoEngine cairoEngine,
+            WorkerPoolManager workerPoolManager,
+            AtomicBoolean acceptOpen
+    ) {
         if (!config.isEnabled()) {
             return null;
         }
@@ -159,7 +194,7 @@ public class Services {
                 asLegacy(config.getWriterWorkerPoolConfiguration(), "line-tcp-writer"),
                 Requester.LINE_TCP_WRITER
         );
-        return new LineTcpReceiver(config, cairoEngine, sharedPoolNetwork, sharedPoolWrite);
+        return new LineTcpReceiver(config, cairoEngine, sharedPoolNetwork, sharedPoolWrite, acceptOpen);
     }
 
     private static io.questdb.mp.WorkerPoolConfiguration asLegacy(
@@ -245,15 +280,25 @@ public class Services {
             CairoEngine cairoEngine,
             WorkerPoolManager workerPoolManager
     ) {
+        return createLineUdpReceiver(config, cairoEngine, workerPoolManager, new AtomicBoolean(true));
+    }
+
+    @Nullable
+    public AbstractLineProtoUdpReceiver createLineUdpReceiver(
+            LineUdpReceiverConfiguration config,
+            CairoEngine cairoEngine,
+            WorkerPoolManager workerPoolManager,
+            AtomicBoolean acceptOpen
+    ) {
         if (!config.isEnabled()) {
             return null;
         }
 
         // The pool is always the SHARED pool
         if (Os.isLinux()) {
-            return new LinuxMMLineUdpReceiver(config, cairoEngine, workerPoolManager.getSharedPoolNetwork());
+            return new LinuxMMLineUdpReceiver(config, cairoEngine, workerPoolManager.getSharedPoolNetwork(), acceptOpen);
         }
-        return new LineUdpReceiver(config, cairoEngine, workerPoolManager.getSharedPoolNetwork());
+        return new LineUdpReceiver(config, cairoEngine, workerPoolManager.getSharedPoolNetwork(), acceptOpen);
     }
 
     @Nullable
@@ -329,6 +374,15 @@ public class Services {
             CairoEngine cairoEngine,
             WorkerPoolManager workerPoolManager
     ) {
+        return createPGWireServer(configuration, cairoEngine, workerPoolManager, new AtomicBoolean(true));
+    }
+
+    public PGServer createPGWireServer(
+            PGConfiguration configuration,
+            CairoEngine cairoEngine,
+            WorkerPoolManager workerPoolManager,
+            AtomicBoolean acceptOpen
+    ) {
         if (!configuration.isEnabled()) {
             return null;
         }
@@ -352,7 +406,8 @@ public class Services {
                 () -> new SqlExecutionContextImpl(
                         cairoEngine,
                         workerPoolManager.getSharedQueryWorkerCount()
-                ));
+                ),
+                acceptOpen);
     }
 
     public QwpUdpReceiver createQwpUdpReceiver(
@@ -360,15 +415,24 @@ public class Services {
             CairoEngine cairoEngine,
             WorkerPoolManager workerPoolManager
     ) {
+        return createQwpUdpReceiver(config, cairoEngine, workerPoolManager, new AtomicBoolean(true));
+    }
+
+    public QwpUdpReceiver createQwpUdpReceiver(
+            QwpUdpReceiverConfiguration config,
+            CairoEngine cairoEngine,
+            WorkerPoolManager workerPoolManager,
+            AtomicBoolean acceptOpen
+    ) {
         if (!config.isEnabled()) {
             return null;
         }
         WorkerPool workerPool = workerPoolManager.getSharedPoolNetwork();
         QwpUdpReceiver receiver;
         if (Os.isLinux()) {
-            receiver = new LinuxMMQwpUdpReceiver(config, cairoEngine, workerPool);
+            receiver = new LinuxMMQwpUdpReceiver(config, cairoEngine, workerPool, acceptOpen);
         } else {
-            receiver = new QwpUdpReceiver(config, cairoEngine, workerPool);
+            receiver = new QwpUdpReceiver(config, cairoEngine, workerPool, acceptOpen);
         }
         try {
             receiver.start();

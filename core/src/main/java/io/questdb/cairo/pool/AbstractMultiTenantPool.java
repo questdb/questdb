@@ -41,6 +41,7 @@ import org.jetbrains.annotations.Nullable;
 import java.util.Arrays;
 import java.util.Map;
 
+// Entries are keyed per table token and hold a fixed array of allocation slots.
 public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends AbstractPool implements ResourcePool<T> {
     public final static String LOCKED = "pool is locked";
     public final static String NO_LOCK_REASON = "unknown";

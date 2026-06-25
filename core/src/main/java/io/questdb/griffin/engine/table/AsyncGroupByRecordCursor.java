@@ -92,7 +92,11 @@ class AsyncGroupByRecordCursor implements RecordCursor {
         recordA = new VirtualRecord(recordFunctions);
         recordB = new VirtualRecord(recordFunctions);
         postAggregationCircuitBreaker = new AtomicBooleanCircuitBreaker(engine);
-        isOpen = true;
+        // Start closed so the first of() runs atom.reopen(), which opens the lazy
+        // (openOnInit=false) allocators and binds the per-query tracker before any
+        // allocation. Skipping reopen() on the first cursor would leave the allocator's
+        // chunk index unallocated.
+        isOpen = false;
     }
 
     @Override
@@ -190,8 +194,10 @@ class AsyncGroupByRecordCursor implements RecordCursor {
     }
 
     private void buildMap() {
+        // Consult the breaker before dispatching frames, so an empty base scan still observes cancellation.
+        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
         frameSequence.prepareForDispatch();
-        frameSequence.getAtom().getFilterContext().initMemoryPools(frameSequence.getPageFrameAddressCache());
+        frameSequence.getAtom().getFilterContext().initMemoryPools(frameSequence.getPageFrameAddressCache(), frameSequence.getMemoryTracker());
         frameSequence.dispatchAndAwait();
 
         final AsyncGroupByAtom atom = frameSequence.getAtom();
@@ -375,11 +381,12 @@ class AsyncGroupByRecordCursor implements RecordCursor {
 
     void of(UnorderedPageFrameSequence<AsyncGroupByAtom> frameSequence, SqlExecutionContext executionContext) throws SqlException {
         final AsyncGroupByAtom atom = frameSequence.getAtom();
+        // Assign before reopen() so close() can drain a partially reopened atom on a breach.
+        this.frameSequence = frameSequence;
         if (!isOpen) {
             isOpen = true;
             atom.reopen();
         }
-        this.frameSequence = frameSequence;
         this.circuitBreaker = executionContext.getCircuitBreaker();
         Function.init(recordFunctions, frameSequence.getSymbolTableSource(), executionContext, null);
         isDataMapBuilt = false;

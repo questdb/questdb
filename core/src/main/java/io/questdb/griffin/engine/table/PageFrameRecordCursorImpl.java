@@ -46,6 +46,7 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
     private final Function filter;
     private final RowCursorFactory rowCursorFactory;
     private boolean areCursorsPrepared;
+    private SqlExecutionCircuitBreaker circuitBreaker;
     private boolean isExhausted;
     private long maxRowsAfterSkip = RecordCursor.UNBOUNDED_ROW_COUNT;
     private RowCursor rowCursor;
@@ -123,6 +124,15 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
 
             PageFrame frame;
             while ((frame = frameCursor.next()) != null) {
+                // Consult the breaker once per page frame, so a long multi-frame scan stays cancellable.
+                // Use the time-throttled variant rather than the count-throttled statefulThrowExceptionIfTripped()
+                // (whose 2M-consultation window would skip ~2M frames between real checks, disabling mid-scan
+                // cancellation for any realistic table) and rather than the un-throttled variant (which would
+                // perform a recv() connection probe on every frame). A nested-loop/cross join re-scans this
+                // cursor once per master row, so an un-throttled per-frame probe becomes ~one syscall per
+                // master row. The time-throttled variant still checks cancellation/timeout every frame (cheap)
+                // while bounding the connection probe to once per wall-clock window for the whole query.
+                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
                 frameAddressCache.add(frameCount, frame);
                 final long remaining = maxRowsAfterSkip - rowsProducedSinceSkip;
                 final long frameSize = frame.getPartitionHi() - frame.getPartitionLo();
@@ -160,13 +170,20 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         recordA.of(frameCursor);
         recordB.of(frameCursor);
         rowCursorFactory.init(frameCursor, sqlExecutionContext);
+        circuitBreaker = sqlExecutionContext.getCircuitBreaker();
+        // Consult the breaker at open (time-throttled), so a scan over an empty table (zero frames, so the
+        // per-frame check in hasNext never runs) still observes cancellation/timeout even when this cursor is
+        // not the query's first breaker consultation. The time-throttled variant checks cancellation/timeout
+        // unconditionally (so the count-throttle window can't skip it, unlike statefulThrowExceptionIfTripped())
+        // while bounding the connection probe to once per wall-clock window, matching the per-frame check above.
+        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
         areCursorsPrepared = false;
         isExhausted = false;
         rowCursor = Misc.free(rowCursor);
         maxRowsAfterSkip = RecordCursor.UNBOUNDED_ROW_COUNT;
         rowsProducedSinceSkip = 0;
         // prepare for page frame iteration
-        super.init();
+        super.init(sqlExecutionContext.getMemoryTracker());
     }
 
     @Override

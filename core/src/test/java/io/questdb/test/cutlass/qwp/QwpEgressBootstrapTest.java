@@ -197,6 +197,83 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
     }
 
     /**
+     * Empty arrays vs NULL arrays over QWP egress. QuestDB stores a non-null
+     * empty array (cardinality 0) distinct from a NULL array, and the server's
+     * egress encoder emits the empty array inline (nDims >= 1 with a 0-length
+     * dimension), reserving the null bitmap for genuine NULLs. The client
+     * decoder must round-trip all three of: a regular array, an empty array,
+     * and a NULL -- keeping empty and NULL distinct.
+     */
+    @Test
+    public void testEmptyAndNullArrayColumns() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = startEgressServer()) {
+                serverMain.execute("CREATE TABLE arr_e(d DOUBLE[], ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+                // Monotonic designated timestamps keep WAL scan order aligned with
+                // insert order (DOUBLE[] columns cannot be ORDER BY'd).
+                // Row 0: regular array. Row 1: empty array. Row 2: NULL.
+                serverMain.execute("INSERT INTO arr_e VALUES (ARRAY[1.0, 2.0], 1::TIMESTAMP)");
+                serverMain.execute("INSERT INTO arr_e VALUES (ARRAY[]::DOUBLE[], 2::TIMESTAMP)");
+                serverMain.execute("INSERT INTO arr_e VALUES (NULL, 3::TIMESTAMP)");
+                serverMain.awaitTable("arr_e");
+
+                final int[] count = {0};
+                final boolean[] isNull = {false, false, false};
+                final int[] nDims = {-1, -1, -1};
+                final double[][] elems = new double[3][];
+                final String[] errMsg = {null};
+                try (QwpQueryClient client = QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
+                    client.connect();
+                    client.execute("SELECT d FROM arr_e", new QwpColumnBatchHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                            for (int r = 0; r < batch.getRowCount(); r++) {
+                                int row = count[0]++;
+                                isNull[row] = batch.isNull(0, r);
+                                if (!isNull[row]) {
+                                    nDims[row] = batch.getArrayNDims(0, r);
+                                    elems[row] = batch.getDoubleArrayElements(0, r);
+                                }
+                            }
+                        }
+
+                        @Override
+                        public void onEnd(long totalRows) {
+                        }
+
+                        @Override
+                        public void onError(byte status, String message) {
+                            errMsg[0] = message;
+                        }
+                    });
+                } catch (Throwable th) {
+                    // A decode failure may surface as a thrown exception rather than
+                    // onError, depending on where in the pipeline it trips.
+                    errMsg[0] = String.valueOf(th.getMessage());
+                }
+
+                // The crux: with the current decoder the empty-array row makes
+                // QwpResultBatchDecoder reject the server's own frame
+                // ("ARRAY dim 0 must be >= 1: 0").
+                Assert.assertNull("egress decode rejected the server's empty-array frame: " + errMsg[0], errMsg[0]);
+                Assert.assertEquals(3, count[0]);
+
+                // Row 0: regular 1-D array round-trips.
+                Assert.assertFalse(isNull[0]);
+                Assert.assertEquals(1, nDims[0]);
+                Assert.assertArrayEquals(new double[]{1.0, 2.0}, elems[0], 0.0);
+                // Row 1: empty array -> non-null, 1-D, zero elements (distinct from NULL).
+                Assert.assertFalse("empty array must NOT be null", isNull[1]);
+                Assert.assertEquals(1, nDims[1]);
+                Assert.assertEquals(0, elems[1].length);
+                // Row 2: NULL array -> null.
+                Assert.assertTrue("NULL array must be null", isNull[2]);
+            }
+        });
+    }
+
+    /**
      * Two back-to-back queries on one WebSocket connection must both succeed. Exercises
      * the dispatch loop resetting between requests and the per-query state cleanup.
      */
@@ -826,7 +903,7 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
                 serverMain.awaitTable("cs");
 
                 LongList rows = new LongList();
-                String conf = "ws::addr=127.0.0.1:" + HTTP_PORT + ";path=/read/v1;client_id=conf-test/1.0;buffer_pool_size=2;";
+                String conf = "ws::addr=127.0.0.1:" + HTTP_PORT + ";client_id=conf-test/1.0;buffer_pool_size=2;";
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(conf)) {
                     client.connect();
                     client.execute("SELECT x FROM cs ORDER BY x", new QwpColumnBatchHandler() {

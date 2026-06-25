@@ -302,7 +302,7 @@ pub fn decode_column_chunk_with_params(
         varchar_slice_dict_bufs,
         varchar_slice_buf_pool,
     );
-    bufs.refresh_ptrs();
+    bufs.refresh_ptrs()?;
     Ok(row_count)
 }
 
@@ -551,7 +551,7 @@ pub fn decode_column_chunk_filtered_with_params<const FILL_NULLS: bool>(
         varchar_slice_dict_bufs,
         varchar_slice_buf_pool,
     );
-    bufs.refresh_ptrs();
+    bufs.refresh_ptrs()?;
     if FILL_NULLS {
         Ok(row_hi - row_lo)
     } else {
