@@ -646,6 +646,9 @@ public final class Numbers {
 
     // Pearson correlation coefficient from the three accumulated deviation sums:
     // sumXY = Sum((x-mx)(y-my)), sumXX = Sum((x-mx)^2), sumYY = Sum((y-my)^2).
+    // The two factor args (sumXX, sumYY) are interchangeable - the product and the
+    // split sqrt are symmetric - so a caller may pass its two variance sums in
+    // either order; only sumXY must be the covariance numerator.
     // Prefer the single-rounding sqrt(sumXX * sumYY), the accurate denominator for
     // normal inputs. Fall back to the split sqrt(sumXX)*sqrt(sumYY) only when the
     // product is unusable: it overflows to +Infinity (large inputs, ~1e153) or
