@@ -47,6 +47,8 @@ public class WorkerPool implements Closeable {
     // Callers that want a tighter, shared budget across several pools pass an explicit timeout to halt(long).
     public static final long DEFAULT_HALT_TIMEOUT_NANOS = TimeUnit.SECONDS.toNanos(30);
     private static final Log LOG = LogFactory.getLog(WorkerPool.class);
+    @TestOnly
+    private volatile Runnable afterClosedSignalForTesting;
     // Every Job instance the pool mints through assign() (blueprints and their
     // gen-0 clones). halt() closeInstance()s each one. closeInstance() is a
     // no-op default on caller-owned singletons and idempotent on recycled
@@ -243,6 +245,10 @@ public class WorkerPool implements Closeable {
 
     private void halt(long timeoutNanos, boolean strict) {
         if (closed.compareAndSet(false, true)) {
+            final Runnable afterClosed = afterClosedSignalForTesting;
+            if (afterClosed != null) {
+                afterClosed.run();
+            }
             if (running.compareAndSet(true, false)) {
                 final long deadline = System.nanoTime() + timeoutNanos;
                 // Signal halt to every spawned worker UNCONDITIONALLY, before clearing or freeing.
@@ -329,6 +335,16 @@ public class WorkerPool implements Closeable {
     }
 
     /**
+     * Installs a hook fired immediately after {@link #halt(long)} flips {@code closed}.
+     * Tests use it to prove a concurrent {@link #start(Log)} observes the close before
+     * the parked add-loop resumes. Pass {@code null} to clear.
+     */
+    @TestOnly
+    public void setAfterClosedSignalForTesting(Runnable hook) {
+        this.afterClosedSignalForTesting = hook;
+    }
+
+    /**
      * Installs a hook fired inside {@link #start(Log)} after the worker threads are spawned and
      * running but BEFORE {@code started.countDown()}. A test uses it to reproduce a start() that
      * stalls in that window (realistic on an OOM mid-launch): the hook blocks or throws, leaving
@@ -403,9 +419,10 @@ public class WorkerPool implements Closeable {
                     // (or a real OOM-stalled launch) held the add open while halt() ran, freeOnExit is
                     // already gone by the time this loop resumes. Spawning a worker now would loop it on
                     // freed resources -- a use-after-free plus an orphan thread. Break instead: the
-                    // workers added so far are already halt-signalled, and started.countDown() below
-                    // still runs so a waiting halt() proceeds.
+                    // workers added so far will be halt-signalled once the add critical section releases,
+                    // and started.countDown() below still runs so a waiting halt() proceeds.
                     if (closed.get()) {
+                        countDownUnstartedWorkers(i);
                         break;
                     }
                     workers.add(worker);
@@ -449,6 +466,12 @@ public class WorkerPool implements Closeable {
             } catch (Throwable ignore) {
                 // contract: Job.closeInstance() must not throw
             }
+        }
+    }
+
+    private void countDownUnstartedWorkers(int firstUnstartedWorker) {
+        for (int i = firstUnstartedWorker; i < workerCount; i++) {
+            halted.countDown();
         }
     }
 

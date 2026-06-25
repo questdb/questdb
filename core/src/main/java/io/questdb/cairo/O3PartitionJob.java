@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.vm.api.MemoryMA;
+import io.questdb.cairo.vm.api.MemoryOM;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
@@ -1723,6 +1724,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         try {
             descriptor.of(tableWriter.getTableToken().getTableName(), rowCount, timestampIndex);
             populateO3DescriptorColumns(
+                    ctx,
                     descriptor,
                     tableWriterMetadata,
                     oooColumns,
@@ -2572,13 +2574,17 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
      * {@link io.questdb.griffin.engine.table.parquet.PartitionUpdater#addRowGroup}
      * (for appending a row group to an existing parquet file).
      * <p>
-     * All pointers handed to the descriptor reference O3 source memory owned
-     * by the {@code TableWriter} for the duration of the encode call:
+     * All pointers handed to the descriptor reference O3 source memory (or,
+     * for a rebased aux, the context scratch arena) owned by the
+     * {@code TableWriter} for the duration of the encode call:
      * <ul>
-     *     <li>Var-size columns: the full source data buffer as primary and
-     *     the aux slice starting at {@code o3Lo} as secondary; aux entries
-     *     keep their absolute offsets and resolve correctly against the
-     *     full data buffer.</li>
+     *     <li>Var-size columns: the data buffer as primary and the aux as
+     *     secondary. A 0-based source (copy+sort path) passes the full data
+     *     buffer with its absolute aux offsets. An offset-mapped WAL segment
+     *     ({@link MemoryOM}, in-order block apply) has a data window that does
+     *     not start at offset 0, so its aux holds offsets that overshoot the
+     *     window; that aux is rebased to window-relative offsets in the context
+     *     scratch arena so {@code primary_data} is a valid 0-based base.</li>
      *     <li>Designated timestamp: the merge-index slice as primary with
      *     {@code PARQUET_TIMESTAMP_STRIDED_16} set on the column type, so
      *     the Rust encoder reads timestamps in place from the 16-byte
@@ -2591,6 +2597,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
      * issuing the encode/addRowGroup, and for any descriptor cleanup.
      */
     private static void populateO3DescriptorColumns(
+            O3ParquetMergeContext ctx,
             PartitionDescriptor descriptor,
             TableRecordMetadata metadata,
             ReadOnlyObjList<? extends MemoryCR> oooColumns,
@@ -2602,6 +2609,24 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final int timestampIndex = metadata.getTimestampIndex();
         final long rowCount = o3Hi - o3Lo + 1;
         final int columnCount = metadata.getColumnCount();
+
+        // Size the rebase arena (see javadoc) once up front: the slots handed
+        // out below must keep stable addresses across the loop, and a later
+        // resize would move them.
+        long rebaseArenaSize = 0;
+        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+            final int columnType = metadata.getColumnType(columnIndex);
+            if (columnType > 0 && ColumnType.isVarSize(columnType)
+                    && oooColumns.getQuick(getPrimaryColumnIndex(columnIndex)) instanceof MemoryOM) {
+                rebaseArenaSize += ColumnType.getDriver(columnType).getAuxVectorSize(rowCount);
+            }
+        }
+        long rebaseArenaBase = 0;
+        long rebaseArenaBump = 0;
+        if (rebaseArenaSize > 0) {
+            rebaseArenaBase = ctx.getRebaseAuxMem().resize(rebaseArenaSize);
+        }
+
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
             final int columnType = metadata.getColumnType(columnIndex);
             if (columnType < 0) {
@@ -2616,7 +2641,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 final MemoryCR oooAuxMem = oooColumns.getQuick(getSecondaryColumnIndex(columnIndex));
                 final long srcOooAuxAddr = oooAuxMem.addressOf(0);
                 final ColumnTypeDriver ctd = ColumnType.getDriver(columnType);
-                final long srcAuxSliceAddr = srcOooAuxAddr + ctd.getAuxVectorOffset(o3Lo);
                 // Encoder reads rowCount aux entries; the N+1 sentinel that
                 // string-like types include in getAuxVectorSize is unused here.
                 final long auxSliceSize = ctd.auxRowsToBytes(rowCount);
@@ -2624,14 +2648,39 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // slice. Encoder asserts offset+size <= data.len().
                 final long dataExtent = ctd.getDataVectorSizeAt(srcOooAuxAddr, o3Hi);
 
+                final long dataAddr;
+                final long dataSize;
+                final long auxAddr;
+                if (oooDataMem instanceof MemoryOM) {
+                    // Windowed source: hand the encoder the data window and
+                    // rebase the aux by shift = dataLo (dest = src - shift).
+                    final long dataLo = ctd.getDataVectorOffset(srcOooAuxAddr, o3Lo);
+                    final long windowSize = dataExtent - dataLo;
+                    final long rebasedAuxSize = ctd.getAuxVectorSize(rowCount);
+                    final long scratch = rebaseArenaBase + rebaseArenaBump;
+                    ctd.shiftCopyAuxVector(dataLo, srcOooAuxAddr, o3Lo, o3Hi, scratch, rebasedAuxSize);
+                    rebaseArenaBump += rebasedAuxSize;
+                    auxAddr = scratch;
+                    // addressOf(dataLo) on an empty window extrapolates to a
+                    // bogus pointer; pass null when there is nothing to read.
+                    dataAddr = windowSize > 0 ? oooDataMem.addressOf(dataLo) : 0;
+                    dataSize = windowSize;
+                } else {
+                    // 0-based source (copy+sort path): addressOf(0) is the real
+                    // base and aux offsets are already correct.
+                    auxAddr = srcOooAuxAddr + ctd.getAuxVectorOffset(o3Lo);
+                    dataAddr = oooDataMem.addressOf(0);
+                    dataSize = dataExtent;
+                }
+
                 descriptor.addColumn(
                         columnName,
                         columnType,
                         columnId,
                         0,
-                        oooDataMem.addressOf(0),
-                        dataExtent,
-                        srcAuxSliceAddr,
+                        dataAddr,
+                        dataSize,
+                        auxAddr,
                         auxSliceSize,
                         0,
                         0,
@@ -3708,15 +3757,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         // encodings (Plain, DeltaBinaryPacked, RleDictionary), so no
         // encoding-aware fallback is needed.
         //
-        // For var-size columns we pass the full source data buffer as
-        // primary_data and the aux slice starting at srcOooLo as
-        // secondary_data; aux entries hold absolute offsets into the source
-        // data buffer, and the Rust encoder uses them as-is without assuming
-        // aux[0].offset == 0.
+        // populateO3DescriptorColumns handles var-column data/aux pointers
+        // (including rebasing offset-mapped WAL aux into the context arena).
         //
         // The descriptor itself is non-owning and does not free anything on
-        // clear — every pointer it carries references O3 source memory owned
-        // by the TableWriter for the duration of this call.
+        // clear -- every pointer it carries references O3 source memory (or the
+        // context rebase arena) owned by the TableWriter for this call.
         final O3ParquetMergeContext ctx = PARQUET_MERGE_CONTEXT.get();
         final PartitionDescriptor descriptor = ctx.getFreshPartitionDescriptor();
         descriptor.clear();
@@ -3735,6 +3781,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     : -1;
             descriptor.of(tableWriter.getTableToken().getTableName(), partitionRowCount, writerTimestampIndex);
             populateO3DescriptorColumns(
+                    ctx,
                     descriptor,
                     metadata,
                     oooColumns,
