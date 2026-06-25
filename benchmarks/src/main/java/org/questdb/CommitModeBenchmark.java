@@ -93,6 +93,14 @@ public class CommitModeBenchmark {
     @Param({"5", "25", "100"})
     public int columnCount;
 
+    /**
+     * Toggle for the batched-column-sync optimisation (syncfs on Linux).
+     * true  = syncfs-batched path (single whole-FS flush per commit, durable on real block device)
+     * false = per-file msync(MS_SYNC) baseline (N individual device flushes per commit)
+     */
+    @Param({"true", "false"})
+    public String batched;
+
     private CairoEngine writerEngine;
     private TableWriter writer;
     private final Rnd rnd = new Rnd();
@@ -135,6 +143,11 @@ public class CommitModeBenchmark {
             @Override
             public long getMiscAppendPageSize() {
                 return Files.ceilPageSize(APPEND_PAGE_SIZE);
+            }
+
+            @Override
+            public boolean isBatchedColumnSyncEnabled() {
+                return Boolean.parseBoolean(batched);
             }
         };
 
