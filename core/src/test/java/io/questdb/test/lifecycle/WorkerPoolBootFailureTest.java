@@ -179,6 +179,7 @@ public class WorkerPoolBootFailureTest {
         final AtomicReference<Throwable> haltError = new AtomicReference<>();
         final CountDownLatch haltSetClosed = new CountDownLatch(1);
         final CountDownLatch haltReturned = new CountDownLatch(1);
+        pool.setAfterClosedSignalForTesting(haltSetClosed::countDown);
 
         final Thread starter = new Thread(() -> {
             try {
@@ -190,11 +191,10 @@ public class WorkerPoolBootFailureTest {
         starter.setDaemon(true);
 
         final Thread halter = new Thread(() -> {
-            haltSetClosed.countDown();
             try {
                 // halt(long) flips closed (plain CAS, outside the monitor), then blocks on the monitor
                 // the parked add holds; once released it frees freeOnExit.
-                pool.halt(TimeUnit.SECONDS.toNanos(10));
+                pool.haltAndAssertCleanForTest(TimeUnit.SECONDS.toNanos(10));
             } catch (Throwable t) {
                 haltError.set(t);
             } finally {
@@ -219,8 +219,9 @@ public class WorkerPoolBootFailureTest {
             // Fire the concurrent halt while start() is parked mid-add: it sets closed, then blocks on
             // the monitor held by the parked add.
             halter.start();
-            Assert.assertTrue("halt thread must start", haltSetClosed.await(10, TimeUnit.SECONDS));
-            // Give the halter time to flip closed and reach the monitor it must wait on.
+            Assert.assertTrue("halt() must set closed before start() resumes",
+                    haltSetClosed.await(10, TimeUnit.SECONDS));
+            // Give the halter time to reach the monitor it must wait on.
             Thread.sleep(200);
 
             // Release the parked add: start() resumes inside the monitor with closed already set. With
@@ -235,6 +236,7 @@ public class WorkerPoolBootFailureTest {
             releaseStartPark.countDown();
             starter.join(TimeUnit.SECONDS.toMillis(10));
             halter.join(TimeUnit.SECONDS.toMillis(10));
+            pool.setAfterClosedSignalForTesting(null);
             pool.setBeforeWorkerAddedForTesting(null);
             pool.halt();
         }
@@ -356,7 +358,7 @@ public class WorkerPoolBootFailureTest {
         final AtomicLong jobTicks = new AtomicLong();
         pool.assign(workerContext -> {
             jobTicks.incrementAndGet();
-            return false;
+            return true;
         });
 
         // Track that freeOnExit is released by halt(): a worker still looping after halt against a
@@ -464,7 +466,7 @@ public class WorkerPoolBootFailureTest {
         final AtomicLong jobTicks = new AtomicLong();
         pool.assign(workerContext -> {
             jobTicks.incrementAndGet();
-            return false;
+            return true;
         });
 
         final AtomicBoolean resourceFreed = new AtomicBoolean(false);
@@ -491,8 +493,10 @@ public class WorkerPoolBootFailureTest {
 
         final AtomicReference<Throwable> startError = new AtomicReference<>();
         final AtomicReference<Throwable> haltError = new AtomicReference<>();
+        final CountDownLatch haltSetClosed = new CountDownLatch(1);
         final CountDownLatch haltStarted = new CountDownLatch(1);
         final CountDownLatch haltReturned = new CountDownLatch(1);
+        pool.setAfterClosedSignalForTesting(haltSetClosed::countDown);
 
         final Thread starter = new Thread(() -> {
             try {
@@ -506,7 +510,7 @@ public class WorkerPoolBootFailureTest {
         final Thread halter = new Thread(() -> {
             haltStarted.countDown();
             try {
-                pool.halt(TimeUnit.SECONDS.toNanos(10));
+                pool.haltAndAssertCleanForTest(TimeUnit.SECONDS.toNanos(10));
             } catch (Throwable t) {
                 haltError.set(t);
             } finally {
@@ -532,21 +536,21 @@ public class WorkerPoolBootFailureTest {
             // Launch the concurrent halt() while start() is parked inside the add critical section.
             halter.start();
             Assert.assertTrue("halt thread must start", haltStarted.await(10, TimeUnit.SECONDS));
+            Assert.assertTrue("halt() must set closed before start() resumes",
+                    haltSetClosed.await(10, TimeUnit.SECONDS));
 
             // Observable proxy for the torn read: halt()'s first pass would signal worker 0 and stop its
             // ticks. On the fixed tree it blocks on workersLock (held by the parked add), so worker 0
-            // stays RUNNING and free-runs its no-work loop; on the un-fixed tree it reads the partial list
-            // and signals worker 0 - the loop exits after one in-flight tick and the counter freezes.
+            // stays RUNNING and free-runs its hot job loop (return true, no idle backoff); on the un-fixed
+            // tree it reads the partial list and signals worker 0 - the loop exits after at most one
+            // in-flight tick and the counter freezes.
             //
             // Witness it by polling for the counter to advance past a small margin within a generous
-            // deadline, NOT by counting ticks in a fixed wall-clock window. The job returns false every
-            // tick, so worker 0's idle backoff (Os.pause -> Os.sleep) governs its RATE; on a slow runner
-            // Os.sleep overshoots and a correctly-held-off worker still ticks only a few dozen times per
-            // second, so a fixed-window count underflows its threshold and flakes RED (the observed
-            // mac-other failure). The deadline-poll only needs worker 0 to keep MAKING PROGRESS: held off
-            // it clears the margin near-instantly; signalled it freezes and never clears it, timing out.
-            // The margin sits well above the un-fixed tree's couple of in-flight ticks, so the outcomes
-            // never overlap.
+            // deadline, NOT by counting ticks in a fixed wall-clock window: the poll returns as soon as
+            // progress is confirmed and assumes no particular tick rate, so it stays robust even when a
+            // loaded CI runner starves worker 0's scheduling. Held off, the hot loop clears the margin
+            // near-instantly; signalled, it freezes and never clears it, timing out. The margin sits well
+            // above the un-fixed tree's at-most-one in-flight tick, so the outcomes never overlap.
             final long requiredTickProgress = 32;
             final long witnessDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
             final long ticksBefore = jobTicks.get();
@@ -565,6 +569,7 @@ public class WorkerPoolBootFailureTest {
             releaseStartPark.countDown();
             starter.join(TimeUnit.SECONDS.toMillis(10));
             halter.join(TimeUnit.SECONDS.toMillis(10));
+            pool.setAfterClosedSignalForTesting(null);
             pool.setBeforeWorkerAddedForTesting(null);
             pool.halt();
         }
