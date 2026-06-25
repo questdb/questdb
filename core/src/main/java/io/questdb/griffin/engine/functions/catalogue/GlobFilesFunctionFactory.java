@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -834,6 +835,8 @@ public class GlobFilesFunctionFactory implements FunctionFactory {
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
+            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
+            cursor.circuitBreaker = executionContext.getCircuitBreaker();
             cursor.toTop();
             return cursor;
         }
@@ -864,6 +867,7 @@ public class GlobFilesFunctionFactory implements FunctionFactory {
         private final GlobFileRecord record = new GlobFileRecord();
         private final DirectUtf8StringList tempPaths = new DirectUtf8StringList(128, 8);
         private final Path workingPath = new Path(MemoryTag.NATIVE_PATH);
+        private SqlExecutionCircuitBreaker circuitBreaker;
         private boolean initialized = false;
         private int matchIndex = 0;
 
@@ -888,6 +892,7 @@ public class GlobFilesFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean hasNext() {
+            circuitBreaker.statefulThrowExceptionIfTripped();
             ensureInitialize();
             if (matchIndex < pendingFiles.size()) {
                 Utf8Sequence path = pendingFiles.getQuick(matchIndex++);
