@@ -1110,8 +1110,18 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         }
 
         private void ensureVarDataCapacity(long[] varDataAddrs, int[] varDataPos, int[] varDataCap, int q, int needed) {
-            if (varDataPos[q] + needed > varDataCap[q]) {
-                int newCap = Math.max(varDataCap[q] * 2, varDataPos[q] + needed);
+            // Cumulative var-data position is int-addressed; compute the grow target in long
+            // and guard the int cast so a multi-key frame whose accumulated var-data nears 2GB
+            // fails loud rather than wrapping the cap negative and under-sizing the buffer. Keep
+            // in sync with CoveringBuffers.ensureCapacity (the worker covered path).
+            final long required = (long) varDataPos[q] + needed;
+            if (required > varDataCap[q]) {
+                final long newCapLong = Math.max((long) varDataCap[q] * 2, required);
+                if (newCapLong > Integer.MAX_VALUE) {
+                    throw CairoException.nonCritical()
+                            .put("covered var-data column too large [bytes=").put(newCapLong).put(']');
+                }
+                final int newCap = (int) newCapLong;
                 long newAddr = growBuffer(varDataAddrs[q], varDataCap[q], newCap, varDataPos[q]);
                 varDataAddrs[q] = newAddr;
                 varDataCap[q] = newCap;

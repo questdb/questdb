@@ -73,6 +73,11 @@ public class CoveringIndexParallelGroupByReachabilityTest extends AbstractCairoT
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, "true");
         // Many small page frames so the covered scan fans out across the worker pool.
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1_000);
+        // Bind a real (generous, never-breached) per-query memory tracker so covered decode
+        // buffers charge it — this exercises the M1 accounting path and, under -ea, makes the
+        // tracker-recycle guard (PerQueryMemoryTracker.acquire asserts used==0) catch any
+        // cross-query mis-charge by the captured CoveringBuffers.bufferTracker.
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 512 * 1024 * 1024L);
         super.setUp();
     }
 
@@ -225,6 +230,54 @@ public class CoveringIndexParallelGroupByReachabilityTest extends AbstractCairoT
                         }
                         if (writerError.get() != null) {
                             throw new AssertionError("background writer failed", writerError.get());
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
+    public void testCoveredAsyncGroupByTrackerBalancedAcrossManyQueries() throws Exception {
+        // M1 accounting check: run the covered async keyed GROUP BY many times so the
+        // per-query MemoryTracker is acquired, charged with covered decode buffers, released,
+        // and recycled repeatedly. CoveringBuffers captures the tracker at decode and frees
+        // against it later; if that free lands after the tracker is recycled (cross-query
+        // mis-charge), PerQueryMemoryTracker.acquire()'s `assert getUsed() == 0` trips on the
+        // next acquisition of the recycled block. A clean run proves covered buffers are
+        // uncharged before their tracker is recycled.
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        engine.execute(
+                                "CREATE TABLE t (" +
+                                        "  ts TIMESTAMP," +
+                                        "  sym SYMBOL INDEX TYPE POSTING INCLUDE (grp, payload)," +
+                                        "  grp VARCHAR," +
+                                        "  payload LONG" +
+                                        ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL",
+                                sqlExecutionContext
+                        );
+                        engine.execute(
+                                "INSERT INTO t SELECT (x * 200000000L)::timestamp, 'A', 'g' || (x % 4), x" +
+                                        " FROM long_sequence(8000)",
+                                sqlExecutionContext
+                        );
+                        engine.releaseAllWriters();
+
+                        final String coveredSql = "SELECT grp, sum(payload) FROM t WHERE sym = 'A' GROUP BY grp ORDER BY grp";
+                        final StringSink expected = new StringSink();
+                        TestUtils.printSql(engine, sqlExecutionContext, coveredSql, expected);
+                        final String expectedStr = expected.toString();
+
+                        final StringSink actual = new StringSink();
+                        for (int i = 0; i < 50; i++) {
+                            TestUtils.printSql(engine, sqlExecutionContext, coveredSql, actual);
+                            Assert.assertEquals("covered result must be stable across queries at iteration " + i,
+                                    expectedStr, actual.toString());
                         }
                     },
                     configuration,

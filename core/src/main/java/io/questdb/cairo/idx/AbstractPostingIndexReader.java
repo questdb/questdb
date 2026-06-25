@@ -736,6 +736,15 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
      * addresses into them. The parallel-decode pipeline sets this around the
      * window in which it dispatches async decode work and clears it once all
      * worker cursors have finished.
+     * <p>
+     * {@code frozen} (and the warm-pass state it guards: the genLookup cache,
+     * {@code coveredAvailable}, the pre-extended mmaps) is a plain field. Visibility to
+     * worker threads relies entirely on the dispatch sequence's release/acquire: the
+     * freeze and all warm writes happen-before the {@code pubSeq.done(cursor)} publish on
+     * the single dispatch thread, and a worker observes them after its {@code Sequence}
+     * dequeue. Any future handoff of a covered reader to a worker through a channel OTHER
+     * than the reduce/collect sequences would have no happens-before and must add its own
+     * fence (or make this field volatile).
      */
     @Override
     public void setFrozen(boolean frozen) {
