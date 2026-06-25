@@ -44,12 +44,12 @@ import io.questdb.std.Misc;
  * {@code tryAcquireWrite} sees the reader and trails rather than progressing
  * past it.
  * <p>
- * The returned cursor wires seam_ts routing: disk rows are
- * served first, then in-mem rows whose timestamp exceeds the disk's maximum.
- * In the current inline-apply architecture the in-mem tier is at most one
- * cycle behind disk, so the in-mem iteration is almost always empty; the
- * routing logic engages in narrow races and in a future hand-off ring regime
- * that decouples apply from per-notification refresh.
+ * The returned cursor wires Mode B seam_ts routing: when the consistency fence
+ * holds it serves disk rows with {@code ts < seamTs} and the pinned in-mem slot
+ * for {@code ts >= seamTs}, skipping the hot tail partition(s) of the LV table.
+ * The fence ({@code slot.lvSeqTxn == diskReader.seqTxn}) plus a full-schema,
+ * ascending, unfiltered-scan requirement keep this safe; anything else falls
+ * back to disk-only. See {@link LiveViewRecordCursor} for the routing details.
  * <p>
  * Each {@link #getCursor(SqlExecutionContext)} call allocates a fresh
  * {@link LiveViewRecordCursor}: the cursor pins a tier slot until
@@ -79,7 +79,12 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
         LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance(liveViewToken.getTableName());
         LiveViewRecordCursor cursor = new LiveViewRecordCursor();
         try {
-            cursor.of(diskCursor, base.getMetadata(), instance, timestampColumnIndex);
+            // Mode B seam routing assumes the disk scan yields rows in ascending
+            // timestamp order. The LV table has a designated timestamp, so a
+            // forward scan is ascending; backward / index scans are not, and the
+            // cursor must fall back to disk-only for them.
+            boolean diskScanAscending = base.getScanDirection() == SCAN_DIRECTION_FORWARD;
+            cursor.of(diskCursor, base.getMetadata(), instance, timestampColumnIndex, diskScanAscending);
         } catch (Throwable t) {
             Misc.free(cursor);
             throw t;

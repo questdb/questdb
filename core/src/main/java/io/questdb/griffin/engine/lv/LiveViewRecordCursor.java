@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.lv;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.lv.LiveViewInMemoryBuffer;
 import io.questdb.cairo.lv.LiveViewInMemoryTier;
@@ -45,35 +46,42 @@ import org.jetbrains.annotations.TestOnly;
  * visible to the refresh worker's slow-path {@code tryAcquireWrite} ensures
  * the writer trails rather than progressing past a slow reader.
  * <p>
- * Routing (V1 interim, max-disk-ts): the cursor drains the disk side first,
- * tracking the maximum disk timestamp, then iterates the pinned in-mem buffer
- * rows whose timestamp is strictly greater than that maximum. This is NOT
- * seam_ts routing (which would make in-mem authoritative for
- * {@code ts >= seam_ts}); the buffer records a seamTs but the read path does
- * not consult it. Inline apply commits the disk tier and stages the in-mem
- * rows in the same refresh cycle, so disk always covers the in-mem tier and the
- * {@code ts > maxDiskTs} predicate is never satisfied in steady state - the
- * in-mem tier is read-inert (populated but not read). The routing engages only
- * in narrow races (a cursor opening between disk apply and in-mem publish).
- * O3 replay rewrites the disk tier and resets the in-mem tier (the refresh
- * worker empties it - see {@code LiveViewRefreshJob.resetInMemoryTier}), so a
- * post-O3 cursor reads the rewritten rows from disk. Full seam_ts routing, the
- * union {@code size()}, in-mem rowIds, and the atomic O3 in-mem rebuild are
- * deferred to the benchmark-gated Phase 3a completion; until then the in-mem
- * tier gives no read benefit (its freshness payoff needs the Phase 4 hand-off
- * ring that lets it outrun disk).
+ * Routing (Mode B, seam_ts): when the consistency fence holds
+ * ({@link #routingEligible}), the cursor serves disk rows with
+ * {@code ts < seamTs}, stops the disk scan at the first row with
+ * {@code ts >= seamTs} (skipping the hot tail partition(s) of the LV table),
+ * then serves the entire pinned in-mem slot, which holds every output row with
+ * {@code ts >= seamTs}. Disk is strictly below the seam and the slot is at or
+ * above it (ties at {@code seamTs} included), so the seam boundary has neither
+ * a duplicate nor a gap. The fence ({@code slot.lvSeqTxn == diskReader.seqTxn})
+ * makes this safe: equal seqTxns mean the slot and the disk snapshot reflect
+ * the identical LV-table version, so the band agrees row-for-row even across an
+ * O3 rewrite. The seam split also assumes the disk scan is ascending, so a
+ * backward / index scan (e.g. {@code ORDER BY ts DESC} pushed into the base)
+ * routes disk-only. When the fence does not hold (tier absent / empty, pruned
+ * projection, a disk cursor that is not a plain table scan, a non-ascending
+ * scan, or a seqTxn mismatch) the cursor falls back to disk-only, which is
+ * always correct because in-mem is a subset of disk in steady state. O3 replay
+ * rewrites the disk tier
+ * and resets the in-mem tier (see {@code LiveViewRefreshJob.resetInMemoryTier}),
+ * so a post-O3 cursor whose slot no longer matches reads from disk until the
+ * tier refills.
  * <p>
  * The in-mem tier stores the full output row, so the cursor routes through it
  * only when the read projects every output column in declared order (see
  * {@link #isFullSchemaProjection}). Pruned or reordered projections - e.g.
  * {@code SELECT max(rn)}, where column pruning drops the timestamp and leaves
  * {@code timestampColumnIndex < 0} - serve from disk alone, which is correct
- * given the steady-state in-mem-as-subset-of-disk property.
+ * given the steady-state in-mem-as-subset-of-disk property. A SYMBOL output
+ * column also routes disk-only: the tier holds WAL-segment-local symbol ids that
+ * the disk reader's symbol table cannot resolve (see
+ * {@link #isFullSchemaProjection}).
  * <p>
- * In-mem rows have no rowId — {@link #recordAt(Record, long)}
- * targets only disk rows. ASOF JOIN as RHS and other random-access readers
- * cannot land on an in-mem row; this is consistent with the steady-state
- * in-mem-as-subset-of-disk property.
+ * In-mem rows synthesize a tagged rowId (the sign bit set over the buffer row
+ * index); {@link #recordAt(Record, long)} decodes it back to a buffer row
+ * against the still-pinned slot. Disk rowIds are non-negative, so the tag never
+ * collides. Random-access readers (ASOF JOIN as RHS, etc.) can therefore land
+ * on an in-mem row and round-trip correctly within the cursor's lifetime.
  * <p>
  * Single-shot lifecycle: the factory allocates a fresh instance per
  * {@link LiveViewRecordCursorFactory#getCursor(io.questdb.griffin.SqlExecutionContext)}.
@@ -81,17 +89,23 @@ import org.jetbrains.annotations.TestOnly;
  */
 public class LiveViewRecordCursor implements RecordCursor {
 
+    // In-mem rows carry no disk rowId; getRowId() synthesizes one by setting the
+    // sign bit over the buffer row index. Disk rowIds are non-negative, so the
+    // tag never collides; recordAt() decodes it back against the pinned slot.
+    private static final long IN_MEM_ROW_ID_FLAG = Long.MIN_VALUE;
     private final MergedRecord recordA = new MergedRecord();
     private final MergedRecord recordB = new MergedRecord();
     private RecordCursor diskCursor;
     private boolean diskExhausted;
     private boolean inMemEligible;
     private long inMemRow;
-    private long maxDiskTs;
+    // Test-only count of in-mem rows served over this cursor's lifetime; lets
+    // tests confirm Mode B actually routed through the tier, not disk alone.
+    private long inMemRowsServed;
     private LiveViewInMemoryBuffer pinnedSlot;
     // True when the fence holds (pinned slot and disk reader share an LV-table
-    // seqTxn). Plumbing-only until Mode B routing uses it; hasNext() still routes
-    // by max-disk-ts.
+    // seqTxn) and the read is a full-schema identity projection. Mode B routing
+    // in hasNext() serves the slot for ts >= seamTs only when this is true.
     private boolean routingEligible;
     private int slotIdx;
     private LiveViewInMemoryTier tier;
@@ -125,35 +139,49 @@ public class LiveViewRecordCursor implements RecordCursor {
 
     @Override
     public boolean hasNext() {
-        if (!diskExhausted) {
-            if (diskCursor.hasNext()) {
-                if (inMemEligible) {
-                    // Track the max disk timestamp only when the in-mem tier may
-                    // contribute rows. The probe reads the projected timestamp
-                    // column, which is present (index >= 0) only for full-schema
-                    // reads; pruned/reordered projections serve from disk alone.
+        if (routingEligible) {
+            // Mode B (seam routing): serve disk rows strictly below the slot's
+            // seam timestamp, then serve the entire pinned slot. The slot holds
+            // every output row with ts >= seamTs and agrees with disk over that
+            // band (the seqTxn fence guarantees it), so stopping the disk scan at
+            // the seam skips reading the hot tail partition(s) from the LV table.
+            // Disk is strictly < seamTs and the slot is >= seamTs (ties at seamTs
+            // included), so there is neither a duplicate nor a gap at the seam.
+            if (!diskExhausted) {
+                if (diskCursor.hasNext()) {
                     long ts = diskCursor.getRecord().getTimestamp(timestampColumnIndex);
-                    if (maxDiskTs == Numbers.LONG_NULL || ts > maxDiskTs) {
-                        maxDiskTs = ts;
+                    if (ts < pinnedSlot.seamTs()) {
+                        recordA.toDiskMode();
+                        return true;
                     }
+                    // Reached the seam: this row and everything after it lives in
+                    // the slot. Stop scanning disk - the perf win.
+                    diskExhausted = true;
+                } else {
+                    diskExhausted = true;
                 }
-                recordA.toDiskMode();
+            }
+            if (inMemRow + 1 < pinnedSlot.rowCount()) {
+                inMemRow++;
+                inMemRowsServed++;
+                recordA.toInMemMode(inMemRow);
                 return true;
             }
-            diskExhausted = true;
+            return false;
         }
-        if (inMemEligible) {
-            long rn = pinnedSlot.rowCount();
-            while (inMemRow + 1 < rn) {
-                inMemRow++;
-                long ts = pinnedSlot.getLong(inMemRow, timestampColumnIndex);
-                if (maxDiskTs == Numbers.LONG_NULL || ts > maxDiskTs) {
-                    recordA.toInMemMode(inMemRow);
-                    return true;
-                }
-            }
+        // Disk-only: the fence did not engage (tier absent/empty, pruned
+        // projection, non-table disk cursor, or a seqTxn mismatch). In steady
+        // state in-mem is a subset of disk, so disk alone is complete.
+        if (diskCursor.hasNext()) {
+            recordA.toDiskMode();
+            return true;
         }
         return false;
+    }
+
+    @TestOnly
+    public long inMemRowsServed() {
+        return inMemRowsServed;
     }
 
     @TestOnly
@@ -166,11 +194,11 @@ public class LiveViewRecordCursor implements RecordCursor {
         return diskCursor.newSymbolTable(columnIndex);
     }
 
-    public void of(RecordCursor diskCursor, RecordMetadata baseMetadata, LiveViewInstance instance, int timestampColumnIndex) {
+    public void of(RecordCursor diskCursor, RecordMetadata baseMetadata, LiveViewInstance instance, int timestampColumnIndex, boolean diskScanAscending) {
         releaseSlot();
         this.diskCursor = diskCursor;
         this.timestampColumnIndex = timestampColumnIndex;
-        this.maxDiskTs = Numbers.LONG_NULL;
+        this.inMemRowsServed = 0;
         this.diskExhausted = false;
         this.inMemRow = -1;
         this.pinnedSlot = null;
@@ -190,10 +218,13 @@ public class LiveViewRecordCursor implements RecordCursor {
                     this.slotIdx = pin;
                     this.pinnedSlot = candidate.getSlot(pin);
                     this.inMemEligible = isFullSchemaProjection(baseMetadata, pinnedSlot, timestampColumnIndex);
-                    // Fence: serve the slot only when it and the disk reader
-                    // share an LV-table seqTxn (same version => rows agree).
-                    // Mismatch / unstamped / non-table cursor => disk-only.
+                    // Fence: serve the slot only when (a) the disk scan is
+                    // ascending (Mode B's seam split assumes ascending ts), and
+                    // (b) the slot and the disk reader share an LV-table seqTxn
+                    // (same version => rows agree). Mismatch / unstamped /
+                    // non-table cursor / non-ascending scan => disk-only.
                     this.routingEligible = inMemEligible
+                            && diskScanAscending
                             && pinnedSlot.rowCount() > 0
                             && pinnedSlot.lvSeqTxn() != Numbers.LONG_NULL
                             && pinnedSlot.lvSeqTxn() == diskReaderSeqTxn(diskCursor);
@@ -211,11 +242,16 @@ public class LiveViewRecordCursor implements RecordCursor {
 
     @Override
     public void recordAt(Record record, long atRowId) {
-        // In-mem rows are not addressable via rowId — only disk
-        // rows have rowIds. Random-access readers (ASOF JOIN as RHS, etc.)
-        // land on the disk side; the in-mem tier is a subset of disk in
-        // steady state so no data is hidden by this choice.
         MergedRecord mr = (MergedRecord) record;
+        if (atRowId < 0) {
+            // Tagged in-mem rowId (sign bit set over the buffer row index).
+            // Decode back to a buffer row and position the record against the
+            // still-pinned slot. Valid for the cursor's lifetime, during which
+            // the slot stays pinned and frozen.
+            mr.toInMemMode(atRowId & Long.MAX_VALUE);
+            return;
+        }
+        // Disk rowId (non-negative): delegate to the disk cursor.
         mr.toDiskMode();
         diskCursor.recordAt(mr.diskRecord(), atRowId);
     }
@@ -230,19 +266,27 @@ public class LiveViewRecordCursor implements RecordCursor {
 
     @Override
     public void toTop() {
+        // Restart both sides; the next hasNext() re-finds the seam by re-scanning
+        // disk from the top. routingEligible is unchanged - the slot stays pinned
+        // at the same seqTxn for the cursor's lifetime.
         if (diskCursor != null) {
             diskCursor.toTop();
         }
-        maxDiskTs = Numbers.LONG_NULL;
         diskExhausted = false;
         inMemRow = -1;
+        recordA.toDiskMode();
     }
 
     // Returns the disk cursor's LV-table seqTxn, or LONG_NULL when the cursor is
-    // not a plain table-reader scan (filter/complex plan) we can fence cheaply.
+    // not a plain FULL table-reader scan we can fence cheaply. An interval filter
+    // (e.g. a WHERE on the designated timestamp, pushed into the scan) makes the
+    // disk side return only a sub-range, so disk[ts < seamTs] would be missing
+    // rows while the unfiltered slot over-returns - Mode B must not engage. A
+    // non-page-frame plan (LATEST BY, complex factory) likewise returns LONG_NULL.
     private static long diskReaderSeqTxn(RecordCursor diskCursor) {
         if (diskCursor instanceof PageFrameRecordCursor pfrc
-                && pfrc.getPageFrameCursor() instanceof TablePageFrameCursor tpfc) {
+                && pfrc.getPageFrameCursor() instanceof TablePageFrameCursor tpfc
+                && !tpfc.hasIntervalFilter()) {
             TableReader reader = tpfc.getTableReader();
             if (reader != null) {
                 return reader.getSeqTxn();
@@ -260,6 +304,13 @@ public class LiveViewRecordCursor implements RecordCursor {
      * correct because the in-mem tier is a subset of disk in steady state. Only
      * an identity projection (every output column, in declared order) may route
      * through the tier; the type-by-type match below establishes that.
+     * <p>
+     * SYMBOL columns also force disk-only: the tier stores the staging record's
+     * raw int, which is a WAL-segment-local symbol id (the disk write path
+     * re-interns the value into the LV table's own symbol space, so the same
+     * string can carry a different id per segment). That id is not resolvable
+     * against the disk reader's symbol table at read time, so any SYMBOL output
+     * column disqualifies the tier read until the tier stores LV-space ids.
      */
     private static boolean isFullSchemaProjection(
             RecordMetadata baseMetadata,
@@ -275,6 +326,9 @@ public class LiveViewRecordCursor implements RecordCursor {
         }
         for (int i = 0; i < columnCount; i++) {
             if (baseMetadata.getColumnType(i) != buffer.columnType(i)) {
+                return false;
+            }
+            if (ColumnType.tagOf(buffer.columnType(i)) == ColumnType.SYMBOL) {
                 return false;
             }
         }
@@ -296,9 +350,14 @@ public class LiveViewRecordCursor implements RecordCursor {
      * Mode-switching record proxy. In disk mode every accessor delegates to
      * the bound {@link Record} from the disk cursor via {@link DelegatingRecord}.
      * In in-mem mode the supported fixed-width accessors read directly from
-     * the pinned buffer; SYMBOL ids resolve via the cursor's
-     * {@link RecordCursor#getSymbolTable(int)} (the in-mem tier stores raw
-     * {@code lv_id} ints and the LV's own symbol table maps them to strings).
+     * the pinned buffer.
+     * <p>
+     * {@link #getSymA}/{@link #getSymB} keep an in-mem branch that resolves the
+     * buffer's stored int via the cursor's
+     * {@link RecordCursor#getSymbolTable(int)}, but a SYMBOL output column routes
+     * disk-only (see {@link #isFullSchemaProjection}) because the tier stores
+     * WAL-segment-local ids, so that branch is currently unreachable; it stays as
+     * the shape a future LV-space symbol id would use.
      * <p>
      * Var-length accessors (STRING / VARCHAR / BINARY / ARRAY) inherit the
      * disk-only delegation. Those columns prevent the in-mem tier from being
@@ -380,13 +439,13 @@ public class LiveViewRecordCursor implements RecordCursor {
 
         @Override
         public long getRowId() {
-            // In-mem rows have no rowId — they are not addressable
-            // via recordAt. Throw on access to fail loudly if a caller tries
-            // to round-trip through random access.
+            // In-mem rows synthesize a tagged rowId: the sign bit set over the
+            // buffer row index. recordAt() decodes it back against the still-
+            // pinned slot. Disk rowIds are non-negative, so the tag never
+            // collides and random access stays self-consistent within the
+            // cursor's lifetime.
             if (inMemMode) {
-                throw new UnsupportedOperationException(
-                        "live view in-mem row has no rowId"
-                );
+                return IN_MEM_ROW_ID_FLAG | bufferRow;
             }
             return base.getRowId();
         }
