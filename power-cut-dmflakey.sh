@@ -173,9 +173,10 @@ WRITER_PID=""
 
 run_one() {
     local MODE="$1"
+    local BATCHED="${2:-true}"
     echo ""
     echo "======================================================"
-    echo "  POWER-CUT CYCLE: commitMode=$MODE"
+    echo "  POWER-CUT CYCLE: commitMode=$MODE  batchedColumnSync=$BATCHED"
     echo "======================================================"
 
     # ---- 1. Create 4 GB sparse image on a real disk ----
@@ -212,6 +213,7 @@ run_one() {
     echo "  [5] starting CrashIngestWriter (commitMode=$MODE) → $DBDIR"
     java $QDB_JVM -cp "$JAR" \
         -DcommitMode="$MODE" \
+        -Dbatched="$BATCHED" \
         org.questdb.CrashIngestWriter "$DBDIR" \
         > "$DBDIR/../_writer.log" 2>&1 &
     WRITER_PID=$!
@@ -278,7 +280,7 @@ run_one() {
 
     # ---- 11. Verify ----
     echo ""
-    echo "=== MODE=$MODE committed_before_cut=$COMMITTED ==="
+    echo "=== MODE=$MODE batched=$BATCHED committed_before_cut=$COMMITTED ==="
     local VERIFY_OUT VERIFY_EXIT
     VERIFY_EXIT=0
     VERIFY_OUT=$(java $QDB_JVM -cp "$JAR" org.questdb.CrashVerifier "$DBDIR" 2>&1) || VERIFY_EXIT=$?
@@ -428,9 +430,13 @@ ensure_dmflakey
 # PREFLIGHT: prove the cut drops un-fsync'd data before trusting any durability result.
 prove_cut_drops_unsynced
 
-# Run SYNC first (the durability claim we are proving), then NOSYNC (the contrast)
-run_one SYNC
-run_one NOSYNC
+# Attribution run:
+#   1) SYNC + batched flush optimization (the path that showed SILENT_CORRUPTION)
+#   2) SYNC + batched OFF = per-file msync(MS_SYNC) baseline (does the proven path survive?)
+#   3) NOSYNC for reference (total loss expected)
+run_one SYNC  true
+run_one SYNC  false
+run_one NOSYNC true
 
 echo ""
 echo "======================================================"

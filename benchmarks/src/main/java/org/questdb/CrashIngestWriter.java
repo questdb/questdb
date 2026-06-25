@@ -116,10 +116,20 @@ public class CrashIngestWriter {
         final int commitModeInt = parseCommitMode(commitModeProp);
         System.out.println("commitMode=" + commitModeProp + " (" + commitModeInt + ")");
 
+        // -Dbatched=false forces the per-file msync(MS_SYNC) path (the proven baseline);
+        // default true uses the batched flush optimization (sync_file_range + _cv device flush).
+        final boolean batchedSync = Boolean.parseBoolean(System.getProperty("batched", "true"));
+        System.out.println("batchedColumnSync=" + batchedSync);
+
         final CairoConfiguration cfg = new DefaultCairoConfiguration(dbRoot) {
             @Override
             public int getCommitMode() {
                 return commitModeInt;
+            }
+
+            @Override
+            public boolean isBatchedColumnSyncEnabled() {
+                return batchedSync;
             }
         };
 
