@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.DelegatingRecordCursor;
 import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
@@ -54,6 +55,7 @@ class SortKeyMaterializingRecordCursor implements DelegatingRecordCursor {
     private final MaterializedRecord recordB = new MaterializedRecord();
     private final DirectLongLongHashMap rowIdToOrdinal;
     private RecordCursor baseCursor;
+    private SqlExecutionCircuitBreaker circuitBreaker;
     private boolean isOpen;
     private boolean materialized;
     private long nextOrdinal;
@@ -150,6 +152,7 @@ class SortKeyMaterializingRecordCursor implements DelegatingRecordCursor {
 
     @Override
     public boolean hasNext() {
+        circuitBreaker.statefulThrowExceptionIfTripped();
         if (baseCursor.hasNext()) {
             final Record baseRecord = recordA.getBaseRecord();
             final long rowId = baseRecord.getRowId();
@@ -178,6 +181,7 @@ class SortKeyMaterializingRecordCursor implements DelegatingRecordCursor {
     @Override
     public void of(RecordCursor baseCursor, SqlExecutionContext executionContext) {
         this.baseCursor = baseCursor;
+        this.circuitBreaker = executionContext.getCircuitBreaker();
         isOpen = true;
         for (int i = 0, n = buffers.length; i < n; i++) {
             buffers[i].truncate();
