@@ -39,11 +39,15 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.IOException;
 import java.io.PrintStream;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
 
 /**
  * INGEST WRITER FOR CRASH-CONSISTENCY AND POWER-CUT DURABILITY HARNESSES
@@ -175,10 +179,27 @@ public class CrashIngestWriter {
                     writer.commit();
                     committedRows = id + 1;
 
-                    // Atomically record the acknowledged watermark (write-to-tmp + rename).
+                    // Durably record the acknowledged watermark so it survives a power cut on ALL
+                    // filesystems: write-tmp → fsync tmp CONTENT → atomic rename → fsync the DIRECTORY.
+                    // Without the fsyncs the watermark is lost on XFS after a cut (XFS does not
+                    // auto-flush a rename-over-existing like ext4's auto_da_alloc heuristic), leaving
+                    // the verifier with an empty _progress. The harness must hold its own bookkeeping
+                    // to the same durability bar as the QuestDB data it is verifying.
+                    final byte[] wm = Long.toString(committedRows).getBytes(StandardCharsets.US_ASCII);
+                    try (FileChannel ch = FileChannel.open(progressTmp,
+                            StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING)) {
+                        ch.write(ByteBuffer.wrap(wm));
+                        ch.force(true); // fsync tmp content+size BEFORE the rename
+                    }
                     // rename(2) is atomic on POSIX — verifier sees either old or new value, never torn.
-                    Files.writeString(progressTmp, Long.toString(committedRows), StandardCharsets.US_ASCII);
                     Files.move(progressTmp, progressPath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+                    // fsync the directory so the rename (the new dirent) is itself durable. Best-effort:
+                    // opening a directory channel is unsupported on some platforms (e.g. Windows) → ignore.
+                    try (FileChannel dir = FileChannel.open(Path.of(dbRoot), StandardOpenOption.READ)) {
+                        dir.force(true);
+                    } catch (IOException ignore) {
+                        // directory fsync not supported here; the content fsync above is the essential part
+                    }
 
                     System.out.println("committed " + committedRows);
                     System.out.flush();
