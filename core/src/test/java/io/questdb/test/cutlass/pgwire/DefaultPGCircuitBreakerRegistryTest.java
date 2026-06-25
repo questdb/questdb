@@ -26,6 +26,7 @@ package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cutlass.pgwire.DefaultPGCircuitBreakerRegistry;
 import io.questdb.cutlass.pgwire.DefaultPGConfiguration;
 import io.questdb.cutlass.pgwire.PGConfiguration;
@@ -34,6 +35,8 @@ import io.questdb.std.MemoryTag;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class DefaultPGCircuitBreakerRegistryTest extends AbstractCairoTest {
 
@@ -166,6 +169,49 @@ public class DefaultPGCircuitBreakerRegistryTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testSentinelCancelReportedByGetState() throws Exception {
+        // A cancel that lands before QueryRegistry binds the per-query flag leaves only the
+        // powerUpTime == MIN_VALUE sentinel. getState() must report it as cancelled instead of
+        // mislabelling the sentinel as a timeout.
+        assertMemoryLeak(() -> {
+            try (NetworkSqlExecutionCircuitBreaker cb = newCircuitBreaker()) {
+                cb.resetTimer();
+                cb.cancel();
+                Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_CANCELLED, cb.getState());
+            }
+        });
+    }
+
+    @Test
+    public void testSentinelCancelThrowsWhenFlagAttachedFalseAfterwards() throws Exception {
+        // Exact production race: cancel() runs before QueryRegistry.register() binds the per-query
+        // flag, so it only sets the sentinel; register() then binds a fresh flag whose value is
+        // false. The sentinel must still win, so the stateful throw path aborts as cancelled.
+        assertMemoryLeak(() -> {
+            try (NetworkSqlExecutionCircuitBreaker cb = newCircuitBreaker()) {
+                cb.resetTimer();
+                cb.cancel();
+                cb.setCancelledFlag(new AtomicBoolean(false));
+                expectQueryCancelled(cb::statefulThrowExceptionIfTripped);
+            }
+        });
+    }
+
+    @Test
+    public void testSentinelCancelThrowsWhenNoFlagAttached() throws Exception {
+        // cancel() arriving while cancelledFlag is still null sets only the sentinel. The stateful
+        // throw path used by virtually all query execution must honour it and abort as cancelled,
+        // even though testTimeout()'s now - MIN_VALUE arithmetic overflows and never trips.
+        assertMemoryLeak(() -> {
+            try (NetworkSqlExecutionCircuitBreaker cb = newCircuitBreaker()) {
+                cb.resetTimer();
+                cb.cancel();
+                expectQueryCancelled(cb::statefulThrowExceptionIfTripped);
+            }
+        });
+    }
+
     private static void expectCairoFailure(Runnable op, String expectedMessage) {
         try {
             op.run();
@@ -174,6 +220,21 @@ public class DefaultPGCircuitBreakerRegistryTest extends AbstractCairoTest {
             Assert.assertTrue(
                     "unexpected message: " + e.getFlyweightMessage(),
                     e.getFlyweightMessage().toString().contains(expectedMessage)
+            );
+        }
+    }
+
+    private static void expectQueryCancelled(Runnable op) {
+        try {
+            op.run();
+            Assert.fail("expected a CairoException signalling query cancellation, but nothing was thrown");
+        } catch (CairoException e) {
+            // queryCancelled() sets the cancellation flag while queryTimedOut() only sets
+            // interruption, so isCancellation() proves the breaker aborted as a cancel, not a timeout.
+            Assert.assertTrue("expected a cancellation, got: " + e.getFlyweightMessage(), e.isCancellation());
+            Assert.assertTrue(
+                    "expected 'cancelled by user', got: " + e.getFlyweightMessage(),
+                    e.getFlyweightMessage().toString().contains("cancelled by user")
             );
         }
     }
