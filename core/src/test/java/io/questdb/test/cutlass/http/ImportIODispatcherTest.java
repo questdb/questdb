@@ -929,44 +929,6 @@ public class ImportIODispatcherTest extends AbstractTest {
     }
 
     @Test
-    public void testImportWitNocacheSymbolsLoop() throws Exception {
-        for (int i = 0; i < 2; i++) {
-            System.out.println("*************************************************************************************");
-            System.out.println("**************************         Run " + i + "            ********************************");
-            System.out.println("*************************************************************************************");
-            testImportWithNoCacheSymbols();
-            TestUtils.removeTestPath(root);
-            TestUtils.createTestPath(root);
-        }
-    }
-
-    @Test
-    public void testImportWithCreateFalseAndNoTable() throws Exception {
-        new HttpQueryTestBuilder()
-                .withTempFolder(root).withWorkerCount(2)
-                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-                .withTelemetry(false)
-                .run((_, _) -> new SendAndReceiveRequestBuilder().withExpectSendDisconnect(true).execute(ImportCreateParamRequestFalse, ImportCreateParamResponse));
-    }
-
-    @Test()
-    public void testImportWithCreateTrueAndNoTable() throws Exception {
-        new HttpQueryTestBuilder()
-                .withTempFolder(root).withWorkerCount(2)
-                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-                .withTelemetry(false)
-                .run((engine, sqlExecutionContext) -> {
-                    new SendAndReceiveRequestBuilder().execute(ImportCreateParamRequestTrue, ImportCreateParamResponse);
-                    drainWalQueue(engine);
-                    assertQuery("select count() from trips")
-                            .withEngine(engine)
-                            .withContext(sqlExecutionContext)
-                            .noLeakCheck()
-                            .returnsOnce("count\n24\n");
-                });
-    }
-
-    @Test
     public void testImportUsesQuotedMultipartFilenameWithSemicolon() throws Exception {
         new HttpQueryTestBuilder()
                 .withTempFolder(root)
@@ -1012,7 +974,47 @@ public class ImportIODispatcherTest extends AbstractTest {
                             .withEngine(engine)
                             .withContext(sqlExecutionContext)
                             .noLeakCheck()
-                            .returnsOnce("x\n1\n");
+                            .expectSize()
+                            .returns("x\n1\n");
+                });
+    }
+
+    @Test
+    public void testImportWitNocacheSymbolsLoop() throws Exception {
+        for (int i = 0; i < 2; i++) {
+            System.out.println("*************************************************************************************");
+            System.out.println("**************************         Run " + i + "            ********************************");
+            System.out.println("*************************************************************************************");
+            testImportWithNoCacheSymbols();
+            TestUtils.removeTestPath(root);
+            TestUtils.createTestPath(root);
+        }
+    }
+
+    @Test
+    public void testImportWithCreateFalseAndNoTable() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(root).withWorkerCount(2)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .run((_, _) -> new SendAndReceiveRequestBuilder().withExpectSendDisconnect(true).execute(ImportCreateParamRequestFalse, ImportCreateParamResponse));
+    }
+
+    @Test()
+    public void testImportWithCreateTrueAndNoTable() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(root).withWorkerCount(2)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .run((engine, sqlExecutionContext) -> {
+                    new SendAndReceiveRequestBuilder().execute(ImportCreateParamRequestTrue, ImportCreateParamResponse);
+                    drainWalQueue(engine);
+                    assertQuery("select count() from trips")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .expectSize()
+                            .noRandomAccess()
+                            .returns("count\n24\n");
                 });
     }
 
