@@ -967,6 +967,56 @@ public class ImportIODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testImportUsesQuotedMultipartFilenameWithSemicolon() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .run((engine, sqlExecutionContext) -> {
+                    new SendAndReceiveRequestBuilder().execute("""
+                            POST /imp?fmt=json&forceHeader=true&delimiter=%2C HTTP/1.1\r
+                            Host: localhost:9001\r
+                            User-Agent: curl/7.64.0\r
+                            Accept: */*\r
+                            Content-Length: 437760673\r
+                            Content-Type: multipart/form-data; boundary=------------------------27d997ca93d2689d\r
+                            Expect: 100-continue\r
+                            \r
+                            --------------------------27d997ca93d2689d\r
+                            Content-Disposition: form-data; name="schema"; filename="schema.json"\r
+                            Content-Type: application/octet-stream\r
+                            \r
+                            [{"name":"x","type":"INT"}]\r
+                            --------------------------27d997ca93d2689d\r
+                            Content-Disposition: form-data; name="data"; filename="a;b.csv"\r
+                            Content-Type: application/octet-stream\r
+                            \r
+                            x\r
+                            1\r
+                            --------------------------27d997ca93d2689d--""", """
+                            HTTP/1.1 200 OK\r
+                            Server: questDB/1.0\r
+                            Date: Thu, 1 Jan 1970 00:00:00 GMT\r
+                            Transfer-Encoding: chunked\r
+                            Content-Type: application/json; charset=utf-8\r
+                            \r
+                            a3\r
+                            {"status":"OK","location":"a;b.csv","rowsRejected":0,"rowsImported":1,"header":true,"partitionBy":"NONE","columns":[{"name":"x","type":"INT","size":4,"errors":0}]}\r
+                            00\r
+                            \r
+                            """);
+
+                    drainWalQueue(engine);
+                    assertQuery("select x from \"a;b.csv\"")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .returnsOnce("x\n1\n");
+                });
+    }
+
+    @Test
     public void testImportWithDedupEnabled() throws Exception {
         new HttpQueryTestBuilder()
                 .withTempFolder(root)
