@@ -106,6 +106,22 @@ public class LiveViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateLiveViewWithParenthesizedSelect() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            // A parenthesized SELECT must capture only the balanced inner query;
+            // a stray leading '(' used to make the stored SQL fail to recompile.
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS (SELECT val, ts, row_number() OVER () AS rn FROM base)");
+            assertQuery("SELECT view_sql FROM live_views() WHERE view_name = 'lv'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .noCircuitBreakerCheck() // catalogue function over the in-memory registry; no per-row checks
+                    .returns("view_sql\nSELECT val, ts, row_number() OVER () AS rn FROM base\n");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testDropLiveViewIfExists() throws Exception {
         assertMemoryLeak(() -> {
             // No view exists yet — IF EXISTS must swallow the error.

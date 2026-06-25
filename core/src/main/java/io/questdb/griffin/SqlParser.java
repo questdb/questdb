@@ -1413,7 +1413,12 @@ public class SqlParser {
         int selectStart = lexer.getPosition();
         tok = tok(lexer, "'(' or 'select'");
         boolean hasParens = Chars.equals(tok, '(');
-        if (!hasParens) {
+        if (hasParens) {
+            // Skip past the opening parenthesis so the captured SELECT text stays
+            // balanced; otherwise the stored SQL keeps the leading '(' but drops
+            // the trailing ')', and recompiling it later fails with "')' expected".
+            selectStart = lexer.getPosition();
+        } else {
             lexer.unparseLast();
         }
         IQueryModel queryModel = parseDml(lexer, lexer.getPosition(), sqlParserCallback);
