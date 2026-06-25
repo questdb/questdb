@@ -141,9 +141,8 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
                 perWorkerMapValues.extendAndSet(i, new SimpleMapValue(valueCount));
             }
 
-            // Lazy variant: the allocator's chunk index is allocated by the first
-            // reopen() under the bound per-query tracker, keeping malloc/free symmetric
-            // on the per-query counter from the first cursor.
+            // Lazy variant (openOnInit=false): the chunk index is global-counter bookkeeping;
+            // only the data chunks it hands out are charged to the per-query tracker.
             ownerAllocator = GroupByAllocatorFactory.createAllocator(configuration, false);
             // Make sure to set worker-local allocator for the group by functions.
             GroupByUtils.setAllocator(ownerGroupByFunctions, ownerAllocator);
@@ -187,10 +186,9 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
 
     @Override
     public void close() {
-        // The allocators' chunk index is retained across queries (restoreInitialCapacity()
-        // in clear()); their final free happens here, after the last query's tracker was
-        // released to the pool. Null the tracker so these frees charge the global counter
-        // only and do not underflow the released per-query block.
+        // clear() already freed the data chunks under the bound tracker (the index is on the
+        // global counter), so close() has nothing tracked to free. Nulling is defensive: any
+        // stray free hits the global counter and cannot underflow an already-recycled block.
         if (ownerAllocator != null) {
             ownerAllocator.setMemoryTracker(null);
         }
