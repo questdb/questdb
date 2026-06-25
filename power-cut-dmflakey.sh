@@ -39,7 +39,7 @@
 # PREREQUISITES:
 #   - Linux kernel with dm-flakey module (modprobe dm-flakey; standard since ~4.0)
 #   - device-mapper-event or dm-event package (dmsetup from device-mapper)
-#   - e2fsprogs (mkfs.ext4)
+#   - e2fsprogs (mkfs.ext4) for FSTYPE=ext4 (default); xfsprogs (mkfs.xfs) for FSTYPE=xfs
 #   - Java 21+, benchmarks.jar already built (or build with mvn first)
 #   - Sufficient disk space at IMG path (4 GB per run)
 #
@@ -81,6 +81,18 @@ fi
 MNT="${MNT:-/mnt/qdbpcut}"
 DM_NAME="qdbflakey"
 DM_DEV="/dev/mapper/$DM_NAME"
+
+# Filesystem under test: ext4 (default) or xfs. Pass as the FIRST ARG so it survives
+# sudo's env sanitizing:  sudo bash power-cut-dmflakey.sh xfs   (env FSTYPE= also works).
+FSTYPE="${1:-${FSTYPE:-ext4}}"
+case "$FSTYPE" in ext4|xfs) ;; *) echo "ERROR: FSTYPE must be ext4 or xfs (got '$FSTYPE')" >&2; exit 1 ;; esac
+mkfs_dev() {  # $1 = device; format with the chosen FSTYPE
+    case "$FSTYPE" in
+        ext4) mkfs.ext4 -F -q "$1" >/dev/null 2>&1 ;;
+        xfs)  mkfs.xfs -f "$1" >/dev/null 2>&1 ;;
+        *) echo "ERROR: unknown FSTYPE=$FSTYPE (use ext4 or xfs)" >&2; exit 1 ;;
+    esac
+}
 
 # Minimum rows committed before we trigger the cut (at least 50 commits × 1000 rows).
 MIN_COMMITTED="${MIN_COMMITTED:-50000}"
@@ -201,8 +213,8 @@ run_one() {
     dmsetup create "$DM_NAME" --table "$UP_TABLE"
 
     # ---- 4. Format and mount ----
-    echo "  [4] mkfs.ext4 on $DM_DEV"
-    mkfs.ext4 -F -q "$DM_DEV"
+    echo "  [4] mkfs.$FSTYPE on $DM_DEV"
+    mkfs_dev "$DM_DEV"
     mkdir -p "$MNT"
     echo "  [4] mounting $DM_DEV → $MNT"
     mount "$DM_DEV" "$MNT"
@@ -351,7 +363,7 @@ prove_cut_drops_unsynced() {
     local UP_TABLE="0 $SECTORS flakey $LOOP 0 180 0"
     local DROP_TABLE="0 $SECTORS flakey $LOOP 0 0 180 1 drop_writes"
     dmsetup create "$DM_NAME" --table "$UP_TABLE"
-    mkfs.ext4 -F -q "$DM_DEV"
+    mkfs_dev "$DM_DEV"
     mkdir -p "$MNT"
     mount "$DM_DEV" "$MNT"
 
@@ -409,6 +421,7 @@ echo "  IMG:           $IMG"
 echo "  MNT:           $MNT"
 echo "  MIN_COMMITTED: $MIN_COMMITTED"
 echo "  DM device:     $DM_DEV"
+echo "  FSTYPE:        $FSTYPE   <-- filesystem actually under test"
 echo ""
 echo "  Technique: dm-flakey drop_writes → umount writeback DROPPED"
 echo "             = un-fsync'd page-cache data LOST (power cut model)"

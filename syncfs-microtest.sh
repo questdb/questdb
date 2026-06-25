@@ -20,6 +20,8 @@ set -uo pipefail
 IMG="${IMG:-/data/qdb-syncfs-micro.img}"
 MNT="${MNT:-/mnt/qdbsfmicro}"
 DM="${DM:-sfmicro}"
+FSTYPE="${1:-${FSTYPE:-ext4}}"   # ext4 | xfs  — pass as FIRST ARG (survives sudo): sudo bash syncfs-microtest.sh xfs
+case "$FSTYPE" in ext4|xfs) ;; *) echo "ERROR: FSTYPE must be ext4 or xfs (got '$FSTYPE')" >&2; exit 1 ;; esac
 SZ=16m
 LOOP=""
 
@@ -33,6 +35,14 @@ trap cleanup EXIT
 
 modprobe dm-flakey 2>/dev/null || true
 
+mkfs_dev() {  # $1 = device; format with the chosen FSTYPE
+    case "$FSTYPE" in
+        ext4) mkfs.ext4 -F -q "$1" >/dev/null 2>&1 ;;
+        xfs)  mkfs.xfs -f "$1" >/dev/null 2>&1 ;;
+        *) echo "ERROR: unknown FSTYPE=$FSTYPE (use ext4 or xfs)" >&2; exit 1 ;;
+    esac
+}
+
 # test_case "<xfs_io flush args>" "<label>" "<expect: SURVIVE|LOST>"
 test_case() {
     local FLUSH="$1" LABEL="$2" EXPECT="$3"
@@ -40,7 +50,7 @@ test_case() {
     LOOP=$(losetup -f --show "$IMG")
     local SECTORS; SECTORS=$(blockdev --getsz "$LOOP")
     dmsetup create "$DM" --table "0 $SECTORS flakey $LOOP 0 180 0"
-    mkfs.ext4 -F -q /dev/mapper/"$DM"
+    mkfs_dev /dev/mapper/"$DM"
     mkdir -p "$MNT"; mount /dev/mapper/"$DM" "$MNT"
 
     # falloc (unwritten extent) + write + sync_file_range(WRITE|WAIT_AFTER) + <FLUSH>
@@ -77,8 +87,8 @@ test_case() {
 }
 
 echo "======================================================================"
-echo "  syncfs micro-test: does syncfs journal ext4 unwritten-extent"
-echo "  conversions durably across a power cut?  (root + dm-flakey)"
+echo "  syncfs micro-test [$FSTYPE]: does syncfs journal the unwritten-extent"
+echo "  conversion durably across a power cut?  (root + dm-flakey)"
 echo "======================================================================"
 test_case "-c syncfs"   "sync_range + SYNCFS        (THE CANDIDATE)"  "SURVIVE"
 test_case "-c fsync"    "sync_range + FSYNC         (per-file baseline)" "SURVIVE"
