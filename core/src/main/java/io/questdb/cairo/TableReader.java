@@ -394,6 +394,24 @@ public class TableReader implements Closeable, SymbolTableSource {
                             columnVersionReader,
                             partitionTimestamp
                     );
+                } catch (CairoException e) {
+                    // Mirror the fresh-create path (createIndexReaderAt): refreshing a CACHED index
+                    // reader onto a partition whose replica-only index sidecars are absent on this
+                    // node (purged on a role flip to a skipping primary, or never materialized for an
+                    // older partition that was written during a skip window) is NOT corruption -- it
+                    // just means "not materialized here yet". Convert the critical file-not-found open
+                    // failure into the same recoverable (non-critical) error so the query degrades
+                    // gracefully instead of crashing. Normal indexed columns are left untouched: a
+                    // missing index file there remains genuine corruption (critical), as does any
+                    // non-file-not-found failure on a replica-only column.
+                    if (metadata.isColumnReplicaOnlyIndex(columnIndex) && Files.isErrnoFileDoesNotExist(e.getErrno())) {
+                        throw CairoException.nonCritical()
+                                .put("replica-only index not materialized on this node [column=")
+                                .put(metadata.getColumnName(columnIndex))
+                                .put(", partitionTimestamp=").put(partitionTimestamp)
+                                .put(']');
+                    }
+                    throw e;
                 } finally {
                     path.trimTo(plen);
                 }

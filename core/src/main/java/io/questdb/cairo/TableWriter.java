@@ -8869,7 +8869,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // On a skipping primary the bitmap/posting index for a replica-only column is never
                     // materialized and no indexer is configured (see configureColumn), so the indexers
                     // list has no entry for it -- treat it as un-indexed here to avoid an OOB access.
-                    final ColumnIndexer indexer = metadata.isColumnIndexActive(i, configuration.skipReplicaOnlyIndexes()) ? indexers.getQuick(i) : null;
+                    //
+                    // Conversely, on a replica (skipReplicaOnlyIndexes()==false) the column IS index-active,
+                    // yet the indexer slot can still be ABSENT here: the writer was configureColumn'd while
+                    // skipping (skip==true, no indexer wired), the role then flipped to replica, but the
+                    // reconcile self-heal that would have wired the indexer early-returns when the table has
+                    // no partitions (e.g. right after TRUNCATE). The very first partition then opens with the
+                    // slot still missing. Lazily wire a fresh indexer here -- exactly what configureColumn
+                    // would have created had skip been false at open -- instead of an OOB getQuick(i).
+                    final ColumnIndexer indexer;
+                    if (metadata.isColumnIndexActive(i, configuration.skipReplicaOnlyIndexes())) {
+                        ColumnIndexer wired = i < indexers.size() ? indexers.getQuick(i) : null;
+                        if (wired == null) {
+                            wired = new SymbolColumnIndexer(configuration, metadata.getColumnIndexType(i));
+                            indexers.extendAndSet(i, wired);
+                        }
+                        indexer = wired;
+                    } else {
+                        indexer = null;
+                    }
 
                     // prepare index writer if column requires indexing
                     if (indexer != null) {
@@ -11873,13 +11891,34 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * "not materialized" rather than corruption (Task 13).
      */
     private void reconcileReplicaOnlyIndexes() {
-        // Nothing to build or purge on an empty table: there are no partitions to index, and no
-        // on-disk sidecars exist yet. openPartition (fired on the first row) wires/creates indexes
-        // per the live skip flag, and the apply-path / next reconcile keeps them in sync.
+        final boolean wantBuilt = !configuration.skipReplicaOnlyIndexes();
+        // Empty table (e.g. right after TRUNCATE): there are no partitions to build/purge ON DISK.
+        // BUILD has nothing to do -- openPartition (fired on the first future row) wires/creates the
+        // index per the live skip flag. But PURGE must still UNWIRE any stale IN-MEMORY indexer left
+        // over from a prior replica window: openPartition only lazily WIRES an absent indexer when the
+        // column is index-active, it never UNWIRES one when the role has flipped to skipping. A stale
+        // wired indexer would otherwise be picked up by the maintenance path (updateIndexesParallel
+        // over denseIndexers) on the next insert and crash indexing memory that is no longer set up.
         if (txWriter.getPartitionCount() == 0) {
+            if (!wantBuilt) {
+                boolean changed = false;
+                for (int i = 0; i < columnCount; i++) {
+                    if (!metadata.isColumnReplicaOnlyIndex(i)) {
+                        continue;
+                    }
+                    final ColumnIndexer stale = i < indexers.size() ? indexers.getQuick(i) : null;
+                    if (stale != null) {
+                        stale.discardAndClose();
+                        indexers.extendAndSet(i, null);
+                        changed = true;
+                    }
+                }
+                if (changed) {
+                    populateDenseIndexerList();
+                }
+            }
             return;
         }
-        final boolean wantBuilt = !configuration.skipReplicaOnlyIndexes();
         for (int i = 0; i < columnCount; i++) {
             if (!metadata.isColumnReplicaOnlyIndex(i)) {
                 continue;
