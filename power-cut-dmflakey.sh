@@ -63,7 +63,8 @@ set -euo pipefail
 # ============================================================
 # CONFIGURATION — adjust paths for your environment
 # ============================================================
-WT="${WT:-$HOME/claude/wt/oss/sync-batch}"
+# Under `sudo`, $HOME is /root — derive the invoking user's home from SUDO_USER instead.
+WT="${WT:-/home/${SUDO_USER:-$(id -un)}/claude/wt/oss/sync-batch}"
 JAR="${JAR:-$WT/benchmarks/target/benchmarks.jar}"
 # IMG: the sparse image file that backs the loop device.
 # Put this on a REAL block device (ext4 / xfs on a spinning disk or SSD) — NOT tmpfs.
@@ -346,13 +347,13 @@ echo "  SYNC:  fsync before commit → data survives → DURABLE"
 echo "  NOSYNC: no fsync → data lost → expected (shows why SYNC matters)"
 echo ""
 
-# Check JAR
+# Check JAR (do NOT build under root — maven would use /root/.m2 and re-download everything).
 if [ ! -f "$JAR" ]; then
-    echo "=== JAR not found; building QuestDB benchmarks ==="
-    cd "$WT"
-    mvn install -pl core -am -DskipTests -q
-    mvn package -pl benchmarks -DskipTests -q
-    echo "=== Build complete ==="
+    echo "ERROR: benchmarks jar not found at: $JAR" >&2
+    echo "Build it first AS YOUR NORMAL USER (not root):" >&2
+    echo "  cd $WT && mvn install -pl core -am -DskipTests -q && mvn package -pl benchmarks -DskipTests -q" >&2
+    echo "Then re-run this script with sudo." >&2
+    exit 1
 fi
 
 ensure_dmflakey
