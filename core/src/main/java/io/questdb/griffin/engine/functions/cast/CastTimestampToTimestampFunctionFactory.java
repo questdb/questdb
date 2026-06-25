@@ -93,34 +93,38 @@ public class CastTimestampToTimestampFunctionFactory implements FunctionFactory 
             long lo = io.getLo();
             long hi = io.getHi();
             final int outType = getType();
+            final int soundness;
             if (ColumnType.isTimestampNano(outType) && ColumnType.isTimestampMicro(leftTimestampType)) {
+                // widening micro -> nano is lossless; the bound is resolved at nano precision
                 if (lo != Numbers.LONG_NULL) {
                     lo = ceilDiv(lo, NANOS_PER_MICRO);
                 }
                 if (hi != Long.MAX_VALUE) {
                     hi = Math.floorDiv(hi, NANOS_PER_MICRO);
                 }
+                soundness = EXACT;
             } else if (ColumnType.isTimestampMicro(outType) && ColumnType.isTimestampNano(leftTimestampType)) {
-                // this inverse runs only when the cast wraps the designated timestamp, which
-                // TableWriter rejects before 1970-01-01, so the nano source is always >= 0 and
-                // nanos/1000 truncates toward zero exactly as floor -- the inverse is exact
+                // narrowing nano -> micro: the bound, resolved in the micro domain, loses the
+                // sub-microsecond bits the runtime comparison still sees, so each finite end is
+                // widened by a microsecond to stay a sound superset and the filter is kept
                 if (lo != Numbers.LONG_NULL) {
-                    if (lo > Long.MAX_VALUE / NANOS_PER_MICRO || lo < Long.MIN_VALUE / NANOS_PER_MICRO) {
+                    if (lo <= Long.MIN_VALUE / NANOS_PER_MICRO + 1 || lo > Long.MAX_VALUE / NANOS_PER_MICRO) {
                         return NONE;
                     }
-                    lo = lo * NANOS_PER_MICRO;
+                    lo = (lo - 1) * NANOS_PER_MICRO;
                 }
                 if (hi != Long.MAX_VALUE) {
-                    if (hi > (Long.MAX_VALUE - (NANOS_PER_MICRO - 1)) / NANOS_PER_MICRO || hi < Long.MIN_VALUE / NANOS_PER_MICRO) {
+                    if (hi < Long.MIN_VALUE / NANOS_PER_MICRO || hi >= Long.MAX_VALUE / NANOS_PER_MICRO - 1) {
                         return NONE;
                     }
-                    hi = hi * NANOS_PER_MICRO + (NANOS_PER_MICRO - 1);
+                    hi = (hi + 1) * NANOS_PER_MICRO + (NANOS_PER_MICRO - 1);
                 }
+                soundness = SUPERSET;
             } else {
                 return NONE;
             }
             io.of(lo, hi);
-            return EXACT;
+            return soundness;
         }
 
         private static long ceilDiv(long a, long b) {

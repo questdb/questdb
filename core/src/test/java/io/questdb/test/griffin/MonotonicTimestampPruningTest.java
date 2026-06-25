@@ -24,11 +24,44 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.TimestampDriver;
+import io.questdb.griffin.SqlException;
+import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.Rnd;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
+import java.util.Arrays;
 
 public class MonotonicTimestampPruningTest extends AbstractCairoTest {
+
+    private static final char[] ADD_UNITS = {'s', 'm', 'h', 'd', 'w', 'M', 'y'};
+    private static final String[] ANCHORS = {
+            "2022-03-27T01:00:00.000000Z", // Europe/London spring-forward gap
+            "2022-10-30T01:00:00.000000Z", // Europe/London fall-back overlap
+            "2005-03-27T00:00:00.000000Z", // Antarctica/Troll first-ever DST transition
+            "2011-12-31T00:00:00.000000Z", // Pacific/Apia date-line skip
+            "2021-01-01T00:00:00.000000Z", // year boundary
+            "2024-02-29T12:00:00.000000Z", // leap day
+            "2008-06-15T08:30:00.000000Z"  // far from any transition
+    };
+    private static final String[] DATE_TRUNC_UNITS = {"second", "minute", "hour", "day", "week", "month", "quarter", "year"};
+    private static final String[] ORIGIN_POOL = {"2020-01-01T00:00:00.000000Z", "2022-01-01T03:00:00.000000Z", "2000-06-15T12:00:00.000000Z"};
+    private static final int OUT_LONG = 2;
+    private static final int OUT_TS = 0;
+    private static final int OUT_YEAR = 1;
+    private static final char[] STRIDE_UNITS_ALL = {'U', 'T', 's', 'm', 'h', 'd', 'w', 'M', 'y', 'n'};
+    private static final char[] STRIDE_UNITS_TIME = {'U', 'T', 's', 'm', 'h', 'd'};
+    private static final String[] TZ_POOL = {
+            "Europe/London", "Antarctica/Troll", "Pacific/Apia", "America/New_York",
+            "Australia/Lord_Howe", "+00:00", "+02:00", "-05:30", "+05:30"
+    };
 
     @Test
     public void testAddLongConstant() throws Exception {
@@ -717,6 +750,81 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFuzzDifferentialPushdown() throws Exception {
+        assertMemoryLeak(() -> {
+            final Rnd rnd = TestUtils.generateRandom(LOG);
+            final StringSink sink = new StringSink();
+            final int tables = 12;
+            final int queriesPerTable = 40;
+            int sampledPlans = 0;
+            int intervalScanHits = 0;
+            try {
+                for (int t = 0; t < tables; t++) {
+                    final boolean nano = rnd.nextBoolean();
+                    final TimestampDriver driver = ColumnType.getTimestampDriver(
+                            nano ? ColumnType.TIMESTAMP_NANO : ColumnType.TIMESTAMP_MICRO);
+                    final long anchorMicros = parseMicros(ANCHORS[rnd.nextInt(ANCHORS.length)]);
+                    setCurrentMicros(anchorMicros);
+                    final long[] data = createFuzzTable(rnd, nano, anchorMicros, driver, sink);
+
+                    sink.clear();
+                    sink.put('\'');
+                    driver.append(sink, data[data.length / 2]);
+                    sink.put('\'');
+                    final String midBound = sink.toString();
+                    final String canonPush = "SELECT i, ts FROM x WHERE date_trunc('day', ts) >= " + midBound;
+                    assertSqlCursors("SELECT i, ts FROM x WHERE date_trunc('day', ts2) >= " + midBound, canonPush);
+                    Assert.assertTrue(
+                            "canonical pushdown did not engage the interval scan [nano=" + nano + ']',
+                            Chars.contains(getPlanSink(canonPush).getSink(), "Interval forward scan"));
+
+                    for (int q = 0; q < queriesPerTable; q++) {
+                        final int wrap = rnd.nextInt(10);
+                        final String tsExpr = randomTsExpr(rnd, 2);
+                        final String expr;
+                        final int outKind;
+                        if (wrap == 0) {
+                            expr = "year(" + tsExpr + ")";
+                            outKind = OUT_YEAR;
+                        } else if (wrap == 1) {
+                            expr = rnd.nextBoolean() ? "cast(" + tsExpr + " AS long)" : tsExpr + "::long";
+                            outKind = OUT_LONG;
+                        } else {
+                            expr = tsExpr;
+                            outKind = OUT_TS;
+                        }
+                        final String predicate = buildPredicate(rnd, outKind, expr, data, nano, driver, sink);
+                        // 'ts' is the designated timestamp (pushed down); 'ts2' an identical copy the optimizer leaves as a row filter
+                        final String pushSql = "SELECT i, ts FROM x WHERE " + predicate.replace("@", "ts");
+                        final String baseSql = "SELECT i, ts FROM x WHERE " + predicate.replace("@", "ts2");
+                        try {
+                            assertSqlCursors(baseSql, pushSql);
+                        } catch (Throwable th) {
+                            throw new AssertionError(
+                                    "differential check failed [nano=" + nano + "]\n  push: " + pushSql + "\n  base: " + baseSql, th);
+                        }
+                        if ((q & 3) == 0) {
+                            sampledPlans++;
+                            if (Chars.contains(getPlanSink(pushSql).getSink(), "Interval forward scan")) {
+                                intervalScanHits++;
+                            }
+                        }
+                    }
+                    execute("DROP TABLE x");
+                }
+            } finally {
+                setCurrentMicros(-1);
+                bindVariableService.clear();
+            }
+            LOG.info().$("monotonic pushdown fuzz done [tables=").$(tables)
+                    .$(", queriesPerTable=").$(queriesPerTable)
+                    .$(", sampledPlans=").$(sampledPlans)
+                    .$(", intervalScanHits=").$(intervalScanHits).$(']').$();
+            Assert.assertTrue("the fuzz never engaged the timestamp-function pushdown", intervalScanHits > 0);
+        });
+    }
+
+    @Test
     public void testNarrowingCastConstant() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE trades_ns (price DOUBLE, timestamp TIMESTAMP_NS) TIMESTAMP(timestamp) PARTITION BY DAY;");
@@ -1262,6 +1370,86 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
         });
     }
 
+    private static String buildPredicate(
+            Rnd rnd, int outKind, String expr, long[] data, boolean nano, TimestampDriver driver, StringSink sink
+    ) throws SqlException {
+        bindVariableService.clear();
+        final int[] bindIdx = {0};
+        final boolean canIn = outKind == OUT_TS;
+        final int roll = rnd.nextInt(100);
+        if (canIn && roll >= 80) {
+            final int form = rnd.nextInt(10);
+            if (form < 6) {
+                // a quoted partial date is an interval: g(ts) IN '2022-03' spans the whole month
+                return expr + " IN " + randomIntervalString(rnd, data[rnd.nextInt(data.length)], driver, sink);
+            }
+            if (form < 8) {
+                return expr + " IN now()";
+            }
+            final int i = bindIdx[0]++;
+            bindVariableService.setTimestampWithType(
+                    i, nano ? ColumnType.TIMESTAMP_NANO : ColumnType.TIMESTAMP_MICRO, data[rnd.nextInt(data.length)]);
+            return expr + " IN $" + (i + 1);
+        }
+        if (roll >= 55) {
+            final long b1 = jitterBound(rnd, data[rnd.nextInt(data.length)], nano);
+            final long b2 = jitterBound(rnd, data[rnd.nextInt(data.length)], nano);
+            final String lo = scalarBound(rnd, outKind, b1, nano, driver, sink, bindIdx);
+            final String hi = scalarBound(rnd, outKind, b2, nano, driver, sink, bindIdx);
+            // drawn order is kept (not sorted) so reversed bounds exercise normalization
+            return expr + " BETWEEN " + lo + " AND " + hi;
+        }
+        final long b = jitterBound(rnd, data[rnd.nextInt(data.length)], nano);
+        final String bound = scalarBound(rnd, outKind, b, nano, driver, sink, bindIdx);
+        final String[] ops = {">=", ">", "<=", "<", "="};
+        final String[] mirrored = {"<=", "<", ">=", ">", "="};
+        final int oi = rnd.nextInt(ops.length);
+        return rnd.nextBoolean()
+                ? bound + " " + mirrored[oi] + " " + expr
+                : expr + " " + ops[oi] + " " + bound;
+    }
+
+    private static long[] createFuzzTable(Rnd rnd, boolean nano, long anchorMicros, TimestampDriver driver, StringSink sink) throws Exception {
+        final int rows = 40 + rnd.nextInt(40);
+        final long anchor = nano ? anchorMicros * 1000 : anchorMicros;
+        final long sec = nano ? 1_000_000_000L : 1_000_000L;
+        final long[] data = new long[rows];
+        for (int i = 0; i < rows; i++) {
+            final long off;
+            final int r = rnd.nextInt(10);
+            if (r < 6) {
+                off = (rnd.nextLong(6L * 24 * 3600) - 3L * 24 * 3600) * sec + rnd.nextLong(sec);
+            } else if (r < 8) {
+                // tightly straddling the anchor transition
+                off = (rnd.nextLong(4L * 3600) - 2L * 3600) * sec + rnd.nextLong(sec);
+            } else {
+                off = (rnd.nextLong(400L * 24 * 3600) - 200L * 24 * 3600) * sec;
+            }
+            data[i] = anchor + off;
+        }
+        Arrays.sort(data);
+        // designated timestamp must be strictly increasing
+        for (int i = 1; i < rows; i++) {
+            if (data[i] <= data[i - 1]) {
+                data[i] = data[i - 1] + 1;
+            }
+        }
+        final String type = nano ? "TIMESTAMP_NS" : "TIMESTAMP";
+        execute("CREATE TABLE x (i INT, ts " + type + ", ts2 " + type + ") TIMESTAMP(ts) PARTITION BY MONTH");
+        final StringBuilder insert = new StringBuilder("INSERT INTO x VALUES ");
+        for (int i = 0; i < rows; i++) {
+            if (i > 0) {
+                insert.append(',');
+            }
+            sink.clear();
+            driver.append(sink, data[i]);
+            final String iso = sink.toString();
+            insert.append('(').append(i).append(",'").append(iso).append("','").append(iso).append("')");
+        }
+        execute(insert.toString());
+        return data;
+    }
+
     private static void createTrades() throws Exception {
         execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
         execute("INSERT INTO trades VALUES " +
@@ -1286,5 +1474,106 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
                 "(2, '2022-06-01T00:00:00.000000Z')," +
                 "(3, '2023-06-01T00:00:00.000000Z')," +
                 "(4, '2024-06-01T00:00:00.000000Z');");
+    }
+
+    private static long jitterBound(Rnd rnd, long base, boolean nano) {
+        final long sec = nano ? 1_000_000_000L : 1_000_000L;
+        return switch (rnd.nextInt(9)) {
+            case 0 -> base;
+            case 1 -> base + 1;
+            case 2 -> base - 1;
+            case 3 -> base + sec;
+            case 4 -> base + 60 * sec;
+            case 5 -> base + 3600 * sec;
+            case 6 -> base + 24L * 3600 * sec;
+            case 7 -> base + (rnd.nextLong(7L * 24 * 3600) - 3L * 24 * 3600) * sec;
+            default -> base + (rnd.nextLong(400L * 24 * 3600) - 200L * 24 * 3600) * sec; // far, often empty
+        };
+    }
+
+    private static long parseMicros(String iso) {
+        try {
+            return MicrosTimestampDriver.INSTANCE.parseFloorLiteral(iso);
+        } catch (NumericException e) {
+            throw new AssertionError("bad anchor literal: " + iso, e);
+        }
+    }
+
+    private static String randomIntervalString(Rnd rnd, long value, TimestampDriver driver, StringSink sink) {
+        sink.clear();
+        driver.append(sink, value);
+        final String full = sink.toString();
+        // cut the ISO string to year/month/day/hour/minute/second granularity
+        final int[] cuts = {4, 7, 10, 13, 16, 19};
+        final int cut = Math.min(cuts[rnd.nextInt(cuts.length)], full.length());
+        return "'" + full.substring(0, cut) + "'";
+    }
+
+    private static String randomStride(Rnd rnd, char[] units) {
+        return (1 + rnd.nextInt(12)) + String.valueOf(units[rnd.nextInt(units.length)]);
+    }
+
+    private static String randomTsExpr(Rnd rnd, int depth) {
+        if (depth <= 0 || rnd.nextInt(100) < 35) {
+            return "@";
+        }
+        final String inner = randomTsExpr(rnd, depth - 1);
+        return switch (rnd.nextInt(9)) {
+            case 0 -> "date_trunc('" + DATE_TRUNC_UNITS[rnd.nextInt(DATE_TRUNC_UNITS.length)] + "', " + inner + ")";
+            case 1 -> "timestamp_floor('" + randomStride(rnd, STRIDE_UNITS_ALL) + "', " + inner + ")";
+            case 2 -> "timestamp_floor('" + randomStride(rnd, STRIDE_UNITS_TIME) + "', " + inner
+                    + ", '" + ORIGIN_POOL[rnd.nextInt(ORIGIN_POOL.length)] + "')";
+            case 3 -> (rnd.nextInt(4) == 0 ? "timestamp_floor_utc('" : "timestamp_floor('")
+                    + randomStride(rnd, STRIDE_UNITS_TIME) + "', " + inner
+                    + ", null, '00:00', '" + TZ_POOL[rnd.nextInt(TZ_POOL.length)] + "')";
+            // timestamp_ceil takes a bare unit char, not a stride multiplier
+            case 4 -> "timestamp_ceil('" + STRIDE_UNITS_ALL[rnd.nextInt(STRIDE_UNITS_ALL.length)] + "', " + inner + ")";
+            case 5 -> "dateadd('" + ADD_UNITS[rnd.nextInt(ADD_UNITS.length)] + "', " + (rnd.nextInt(73) - 36) + ", " + inner + ")";
+            case 6 -> "dateadd('" + ADD_UNITS[rnd.nextInt(ADD_UNITS.length)] + "', " + (rnd.nextInt(49) - 24)
+                    + ", " + inner + ", '" + TZ_POOL[rnd.nextInt(TZ_POOL.length)] + "')";
+            case 7 -> (rnd.nextBoolean() ? "to_timezone(" : "to_utc(") + inner + ", '" + TZ_POOL[rnd.nextInt(TZ_POOL.length)] + "')";
+            default -> {
+                final String castType = rnd.nextBoolean() ? "timestamp" : "timestamp_ns";
+                yield rnd.nextBoolean() ? "cast(" + inner + " AS " + castType + ")" : inner + "::" + castType;
+            }
+        };
+    }
+
+    private static String scalarBound(
+            Rnd rnd, int outKind, long value, boolean nano, TimestampDriver driver, StringSink sink, int[] bindIdx
+    ) throws SqlException {
+        final int kind = rnd.nextInt(100);
+        if (outKind == OUT_TS && kind < 8) {
+            return "null";
+        }
+        if (outKind == OUT_TS && kind < 18) {
+            return "now()";
+        }
+        if (kind < 33) {
+            final int i = bindIdx[0]++;
+            if (outKind == OUT_TS && kind < 22) {
+                bindVariableService.setTimestampWithType(
+                        i, nano ? ColumnType.TIMESTAMP_NANO : ColumnType.TIMESTAMP_MICRO, Numbers.LONG_NULL);
+            } else if (outKind == OUT_TS) {
+                bindVariableService.setTimestampWithType(
+                        i, nano ? ColumnType.TIMESTAMP_NANO : ColumnType.TIMESTAMP_MICRO, value);
+            } else if (outKind == OUT_YEAR) {
+                bindVariableService.setLong(i, driver.getYear(value));
+            } else {
+                bindVariableService.setLong(i, value);
+            }
+            return "$" + (i + 1);
+        }
+        if (outKind == OUT_TS) {
+            sink.clear();
+            sink.put('\'');
+            driver.append(sink, value);
+            sink.put('\'');
+            return sink.toString();
+        }
+        if (outKind == OUT_YEAR) {
+            return Integer.toString(driver.getYear(value));
+        }
+        return Long.toString(value);
     }
 }
