@@ -11531,8 +11531,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
 
                     // Read min and max timestamp values from the file; the detached partition's format
-                    // is not in the live _txn, so let file presence detect it (isParquet=true).
-                    readPartitionMinMaxTimestamps(partitionTimestamp, path.trimTo(pathLen), columnName, true, -1, partitionSize);
+                    // is not in the live _txn, so let file presence detect it (mayBeParquet=true).
+                    readPartitionMinMaxTimestamps(partitionTimestamp, path.trimTo(pathLen), columnName, /* mayBeParquet */ true, -1, partitionSize);
                     return partitionSize;
                 } finally {
                     Misc.free(attachTxReader);
@@ -11632,10 +11632,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void readPartitionMinMaxTimestamps(long partitionTimestamp, Path path, CharSequence columnName, boolean isParquet, long parquetFileSize, long partitionSize) {
+    private void readPartitionMinMaxTimestamps(long partitionTimestamp, Path path, CharSequence columnName, boolean mayBeParquet, long parquetFileSize, long partitionSize) {
         int partitionLen = path.size();
         try {
-            if (!isParquet) {
+            if (!mayBeParquet) {
                 readNativeMinMaxTimestamps(path, columnName, partitionSize);
             } else {
                 // Parquet partition with _pm file (data.parquet might be absent)
