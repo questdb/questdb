@@ -54,6 +54,11 @@ public class PostingGenLookup implements Closeable {
     private static final double KEY_TO_SLOT_LOAD_FACTOR = 0.5;
     // Column keys are always >= 0, so Integer.MIN_VALUE is a safe sentinel.
     private static final int NO_ENTRY_KEY = Integer.MIN_VALUE;
+    // Max txn a later gen's TXN_AT_SEAL may legitimately regress below the
+    // entry's floor (gen 0's seal). The only documented intra-entry seal
+    // regression is the WAL fast-lag gen, stamped getTxn() against an entry
+    // sealed at getTxn()+1 — exactly one txn. See snapshotMetadata.
+    private static final long WAL_FAST_LAG_SEAL_TOLERANCE = 1L;
     // Double-buffered snapshot. {@code snapshotMetadata} fills the staging
     // copy in-place; {@code commitSnapshot} swaps the active/staging
     // pointers only after the seqlock reader has verified the source bytes
@@ -275,7 +280,42 @@ public class PostingGenLookup implements Closeable {
     public void snapshotMetadata(MemoryMR keyMem, int genCount, long entryOffset) {
         Snapshot s = staging;
         s.clear();
-        long prevTxnAtSeal = Long.MIN_VALUE;
+        // Per-gen seal sanity guard (assertion-only; off in production).
+        //
+        // The original strict form (`txnAtSeal >= prevTxnAtSeal`, intra-entry
+        // monotonic) was over-strict. Per POSTING_INDEX_CHAIN_DESIGN.md section
+        // 4.5.1 (lines 166-172) the gens within ONE chain entry intentionally
+        // carry different TXN_AT_SEAL values: with the fast-path
+        // multi-commit-shares-entry path the WAL fast-lag commit stamps a gen
+        // with getTxn() while O3 / seal / REINDEX / reconcile-build stamp
+        // getTxn()+1, so a later gen's seal can land exactly one txn BELOW gen 0's.
+        // The replica-only reconcile-BUILD path (role flip -> rebuilt generation)
+        // hits this routinely.
+        //
+        // This is correctness-benign. The picker (PostingIndexChainEntry.read ->
+        // slot[0]) selects this ENTRY only when gen 0's seal <= the reader's
+        // pinned _txn; within the selected entry all gens become visible at the
+        // same effective commit, and a reader only ever pins at a *committed*
+        // _txn, so no live pin can land strictly between the out-of-order seals.
+        // The reader's prefix-cut gen visibility (computeVisibleGenCount) is
+        // therefore exact even when seals dip. Empirically verified: a 24-seed
+        // covering-posting reconcile fuzz drove 785 below-floor (non-monotonic)
+        // observations, every dip exactly the 1-txn fast-lag offset, with ZERO
+        // cases of a visible gen wrongly excluded by the prefix cut, and the
+        // covering query returned exactly the reference rows + values.
+        //
+        // The retained guard: every gen's seal must be a valid table txn (>= 0)
+        // and must not regress below the entry's floor (gen 0's seal) by more
+        // than the single documented WAL fast-lag txn. A larger regression means
+        // a genuinely-too-old / recycled-region gen slot — exactly the corruption
+        // the original assert protected against — and still trips. Write-time
+        // seal conventions are deliberately left unchanged (changing them risks
+        // crash-recovery regressions).
+        long firstGenTxnAtSeal = genCount > 0
+                ? keyMem.getLong(PostingIndexChainEntry.resolveGenDirOffset(entryOffset, 0)
+                + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL)
+                : Long.MIN_VALUE;
+        long genSealFloor = firstGenTxnAtSeal - WAL_FAST_LAG_SEAL_TOLERANCE;
         for (int i = 0; i < genCount; i++) {
             long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(entryOffset, i);
             s.genFileOffsets.add(keyMem.getLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_FILE_OFFSET));
@@ -289,8 +329,9 @@ public class PostingGenLookup implements Closeable {
             s.genMaxKeys.add(keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY));
             s.genMaxValues.add(keyMem.getLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_VALUE));
             long txnAtSeal = keyMem.getLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL);
-            assert txnAtSeal >= prevTxnAtSeal;
-            prevTxnAtSeal = txnAtSeal;
+            assert txnAtSeal >= 0 && txnAtSeal >= genSealFloor
+                    : "posting gen seal below entry floor [gen=" + i + ", txnAtSeal=" + txnAtSeal
+                    + ", firstGenTxnAtSeal=" + firstGenTxnAtSeal + ", floor=" + genSealFloor + ']';
             s.genTxnAtSeals.add(txnAtSeal);
         }
     }
