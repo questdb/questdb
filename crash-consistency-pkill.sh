@@ -37,6 +37,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 JAR="$SCRIPT_DIR/benchmarks/target/benchmarks.jar"
+# QuestDB needs these JVM flags on JDK 21+ (same set as core/pom.xml argLine); without
+# --add-exports ...jdk.internal.vm=ALL-UNNAMED the worker continuation class fails to init
+# and QuestDB runs DEGRADED (workers dead), invalidating the test.
+QDB_JVM="--enable-native-access=ALL-UNNAMED --sun-misc-unsafe-memory-access=allow --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.reflect=ALL-UNNAMED --add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/java.time.zone=ALL-UNNAMED --add-exports=java.base/jdk.internal.vm=ALL-UNNAMED"
 
 N="${1:-10}"           # number of kill iterations
 MIN_COMMITTED=3000     # wait until at least this many rows committed before killing
@@ -92,7 +96,7 @@ for iter in $(seq 1 "$N"); do
     echo "--- iteration $iter/$N  root=$ROOT ---"
 
     # Launch CrashIngestWriter as a separate JVM process (real process kill target)
-    java -cp "$JAR" org.questdb.CrashIngestWriter "$ROOT" > "$ROOT/_writer.log" 2>&1 &
+    java $QDB_JVM -cp "$JAR" org.questdb.CrashIngestWriter "$ROOT" > "$ROOT/_writer.log" 2>&1 &
     WRITER_PID=$!
     echo "  writer PID=$WRITER_PID"
 
@@ -154,7 +158,7 @@ for iter in $(seq 1 "$N"); do
     echo "  watermark at kill time: $WATERMARK"
 
     # Run CrashVerifier; capture exit code separately to avoid set -e exit
-    VERIFY_OUT=$( java -cp "$JAR" org.questdb.CrashVerifier "$ROOT" 2>&1 ) || VERIFY_EXIT=$?
+    VERIFY_OUT=$( java $QDB_JVM -cp "$JAR" org.questdb.CrashVerifier "$ROOT" 2>&1 ) || VERIFY_EXIT=$?
     VERIFY_EXIT="${VERIFY_EXIT:-0}"
     echo "  verifier output: $VERIFY_OUT"
 

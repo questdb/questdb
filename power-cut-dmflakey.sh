@@ -66,6 +66,10 @@ set -euo pipefail
 # Under `sudo`, $HOME is /root — derive the invoking user's home from SUDO_USER instead.
 WT="${WT:-/home/${SUDO_USER:-$(id -un)}/claude/wt/oss/sync-batch}"
 JAR="${JAR:-$WT/benchmarks/target/benchmarks.jar}"
+# QuestDB needs these JVM flags on JDK 21+ (same set as core/pom.xml argLine).
+# WITHOUT --add-exports ...jdk.internal.vm=ALL-UNNAMED the worker continuation class
+# fails to init and QuestDB runs DEGRADED (workers dead) — invalidating the test.
+QDB_JVM="--enable-native-access=ALL-UNNAMED --sun-misc-unsafe-memory-access=allow --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.reflect=ALL-UNNAMED --add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/java.time.zone=ALL-UNNAMED --add-exports=java.base/jdk.internal.vm=ALL-UNNAMED"
 # IMG: the sparse image file that backs the loop device.
 # Put this on a REAL block device (ext4 / xfs on a spinning disk or SSD) — NOT tmpfs.
 # /data is preferred (real disk); fall back to HOME.
@@ -206,7 +210,7 @@ run_one() {
     local DBDIR="$MNT/db"
     mkdir -p "$DBDIR"
     echo "  [5] starting CrashIngestWriter (commitMode=$MODE) → $DBDIR"
-    java -cp "$JAR" \
+    java $QDB_JVM -cp "$JAR" \
         -DcommitMode="$MODE" \
         org.questdb.CrashIngestWriter "$DBDIR" \
         > "$DBDIR/../_writer.log" 2>&1 &
@@ -277,7 +281,7 @@ run_one() {
     echo "=== MODE=$MODE committed_before_cut=$COMMITTED ==="
     local VERIFY_OUT VERIFY_EXIT
     VERIFY_EXIT=0
-    VERIFY_OUT=$(java -cp "$JAR" org.questdb.CrashVerifier "$DBDIR" 2>&1) || VERIFY_EXIT=$?
+    VERIFY_OUT=$(java $QDB_JVM -cp "$JAR" org.questdb.CrashVerifier "$DBDIR" 2>&1) || VERIFY_EXIT=$?
     echo "$VERIFY_OUT"
 
     # Extract count from verifier output
