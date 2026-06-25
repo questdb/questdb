@@ -45,6 +45,8 @@ import io.questdb.std.WeakClosableObjectPool;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
+import static io.questdb.cairo.CairoException.METADATA_VALIDATION;
+
 import static io.questdb.cairo.TableUtils.dFile;
 import static io.questdb.cairo.TableUtils.iFile;
 import static io.questdb.std.Files.SEPARATOR;
@@ -217,6 +219,7 @@ public class TableWriterSegmentFileCache {
                 if (columnType > 0) {
                     int sizeBitsPow2 = ColumnType.getWalDataColumnShl(columnType, columnIndex == timestampIndex);
 
+                    final FilesFacade ff = configuration.getFilesFacade();
                     if (ColumnType.isVarSize(columnType)) {
                         MemoryCMOR auxMem = walColumnMemoryPool.pop();
                         MemoryCMOR dataMem = walColumnMemoryPool.pop();
@@ -236,8 +239,24 @@ public class TableWriterSegmentFileCache {
                                     .$(", walSegment=").$(walSegmentId)
                                     .I$();
                         }
+
+                        // Guard: aux file must cover all rowHi entries before mapping.
+                        if (rowHi > 0) {
+                            final long requiredAuxSize = columnTypeDriver.getAuxVectorSize(rowHi);
+                            final long actualAuxSize = auxFd != -1 ? ff.length(auxFd) : ff.length(ifile);
+                            if (actualAuxSize < requiredAuxSize) {
+                                throw CairoException.critical(METADATA_VALIDATION)
+                                        .put("WAL segment column too short for committed row range")
+                                        .put(" [col=").put(metadata.getColumnName(columnIndex))
+                                        .put(", file=").put(ifile)
+                                        .put(", required=").put(requiredAuxSize)
+                                        .put(", actual=").put(actualAuxSize)
+                                        .put(']');
+                            }
+                        }
+
                         columnTypeDriver.configureAuxMemOM(
-                                configuration.getFilesFacade(),
+                                ff,
                                 auxMem,
                                 auxFd,
                                 ifile,
@@ -255,8 +274,26 @@ public class TableWriterSegmentFileCache {
                                     .$(", walSegment=").$(walSegmentId)
                                     .I$();
                         }
+
+                        // Guard: data file must cover the byte range required by the last aux entry.
+                        // Uses the aux fd (now open inside auxMem) to read the data-end offset from disk
+                        // without requiring the aux to be mmap-ed yet (lazy mapping defers the mmap call).
+                        if (rowHi > 0) {
+                            final long requiredDataSize = columnTypeDriver.getDataVectorSizeAtFromFd(ff, auxMem.getFd(), rowHi - 1);
+                            final long actualDataSize = dataFd != -1 ? ff.length(dataFd) : ff.length(dfile);
+                            if (actualDataSize < requiredDataSize) {
+                                throw CairoException.critical(METADATA_VALIDATION)
+                                        .put("WAL segment column too short for committed row range")
+                                        .put(" [col=").put(metadata.getColumnName(columnIndex))
+                                        .put(", file=").put(dfile)
+                                        .put(", required=").put(requiredDataSize)
+                                        .put(", actual=").put(actualDataSize)
+                                        .put(']');
+                            }
+                        }
+
                         columnTypeDriver.configureDataMemOM(
-                                configuration.getFilesFacade(),
+                                ff,
                                 auxMem,
                                 dataMem,
                                 dataFd,
@@ -279,8 +316,24 @@ public class TableWriterSegmentFileCache {
                                     .$(", walSegment=").$(walSegmentId)
                                     .I$();
                         }
+
+                        // Guard: fixed-width column file must cover all rowHi rows before mapping.
+                        if (rowHi > 0 && sizeBitsPow2 >= 0) {
+                            final long requiredSize = rowHi << sizeBitsPow2;
+                            final long actualSize = fd != -1 ? ff.length(fd) : ff.length(dfile);
+                            if (actualSize < requiredSize) {
+                                throw CairoException.critical(METADATA_VALIDATION)
+                                        .put("WAL segment column too short for committed row range")
+                                        .put(" [col=").put(metadata.getColumnName(columnIndex))
+                                        .put(", file=").put(dfile)
+                                        .put(", required=").put(requiredSize)
+                                        .put(", actual=").put(actualSize)
+                                        .put(']');
+                            }
+                        }
+
                         primary.ofOffset(
-                                configuration.getFilesFacade(),
+                                ff,
                                 fd,
                                 false,
                                 dfile,
