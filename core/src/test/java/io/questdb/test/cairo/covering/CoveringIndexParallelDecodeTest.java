@@ -343,6 +343,59 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCountOverCoveringIndexIsMetadataExactAndMatchesReference() throws Exception {
+        // count(*) WHERE sym = '<lit>' over a covering index is served by SingleKeyCoveringCursor.size()
+        // -> AbstractPostingIndexReader.countMatchesClamped (O(genCount) metadata, no covered decode,
+        // no posting walk). This locks in that the metadata count equals a full scan of the non-indexed
+        // twin across keys, NULLs, an absent key, and interval-narrowed (partial-frame) ranges.
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        engine.execute(
+                                "CREATE TABLE cov (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (px), px DOUBLE)" +
+                                        " TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", sqlExecutionContext);
+                        engine.execute(
+                                "CREATE TABLE ref (ts TIMESTAMP, sym SYMBOL, px DOUBLE)" +
+                                        " TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", sqlExecutionContext);
+                        // ~5 days x ~4000 rows: a hot key, several cold keys, and real NULL symbols.
+                        final String gen =
+                                "SELECT ('2024-01-01'::timestamp + (x - 1) * 1800000000L)::timestamp ts," +
+                                        " (CASE WHEN x % 7 = 0 THEN NULL WHEN x % 3 = 0 THEN 'HOT'" +
+                                        "       ELSE 'C' || (x % 5) END)::symbol sym," +
+                                        " (x % 13)::double px FROM long_sequence(20000)";
+                        engine.execute("INSERT INTO cov " + gen, sqlExecutionContext);
+                        engine.execute("INSERT INTO ref " + gen, sqlExecutionContext);
+                        engine.releaseAllWriters();
+
+                        // Confirm the metadata fast path is actually planned (Count over CoveringIndex).
+                        final StringSink plan = new StringSink();
+                        TestUtils.printSql(compiler, sqlExecutionContext, "EXPLAIN SELECT count() FROM cov WHERE sym = 'HOT'", plan);
+                        assertTrue("count() must plan Count over CoveringIndex, got:\n" + plan,
+                                plan.toString().contains("Count") && plan.toString().contains("CoveringIndex on: sym"));
+
+                        for (String pred : new String[]{
+                                "sym = 'HOT'",
+                                "sym = 'C1'",
+                                "sym = 'C4'",
+                                "sym IS NULL",
+                                "sym = 'NOPE'",                                  // absent key -> 0
+                                "sym = 'HOT' AND ts IN '2024-01-02'",            // single-partition interval
+                                "sym = 'HOT' AND ts >= '2024-01-02T06:00:00.000000Z'", // partial-frame ranges
+                        }) {
+                            final String q = "SELECT count() FROM %s WHERE " + pred;
+                            TestUtils.assertSqlCursors(compiler, sqlExecutionContext,
+                                    String.format(q, "ref"), String.format(q, "cov"), LOG);
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
     public void testParallelCoveredDecodeMatchesReference() throws Exception {
         // THE HEADLINE TEST (Task 9): covered column decode now happens on the
         // async workers inside PageFrameMemoryPool.navigateTo, and must be both

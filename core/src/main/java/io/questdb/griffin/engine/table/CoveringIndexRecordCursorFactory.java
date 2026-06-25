@@ -2742,28 +2742,56 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             this.symbolKey = symbolKey;
         }
 
+        /**
+         * O(genCount) metadata count of the rows matching the resolved key, summed across
+         * partition frames. This makes {@code count(*) WHERE sym = '<lit>'} (and any caller of
+         * {@link CountRecordCursorFactory}, which uses {@code baseCursor.size()} when {@code >= 0})
+         * a metadata-only answer that decodes NO covered columns and never walks the postings
+         * ({@code CountRecordCursorFactory} uses {@code baseCursor.size()} when it returns >= 0).
+         * <p>
+         * Uses {@link AbstractPostingIndexReader#countMatchesClamped} (the EXACT per-gen
+         * first/last-posting coverage check), NOT {@code reader.getCursor(...).size()} which
+         * false-bails on a freshly-resealed partition (where the encoding's slack max upper bound
+         * straddles the clamp while the true max is within it) and then forces an O(rows) traverse.
+         * Only a genuinely MIXED gen (real postings clipped by the clamp) falls back to a
+         * per-frame row walk; that path is correctness-equivalent to the metadata count.
+         */
         @Override
         public long size() {
             if (frameCursor == null || latestBy || symbolKey == SymbolTable.VALUE_NOT_FOUND) {
                 return -1;
             }
+            final int key = TableUtils.toIndexKey(symbolKey);
             long total = 0;
             frameCursor.toTop();
             try {
                 PartitionFrame frame;
                 while ((frame = frameCursor.next()) != null) {
-                    IndexReader reader = tableReader.getIndexReader(
+                    final IndexReader reader = tableReader.getIndexReader(
                             frame.getPartitionIndex(), indexColumnIndex, IndexReader.DIR_FORWARD);
                     final long rowLo = frame.getRowLo();
                     final long rowHi = frame.getRowHi();
-                    try (RowCursor rc = reader.getCursor(TableUtils.toIndexKey(symbolKey), rowLo, rowHi - 1)) {
-                        if (rowLo == 0 && rowHi == tableReader.getPartitionRowCount(frame.getPartitionIndex())) {
-                            long count = rc.size();
-                            if (count >= 0) {
-                                total += count;
-                                continue;
-                            }
+                    // The covering index is a POSTING index, but a partition that predates the
+                    // index (e.g. the column was added later) yields a non-posting null reader; only
+                    // a real posting reader has the O(genCount) metadata count.
+                    if (reader instanceof AbstractPostingIndexReader posting) {
+                        // Bounds mirror the page-frame cheap-chunk path: the gen walk clamps the
+                        // inclusive upper bound to min(rowHi - 1, entryMaxValue); the implicit-null
+                        // prefix (key 0) is clamped by columnTop only, so it takes the UNCLAMPED
+                        // rowHi - 1 as its bound.
+                        final long callerHiInclusive = rowHi - 1;
+                        final long entryMax = posting.getEntryMaxValue();
+                        final long clampedMax = entryMax >= 0 ? Math.min(callerHiInclusive, entryMax) : callerHiInclusive;
+                        final long c = posting.countMatchesClamped(key, rowLo, callerHiInclusive, clampedMax);
+                        if (c != Numbers.LONG_NULL) {
+                            total += c;
+                            continue;
                         }
+                        // else: genuinely MIXED gen (rare) -> fall through to the traverse below.
+                    }
+                    // Non-posting / null reader (empty -> 0) OR a MIXED gen: fall back to the cursor
+                    // traverse for THIS frame, correctness-equivalent to the metadata count.
+                    try (RowCursor rc = reader.getCursor(key, rowLo, rowHi - 1)) {
                         while (rc.hasNext()) {
                             rc.next();
                             total++;
