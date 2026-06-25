@@ -68,7 +68,7 @@ public class WalEventChecksumTest extends AbstractCairoTest {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
             execute("insert into x values ('2024-01-01T00:00:00.000000Z', 1)");
             TableToken tt = engine.verifyTableName("x");
-            java.nio.file.Path event = findEventFile(tt.getDirName());
+            Path event = findEventFile(tt.getDirName());
             byte[] bytes = Files.readAllBytes(event);
             // Corrupt the first byte of the stored xxh3 checksum (the 8 bytes immediately after
             // WALE_CHECKSUM_MAGIC). The magic is still intact, so the record is recognised as
@@ -83,12 +83,27 @@ public class WalEventChecksumTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTornBodyByteSuspendsTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
+            execute("insert into x values ('2024-01-01T00:00:00.000000Z', 1)");
+            TableToken tt = engine.verifyTableName("x");
+            Path event = findEventFile(tt.getDirName());
+            byte[] bytes = Files.readAllBytes(event);
+            corruptLastBodyByte(bytes, WalUtils.WALE_CHECKSUM_MAGIC);
+            Files.write(event, bytes);
+            drainWalQueue();
+            Assert.assertTrue("expected table to be suspended after torn body", engine.getTableSequencerAPI().isSuspended(tt));
+        });
+    }
+
+    @Test
     public void testLegacyRecordWithoutTrailerStillReads() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
             execute("insert into x values ('2024-01-01T00:00:00.000000Z', 1)");
             TableToken tt = engine.verifyTableName("x");
-            java.nio.file.Path event = findEventFile(tt.getDirName());
+            Path event = findEventFile(tt.getDirName());
             byte[] bytes = Files.readAllBytes(event);
             zeroFirstMagic(bytes, WalUtils.WALE_CHECKSUM_MAGIC); // simulate a pre-checksum (legacy) record
             Files.write(event, bytes);
@@ -105,11 +120,7 @@ public class WalEventChecksumTest extends AbstractCairoTest {
     static int countMagic(byte[] bytes, long magic) {
         int count = 0;
         for (int i = 0; i + 8 <= bytes.length; i++) {
-            long v = 0;
-            for (int b = 0; b < 8; b++) {
-                v |= (bytes[i + b] & 0xFFL) << (8 * b);
-            }
-            if (v == magic) {
+            if (readLeLong(bytes, i) == magic) {
                 count++;
             }
         }
@@ -118,11 +129,7 @@ public class WalEventChecksumTest extends AbstractCairoTest {
 
     static void zeroFirstMagic(byte[] bytes, long magic) {
         for (int i = 0; i + 8 <= bytes.length; i++) {
-            long v = 0;
-            for (int b = 0; b < 8; b++) {
-                v |= (bytes[i + b] & 0xFFL) << (8 * b);
-            }
-            if (v == magic) {
+            if (readLeLong(bytes, i) == magic) {
                 for (int b = 0; b < 8; b++) {
                     bytes[i + b] = 0;
                 }
@@ -137,11 +144,7 @@ public class WalEventChecksumTest extends AbstractCairoTest {
     // hash value no longer matches the body, but no other validator touches it.
     static void corruptFirstChecksumByte(byte[] bytes, long magic) {
         for (int i = 0; i + 8 <= bytes.length; i++) {
-            long v = 0;
-            for (int b = 0; b < 8; b++) {
-                v |= (bytes[i + b] & 0xFFL) << (8 * b);
-            }
-            if (v == magic) {
+            if (readLeLong(bytes, i) == magic) {
                 // The stored checksum starts at i + 8 (right after the 8-byte magic).
                 if (i + 9 <= bytes.length) {
                     bytes[i + 8] ^= 0xFF;
@@ -150,5 +153,36 @@ public class WalEventChecksumTest extends AbstractCairoTest {
             }
         }
         throw new AssertionError("magic not found");
+    }
+
+    // Corrupt the last byte of maxTimestamp in the DATA record body. Layout before the magic trailer:
+    //   ...[maxTimestamp: 8 bytes][outOfOrder: 1 byte][END_OF_SYMBOL_DIFFS: 4 bytes][MAGIC: 8 bytes]...
+    // So maxTimestamp's last byte is at magic_position - 1(END_OF_SYMBOL_DIFFS byte 3) - 3(bytes 2..0)
+    // - 1(outOfOrder) - 1 = magic_position - 6.
+    // The magic is left intact so the record is still recognised as new-format; the recomputed hash
+    // of the (now-changed) body no longer matches the stored checksum.
+    // This byte is pure payload: without verification the apply proceeds with a wrong maxTimestamp,
+    // silently — no suspension unless the checksum catches it.
+    static void corruptLastBodyByte(byte[] bytes, long magic) {
+        for (int i = 0; i + 8 <= bytes.length; i++) {
+            if (readLeLong(bytes, i) == magic) {
+                // Last byte of maxTimestamp: outOfOrder(1) + END_OF_SYMBOL_DIFFS(4) + 1 = 6 bytes before magic.
+                int target = i - 6;
+                if (target < 0) {
+                    throw new AssertionError("no payload byte before magic at expected offset");
+                }
+                bytes[target] ^= 0xFF;
+                return;
+            }
+        }
+        throw new AssertionError("magic not found");
+    }
+
+    static long readLeLong(byte[] bytes, int i) {
+        long v = 0;
+        for (int b = 0; b < 8; b++) {
+            v |= (bytes[i + b] & 0xFFL) << (8 * b);
+        }
+        return v;
     }
 }

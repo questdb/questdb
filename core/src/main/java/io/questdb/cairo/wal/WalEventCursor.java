@@ -159,12 +159,15 @@ public class WalEventCursor {
     }
 
     // Verify the per-record checksum trailer if present. Magic-gated: a record without the trailer
-    // (written by an older QuestDB) is read unverified. A present-but-mismatched trailer means the
+    // (written before this change) is read unverified. A present-but-mismatched trailer means the
     // record body was torn/partially written -> throw loudly so apply suspends the table.
     private void verifyRecordChecksum(long recordStart, int length) {
         final long bodyLen = (long) length - WALE_CHECKSUM_TRAILER_SIZE;
         if (bodyLen <= 0 || memSize < recordStart + length) {
-            return; // too short to carry a trailer
+            // bodyLen <= 0: corrupt/degenerate length. memSize guard: the record isn't fully mapped, so
+            // we can't hash it here; a genuinely torn tail is still caught downstream (checksum mismatch
+            // below, or magic-absence -> treated as legacy). memSize is the mapped size, not ff.length(fd).
+            return;
         }
         final long trailerOffset = recordStart + bodyLen;
         if (eventMem.getLong(trailerOffset) != WALE_CHECKSUM_MAGIC) {
@@ -173,13 +176,23 @@ public class WalEventCursor {
         final long stored = eventMem.getLong(trailerOffset + Long.BYTES);
         final long actual = TableUtils.calculateCvAreaChecksum(eventMem.addressOf(recordStart), bodyLen);
         if (actual != stored) {
-            throw CairoException.critical(0)
+            throw CairoException.critical(CairoException.METADATA_VALIDATION)
                     .put("torn WAL event record [offset=").put(recordStart)
                     .put(", len=").put(length)
                     .put(", expected=").put(stored)
                     .put(", actual=").put(actual)
                     .put(']');
         }
+    }
+
+    // Offset of the end of the record body (excludes the per-record checksum trailer, if present).
+    // Readers that locate optional trailing fields by distance from the record end MUST use this
+    // rather than nextOffset, since the trailer sits between the body and nextOffset.
+    private long bodyEndOffset() {
+        return nextOffset >= WALE_CHECKSUM_TRAILER_SIZE
+                && eventMem.getLong(nextOffset - WALE_CHECKSUM_TRAILER_SIZE) == WALE_CHECKSUM_MAGIC
+                ? nextOffset - WALE_CHECKSUM_TRAILER_SIZE
+                : nextOffset;
     }
 
     public void reset() {
@@ -437,10 +450,7 @@ public class WalEventCursor {
             // The body ends at nextOffset, but if a checksum trailer is present the trailer
             // bytes sit between the actual body and nextOffset.  Strip them before looking for
             // the optional dedup footer so both new-format and legacy records are handled correctly.
-            final long bodyEndOffset = nextOffset >= WALE_CHECKSUM_TRAILER_SIZE
-                    && eventMem.getLong(nextOffset - WALE_CHECKSUM_TRAILER_SIZE) == WALE_CHECKSUM_MAGIC
-                    ? nextOffset - WALE_CHECKSUM_TRAILER_SIZE
-                    : nextOffset;
+            final long bodyEndOffset = bodyEndOffset();
 
             if (bodyEndOffset - offset >= Integer.BYTES + DEDUP_FOOTER_SIZE) {
                 // This is big enough to contain the footer.
@@ -538,10 +548,7 @@ public class WalEventCursor {
             // Strip the checksum trailer (if present) before using nextOffset as a guard for
             // optional fields, so that legacy-format records (without lastPeriodHi / refreshIntervals)
             // are not misread as containing those fields.
-            final long bodyEndOffset = nextOffset >= WALE_CHECKSUM_TRAILER_SIZE
-                    && eventMem.getLong(nextOffset - WALE_CHECKSUM_TRAILER_SIZE) == WALE_CHECKSUM_MAGIC
-                    ? nextOffset - WALE_CHECKSUM_TRAILER_SIZE
-                    : nextOffset;
+            final long bodyEndOffset = bodyEndOffset();
 
             if (bodyEndOffset - offset >= Long.BYTES) {
                 lastPeriodHi = readLong();
