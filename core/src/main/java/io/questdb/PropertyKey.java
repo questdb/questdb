@@ -47,6 +47,10 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_JIT_MODE("cairo.sql.jit.mode"),
     CAIRO_COMMIT_MODE("cairo.commit.mode"),
     CAIRO_COMMIT_SYNC_COLUMN_BATCHED("cairo.commit.sync.column.batched"),
+    // Min interval between adaptive durable epochs per table (ms). Under CommitMode.ADAPTIVE the apply
+    // worker fires a durable epoch at most this often, right after an apply batch commits while it
+    // still holds the writer. 0 => every batch; NEGATIVE => epochs disabled. See ApplyWal2TableJob.
+    CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS("cairo.adaptive.epoch.interval.ms"),
     CAIRO_CREATE_AS_SELECT_RETRY_COUNT("cairo.create.as.select.retry.count"),
     CAIRO_DEFAULT_MAP_TYPE("cairo.default.map.type"),
     CAIRO_DEFAULT_SYMBOL_CACHE_FLAG("cairo.default.symbol.cache.flag"),

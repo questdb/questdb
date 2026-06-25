@@ -103,6 +103,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getAdaptiveEpochIntervalMs() {
+        return getDelegate().getAdaptiveEpochIntervalMs();
+    }
+
+    @Override
     public boolean getAsyncMunmapEnabled() {
         return getDelegate().getAsyncMunmapEnabled();
     }

@@ -224,6 +224,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final double columnPurgeRetryDelayMultiplier;
     private final int columnPurgeTaskPoolCapacity;
     private final int commitMode;
+    // Min interval between adaptive durable epochs per table (ms); default 1000. See
+    // CairoConfiguration.getAdaptiveEpochIntervalMs / ApplyWal2TableJob.
+    private final long adaptiveEpochIntervalMs;
     // Raw value of cairo.commit.sync.column.batched (operator override / safety valve), default true.
     private final boolean commitSyncColumnBatchedProp;
     private final String confRoot;
@@ -1537,6 +1540,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.exportWorkerYieldThreshold = getLong(properties, env, PropertyKey.EXPORT_WORKER_YIELD_THRESHOLD, 1000);
 
             this.commitMode = getCommitMode(properties, env, PropertyKey.CAIRO_COMMIT_MODE);
+            this.adaptiveEpochIntervalMs = getMillis(properties, env, PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 1000);
             this.commitSyncColumnBatchedProp = getBoolean(properties, env, PropertyKey.CAIRO_COMMIT_SYNC_COLUMN_BATCHED, true);
             this.detectFastCommit = loadAdditionalConfigurations;
             this.createAsSelectRetryCount = getInt(properties, env, PropertyKey.CAIRO_CREATE_AS_SELECT_RETRY_COUNT, 5);
@@ -3829,6 +3833,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getCommitMode() {
             return commitMode;
+        }
+
+        @Override
+        public long getAdaptiveEpochIntervalMs() {
+            return adaptiveEpochIntervalMs;
         }
 
         @Override

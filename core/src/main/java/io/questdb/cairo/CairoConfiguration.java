@@ -203,6 +203,21 @@ public interface CairoConfiguration {
 
     int getCommitMode();
 
+    /**
+     * Minimum interval, in milliseconds, between adaptive durable epochs for a single table. Under
+     * {@link CommitMode#ADAPTIVE} the apply worker fires a durable epoch
+     * ({@link TableWriter#advance}) at most once per this interval per table, right after an apply
+     * batch commits while it still holds the writer. {@code 0} fires on every apply batch; a NEGATIVE
+     * value DISABLES adaptive epochs entirely (operator opt-out). The default (1000ms) bounds the
+     * amount of post-epoch WAL that must be rolled forward on recovery while keeping the per-epoch
+     * fsync cost off the hot apply path most of the time.
+     *
+     * @return the minimum per-table durable-epoch interval in milliseconds; negative disables epochs
+     */
+    default long getAdaptiveEpochIntervalMs() {
+        return 1000;
+    }
+
     int getCompileViewModelPoolCapacity();
 
     @NotNull

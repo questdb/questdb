@@ -31,11 +31,14 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoKeywords;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.ErrorTag;
+import io.questdb.cairo.SnapshotMarker;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TxnScoreboard;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.mv.MatViewRefreshTask;
 import io.questdb.cairo.mv.MatViewState;
@@ -96,6 +99,10 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private final MatViewRefreshTask mvRefreshTask = new MatViewRefreshTask();
     private final OperationExecutor operationExecutor;
     private final int sharedQueryWorkerCount;
+    // Reusable scratch for the adaptive durable-epoch path (advance()). The marker is re-of()'d to
+    // each table's _snapshot before use, so a single instance serves all tables this worker applies.
+    private final SnapshotMarker snapshotMarker;
+    private final Path snapshotPath = new Path();
     private final long tableTimeQuotaMicros;
     private final Telemetry<TelemetryTask> telemetry;
     private final TelemetryFacade telemetryFacade;
@@ -121,6 +128,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         tableTimeQuotaMicros = configuration.getWalApplyTableTimeQuota() >= 0 ? configuration.getWalApplyTableTimeQuota() * 1000L : Micros.DAY_MICROS;
         config = engine.getConfiguration();
         blockFileWriter = new BlockFileWriter(config.getFilesFacade(), config.getCommitMode());
+        snapshotMarker = new SnapshotMarker(configuration);
     }
 
     @Override
@@ -133,6 +141,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         Misc.free(operationExecutor);
         Misc.free(walEventReader);
         Misc.free(blockFileWriter);
+        Misc.free(snapshotMarker);
+        Misc.free(snapshotPath);
     }
 
     @Override
@@ -574,6 +584,15 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         writer.commitSeqTxn();
                     }
 
+                    // Adaptive durable epoch (Plan 3B): right after the batch commits, while we still
+                    // hold the writer (single-threaded per table -> a consistent cut, no quiesce
+                    // needed), fire a durable epoch at most once per the configured cadence. This is
+                    // the only place the materialized state is forced durable under ADAPTIVE; without
+                    // it the lazily-applied columns are non-durable until the next epoch / shutdown.
+                    if (totalTransactionCount > 0) {
+                        maybeAdvanceDurableEpoch(tableToken, writer);
+                    }
+
                     // The apply loop holds the writer across this batch of transactions and never
                     // ticks the command queue itself. Once the batch is applied and its sequencer
                     // txn finalized, drain async writer commands (e.g. storage policy parquet-commit
@@ -642,6 +661,109 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 Misc.free(structuralChangeCursor);
             }
         }
+    }
+
+    /**
+     * Fire a durable epoch (Plan 3B) for {@code tableToken} iff commit mode is ADAPTIVE and the
+     * configured per-table cadence has elapsed. Called from the apply loop right after a batch
+     * commits while the writer is still held. Best-effort: a (non-Error) failure here is logged and
+     * the epoch is skipped — the batch's rows are already durably committed in the WAL, so a missed
+     * epoch only means more WAL to roll forward on recovery, never data loss. Errors (OOM, writer
+     * distress) propagate to the apply loop's existing failure handling.
+     */
+    private void maybeAdvanceDurableEpoch(TableToken tableToken, TableWriter writer) {
+        if (config.getCommitMode() != CommitMode.ADAPTIVE) {
+            return;
+        }
+        final long intervalMs = config.getAdaptiveEpochIntervalMs();
+        // A negative interval disables adaptive epochs entirely (operator opt-out / test isolation).
+        if (intervalMs < 0) {
+            return;
+        }
+        final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
+        final long nowMs = microClock.getTicks() / 1000L;
+        final long lastEpochTs = tracker.getLastEpochTs();
+        // Cadence gate: fire on the first batch (lastEpochTs == 0) or once intervalMs has elapsed.
+        if (lastEpochTs != 0 && (nowMs - lastEpochTs) < intervalMs) {
+            return;
+        }
+        try {
+            advance(tableToken, writer, tracker, nowMs);
+        } catch (CairoException e) {
+            LOG.error().$("could not advance adaptive durable epoch [table=").$(tableToken)
+                    .$(", error=").$(e.getFlyweightMessage()).I$();
+        } catch (Throwable th) {
+            // Let Errors (OOM / writer distress CairoError) propagate; swallow only Exceptions.
+            if (th instanceof Exception) {
+                LOG.error().$("could not advance adaptive durable epoch [table=").$(tableToken)
+                        .$(", error=").$(th).I$();
+            } else {
+                throw th;
+            }
+        }
+    }
+
+    /**
+     * Record a durable EPOCH for {@code tableToken}: a fully-durable, self-consistent cut of the
+     * table's materialized state, recorded so recovery (Plan 3C) can land exactly on it. Runs on the
+     * apply worker while it holds the writer (single-threaded per table -> consistent cut).
+     * <p>
+     * INV-5 strict ordering (each step's effect must be durable before the next is published):
+     * <ol>
+     *   <li>{@link TableWriter#fsyncMaterializedState()} — columns + {@code _cv} + {@code _txn}
+     *       durable, then the durable epoch copies {@code _txn.epoch}/{@code _cv.epoch};</li>
+     *   <li>{@link SnapshotMarker#write} — the A/B+CRC {@code _snapshot} marker, fsync'd (records the
+     *       cut's {@code (epochSeqTxn, epochTxn, ts)} as the hard crash boundary);</li>
+     *   <li>scoreboard PIN of the epoch txn in the FREE ping-pong slot (so partition purge cannot
+     *       reclaim partitions the epoch references) — pinned BEFORE the prior pin is released;</li>
+     *   <li>RELEASE the PRIOR epoch pin from the other slot (a crash between marker-fsync and this
+     *       release just leaves both pinned, which is safe — the scoreboard is in-memory anyway);</li>
+     *   <li>PUBLISH {@code durableEpochSeqTxn} (the WAL-purge floor under adaptive) + the cadence
+     *       timestamp, last — only after everything the floor depends on is durable.</li>
+     * </ol>
+     * The cut's identity is the writer's current {@link TableWriter#getSeqTxn()} /
+     * {@link TableWriter#getTxn()}, read right after its A/B commit point.
+     */
+    private void advance(TableToken tableToken, TableWriter writer, SeqTxnTracker tracker, long nowMs) {
+        // Step 1: make the materialized state fully durable + write the durable epoch copies.
+        writer.fsyncMaterializedState();
+
+        // The cut's identity, captured AFTER the durable cut's A/B commit point.
+        final long epochSeqTxn = writer.getSeqTxn();
+        final long epochTxn = writer.getTxn();
+
+        // Step 2: write + fsync the _snapshot marker (the hard crash boundary).
+        snapshotPath.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat(TableUtils.SNAPSHOT_FILE_NAME);
+        snapshotMarker.of(snapshotPath.$());
+        snapshotMarker.write(epochSeqTxn, epochTxn, nowMs);
+
+        // Steps 3+4: ping-pong pin handover. Pin the NEW epoch txn into the FREE slot, THEN release
+        // the prior from the other slot, so a concurrent O3PartitionPurgeJob never sees an
+        // unprotected gap between epoch generations (INV-5 pin-before-release).
+        final TxnScoreboard scoreboard = writer.getTxnScoreboard();
+        final long priorEpochTxn = tracker.getPinnedEpochTxn();
+        final boolean priorSlotA = tracker.isPinnedEpochSlotA();
+        // First epoch uses slot A; thereafter alternate to the free slot.
+        final boolean newSlotA = priorEpochTxn < 0 || !priorSlotA;
+        final int newSlotId = newSlotA ? TxnScoreboard.EPOCH_ID_A : TxnScoreboard.EPOCH_ID_B;
+        if (!scoreboard.incrementTxn(newSlotId, epochTxn)) {
+            // The target ping-pong slot was unexpectedly occupied. Do NOT release the prior pin (that
+            // would expose a purge gap); skip publishing this epoch and retry on the next batch.
+            LOG.error().$("epoch pin slot busy, skipping epoch publish [table=").$(tableToken)
+                    .$(", epochTxn=").$(epochTxn).$(", slotA=").$(newSlotA).I$();
+            return;
+        }
+        if (priorEpochTxn >= 0 && !(priorSlotA == newSlotA && priorEpochTxn == epochTxn)) {
+            scoreboard.releaseTxn(priorSlotA ? TxnScoreboard.EPOCH_ID_A : TxnScoreboard.EPOCH_ID_B, priorEpochTxn);
+        }
+        tracker.setPinnedEpoch(epochTxn, newSlotA);
+
+        // Step 5: publish the durable frontier (WAL-purge floor) + cadence timestamp, LAST.
+        tracker.setDurableEpochSeqTxn(epochSeqTxn);
+        tracker.setLastEpochTs(nowMs);
+
+        LOG.info().$("adaptive durable epoch [table=").$(tableToken)
+                .$(", epochSeqTxn=").$(epochSeqTxn).$(", epochTxn=").$(epochTxn).I$();
     }
 
     private void doStoreTelemetry(short event, short origin) {

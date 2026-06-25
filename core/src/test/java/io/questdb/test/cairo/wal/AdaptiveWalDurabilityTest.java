@@ -271,6 +271,11 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
     public void testAdaptiveApplyIssuezZeroColumnSyncsOnApply() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 16);
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        // Disable the durable epoch so this test isolates the LAZY APPLY's own sync behavior; the
+        // epoch (Plan 3B) deliberately forces a column flush from inside the apply worker, which is
+        // covered separately by testFsyncMaterializedStateForcesFlushAndWritesEpochCopies + the
+        // adaptive epoch crash test.
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, -1);
 
         final TableSyncTrackingFacade trackFf = new TableSyncTrackingFacade();
         assertMemoryLeak(trackFf, () -> {
@@ -387,6 +392,9 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
     public void testFsyncMaterializedStateForcesFlushAndWritesEpochCopies() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 16);
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        // Disable the automatic epoch so the EXPLICIT fsyncMaterializedState() call below is the only
+        // durable cut under test here (B1 in isolation; the apply-worker hook is B2's concern).
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, -1);
 
         final TableSyncTrackingFacade trackFf = new TableSyncTrackingFacade();
         assertMemoryLeak(trackFf, () -> {
@@ -422,6 +430,67 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
                     .returns("ts\tv\n" +
                             "2024-08-01T00:00:00.000000Z\t1\n" +
                             "2024-08-01T01:00:00.000000Z\t2\n");
+        });
+    }
+
+    /**
+     * (i) B2 — the apply worker fires a durable epoch automatically: after drainWalQueue under
+     * ADAPTIVE with epochs enabled (interval 0 => every batch), the {@code _snapshot} marker is
+     * written, {@code _txn.epoch}/{@code _cv.epoch} exist, the tracker publishes
+     * {@code durableEpochSeqTxn} = the applied seqTxn, and the epoch txn is PINNED in the scoreboard
+     * (so partition purge can't reclaim it).
+     */
+    @Test
+    public void testApplyWorkerFiresDurableEpoch() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 16);
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        // interval 0 => epoch fires on every apply batch (no cadence wait), deterministic for the test.
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 0);
+
+        assertMemoryLeak(() -> {
+            execute("create table tab_i (ts timestamp, v long) timestamp(ts) partition by day wal");
+            execute("insert into tab_i values ('2024-09-01T00:00:00.000000Z', 1)");
+            execute("insert into tab_i values ('2024-09-01T01:00:00.000000Z', 2)");
+            drainWalQueue();
+
+            io.questdb.cairo.TableToken tt = engine.verifyTableName("tab_i");
+
+            // The marker and the durable epoch copies must all exist after the worker epoch fired.
+            try (io.questdb.std.str.Path p = new io.questdb.std.str.Path()) {
+                p.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(io.questdb.cairo.TableUtils.SNAPSHOT_FILE_NAME);
+                Assert.assertTrue("_snapshot marker must exist", engine.getConfiguration().getFilesFacade().exists(p.$()));
+            }
+            assertEpochCopyExists(tt, io.questdb.cairo.TableUtils.TXN_FILE_NAME);
+            assertEpochCopyExists(tt, io.questdb.cairo.TableUtils.COLUMN_VERSION_FILE_NAME);
+
+            // The marker's recorded epochSeqTxn must equal the applied seqTxn (2 inserts => seqTxn 2).
+            try (io.questdb.cairo.SnapshotMarker marker = new io.questdb.cairo.SnapshotMarker(engine.getConfiguration());
+                 io.questdb.std.str.Path p = new io.questdb.std.str.Path()) {
+                p.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(io.questdb.cairo.TableUtils.SNAPSHOT_FILE_NAME);
+                marker.of(p.$());
+                Assert.assertTrue("marker must load", marker.tryLoad());
+                Assert.assertEquals("epochSeqTxn == applied seqTxn", 2L, marker.getEpochSeqTxn());
+            }
+
+            // The tracker published durableEpochSeqTxn = the applied seqTxn.
+            io.questdb.cairo.wal.seq.SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tt);
+            Assert.assertEquals("durableEpochSeqTxn published", 2L, tracker.getDurableEpochSeqTxn());
+            Assert.assertTrue("an epoch txn is pinned", tracker.getPinnedEpochTxn() >= 0);
+
+            // The pinned epoch txn must be held in the scoreboard: its version range is unavailable.
+            long pinnedTxn = tracker.getPinnedEpochTxn();
+            try (io.questdb.cairo.TxnScoreboard sb = engine.getTxnScoreboard(tt)) {
+                Assert.assertFalse("pinned epoch txn must be held in the scoreboard",
+                        sb.isRangeAvailable(pinnedTxn, pinnedTxn + 1));
+            }
+
+            // Data correct after the worker epoch.
+            assertQuery("select * from tab_i order by ts")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tv\n" +
+                            "2024-09-01T00:00:00.000000Z\t1\n" +
+                            "2024-09-01T01:00:00.000000Z\t2\n");
         });
     }
 

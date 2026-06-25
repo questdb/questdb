@@ -50,6 +50,18 @@ public class SeqTxnTracker {
     // fresh adaptive table; the epoch job advances this as epochs are confirmed durable).
     // Read by WalPurgeJob to floor the purge seqTxn for ADAPTIVE commit mode only.
     private volatile long durableEpochSeqTxn = 0;
+    // Wall-clock ms of the last durable epoch fired for this table (adaptive cadence gate). 0 => none
+    // yet (so the first apply batch under adaptive is eligible to epoch). Read+written ONLY by the
+    // apply worker that holds the table writer (single-threaded per table) -> no CAS needed.
+    private long lastEpochTs = 0;
+    // The epoch partition-version txn currently PINNED in the scoreboard, or -1 if none. advance()
+    // pins the new epoch txn in the FREE ping-pong slot, then releases this prior one from the other
+    // slot (INV-5 pin-before-release; the brief double-pin is safe). Like the scoreboard itself these
+    // are in-memory, reset on restart; recovery re-establishes the pin.
+    private long pinnedEpochTxn = -1;
+    // Which ping-pong slot currently holds pinnedEpochTxn: true => EPOCH_ID_A, false => EPOCH_ID_B.
+    // The next epoch pins into the OTHER slot. Initial value is arbitrary (no pin held yet).
+    private boolean pinnedEpochSlotIsA = false;
     private volatile long dirtyWriterTxn;
     // Volatile because fireWaiters() and registerWaiter() can race. See comments there
     private volatile boolean dropped;
@@ -88,6 +100,21 @@ public class SeqTxnTracker {
 
     public long getDurableEpochSeqTxn() {
         return durableEpochSeqTxn;
+    }
+
+    /** Wall-clock ms of the last durable epoch (adaptive cadence gate); 0 if none yet. */
+    public long getLastEpochTs() {
+        return lastEpochTs;
+    }
+
+    /** The epoch txn currently pinned in the scoreboard, or -1 if none. */
+    public long getPinnedEpochTxn() {
+        return pinnedEpochTxn;
+    }
+
+    /** Which ping-pong slot holds the current epoch pin: true => EPOCH_ID_A, false => EPOCH_ID_B. */
+    public boolean isPinnedEpochSlotA() {
+        return pinnedEpochSlotIsA;
     }
 
     public long getSeqTxn() {
@@ -204,6 +231,20 @@ public class SeqTxnTracker {
 
     public void setDurableEpochSeqTxn(long durableEpochSeqTxn) {
         this.durableEpochSeqTxn = durableEpochSeqTxn;
+    }
+
+    /** Record the wall-clock ms of the last durable epoch (adaptive cadence gate). */
+    public void setLastEpochTs(long lastEpochTs) {
+        this.lastEpochTs = lastEpochTs;
+    }
+
+    /**
+     * Record the epoch txn now pinned in the scoreboard (or -1 when none) and which ping-pong slot
+     * holds it (true => EPOCH_ID_A). Set after advance() completes the pin handover.
+     */
+    public void setPinnedEpoch(long pinnedEpochTxn, boolean slotIsA) {
+        this.pinnedEpochTxn = pinnedEpochTxn;
+        this.pinnedEpochSlotIsA = slotIsA;
     }
 
     public void setUnsuspended() {
