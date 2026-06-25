@@ -37,7 +37,8 @@ is the continuous, internal crash-recovery axis and reuses checkpoint's scoreboa
 
 **Non-goals (v1)**
 - No new user-facing snapshot CRUD SQL. "Always-on" = automatic; recovery is on boot.
-- No arbitrary point-in-time **rewind** (`RESTORE ... AS OF t`). It is a clean future layer on the same retained-WAL substrate.
+- No arbitrary point-in-time **rewind** UX in OSS (`RESTORE ... AS OF t`). The *substrate* (epoch + retained WAL) already powers Enterprise PITR (`PointInTimeRecoveryConfiguration`); the OSS local-rewind verb is a clean future layer.
+- **No Enterprise replication/backup _implementation_ in v1** — but v1 ships the integration *seams* (see [§17](#17-enterprise-integration-seams-v2)) so the existing pipeline plugs in as **v2**. Enterprise may go further than OSS.
 - No speculative `read_durability='latest'` reader mode (designed for, deferred — see [§7](#7-read-durability-semantics)).
 - Does not change `NOSYNC`/`ASYNC`/`SYNC` semantics; `NOSYNC` stays the default for v1.
 - Does not replace `CHECKPOINT`.
@@ -160,14 +161,17 @@ reader ever saw — **both phantom and non-monotonic reads are impossible.**
 - **Cost is freshness, not latency.** Reads run at full speed; they trail live writes by ≤ `W` (≈ fsync latency at `W=0`). This preserves the "no read-latency increase" constraint.
 - **Implementation latitude:** either gate apply (`appliedSeqTxn ≤ durableSeqTxn`, simplest) or let apply run ahead and clamp only the *reader-visible* version (decouples apply throughput from fsync; needs the durable-frontier version pinned). The plan picks one; both satisfy INV‑3.
 
-**Exposed for observability / replication (v1):** `durableSeqTxn` watermark + a **recovery-incarnation** counter that bumps on every rollback.
+**Multi-tier durability (the watermark already exists).** QuestDB already tracks an *uploaded* durable frontier — `DurableAckRegistry.getDurablyUploadedSeqTxn`, surfaced to opt-in clients via the QWP `X-QWP-Request-Durable-Ack` frame. `adaptive` adds a *local-fsync* tier under the **same** abstraction, giving a tier-ordered chain `applied ≥ localDurable ≥ uploaded`. v1 gates visibility on `durableSeqTxn` (the `localDurable` tier) and extends `DurableAckRegistry` to report it, rather than inventing a parallel watermark. The gate generalizes to a per-session `read_durability` tier — `local` (power-loss safe, OSS default) vs `replicated` (node-loss / failover-consistent, Enterprise v2) vs `latest` (speculative, deferred) — because a primary-visible-but-unreplicated row is the cluster analog of a phantom. See [§17](#17-enterprise-integration-seams-v2).
 
-**Deferred (future):** a per-session `read_durability='latest'` that keeps speculative visibility and lets clients
-detect rollback themselves via the watermark + incarnation. Not needed for v1 (YAGNI).
+**Exposed for observability (v1):** the `durableSeqTxn` (local-fsync) tier via the extended `DurableAckRegistry`, plus a **recovery-incarnation** counter that bumps on every rollback.
+
+**Deferred:** `read_durability='replicated'` (Enterprise v2) and `read_durability='latest'` (speculative). Not needed for OSS v1 (YAGNI).
 
 ## 8. GC coordination
 
 The single critical change: **in `adaptive`, the `WalPurgeJob` floor drops from `lastAppliedTxn` to `min(durableEpoch.seqTxn)`.** Apply is no longer a durability point, so retaining WAL only to `lastAppliedTxn` would discard the sole durable copy of applied-but-not-epoch'd data. Retaining to the durable epoch is also what *bounds* WAL growth — without epochs, WAL would grow unbounded. Non-`adaptive` tables keep today's floor.
+
+This composes with the existing two-part retention: `WalPurgeJob.getSafeToPurgeUpToTxn` already takes a `min` over consumers (active readers + dependent mat-views via `appliedToViewTxn`), so `adaptive` adds `durableEpoch.seqTxn` as one more `min` term; and `WalDirectoryPolicy.isInUse` independently holds a segment in use (Enterprise's `UploadWalDirectoryPolicy` keeps it until uploaded). The epoch `min`-term and the in-use policy are orthogonal — both must clear before a segment is purged.
 
 ## 9. On-disk: `_snapshot` marker
 
@@ -186,7 +190,7 @@ The single critical change: **in `adaptive`, the `WalPurgeJob` floor drops from 
 
 ## 11. Observability
 
-Extend `wal_tables()` with: `commit_mode`, `durableSeqTxn`, `lastEpochSeqTxn`, `walRetentionTxn`, `recoveryIncarnation`. No new SQL verbs in v1.
+Extend `wal_tables()` with: `commit_mode`, `durableSeqTxn` (the local-fsync tier of `DurableAckRegistry`), `lastEpochSeqTxn`, `walRetentionTxn`, `recoveryIncarnation`. (Enterprise additionally surfaces the `uploaded` tier, already present.) No new SQL verbs in v1.
 
 ## 12. Back-compat & rollout
 
@@ -206,6 +210,8 @@ Extend `wal_tables()` with: `commit_mode`, `durableSeqTxn`, `lastEpochSeqTxn`, `
 | Goal 2 — cheaper SYNC | `nw_sync_cheaper` (fdatasync, append-scoped msync), `nw_sync_opt` (msync pipelining), `nw_sync_batch` (syncfs batching, ext4 `fast_commit` detection, power-cut harness) | the **"how to sync" strategies** `adaptive` chooses among on axis 3 |
 
 Net: these stop being five loose experiments and become this mode's foundation layer. (The `nw_sync_opt` vs `nw_sync_batch` Goal-2 strategies are alternative implementations of axis 3 — reconcile/merge them during the dependency-landing step.)
+
+**Enterprise-critical within this layer:** replication uses the **V2 split txnlog** (`txnPartSize > 0`), so audit **#8 (V2 sequencer publishes a durable maxTxn over an unsynced record)** is not merely a precondition — it sits on the `adaptive` commit path, and the durable-frontier computation must understand part files. The WAL-record CRC (#10) should **be** the transfer-layer checksum (`transfer/ChecksumMode`), verified on upload and restore — one checksum, not two.
 
 ## 14. Invariants (backbone for implementation + tests)
 
@@ -235,4 +241,17 @@ Reuse the `nw_sync_batch` power-cut harness verbatim (`dmsetup suspend --nolockf
 - **Epoch consistency** — selecting a genuinely consistent `_txn` cut while apply runs concurrently (lean on the existing checkpoint quiesce/scoreboard plumbing).
 - **Goal-2 strategy reconciliation** — `nw_sync_opt` (pipelining) vs `nw_sync_batch` (syncfs) as axis-3 implementations: one, both (FS-selected), or merge.
 - **`W>0` semantics** — document precisely that acks may trail by ≤ `W`; ensure client-facing ack timing matches the durability point.
-- **Mat views / V2 sequencer** — confirm epoch + durable-frontier semantics compose with mat-view refresh state and the V2 split txnlog (audit #8).
+- **Mat views / V2 sequencer** — confirm epoch + durable-frontier semantics compose with mat-view refresh state and the V2 split txnlog (audit #8); see [§17](#17-enterprise-integration-seams-v2).
+
+## 17. Enterprise integration seams (v2)
+
+v1 is OSS-core; Enterprise replication / backup / PITR is **v2**. Most of that machinery already exists (`questdb-ent/.../cairo/wal/transfer/` — `WalUploader`, `WalDownloader`, `UploadWalDirectoryPolicy`, `ChecksumMode`, `PointInTimeRecoveryConfiguration`; `.../cairo/backup/` — `DatabaseBackupAgent`, `CheckpointManifest`). v1's job is to expose the **seams** so v2 snaps on without rework. Enterprise may go further than OSS.
+
+- **S1 · Durability as a tier-ordered frontier.** Generalize `DurableAckRegistry` to report a per-table chain `applied ≥ localDurable ≥ uploaded`. v1 wires the new `localDurable` tier (group-fsync of the WAL); Enterprise's upload pipeline already provides `uploaded` (`getDurablyUploadedSeqTxn`). Both feed the QWP durable-ack frame and the [§7](#7-read-durability-semantics) gate. *Seam:* per-tier accessors on `DurableAckRegistry`.
+- **S2 · `read_durability='replicated'` (failover-consistent reads).** With S1, gating visibility on the `uploaded` tier means a promoted replica never loses a row a client read on the old primary. Pure config over the same gate; Enterprise-only (needs the upload frontier). *Seam:* the gate takes a tier parameter; v1 hard-codes `local`.
+- **S3 · Epoch = incremental-backup base.** `SnapshotEpochJob` produces exactly the "consistent `_txn` cut at a known seqTxn" that `DatabaseBackupAgent` builds today via `checkpointCreate(incremental=true)`. Shape the epoch so the backup `WalUploader` can adopt it as a base and ship epoch + WAL `(prevEpoch.seqTxn, epoch.seqTxn]` to object store — continuous PITR without the periodic heavyweight checkpoint. *Seam:* epoch exposes `{seqTxn, txn, consistent-cut handle}`; reconcile with `CheckpointManifest`.
+- **S4 · Retention composition.** Already structured ([§8](#8-gc-coordination)): the epoch `min`-term coexists with `UploadWalDirectoryPolicy`'s hold-until-uploaded. *Seam:* none beyond the epoch term — document that both gates apply.
+- **S5 · Replica-side adaptive.** A replica's source of truth is object storage, so it runs lazy-apply + epochs for fast restart but **skips the local WAL-commit fsync** (recovery = re-fetch via `WalDownloader`). *Seam:* `WalCommitDurability` is pluggable per role — full barrier on a primary, no-op on a replica.
+- **S6 · Integrity = transfer checksum.** The audit's WAL-record CRC (#10) and `transfer/ChecksumMode` are the same need; the checksum written locally is the one verified on upload and on restore, protecting the object-store copy too. *Seam:* a single `WalIntegrity` CRC consumed by both recovery and transfer.
+
+**v2 risks:** V2 split-txnlog durable-frontier semantics (#8); epoch ↔ `CheckpointManifest` format reconciliation; confirm `localDurable` epochs stay node-local (proposed: only WAL + backup bases upload, not per-node epochs).
