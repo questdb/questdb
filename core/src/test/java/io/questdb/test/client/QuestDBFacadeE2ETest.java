@@ -115,7 +115,7 @@ public class QuestDBFacadeE2ETest extends AbstractBootstrapTest {
                 server.execute("CREATE TABLE rt(i LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
                 server.awaitTable("rt");
 
-                String config = "http::addr=127.0.0.1:" + HTTP_PORT + ";protocol_version=2;";
+                String config = "ws::addr=127.0.0.1:" + HTTP_PORT + ";";
                 try (QuestDB db = QuestDB.connect(config)) {
                     try (Sender s = db.borrowSender()) {
                         s.table("rt").longColumn("i", 1).at(1_000_000L, java.time.temporal.ChronoUnit.MICROS);
@@ -123,7 +123,10 @@ public class QuestDBFacadeE2ETest extends AbstractBootstrapTest {
                         s.table("rt").longColumn("i", 3).at(3L * 1_000_000L, java.time.temporal.ChronoUnit.MICROS);
                         // close() flushes -- assertion below proves it ran.
                     }
-                    server.awaitTable("rt");
+                    // ws ingest is async: close() returns before the server
+                    // commits, so wait for the WAL txn to be applied (not just
+                    // for the table to exist) before querying it back.
+                    server.awaitTxn("rt", 1);
 
                     AtomicLong sum = new AtomicLong();
                     AtomicInteger rows = new AtomicInteger();
@@ -152,7 +155,7 @@ public class QuestDBFacadeE2ETest extends AbstractBootstrapTest {
                 server.execute("INSERT INTO big SELECT x, x::TIMESTAMP FROM long_sequence(50000)");
                 server.awaitTable("big");
 
-                String config = "http::addr=127.0.0.1:" + HTTP_PORT + ";protocol_version=2;";
+                String config = "ws::addr=127.0.0.1:" + HTTP_PORT + ";";
                 try (QuestDB db = QuestDB.builder().fromConfig(config).queryPoolSize(1).build()) {
                     AtomicReference<Byte> errorStatus = new AtomicReference<>();
                     AtomicReference<Throwable> awaitOutcome = new AtomicReference<>();
@@ -208,7 +211,7 @@ public class QuestDBFacadeE2ETest extends AbstractBootstrapTest {
                 server.execute("INSERT INTO conc SELECT x, x::TIMESTAMP FROM long_sequence(100)");
                 server.awaitTable("conc");
 
-                String config = "http::addr=127.0.0.1:" + HTTP_PORT + ";protocol_version=2;";
+                String config = "ws::addr=127.0.0.1:" + HTTP_PORT + ";";
                 try (QuestDB db = QuestDB.builder().fromConfig(config).queryPoolSize(2).senderPoolSize(2).build()) {
                     int threads = 4;
                     AtomicInteger okCount = new AtomicInteger();
@@ -249,7 +252,7 @@ public class QuestDBFacadeE2ETest extends AbstractBootstrapTest {
     public void testQueryExceptionOnBadSql() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain _ = startFragmented()) {
-                String config = "http::addr=127.0.0.1:" + HTTP_PORT + ";protocol_version=2;";
+                String config = "ws::addr=127.0.0.1:" + HTTP_PORT + ";";
                 try (QuestDB db = QuestDB.connect(config)) {
                     Completion c = db.executeSql("SELECT * FROM no_such_table", new CollectingHandler());
                     try {
@@ -268,7 +271,7 @@ public class QuestDBFacadeE2ETest extends AbstractBootstrapTest {
     public void testSenderPoolExhaustionTimesOut() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain _ = startFragmented()) {
-                String config = "http::addr=127.0.0.1:" + HTTP_PORT + ";protocol_version=2;";
+                String config = "ws::addr=127.0.0.1:" + HTTP_PORT + ";";
                 try (QuestDB db = QuestDB.builder()
                         .fromConfig(config)
                         .senderPoolSize(1)
@@ -301,7 +304,7 @@ public class QuestDBFacadeE2ETest extends AbstractBootstrapTest {
                 server.execute("CREATE TABLE ta(i LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
                 server.awaitTable("ta");
 
-                String config = "http::addr=127.0.0.1:" + HTTP_PORT + ";protocol_version=2;";
+                String config = "ws::addr=127.0.0.1:" + HTTP_PORT + ";";
                 try (QuestDB db = QuestDB.connect(config)) {
                     Sender s1 = db.sender();
                     Sender s2 = db.sender();
@@ -309,7 +312,7 @@ public class QuestDBFacadeE2ETest extends AbstractBootstrapTest {
                     s1.table("ta").longColumn("i", 7).at(7L * 1_000_000L, java.time.temporal.ChronoUnit.MICROS);
                     s1.flush();
                     db.releaseSender();
-                    server.awaitTable("ta");
+                    server.awaitTxn("ta", 1);
 
                     AtomicLong got = new AtomicLong();
                     Completion c = db.executeSql("SELECT i FROM ta", new CollectingHandler() {
@@ -341,7 +344,7 @@ public class QuestDBFacadeE2ETest extends AbstractBootstrapTest {
                 server.execute("INSERT INTO seq SELECT x, x::TIMESTAMP FROM long_sequence(50)");
                 server.awaitTable("seq");
 
-                String config = "http::addr=127.0.0.1:" + HTTP_PORT + ";protocol_version=2;";
+                String config = "ws::addr=127.0.0.1:" + HTTP_PORT + ";";
                 try (QuestDB db = QuestDB.builder().fromConfig(config).queryPoolSize(1).build()) {
                     io.questdb.client.Query firstHandle = db.query();
                     Completion firstCompletion = firstHandle
@@ -426,7 +429,7 @@ public class QuestDBFacadeE2ETest extends AbstractBootstrapTest {
                 server.execute("INSERT INTO mix SELECT x, x::TIMESTAMP FROM long_sequence(200)");
                 server.awaitTable("mix");
 
-                String config = "http::addr=127.0.0.1:" + HTTP_PORT + ";protocol_version=2;";
+                String config = "ws::addr=127.0.0.1:" + HTTP_PORT + ";";
                 try (QuestDB db = QuestDB.builder()
                         .fromConfig(config)
                         .queryPoolSize(2)
@@ -524,7 +527,7 @@ public class QuestDBFacadeE2ETest extends AbstractBootstrapTest {
                 server.execute("INSERT INTO cc SELECT x, x::TIMESTAMP FROM long_sequence(10)");
                 server.awaitTable("cc");
 
-                String config = "http::addr=127.0.0.1:" + HTTP_PORT + ";protocol_version=2;";
+                String config = "ws::addr=127.0.0.1:" + HTTP_PORT + ";";
                 try (QuestDB db = QuestDB.builder().fromConfig(config).queryPoolSize(2).build()) {
                     final long STALL_MS = 1_000;
                     CountDownLatch bothBatchesEntered = new CountDownLatch(2);
@@ -597,7 +600,7 @@ public class QuestDBFacadeE2ETest extends AbstractBootstrapTest {
                 server.execute("CREATE TABLE el(x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
                 server.awaitTable("el");
 
-                String config = "http::addr=127.0.0.1:" + HTTP_PORT + ";protocol_version=2;";
+                String config = "ws::addr=127.0.0.1:" + HTTP_PORT + ";";
                 try (QuestDB db = QuestDB.builder()
                         .fromConfig(config)
                         .senderPoolMin(1)
@@ -637,7 +640,9 @@ public class QuestDBFacadeE2ETest extends AbstractBootstrapTest {
                         throw new AssertionError("burst writer failed", firstError.get());
                     }
 
-                    server.awaitTable("el");
+                    // Each of the 4 burst senders flushes once on close -> 4 WAL
+                    // txns. Wait for all to apply before counting.
+                    server.awaitTxn("el", 4);
                     AtomicInteger seen = new AtomicInteger();
                     db.executeSql("SELECT x FROM el", new CollectingHandler() {
                         @Override
@@ -656,7 +661,119 @@ public class QuestDBFacadeE2ETest extends AbstractBootstrapTest {
                                 .longColumn("x", 9_999)
                                 .at(99_999_000_000L, java.time.temporal.ChronoUnit.MICROS);
                     }
-                    server.awaitTable("el");
+                    server.awaitTxn("el", 5);
+                }
+            }
+        });
+    }
+
+    /**
+     * Two-arg connect: separate (here identical) ingest and query ws strings.
+     * Exercises the facade's two-string path end-to-end.
+     */
+    @Test
+    public void testTwoArgConnectRoundTrip() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain server = startFragmented()) {
+                server.execute("CREATE TABLE two(i LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                server.awaitTable("two");
+
+                String ingest = "ws::addr=127.0.0.1:" + HTTP_PORT + ";";
+                String query = "ws::addr=127.0.0.1:" + HTTP_PORT + ";";
+                try (QuestDB db = QuestDB.connect(ingest, query)) {
+                    try (Sender s = db.borrowSender()) {
+                        s.table("two").longColumn("i", 11).at(1_000_000L, java.time.temporal.ChronoUnit.MICROS);
+                        s.table("two").longColumn("i", 22).at(2L * 1_000_000L, java.time.temporal.ChronoUnit.MICROS);
+                    }
+                    server.awaitTxn("two", 1);
+
+                    AtomicLong sum = new AtomicLong();
+                    db.executeSql("SELECT i FROM two", new CollectingHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                            for (int r = 0; r < batch.getRowCount(); r++) {
+                                sum.addAndGet(batch.getLongValue(0, r));
+                            }
+                        }
+                    }).await();
+                    Assert.assertEquals(33L, sum.get());
+                }
+            }
+        });
+    }
+
+    /**
+     * Pool sizing carried entirely in the connect string (no explicit builder
+     * calls). The facade resolves the pool keys and the round-trip still works.
+     */
+    @Test
+    public void testPoolKeysFromConnectStringRoundTrip() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain server = startFragmented()) {
+                server.execute("CREATE TABLE pk(i LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                server.awaitTable("pk");
+
+                String config = "ws::addr=127.0.0.1:" + HTTP_PORT
+                        + ";sender_pool_min=1;sender_pool_max=2;query_pool_min=1;query_pool_max=2;acquire_timeout_ms=10000;";
+                try (QuestDB db = QuestDB.connect(config)) {
+                    try (Sender s = db.borrowSender()) {
+                        s.table("pk").longColumn("i", 5).at(1_000_000L, java.time.temporal.ChronoUnit.MICROS);
+                    }
+                    server.awaitTxn("pk", 1);
+
+                    AtomicInteger rows = new AtomicInteger();
+                    db.executeSql("SELECT i FROM pk", new CollectingHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                            rows.addAndGet(batch.getRowCount());
+                        }
+                    }).await();
+                    Assert.assertEquals(1, rows.get());
+                }
+            }
+        });
+    }
+
+    /**
+     * The {@code user}/{@code pass} aliases authenticate both the ingest and the
+     * egress WebSocket upgrades: against an auth-enabled server, the correct
+     * aliases round-trip and a wrong password is rejected at connect.
+     */
+    @Test
+    public void testUserPassAliasAuthRoundTrip() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain server = startWithEnvVariables(
+                    PropertyKey.HTTP_USER.getEnvVarName(), "admin",
+                    PropertyKey.HTTP_PASSWORD.getEnvVarName(), "quest"
+            )) {
+                server.execute("CREATE TABLE au(i LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                server.awaitTable("au");
+
+                String good = "ws::addr=127.0.0.1:" + HTTP_PORT + ";user=admin;pass=quest;";
+                try (QuestDB db = QuestDB.connect(good)) {
+                    try (Sender s = db.borrowSender()) {
+                        s.table("au").longColumn("i", 99).at(1_000_000L, java.time.temporal.ChronoUnit.MICROS);
+                    }
+                    server.awaitTxn("au", 1);
+
+                    AtomicLong got = new AtomicLong();
+                    db.executeSql("SELECT i FROM au", new CollectingHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                            for (int r = 0; r < batch.getRowCount(); r++) {
+                                got.set(batch.getLongValue(0, r));
+                            }
+                        }
+                    }).await();
+                    Assert.assertEquals(99L, got.get());
+                }
+
+                // Wrong password is rejected at the eager pool-prewarm connect.
+                String bad = "ws::addr=127.0.0.1:" + HTTP_PORT + ";user=admin;pass=wrong;";
+                try (QuestDB db = QuestDB.connect(bad)) {
+                    Assert.fail("expected auth failure with a wrong password");
+                } catch (RuntimeException expected) {
+                    // connect rejected the bad credentials
                 }
             }
         });

@@ -38,6 +38,7 @@ import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
@@ -76,6 +77,7 @@ public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
+        cursor.circuitBreaker = executionContext.getCircuitBreaker();
         return cursor.initialize();
     }
 
@@ -92,6 +94,7 @@ public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory
     private class TableStorageRecordCursor implements NoRandomAccessRecordCursor {
         private final TableStorageRecord record = new TableStorageRecord();
         private final ObjHashSet<TableToken> tableBucket = new ObjHashSet<>();
+        private SqlExecutionCircuitBreaker circuitBreaker;
         private int tableIndex = -1;
 
         @Override
@@ -107,6 +110,7 @@ public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory
 
         @Override
         public boolean hasNext() {
+            circuitBreaker.statefulThrowExceptionIfTripped();
             ++tableIndex;
             int n = tableBucket.size();
 

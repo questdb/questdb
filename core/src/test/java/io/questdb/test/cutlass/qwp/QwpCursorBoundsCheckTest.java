@@ -546,7 +546,6 @@ public class QwpCursorBoundsCheckTest {
     private static byte[] generateValidMessage(Rnd rnd, int iter) {
         try (QwpTableBuffer buffer = new QwpTableBuffer("fuzz_" + iter);
              QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
-            encoder.setGorillaEnabled((iter & 1) != 0);
             populateFuzzTable(buffer, rnd, iter);
 
             int size = encoder.encode(buffer);

@@ -203,6 +203,8 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
     }
 
     private void buildAndSort() {
+        // Consult the breaker before consuming the base, so an empty base scan still observes cancellation.
+        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
         final boolean isVariable = keyType.isVariable();
         long estimatedSize = baseCursor.size();
         long maxEntries = maxEntryMemBytes / entrySize;
