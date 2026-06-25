@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
@@ -227,6 +228,21 @@ class WalEventWriter implements Closeable {
         eventIndexMem.putLong(value);
     }
 
+    // Finalize the current record: append the [MAGIC | xxh3] checksum trailer, back-patch the
+    // length prefix (length is patched BEFORE hashing so it is covered), write the EOF sentinel,
+    // index entry, and header max-txn. Body hashed = [startOffset, bodyEnd) (excludes the trailer).
+    private void finishRecord() {
+        final long bodyEnd = eventMem.getAppendOffset();
+        final int length = (int) (bodyEnd - startOffset + WALE_CHECKSUM_TRAILER_SIZE);
+        eventMem.putInt(startOffset, length);
+        final long checksum = TableUtils.calculateCvAreaChecksum(eventMem.addressOf(startOffset), bodyEnd - startOffset);
+        eventMem.putLong(WALE_CHECKSUM_MAGIC);
+        eventMem.putLong(checksum);
+        eventMem.putInt(-1);
+        appendIndex(eventMem.getAppendOffset() - Integer.BYTES);
+        eventMem.putInt(WALE_MAX_TXN_OFFSET_32, txn);
+    }
+
     private void init() {
         eventMem.putInt(0);
         eventMem.putInt(WALE_FORMAT_VERSION);
@@ -338,11 +354,7 @@ class WalEventWriter implements Closeable {
             eventMem.putLong(replaceRangeHiTs);
             eventMem.putByte(dedupMode);
         }
-        eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
-        eventMem.putInt(-1);
-
-        appendIndex(eventMem.getAppendOffset() - Integer.BYTES);
-        eventMem.putInt(WALE_MAX_TXN_OFFSET_32, txn);
+        finishRecord();
         if (txnType == WalTxnType.MAT_VIEW_DATA) {
             eventMem.putInt(WAL_FORMAT_OFFSET_32, WALE_MAT_VIEW_FORMAT_VERSION);
         }
@@ -377,11 +389,7 @@ class WalEventWriter implements Closeable {
                 eventMem.putInt(-1);
             }
         }
-        eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
-        eventMem.putInt(-1);
-
-        appendIndex(eventMem.getAppendOffset() - Integer.BYTES);
-        eventMem.putInt(WALE_MAX_TXN_OFFSET_32, txn);
+        finishRecord();
         eventMem.putInt(WAL_FORMAT_OFFSET_32, WALE_MAT_VIEW_FORMAT_VERSION);
         return txn++;
     }
@@ -398,11 +406,7 @@ class WalEventWriter implements Closeable {
         final BindVariableService bindVariableService = sqlExecutionContext.getBindVariableService();
         appendBindVariableValuesByIndex(bindVariableService);
         appendBindVariableValuesByName(bindVariableService);
-        eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
-        eventMem.putInt(-1);
-
-        appendIndex(eventMem.getAppendOffset() - Integer.BYTES);
-        eventMem.putInt(WALE_MAX_TXN_OFFSET_32, txn);
+        finishRecord();
         return txn++;
     }
 
@@ -434,11 +438,7 @@ class WalEventWriter implements Closeable {
             }
         }
 
-        eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
-        eventMem.putInt(-1);
-
-        appendIndex(eventMem.getAppendOffset() - Integer.BYTES);
-        eventMem.putInt(WALE_MAX_TXN_OFFSET_32, txn);
+        finishRecord();
         return txn++;
     }
 
@@ -540,11 +540,7 @@ class WalEventWriter implements Closeable {
         startOffset = eventMem.getAppendOffset() - Integer.BYTES;
         eventMem.putLong(txn);
         eventMem.putByte(WalTxnType.TRUNCATE);
-        eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
-        eventMem.putInt(-1);
-
-        appendIndex(eventMem.getAppendOffset() - Integer.BYTES);
-        eventMem.putInt(WALE_MAX_TXN_OFFSET_32, txn);
+        finishRecord();
         return txn++;
     }
 }
