@@ -40,6 +40,7 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
 
     private static final int BODY = 6;
     private static final int BODY_BROKEN = 8;
+    private static final int BODY_REPLAY_BOUNDARY_SUFFIX = 14;
     private static final int BOUNDARY_INCOMPLETE = 3;
     private static final int BOUNDARY_MATCH = 1;
     private static final int BOUNDARY_NO_MATCH = 2;
@@ -58,8 +59,8 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
     private byte boundaryByte;
     private int boundaryLen;
     private int boundaryPtr;
+    private byte boundarySuffix;
     private int consumedBoundaryLen;
-    private boolean firstDashRead;
     private long resumePtr;
     private int state;
 
@@ -74,8 +75,8 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
         this.boundaryPtr = 0;
         this.boundaryByte = 0;
         this.boundary = null;
+        this.boundarySuffix = 0;
         this.consumedBoundaryLen = 0;
-        this.firstDashRead = false;
         this.headerParser.clear();
     }
 
@@ -113,6 +114,16 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
                     _lo = ptr;
                     state = BODY;
                     break;
+                case BODY_REPLAY_BOUNDARY_SUFFIX:
+                    long suffixLo = getBoundarySuffixLo();
+                    try {
+                        ptr = onChunkWithRetryHandle(processor, suffixLo, suffixLo + 1, BODY_BROKEN, ptr, ptr, true);
+                        boundarySuffix = 0;
+                    } catch (RetryOperationException e) {
+                        boundarySuffix = 0;
+                        throw e;
+                    }
+                    break;
                 case START_PARSING:
                     state = START_BOUNDARY;
                     // fall through
@@ -133,41 +144,68 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
                     }
                     break;
                 case PRE_HEADERS:
-                    switch (Unsafe.getByte(ptr)) {
-                        case '\n':
-                            state = HEADERS;
-                            // fall through
+                    byte preHeaderByte = Unsafe.getByte(ptr);
+                    switch (boundarySuffix) {
                         case '\r':
-                            ptr++;
-                            break;
-                        case '-':
-                            // make sure that we set the status to DONE only after we read the second '-'
-                            if (!firstDashRead) {
-                                firstDashRead = true;
-                                // on the first '-' we just need to read the next byte
+                            if (preHeaderByte == '\n') {
+                                boundarySuffix = 0;
+                                state = HEADERS;
                                 ptr++;
                                 break;
                             }
-                            processor.onPartEnd();
-                            state = DONE;
-                            return true;
+                            ptr = onChunkWithRetryHandle(processor, boundary.lo(), boundary.hi(), BODY_REPLAY_BOUNDARY_SUFFIX, ptr, ptr, true);
+                            break;
+                        case '-':
+                            if (preHeaderByte == '-') {
+                                boundarySuffix = 0;
+                                processor.onPartEnd();
+                                state = DONE;
+                                return true;
+                            }
+                            ptr = onChunkWithRetryHandle(processor, boundary.lo(), boundary.hi(), BODY_REPLAY_BOUNDARY_SUFFIX, ptr, ptr, true);
+                            break;
                         default:
-                            processor.onChunk(boundary.lo(), boundary.hi());
-                            _lo = ptr;
-                            state = BODY;
+                            switch (preHeaderByte) {
+                                case '\n':
+                                    state = HEADERS;
+                                    ptr++;
+                                    break;
+                                case '\r':
+                                    boundarySuffix = '\r';
+                                    ptr++;
+                                    break;
+                                case '-':
+                                    boundarySuffix = '-';
+                                    ptr++;
+                                    break;
+                                default:
+                                    ptr = onChunkWithRetryHandle(processor, boundary.lo(), boundary.hi(), BODY_BROKEN, ptr, ptr, true);
+                                    break;
+                            }
                             break;
                     }
                     break;
                 case START_PRE_HEADERS:
-                    switch (Unsafe.getByte(ptr)) {
+                    byte startPreHeaderByte = Unsafe.getByte(ptr);
+                    if (boundarySuffix == '-') {
+                        if (startPreHeaderByte == '-') {
+                            boundarySuffix = 0;
+                            return true;
+                        }
+                        throw HttpException.instance("Malformed start boundary");
+                    }
+                    switch (startPreHeaderByte) {
                         case '\n':
                             state = START_HEADERS;
-                            // fall through
+                            ptr++;
+                            break;
                         case '\r':
                             ptr++;
                             break;
                         case '-':
-                            return true;
+                            boundarySuffix = '-';
+                            ptr++;
+                            break;
                         default:
                             throw HttpException.instance("Malformed start boundary");
                     }
@@ -217,7 +255,7 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
                             break;
                         default:
                             // can only be BOUNDARY_NO_MATCH:
-                            onChunkWithRetryHandle(processor, boundary.lo(), boundary.lo() + p, BODY_BROKEN, ptr, true);
+                            onChunkWithRetryHandle(processor, boundary.lo(), boundary.lo() + p, BODY_BROKEN, ptr, ptr, true);
                             break;
                     }
                     break;
@@ -232,6 +270,10 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
         }
 
         return false;
+    }
+
+    private long getBoundarySuffixLo() {
+        return boundarySuffix == '\r' ? boundary.lo() : boundary.lo() + 2;
     }
 
     private int matchBoundary(long lo, long hi) {
@@ -262,6 +304,18 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
             long resumePtr,
             boolean handleIncomplete
     ) throws PeerIsSlowToReadException, PeerDisconnectedException, ServerDisconnectException {
+        return onChunkWithRetryHandle(processor, lo, hi, state, resumePtr, lo, handleIncomplete);
+    }
+
+    private long onChunkWithRetryHandle(
+            HttpMultipartContentProcessor processor,
+            long lo,
+            long hi,
+            int state,
+            long resumePtr,
+            long tooFewBytesResumePtr,
+            boolean handleIncomplete
+    ) throws PeerIsSlowToReadException, PeerDisconnectedException, ServerDisconnectException {
         RetryOperationException needsRetry = null;
         try {
             processor.onChunk(lo, hi);
@@ -270,7 +324,7 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
             needsRetry = e;
         } catch (NotEnoughLinesException e) {
             if (handleIncomplete) {
-                this.resumePtr = lo;
+                this.resumePtr = tooFewBytesResumePtr;
                 throw TooFewBytesReceivedException.INSTANCE;
             } else {
                 throw e;
