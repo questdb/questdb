@@ -34,6 +34,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
@@ -52,16 +53,28 @@ import org.junit.Test;
  */
 public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
 
+    // Default true so the legacy skipping-primary tests are unaffected; the convert-partition
+    // regression below flips this at runtime to drive a role change (skip true -> false).
+    private static volatile boolean skip = true;
+
     @BeforeClass
     public static void setUpStatic() throws Exception {
+        skip = true;
         configurationFactory = (root, telemetry, overrides) ->
                 new CairoTestConfiguration(root, telemetry, overrides) {
                     @Override
                     public boolean skipReplicaOnlyIndexes() {
-                        return true;
+                        return skip;
                     }
                 };
         AbstractCairoTest.setUpStatic();
+    }
+
+    @Before
+    public void resetSkip() {
+        // Every legacy test in this class expects a skipping primary; restore the default before each
+        // test so the convert-partition regression (which flips skip to false) cannot leak state.
+        skip = true;
     }
 
     @Test
@@ -80,6 +93,68 @@ public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
             );
             assertMetadataFlags("x", "s");
         });
+    }
+
+    // Regression: replica-only POSTING index + reconcile-rebuild + CONVERT PARTITION TO PARQUET must
+    // not suspend the table, even when the index is UNMATERIALIZED at convert time.
+    //
+    // Reproduces the fuzz seed 0xABCD convert-suspend: a replica-only POSTING index is added while
+    // skipping (so nothing is materialized), the role flips to NON-skipping (bumpRoleGeneration) with
+    // NO intervening insert -- so reconcile (which only runs on a WAL insert apply) has NOT rebuilt the
+    // index -- and then CONVERT PARTITION TO PARQUET runs. The convert/link path used to hard-link the
+    // absent .pk/.pv.<sealTxn> and throw "index files do not exist", suspending the table. The fix in
+    // TableWriter.copyOrRebuildColumnIndexes / linkPartitionIndexFiles tolerates the absence and skips
+    // the column; a later insert-apply reconcile materializes the index over the now-parquet partition.
+    @Test
+    public void testReplicaOnlyPostingConvertToParquetUnmaterializedNoSuspend() throws Exception {
+        assertMemoryLeak(() -> {
+            skip = true; // ADD INDEX REPLICA ONLY does not materialize while skipping
+            execute("create table x (" +
+                    "c symbol capacity 256 index type posting replica only, " +
+                    "v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into x values ('a', 1.0, 0), ('b', 2.0, 1000000), ('a', 3.0, 2000000)");
+            drainWalQueue();
+            Assert.assertFalse("posting index must NOT exist while skipping", indexFilesExist("x", "c"));
+
+            // Flip to NON-skipping with a role bump but NO intervening insert: reconcile has not run, so
+            // the replica-only posting index is still unmaterialized on disk.
+            skip = false;
+            engine.bumpRoleGeneration();
+
+            // Convert to parquet must NOT suspend despite the absent .pk/.pv.
+            execute("alter table x convert partition to parquet where ts >= 0");
+            drainWalQueue();
+
+            final TableToken token = engine.verifyTableName("x");
+            Assert.assertFalse(
+                    "table must not be suspended after CONVERT PARTITION on unmaterialized replica-only posting index",
+                    engine.getTableSequencerAPI().isSuspended(token)
+            );
+
+            // count(*) stays correct.
+            assertSql("count\n3\n", "select count() from x");
+
+            // An insert now triggers reconcile, which materializes the posting index over the parquet
+            // partition (indexHistoricPartitions/indexParquetPartition) -- correctness on a non-skipping
+            // node: covered-value counts match a full-scan reference.
+            execute("insert into x values ('a', 4.0, 3000000)");
+            drainWalQueue();
+            Assert.assertFalse(
+                    "table must not be suspended after reconcile build over the parquet partition",
+                    engine.getTableSequencerAPI().isSuspended(token)
+            );
+
+            // c='a' has 3 rows (rows 0,2 from native-then-parquet partition + the new native row).
+            assertSql("count\n3\n", "select count() from x where c = 'a'");
+            // Full distribution as an independent oracle.
+            assertSql("c\tcount\na\t3\nb\t1\n", "select c, count() from x order by c");
+        });
+    }
+
+    private void assertSql(String expected, String query) throws Exception {
+        sink.clear();
+        printSql(query, sink);
+        io.questdb.test.tools.TestUtils.assertEquals(expected, sink);
     }
 
     // Regression for an O3 crash: out-of-order rows spanning multiple partitions drive the O3 open-

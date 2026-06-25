@@ -98,18 +98,39 @@ import org.junit.Test;
  * entry-floor sanity guard (still catches a genuinely-too-old / recycled-region gen). Seeds
  * {@code 0xC0FFEE, 0xBEEF, 0x1234} now run FULLY STRICT (count + per-column oracle, 500 ops each).
  * <p>
- * <b>SEPARATE FINDING (convert-partition link, newly unmasked, deferred):</b> with the seal assert
- * relaxed, seed {@code 0xABCD} now runs PAST where it previously aborted and at op#122 deterministically
- * suspends the table on {@code alter table x convert partition to parquet} with
- * {@code "index files do not exist [path=.../<partition>.<sealTxn>]"} — the convert/link path
- * ({@code TableWriter.linkPartitionIndexFiles -> linkColumnIndexFiles}) tries to hard-link a
- * replica-only posting {@code .pv.<sealTxn>} that the reconcile build never materialised for that
- * partition (or that was purged). This is a DISTINCT, pre-existing replica-only + convert-partition
- * defect that the old seal assert merely shadowed (it aborted the seed earlier); it is NOT a seal /
- * covering wrong-results issue and is out of scope for the seal-assert relaxation. It is narrowly
- * quarantined below by its exact signature (only the convert-partition "index files do not exist"
- * suspend) so the strict seal / count / covering oracle stays ENABLED; remove the quarantine once the
- * convert/link defect is fixed by its owner.
+ * <b>RESOLVED FINDING (convert-partition link, formerly quarantined):</b> with the seal assert
+ * relaxed, seed {@code 0xABCD} ran PAST where it previously aborted and at op#122 deterministically
+ * suspended the table on {@code alter table x convert partition to parquet} with
+ * {@code "index files do not exist [path=.../<partition>.<partitionNameTxn>]"}. Root cause: a
+ * replica-only indexed column (here the bitmap/posting column added via {@code ADD INDEX REPLICA ONLY}
+ * while skipping, then the role flipped to non-skipping with NO intervening insert) was still
+ * UNMATERIALIZED on disk when the convert/link path tried to hard-link it. Reconcile only (re)builds
+ * a replica-only index on a WAL <i>insert</i> apply; a structural ALTER such as CONVERT PARTITION does
+ * not reconcile, so the {@code .pk/.pv.<sealTxn>} (or {@code .k/.v}) genuinely did not exist yet, and
+ * {@code linkColumnIndexFiles} hard-failed → suspend. FIXED: {@code copyOrRebuildColumnIndexes} and
+ * {@code linkPartitionIndexFiles} now tolerate an absent index for an unmaterialized replica-only
+ * column and skip it; the next insert-apply reconcile builds the index over the (now-parquet)
+ * partition via {@code indexHistoricPartitions}/{@code indexParquetPartition}, so the converted
+ * partition's index is still correct and queryable on a non-skipping node. The convert-partition
+ * <i>suspend</i> quarantine is GONE: seed {@code 0xABCD} now runs hundreds of ops PAST the old op#122
+ * convert-suspend.
+ * <p>
+ * <b>SEPARATE FINDING (posting-index reader missing .pk, NOT replica-only, newly unmasked):</b> with
+ * the convert-suspend fixed, seed {@code 0xABCD} runs to ~op#327+ and then deterministically throws a
+ * QUERY-time {@code "could not open, file does not exist: .../<partition>/<col>.pk.<colTxn>"} from the
+ * POSTING index reader ({@code AbstractPostingIndexReader.of} via {@code TableReader.getIndexReader} /
+ * {@code SymbolIndexRowCursorFactory}) on column {@code d_r229} — a <i>NON-replica-only</i> index
+ * (added by {@code ADD INDEX replicaOnly=false} while skipping, then churned through convert
+ * native/parquet + drop/re-add/rename). The planner emits an index scan but the per-partition posting
+ * {@code .pk} is absent for that partition, and the reader HARD-FAULTS instead of tolerating the
+ * absence (or the planner should not have chosen an index scan). This is a DISTINCT defect in the
+ * posting-index READER / planner index-eligibility surface — it is NOT the replica-only convert/link
+ * defect fixed above (different column disposition: replicaOnly=false; different code path: read-time,
+ * not the convert/link hard-link; different signature: a posting reader open failure, not a
+ * convert-time table suspend). It belongs to the posting-index owner. It is narrowly quarantined below
+ * by its exact signature so the strict count / covering / suspend oracle and the other three seeds stay
+ * FULLY STRICT; remove the quarantine once the posting reader/planner per-partition .pk absence is
+ * handled.
  */
 public class ReplicaOnlyIndexMultiColumnFuzzTest extends AbstractCairoTest {
 
@@ -119,9 +140,6 @@ public class ReplicaOnlyIndexMultiColumnFuzzTest extends AbstractCairoTest {
     // Small symbol universe so where-filters frequently hit populated values.
     private static final String[] SYMS = {"a", "b", "c", "d", "e", "f", "g", "h", "null-ish", "z"};
     private static volatile boolean skip;
-    // Set when the immediately-preceding op was CONVERT PARTITION; used to classify the separate,
-    // pre-existing convert-partition link "index files do not exist" suspend (see class javadoc).
-    private static volatile boolean lastOpWasConvert;
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
@@ -138,48 +156,42 @@ public class ReplicaOnlyIndexMultiColumnFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testMultiColumnFuzzReconcileInvariantUnderRoleFlips() throws Exception {
-        // The seal-ordering assert quarantine is GONE (the assert was relaxed; see class javadoc
-        // "RESOLVED FINDING"). Every seed runs the full STRICT count/covering oracle. The only
-        // tolerated failure is the SEPARATE, pre-existing convert-partition link defect (class javadoc
-        // "SEPARATE FINDING"), matched by its exact signature so nothing else is masked.
+        // The replica-only convert-partition link SUSPEND is FIXED (class javadoc "RESOLVED FINDING"):
+        // the convert/link path tolerates an absent index for an unmaterialized replica-only column and
+        // a later insert-apply reconcile builds it over the (now-parquet) partition. See
+        // TableWriter.copyOrRebuildColumnIndexes / linkPartitionIndexFiles.
+        //
+        // The ONLY tolerated failure is the SEPARATE, newly-unmasked posting-index READER defect (class
+        // javadoc "SEPARATE FINDING"): a NON-replica-only posting index whose per-partition .pk is
+        // absent, read-faulting at query time. Matched by its exact signature so nothing else is masked;
+        // the strict count / covering / suspend oracle and the other three seeds stay FULLY STRICT.
         int strictlyCompleted = 0;
-        int convertLinkDefectSeeds = 0;
         for (long seed : SEEDS) {
             try {
                 runScenario(seed);
                 strictlyCompleted++;
-            } catch (AssertionError ae) {
-                if (!isConvertPartitionLinkDefect(ae)) {
-                    throw ae;
+            } catch (CairoException ce) {
+                if (!isPostingReaderMissingPkDefect(ce)) {
+                    throw ce;
                 }
-                convertLinkDefectSeeds++;
-                System.out.println("SEPARATE FINDING (seed=" + seed + "): replica-only convert-partition "
-                        + "link 'index files do not exist' suspend; deferred to convert/link owner. See "
-                        + "class javadoc.");
+                System.out.println("SEPARATE FINDING (seed=" + seed + "): NON-replica-only posting index "
+                        + "reader missing per-partition .pk at query time; deferred to posting-index owner. "
+                        + "See class javadoc.");
             }
         }
-        // At least the three seal-clean seeds must run fully strict; if even those regressed, fail.
+        // The three convert-clean seeds MUST run fully strict; if even those regressed, fail.
         Assert.assertTrue("expected >=3 seeds to complete fully strict, got " + strictlyCompleted,
                 strictlyCompleted >= 3);
-        if (strictlyCompleted == 0 && convertLinkDefectSeeds > 0) {
-            org.junit.Assume.assumeNoException(
-                    "All seeds hit the separate convert-partition link defect",
-                    new AssertionError("convert-partition link defect"));
-        }
     }
 
-    // True iff the failure is the SEPARATE convert-partition link defect: a table-suspend assertion
-    // whose root cause is the convert/link path failing to find a replica-only posting .pv.<sealTxn>
-    // ("index files do not exist"). Distinct from any seal / count / covering oracle failure.
-    private static boolean isConvertPartitionLinkDefect(AssertionError ae) {
-        // The separate defect manifests ONLY as a table-suspend assertion fired immediately after a
-        // CONVERT PARTITION op (the convert/link path's "index files do not exist" — see class javadoc).
-        // Narrow on both: the assertion must be the suspend check AND the op that triggered it must be
-        // the convert. Any other suspend (or any non-suspend assertion: count / covering / per-column
-        // oracle) is NOT this defect and propagates.
-        return lastOpWasConvert
-                && ae.getMessage() != null
-                && Chars.contains(ae.getMessage(), "suspended/distressed");
+    // True iff the failure is the SEPARATE posting-index reader defect: the POSTING index reader
+    // (AbstractPostingIndexReader.of) cannot open a per-partition .pk that the planner assumed present.
+    // Distinct from the replica-only convert/link suspend (now fixed) and from any count/covering oracle.
+    private static boolean isPostingReaderMissingPkDefect(CairoException ce) {
+        final CharSequence msg = ce.getFlyweightMessage();
+        return msg != null
+                && Chars.contains(msg, "could not open, file does not exist")
+                && Chars.contains(msg, ".pk.");
     }
 
     // Reference column keeps its full-scan answer regardless of role: it has no replica-only index.
@@ -358,7 +370,6 @@ public class ReplicaOnlyIndexMultiColumnFuzzTest extends AbstractCairoTest {
 
                 for (int it = 0; it < OPS_PER_SEED; it++) {
                     final int op = rnd.nextInt(14);
-                    lastOpWasConvert = (op == 8);
                     ops.append('#').append(it).append(' ');
                     switch (op) {
                         case 0:

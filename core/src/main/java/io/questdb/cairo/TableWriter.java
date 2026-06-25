@@ -5221,6 +5221,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 final String columnName = metadata.getColumnName(columnIndex);
                 final long columnNameTxn = getColumnNameTxn(partitionTimestamp, columnIndex);
 
+                // A replica-only index may be UNMATERIALIZED on this (non-skipping) node even when
+                // skipReplicaOnlyIndexes()==false: reconcile only (re)builds the index on a WAL
+                // *insert* apply (commitWalInsertTransactions), but a structural ALTER such as
+                // CONVERT PARTITION TO PARQUET does NOT run a reconcile. So when ADD INDEX REPLICA
+                // ONLY ran while skipping (or right after a role flip with no intervening insert),
+                // the .k/.v (or posting .pk/.pv.<sealTxn>) files genuinely do not exist yet for this
+                // partition. The link branch below would then hard-fail with "index files do not
+                // exist" and suspend the table. Tolerate the absence: skip the column for this
+                // partition. Correctness is preserved because the next insert-apply reconcile rebuilds
+                // the index, and indexHistoricPartitions/indexParquetPartition materialize it over the
+                // now-parquet partition exactly as over a native one.
+                if (metadata.isColumnReplicaOnlyIndex(columnIndex)
+                        && !ff.exists(keyFileName(indexType, path.trimTo(srcDirLen), columnName, columnNameTxn))) {
+                    LOG.info().$("skip parquet index copy for unmaterialized replica-only column [table=").$(tableToken)
+                            .$(", column=").$safe(columnName)
+                            .$(", partition=").$ts(timestampDriver, partitionTimestamp).I$();
+                    continue;
+                }
+
                 if (colTop > 0) {
                     // Column top will be zeroed by zeroColumnTopsAfterParquetRewrite.
                     // Readers no longer synthesize [0, colTop) as NULL, so those NULL
@@ -7579,12 +7598,29 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex) == -1) {
                     continue;
                 }
+                final CharSequence columnName = metadata.getColumnName(columnIndex);
+                final long columnNameTxn = getColumnNameTxn(partitionTimestamp, columnIndex);
+                final byte indexType = metadata.getColumnIndexType(columnIndex);
+                // A replica-only index can be UNMATERIALIZED on this (non-skipping) node: reconcile
+                // only (re)builds the index on a WAL insert apply, but a structural ALTER (this
+                // parquet partition switch) does NOT reconcile, so an ADD INDEX REPLICA ONLY issued
+                // while skipping -- or right after a role flip with no intervening insert -- leaves
+                // the .k/.v (or posting .pk/.pv.<sealTxn>) absent for this partition. linkColumnIndexFiles
+                // would then hard-fail and suspend the table. Tolerate the absence and skip the column;
+                // the next insert-apply reconcile rebuilds the index over the (now-parquet) partition.
+                if (metadata.isColumnReplicaOnlyIndex(columnIndex)
+                        && !ff.exists(keyFileName(indexType, path.trimTo(partitionDirLen), columnName, columnNameTxn))) {
+                    LOG.info().$("skip parquet index link for unmaterialized replica-only column [table=").$(tableToken)
+                            .$(", column=").$safe(columnName)
+                            .$(", partition=").$ts(timestampDriver, partitionTimestamp).I$();
+                    continue;
+                }
                 linkColumnIndexFiles(
                         partitionDirLen,
                         newPartitionDirLen,
-                        metadata.getColumnName(columnIndex),
-                        getColumnNameTxn(partitionTimestamp, columnIndex),
-                        metadata.getColumnIndexType(columnIndex),
+                        columnName,
+                        columnNameTxn,
+                        indexType,
                         partitionTimestamp,
                         partitionNameTxn
                 );
