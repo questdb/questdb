@@ -212,6 +212,27 @@ public class DefaultPGCircuitBreakerRegistryTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testSentinelClearedByResetTimer() throws Exception {
+        // The cancel sentinel must not leak across queries. Once a sentinel-only cancel has been
+        // honoured, the next query's resetTimer() overwrites powerUpTime with a fresh value, so the
+        // fresh query neither throws nor reports cancelled. This pins the no-false-positive property
+        // that the sentinel check relies on for cross-query safety.
+        assertMemoryLeak(() -> {
+            try (NetworkSqlExecutionCircuitBreaker cb = newCircuitBreaker()) {
+                cb.resetTimer();
+                cb.cancel();
+                // The sentinel is honoured for the cancelled query.
+                expectQueryCancelled(cb::statefulThrowExceptionIfTripped);
+
+                // A fresh query starts: resetTimer() clears the stale sentinel, so the breaker is OK.
+                cb.resetTimer();
+                cb.statefulThrowExceptionIfTripped(); // must not throw
+                Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_OK, cb.getState());
+            }
+        });
+    }
+
     private static void expectCairoFailure(Runnable op, String expectedMessage) {
         try {
             op.run();
