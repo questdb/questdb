@@ -161,6 +161,7 @@ public class QwpEgressRequestDecoder {
             throws QwpParseException, SqlException {
         long limit = payload + payloadLen;
         long p = payload + 1; // skip msg_kind
+        queryFlags = 0;
         if (p + 8 > limit) {
             throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("QUERY_REQUEST: header truncated");
         }
@@ -201,7 +202,6 @@ public class QwpEgressRequestDecoder {
         }
 
         // Optional query_flags trailer; a baseline client leaves p == limit.
-        queryFlags = 0;
         if (p < limit) {
             QwpVarint.decode(p, limit, varintScratch);
             queryFlags = varintScratch.value;
