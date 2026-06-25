@@ -46,23 +46,29 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 
 /**
- * PROCESS-CRASH-CONSISTENCY INGEST WRITER
+ * INGEST WRITER FOR CRASH-CONSISTENCY AND POWER-CUT DURABILITY HARNESSES
  *
- * PURPOSE: Ingest rows into QuestDB in SYNC commit mode, recording an acknowledged-commit
- * watermark after every successful commit(). The process is then hard-killed via kill -9
- * by the harness script, and CrashVerifier reopens the DB to verify consistency.
+ * PURPOSE: Ingest rows into QuestDB in configurable commit mode (SYNC or NOSYNC),
+ * recording an acknowledged-commit watermark after every successful commit(). The process
+ * is then hard-killed (kill -9) or power-cut (dm-flakey drop_writes) by the harness
+ * script, and CrashVerifier reopens the DB to verify consistency / durability.
  *
- * WHAT THIS TESTS — PROCESS-CRASH-CONSISTENCY, NOT POWER-LOSS DURABILITY:
- *   kill -9 terminates the JVM without running any shutdown hooks or finally-blocks,
- *   but it does NOT flush the OS page cache. This means:
- *     - Any data written to mmap'd memory-mapped files lives in the OS page cache and
- *       IS visible to a subsequently launched process reading the same files.
- *     - SYNC commit mode calls msync(MS_SYNC) before writing the _txn commit record,
- *       which ensures committed data pages are durable before the txn is finalised.
- *     - The test proves QuestDB's recovery path (torn-aux guards, _txn/_cv A/B metadata,
- *       _todo recovery file) leaves a CONSISTENT state after an abrupt mid-write kill.
- *   Power-loss durability (flushing page cache to disk) requires a separate dm-log-writes
- *   harness to simulate actual storage failures — this test does NOT cover that scenario.
+ * COMMIT MODE (via -DcommitMode=SYNC|NOSYNC, default SYNC):
+ *   SYNC:   msync(MS_SYNC) is called on all dirty mmap pages before the _txn commit record
+ *           is written.  On a real block device this pushes data to stable storage before
+ *           the commit is acknowledged — surviving both process crashes AND power cuts.
+ *   NOSYNC: commits are acknowledged without forcing pages to stable storage.  Data lives
+ *           in the OS page cache and survives a process kill (page cache persists), but is
+ *           LOST on a power cut (page cache discarded).
+ *
+ * HARNESS #1 — PROCESS-CRASH-CONSISTENCY (crash-consistency-pkill.sh):
+ *   kill -9 tests that QuestDB's recovery path (torn-aux guards, _txn/_cv A/B metadata,
+ *   _todo recovery file) leaves a CONSISTENT state after an abrupt mid-write kill.
+ *   Page cache is NOT discarded by a kill, so BOTH SYNC and NOSYNC survive process kills.
+ *
+ * HARNESS #2 — POWER-CUT DURABILITY (power-cut-dmflakey.sh):
+ *   dm-flakey with drop_writes discards un-fsync'd writes at the block layer, exactly
+ *   modelling a power failure.  SYNC-committed data should survive; NOSYNC data may be lost.
  *
  * SCHEMA: t (id long, v long, s symbol index, ts timestamp) partition by DAY, NON-WAL
  *
@@ -75,7 +81,9 @@ import java.nio.file.StandardCopyOption;
  * WATERMARK: after each commit() returns, atomically write committed row count to
  *   <root>/_progress via write-to-temp+rename, so it is never half-written.
  *
- * Usage: java -cp benchmarks/target/benchmarks.jar org.questdb.CrashIngestWriter <db-root>
+ * Usage: java -cp benchmarks/target/benchmarks.jar \
+ *            [-DcommitMode=SYNC|NOSYNC] \
+ *            org.questdb.CrashIngestWriter <db-root>
  */
 public class CrashIngestWriter {
 
@@ -92,19 +100,26 @@ public class CrashIngestWriter {
 
     public static void main(String[] args) throws Exception {
         if (args.length < 1) {
-            System.err.println("Usage: CrashIngestWriter <db-root>");
+            System.err.println("Usage: CrashIngestWriter [-DcommitMode=SYNC|NOSYNC] <db-root>");
             System.exit(1);
         }
         final String dbRoot = args[0];
         new File(dbRoot).mkdirs();
 
-        // SYNC commit mode: msync(MS_SYNC) is called on all dirty mmap pages before the txn
-        // commit record is written, ensuring committed data is visible from the OS page cache
-        // before the next process reads it — critical for process-crash-consistency.
+        // Commit mode is configured via -DcommitMode=SYNC|NOSYNC (default: SYNC).
+        // SYNC:   msync(MS_SYNC) on all dirty mmap pages before the _txn commit record →
+        //         data reaches stable storage before commit is acknowledged (process-crash-
+        //         consistent AND power-cut-durable when paired with a real block device).
+        // NOSYNC: commits acknowledged without forcing pages to storage — survives process
+        //         kills (page cache persists) but NOT power cuts (page cache discarded).
+        final String commitModeProp = System.getProperty("commitMode", "SYNC");
+        final int commitModeInt = parseCommitMode(commitModeProp);
+        System.out.println("commitMode=" + commitModeProp + " (" + commitModeInt + ")");
+
         final CairoConfiguration cfg = new DefaultCairoConfiguration(dbRoot) {
             @Override
             public int getCommitMode() {
-                return CommitMode.SYNC;
+                return commitModeInt;
             }
         };
 
@@ -145,7 +160,8 @@ public class CrashIngestWriter {
                 row.append();
 
                 if ((id + 1) % K == 0) {
-                    // commit() in SYNC mode: msync(MS_SYNC) all dirty pages → write txn record
+                    // commit(): in SYNC mode msync(MS_SYNC) all dirty pages before _txn write;
+                    // in NOSYNC mode commits without forcing pages to storage.
                     writer.commit();
                     committedRows = id + 1;
 
@@ -160,6 +176,21 @@ public class CrashIngestWriter {
             }
             System.out.println("reached MAX_ROWS=" + MAX_ROWS + " without kill; exiting normally");
         }
+    }
+
+    /**
+     * Parse the -DcommitMode property value into a CommitMode int constant.
+     * Mirrors the same helper in CommitModeBenchmark; NOSYNC and SYNC are the two
+     * modes relevant to the durability harnesses (ASYNC is equivalent to NOSYNC for
+     * our purposes and is not exposed here).
+     */
+    static int parseCommitMode(String name) {
+        return switch (name.toUpperCase()) {
+            case "SYNC"   -> CommitMode.SYNC;
+            case "NOSYNC" -> CommitMode.NOSYNC;
+            default -> throw new IllegalArgumentException(
+                    "Unknown commitMode '" + name + "'; expected SYNC or NOSYNC");
+        };
     }
 
     /**
