@@ -24,6 +24,8 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionUpdater;
@@ -45,6 +47,8 @@ import io.questdb.std.str.Utf8StringSink;
 import java.io.Closeable;
 
 public class O3ParquetMergeContext implements Closeable {
+    // Initial size of the rebase aux arena (see getRebaseAuxMem). Grown on demand.
+    private static final long REBASE_AUX_ARENA_PAGE_SIZE = 16 * 1024;
     private ObjList<O3ParquetMergeStrategy.MergeAction> actionsBuf;
     private IntList activeColIndices;
     private IntList activeToDecodeIdx;
@@ -67,6 +71,7 @@ public class O3ParquetMergeContext implements Closeable {
     private ParquetMetaFileReader parquetMetaReader;
     private ParquetPartitionDecoder partitionDecoder;
     private PartitionUpdater partitionUpdater;
+    private MemoryCARW rebaseAuxMem;
     private LongList rgO3Ranges;
     private LongList rowGroupBounds;
     private RowGroupBuffers rowGroupBuffers;
@@ -95,6 +100,7 @@ public class O3ParquetMergeContext implements Closeable {
         parquetMetaReader = new ParquetMetaFileReader();
         partitionDecoder = new ParquetPartitionDecoder();
         partitionUpdater = new PartitionUpdater();
+        rebaseAuxMem = Vm.getCARWInstance(REBASE_AUX_ARENA_PAGE_SIZE, Integer.MAX_VALUE, MemoryTag.NATIVE_O3);
         rgO3Ranges = new LongList();
         rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
         rowGroupBounds = new LongList();
@@ -156,6 +162,7 @@ public class O3ParquetMergeContext implements Closeable {
         }
         partitionDecoder = Misc.free(partitionDecoder);
         partitionUpdater = Misc.free(partitionUpdater);
+        rebaseAuxMem = Misc.free(rebaseAuxMem);
         rgO3Ranges = null;
         rowGroupBuffers = Misc.free(rowGroupBuffers);
         rowGroupBounds = null;
@@ -254,6 +261,15 @@ public class O3ParquetMergeContext implements Closeable {
 
     public PartitionUpdater getPartitionUpdater() {
         return partitionUpdater;
+    }
+
+    /**
+     * Reusable scratch arena for window-relative rebased var-column aux vectors.
+     * The caller sizes it once per apply (a later resize moves earlier slots),
+     * then hands out base+offset slots. Freed in {@link #close()}.
+     */
+    public MemoryCARW getRebaseAuxMem() {
+        return rebaseAuxMem;
     }
 
     public LongList getRgO3Ranges() {

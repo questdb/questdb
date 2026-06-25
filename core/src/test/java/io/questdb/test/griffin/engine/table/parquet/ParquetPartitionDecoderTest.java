@@ -50,6 +50,16 @@ import org.junit.Test;
  */
 public class ParquetPartitionDecoderTest extends AbstractCairoTest {
 
+    // A concrete parquet footer geometry so resolveFooter has a real
+    // parquet-size token to match against: derivedPqSize = offset + length +
+    // PARQUET_TRAILER_SIZE. resolveFooter no longer treats Long.MAX_VALUE as a
+    // "take the latest footer" sentinel, so of() must be handed the size the
+    // built footer actually encodes.
+    private static final int PARQUET_FOOTER_LENGTH = 256;
+    private static final long PARQUET_FOOTER_OFFSET = 1024;
+    // 4-byte footer length + 4-byte PAR1 magic; mirrors ParquetMetaFileReader.PARQUET_TRAILER_SIZE.
+    private static final int PARQUET_TRAILER_SIZE = 8;
+
     @BeforeClass
     public static void loadNativeLib() {
         Os.init();
@@ -73,7 +83,7 @@ public class ParquetPartitionDecoderTest extends AbstractCairoTest {
                             file1.dataPtr,
                             file1.dataLen,
                             0L,
-                            Long.MAX_VALUE,
+                            file1.parquetSize,
                             MemoryTag.NATIVE_DEFAULT
                     );
                     try (DirectLongList filters = new DirectLongList(0, MemoryTag.NATIVE_DEFAULT)) {
@@ -87,7 +97,7 @@ public class ParquetPartitionDecoderTest extends AbstractCairoTest {
                             file2.dataPtr,
                             file2.dataLen,
                             0L,
-                            Long.MAX_VALUE,
+                            file2.parquetSize,
                             MemoryTag.NATIVE_DEFAULT
                     );
                     Assert.assertEquals(2, decoder.metadata().getColumnCount());
@@ -120,7 +130,7 @@ public class ParquetPartitionDecoderTest extends AbstractCairoTest {
                             file.dataPtr,
                             file.dataLen,
                             0L,
-                            Long.MAX_VALUE,
+                            file.parquetSize,
                             MemoryTag.NATIVE_DEFAULT
                     );
 
@@ -162,7 +172,7 @@ public class ParquetPartitionDecoderTest extends AbstractCairoTest {
                 }
             }
             ParquetMetaFileWriter.addRowGroup(writerPtr, numRows);
-            ParquetMetaFileWriter.setParquetFooter(writerPtr, 0, 0);
+            ParquetMetaFileWriter.setParquetFooter(writerPtr, PARQUET_FOOTER_OFFSET, PARQUET_FOOTER_LENGTH);
             long resultPtr = ParquetMetaFileWriter.finish(writerPtr);
             return new ParquetMetaTestFile(resultPtr);
         } finally {
@@ -173,12 +183,14 @@ public class ParquetPartitionDecoderTest extends AbstractCairoTest {
     private static final class ParquetMetaTestFile implements AutoCloseable {
         final long dataLen;
         final long dataPtr;
+        final long parquetSize;
         final long resultPtr;
 
         ParquetMetaTestFile(long resultPtr) {
             this.resultPtr = resultPtr;
             this.dataPtr = ParquetMetaFileWriter.resultDataPtr(resultPtr);
             this.dataLen = ParquetMetaFileWriter.resultDataLen(resultPtr);
+            this.parquetSize = PARQUET_FOOTER_OFFSET + PARQUET_FOOTER_LENGTH + PARQUET_TRAILER_SIZE;
         }
 
         @Override

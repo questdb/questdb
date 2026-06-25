@@ -189,7 +189,9 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
                     decoder.metadata(),
                     pushdownFilterConditions,
                     filterList,
-                    filterValues
+                    filterValues,
+                    // read_parquet() projects external files by name; resolve by name too.
+                    false
             );
             if (isFilterListPrepared) {
                 filterBufEnd = filterValues.getAddress() + filterValues.getAppendOffset();
