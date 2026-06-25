@@ -608,6 +608,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long walApplyMemoryLimitBytes;
     private final WorkerPoolConfiguration walApplyPoolConfiguration = new PropWalApplyPoolConfiguration();
     private final long walApplySleepTimeout;
+    private final ObjHashSet<String> walApplySuspendedTables = new ObjHashSet<>();
+    private final boolean walApplySuspendedWriteDenied;
     private final long walApplyTableTimeQuota;
     private final int[] walApplyWorkerAffinity;
     private final int walApplyWorkerCount;
@@ -932,6 +934,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.walMaxSegmentFileDescriptorsCache = getInt(properties, env, PropertyKey.CAIRO_WAL_MAX_SEGMENT_FILE_DESCRIPTORS_CACHE, 30);
         this.walApplyTableTimeQuota = getMillis(properties, env, PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 1000);
         this.walApplyLookAheadTransactionCount = getInt(properties, env, PropertyKey.CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, 200);
+        final String walApplySuspendedTablesValue = getString(properties, env, PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, null);
+        if (walApplySuspendedTablesValue != null) {
+            for (String entry : walApplySuspendedTablesValue.split(",")) {
+                final String dirName = entry.trim();
+                if (!dirName.isEmpty()) {
+                    walApplySuspendedTables.add(dirName);
+                }
+            }
+        }
+        this.walApplySuspendedWriteDenied = getBoolean(properties, env, PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, false);
         this.tableTypeConversionEnabled = getBoolean(properties, env, PropertyKey.TABLE_TYPE_CONVERSION_ENABLED, true);
         this.tempRenamePendingTablePrefix = getString(properties, env, PropertyKey.CAIRO_WAL_TEMP_PENDING_RENAME_TABLE_PREFIX, "temp_5822f658-31f6-11ee-be56-0242ac120002");
         this.sequencerCheckInterval = getMillis(properties, env, PropertyKey.CAIRO_WAL_SEQUENCER_CHECK_INTERVAL, 10_000);
@@ -5029,6 +5041,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getWalApplyMemoryLimitBytes() {
             return walApplyMemoryLimitBytes;
+        }
+
+        @Override
+        public ObjHashSet<String> getWalApplySuspendedTables() {
+            return walApplySuspendedTables;
+        }
+
+        @Override
+        public boolean isWalApplySuspendedWriteDenied() {
+            return walApplySuspendedWriteDenied;
         }
 
         @Override

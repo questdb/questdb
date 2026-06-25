@@ -35,6 +35,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.qwp.codec.QwpServerInfoProvider;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
@@ -1425,6 +1426,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public long getWalApplyMemoryLimitBytes() {
         return getDelegate().getWalApplyMemoryLimitBytes();
+    }
+
+    @Override
+    public ObjHashSet<String> getWalApplySuspendedTables() {
+        return getDelegate().getWalApplySuspendedTables();
+    }
+
+    @Override
+    public boolean isWalApplySuspendedWriteDenied() {
+        return getDelegate().isWalApplySuspendedWriteDenied();
     }
 
     @Override
