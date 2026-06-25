@@ -1018,10 +1018,15 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 matViewStateReader.of(matViewStateBlockReader, viewToken);
                 haveExisting = true;
             } catch (Throwable th) {
-                LOG.error().$("could not read materialized view state for backfill-frontier persist [view=").$(viewToken)
+                // The state file exists but could not be read (corruption, or a concurrent
+                // writer mid-rewrite). Skip this persist rather than overwrite the file with
+                // default refresh fields -- that would discard the existing refresh state and
+                // invalidation reason. The next accepted backfill retries; the in-memory
+                // frontier is unaffected, so no protection is lost in this process.
+                LOG.error().$("could not read materialized view state for backfill-frontier persist; skipping to avoid clobbering [view=").$(viewToken)
                         .$(", msg=").$safe(th.getMessage())
                         .I$();
-                haveExisting = false;
+                return;
             } finally {
                 matViewStateBlockReader.close();
             }
