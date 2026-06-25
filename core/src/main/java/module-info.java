@@ -88,6 +88,7 @@ open module io.questdb {
     exports io.questdb.griffin.engine.orderby;
     exports io.questdb.griffin.engine.window;
     exports io.questdb.griffin.engine.table;
+    exports io.questdb.griffin.engine.lv;
     exports io.questdb.jit;
     exports io.questdb.std;
     exports io.questdb.std.datetime;

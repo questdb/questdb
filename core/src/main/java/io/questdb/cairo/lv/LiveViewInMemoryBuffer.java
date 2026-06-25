@@ -69,6 +69,10 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
     private final IntList columnTypes;
     private final ObjList<MemoryCARWImpl> columns;
     private final int timestampColumnIndex;
+    // LV-table applied seqTxn this slot reflects. The read-path fence serves the
+    // slot only when this equals the disk reader's getSeqTxn() (same table
+    // version => in-mem agrees with disk). LONG_NULL = not stamped yet.
+    private long lvSeqTxn;
     // Highest base seqTxn whose rows the slot reflects. Eviction only ages
     // out rows when this value is covered by the LV's applied_watermark —
     // protects unflushed rows from
@@ -105,6 +109,7 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
         this.rowCount = 0;
         this.seamTs = Numbers.LONG_NULL;
         this.maxSeqTxn = Numbers.LONG_NULL;
+        this.lvSeqTxn = Numbers.LONG_NULL;
     }
 
     @Override
@@ -321,6 +326,10 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
         return timestampColumnIndex;
     }
 
+    public long lvSeqTxn() {
+        return lvSeqTxn;
+    }
+
     public long maxSeqTxn() {
         return maxSeqTxn;
     }
@@ -366,6 +375,7 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
         rowCount = 0;
         seamTs = Numbers.LONG_NULL;
         maxSeqTxn = Numbers.LONG_NULL;
+        lvSeqTxn = Numbers.LONG_NULL;
     }
 
     public long rowCount() {
@@ -374,6 +384,10 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
 
     public long seamTs() {
         return seamTs;
+    }
+
+    public void setLvSeqTxn(long lvSeqTxn) {
+        this.lvSeqTxn = lvSeqTxn;
     }
 
     public void setMaxSeqTxn(long maxSeqTxn) {

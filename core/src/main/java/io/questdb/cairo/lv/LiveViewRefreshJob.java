@@ -740,12 +740,19 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // the in-mem tier is parked, so the seam_ts is anchored at the WAL commit boundary.
             instance.setAppliedWatermark(advanceTo);
             boolean lvConsumedPersisted = false;
+            // LV-table applied seqTxn for the fence stamp; LONG_NULL until apply.
+            long lvAppliedSeqTxn = Numbers.LONG_NULL;
             if (appendedRows > 0) {
                 // LV apply runs inline on this thread. The
                 // global ApplyWal2TableJob.doRun skips LV tokens, so without
                 // applyWalDirect here the LIVE_VIEW_DATA block would sit
                 // unapplied and the on-disk tier would not catch up.
                 applyJob.applyWalDirect(instance.getLiveViewToken(), Job.RUNNING_STATUS);
+                // Capture the just-applied LV-table seqTxn (matches a query
+                // reader's getSeqTxn()) to stamp the slot below.
+                lvAppliedSeqTxn = engine.getTableSequencerAPI()
+                        .getTxnTracker(instance.getLiveViewToken())
+                        .getWriterTxn();
                 // Apply has committed the _txn (the durability cut for the rows).
                 // Now publish the new lvConsumedSeqTxn floor and persist _lv.s
                 // through the refresh worker's reusable BlockFileWriter + Path so
@@ -802,7 +809,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // the resulting slot so the durability clamp at slow-path
                 // eviction can compare
                 // against applied_watermark.
-                publishToInMemoryTier(instance, stagingMaxTs, advanceTo);
+                publishToInMemoryTier(instance, stagingMaxTs, advanceTo, lvAppliedSeqTxn);
             }
             if (lvConsumedPersisted && appendedRows > 0) {
                 // 2a.4 head-checkpoint write hook. Ordered after the apply's
@@ -2333,7 +2340,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * {@code live_views().writer_stall_micros} surfaces the stall duration
      * so operators can observe the trail.
      */
-    private void publishToInMemoryTier(LiveViewInstance instance, long stagingMaxTs, long cycleSeqTxn) {
+    private void publishToInMemoryTier(LiveViewInstance instance, long stagingMaxTs, long cycleSeqTxn, long lvSeqTxn) {
         LiveViewInMemoryTier tier = instance.getInMemoryTier();
         if (tier == null) {
             return;
@@ -2354,6 +2361,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 try {
                     appendStagingInPlace(acquired, stagingBuffer.seamTs());
                     acquired.setMaxSeqTxn(cycleSeqTxn);
+                    acquired.setLvSeqTxn(lvSeqTxn);
                 } catch (Throwable t) {
                     // Fast-path append cannot leave the slot partially
                     // populated visibly to readers: rowCount only advances
@@ -2442,6 +2450,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             writeSlot.setRowCount(writeRow);
             writeSlot.setSeamTs(writeSeamTs);
             writeSlot.setMaxSeqTxn(cycleSeqTxn);
+            writeSlot.setLvSeqTxn(lvSeqTxn);
             tier.publishSwap(writeIdx);
             // Clear any prior stall streak — this cycle made progress.
             instance.setWriterStallStartUs(Numbers.LONG_NULL);

@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.lv;
 
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.lv.LiveViewInMemoryBuffer;
 import io.questdb.cairo.lv.LiveViewInMemoryTier;
 import io.questdb.cairo.lv.LiveViewInstance;
@@ -32,8 +33,11 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.griffin.engine.table.PageFrameRecordCursor;
+import io.questdb.griffin.engine.table.TablePageFrameCursor;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * The cursor returned by {@link LiveViewRecordCursorFactory}. Pins the LV's
@@ -85,6 +89,10 @@ public class LiveViewRecordCursor implements RecordCursor {
     private long inMemRow;
     private long maxDiskTs;
     private LiveViewInMemoryBuffer pinnedSlot;
+    // True when the fence holds (pinned slot and disk reader share an LV-table
+    // seqTxn). Plumbing-only until Mode B routing uses it; hasNext() still routes
+    // by max-disk-ts.
+    private boolean routingEligible;
     private int slotIdx;
     private LiveViewInMemoryTier tier;
     private int timestampColumnIndex;
@@ -148,6 +156,11 @@ public class LiveViewRecordCursor implements RecordCursor {
         return false;
     }
 
+    @TestOnly
+    public boolean isRoutingEligible() {
+        return routingEligible;
+    }
+
     @Override
     public SymbolTable newSymbolTable(int columnIndex) {
         return diskCursor.newSymbolTable(columnIndex);
@@ -162,6 +175,7 @@ public class LiveViewRecordCursor implements RecordCursor {
         this.inMemRow = -1;
         this.pinnedSlot = null;
         this.inMemEligible = false;
+        this.routingEligible = false;
         if (instance != null) {
             LiveViewInMemoryTier candidate = instance.getInMemoryTier();
             if (candidate != null) {
@@ -176,6 +190,13 @@ public class LiveViewRecordCursor implements RecordCursor {
                     this.slotIdx = pin;
                     this.pinnedSlot = candidate.getSlot(pin);
                     this.inMemEligible = isFullSchemaProjection(baseMetadata, pinnedSlot, timestampColumnIndex);
+                    // Fence: serve the slot only when it and the disk reader
+                    // share an LV-table seqTxn (same version => rows agree).
+                    // Mismatch / unstamped / non-table cursor => disk-only.
+                    this.routingEligible = inMemEligible
+                            && pinnedSlot.rowCount() > 0
+                            && pinnedSlot.lvSeqTxn() != Numbers.LONG_NULL
+                            && pinnedSlot.lvSeqTxn() == diskReaderSeqTxn(diskCursor);
                 }
             }
         }
@@ -215,6 +236,19 @@ public class LiveViewRecordCursor implements RecordCursor {
         maxDiskTs = Numbers.LONG_NULL;
         diskExhausted = false;
         inMemRow = -1;
+    }
+
+    // Returns the disk cursor's LV-table seqTxn, or LONG_NULL when the cursor is
+    // not a plain table-reader scan (filter/complex plan) we can fence cheaply.
+    private static long diskReaderSeqTxn(RecordCursor diskCursor) {
+        if (diskCursor instanceof PageFrameRecordCursor pfrc
+                && pfrc.getPageFrameCursor() instanceof TablePageFrameCursor tpfc) {
+            TableReader reader = tpfc.getTableReader();
+            if (reader != null) {
+                return reader.getSeqTxn();
+            }
+        }
+        return Numbers.LONG_NULL;
     }
 
     /**
