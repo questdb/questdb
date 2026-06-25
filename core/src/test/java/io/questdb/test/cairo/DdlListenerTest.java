@@ -501,6 +501,73 @@ public class DdlListenerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDdlListenerWithLiveView() throws Exception {
+        assertMemoryLeak(() -> {
+            engine.setDdlListener(DefaultDdlListener.INSTANCE);
+
+            execute("CREATE TABLE tab(ts TIMESTAMP, x LONG, y BYTE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            final int[] callbackCounters = new int[6];
+
+            engine.setDdlListener(new DefaultDdlListener() {
+                @Override
+                public void onColumnAdded(SecurityContext securityContext, TableToken tableToken, CharSequence columnName) {
+                    callbackCounters[0]++;
+                }
+
+                @Override
+                public void onColumnDropped(TableToken tableToken, CharSequence columnName) {
+                    callbackCounters[1]++;
+                }
+
+                @Override
+                public void onColumnRenamed(TableToken tableToken, CharSequence oldColumnName, CharSequence newColumnName) {
+                    callbackCounters[2]++;
+                }
+
+                @Override
+                public void onTableOrViewOrMatViewDropped(TableToken tableToken) {
+                    assertEquals("lv", tableToken.getTableName());
+                    callbackCounters[3]++;
+                }
+
+                @Override
+                public void onTableOrViewOrMatViewCreated(SecurityContext securityContext, TableToken tableToken, int tableKind) {
+                    assertEquals("admin", securityContext.getPrincipal());
+                    assertEquals("lv", tableToken.getTableName());
+                    // TABLE_KIND_REGULAR_TABLE is used for tables, views, mat views and live views too
+                    // table kind only distinguishes between regular vs. temp parquet export tables
+                    Assert.assertEquals(TableUtils.TABLE_KIND_REGULAR_TABLE, tableKind);
+                    callbackCounters[4]++;
+                }
+
+                @Override
+                public void onTableRenamed(TableToken oldTableToken, TableToken newTableToken) {
+                    callbackCounters[5]++;
+                }
+            });
+
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS (SELECT ts, x, row_number() OVER () AS rn FROM tab)");
+            drainWalQueue();
+            execute("DROP LIVE VIEW lv");
+            drainWalQueue();
+
+            Assert.assertEquals(0, callbackCounters[0]);
+            Assert.assertEquals(0, callbackCounters[1]);
+            Assert.assertEquals(0, callbackCounters[2]);
+            Assert.assertEquals(1, callbackCounters[3]);
+            Assert.assertEquals(1, callbackCounters[4]);
+            Assert.assertEquals(0, callbackCounters[5]);
+
+            // cleanup
+            engine.setDdlListener(DefaultDdlListener.INSTANCE);
+            execute("DROP TABLE tab");
+            drainWalQueue();
+        });
+    }
+
+    @Test
     public void testDdlListenerWithMatView() throws Exception {
         assertMemoryLeak(() -> {
             engine.setDdlListener(DefaultDdlListener.INSTANCE);
