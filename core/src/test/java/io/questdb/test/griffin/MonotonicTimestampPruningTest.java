@@ -423,6 +423,23 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDateAddYearSuperset() throws Exception {
+        assertMemoryLeak(() -> {
+            createYears();
+            // calendar add clamps day-of-month, so the year inverse stays SUPERSET (filter kept)
+            assertQuery("SELECT * FROM y WHERE dateadd('y', 1, timestamp) >= '2023-01-03'")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Interval forward scan on: y")
+                    .returns("""
+                            price\ttimestamp
+                            2.0\t2022-06-01T00:00:00.000000Z
+                            3.0\t2023-06-01T00:00:00.000000Z
+                            4.0\t2024-06-01T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testDateTruncDayBetween() throws Exception {
         assertMemoryLeak(() -> {
             createTrades();
@@ -492,6 +509,54 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
                     .withPlanContaining("Interval forward scan on: trades")
                     .returns("""
                             price\ttimestamp
+                            200.0\t2022-01-03T12:00:00.000000Z
+                            250.0\t2022-01-04T12:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testDateTruncDayOverflowLower() throws Exception {
+        assertMemoryLeak(() -> {
+            createTrades();
+            // a bound a hair below the type maximum overflows the floor inverse; it must fall
+            // back to a row filter rather than prune with a wrapped interval
+            assertQuery("SELECT * FROM trades WHERE date_trunc('day', timestamp) >= 9223372036854775806")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Frame forward scan on: trades")
+                    .returns("price\ttimestamp\n");
+        });
+    }
+
+    @Test
+    public void testDateTruncDayOverflowUpper() throws Exception {
+        assertMemoryLeak(() -> {
+            createTrades();
+            // the predicate is true for every row; a wrapped inverse must not silently drop them
+            assertQuery("SELECT * FROM trades WHERE date_trunc('day', timestamp) < 9223372036854775806")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Frame forward scan on: trades")
+                    .returns("""
+                            price\ttimestamp
+                            100.0\t2022-01-01T12:00:00.000000Z
+                            150.0\t2022-01-02T12:00:00.000000Z
+                            200.0\t2022-01-03T12:00:00.000000Z
+                            250.0\t2022-01-04T12:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testDateTruncMonthOverflowUpper() throws Exception {
+        assertMemoryLeak(() -> {
+            createTrades();
+            assertQuery("SELECT * FROM trades WHERE date_trunc('month', timestamp) < 9223372036854775806")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Frame forward scan on: trades")
+                    .returns("""
+                            price\ttimestamp
+                            100.0\t2022-01-01T12:00:00.000000Z
+                            150.0\t2022-01-02T12:00:00.000000Z
                             200.0\t2022-01-03T12:00:00.000000Z
                             250.0\t2022-01-04T12:00:00.000000Z
                             """);
@@ -718,6 +783,23 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFloorWithOffsetOverflow() throws Exception {
+        assertMemoryLeak(() -> {
+            createTrades();
+            assertQuery("SELECT * FROM trades WHERE timestamp_floor('6h', timestamp, '2020-01-01T03:00:00.000000Z') < 9223372036854775806")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Frame forward scan on: trades")
+                    .returns("""
+                            price\ttimestamp
+                            100.0\t2022-01-01T12:00:00.000000Z
+                            150.0\t2022-01-02T12:00:00.000000Z
+                            200.0\t2022-01-03T12:00:00.000000Z
+                            250.0\t2022-01-04T12:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testFloorWithStrideComparison() throws Exception {
         assertMemoryLeak(() -> {
             createTrades();
@@ -726,6 +808,23 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
                     .withPlanContaining("Interval forward scan on: trades")
                     .returns("""
                             price\ttimestamp
+                            250.0\t2022-01-04T12:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testFloorWithStrideOverflow() throws Exception {
+        assertMemoryLeak(() -> {
+            createTrades();
+            assertQuery("SELECT * FROM trades WHERE timestamp_floor('6h', timestamp) < 9223372036854775806")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Frame forward scan on: trades")
+                    .returns("""
+                            price\ttimestamp
+                            100.0\t2022-01-01T12:00:00.000000Z
+                            150.0\t2022-01-02T12:00:00.000000Z
+                            200.0\t2022-01-03T12:00:00.000000Z
                             250.0\t2022-01-04T12:00:00.000000Z
                             """);
         });
@@ -822,6 +921,29 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
                     .$(", sampledPlans=").$(sampledPlans)
                     .$(", intervalScanHits=").$(intervalScanHits).$(']').$();
             Assert.assertTrue("the fuzz never engaged the timestamp-function pushdown", intervalScanHits > 0);
+        });
+    }
+
+    @Test
+    public void testNanoColumnRuntimeMicroBound() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tn (price DOUBLE, timestamp TIMESTAMP_NS) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("INSERT INTO tn VALUES " +
+                    "(100, '2022-01-01T12:00:00.000000000Z')," +
+                    "(150, '2022-01-02T12:00:00.000000000Z')," +
+                    "(200, '2022-01-03T12:00:00.000000000Z')," +
+                    "(250, '2022-01-04T12:00:00.000000000Z');");
+            bindVariableService.clear();
+            bindVariableService.setTimestampWithType(0, ColumnType.TIMESTAMP_MICRO, 1_641_168_000_000_000L); // 2022-01-03T00:00:00Z
+            // a micro-typed runtime bound on a nanosecond column is normalized to nanos by the inverter
+            assertQuery("SELECT * FROM tn WHERE date_trunc('day', timestamp) >= $1")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Interval forward scan on: tn")
+                    .returns("""
+                            price\ttimestamp
+                            200.0\t2022-01-03T12:00:00.000000000Z
+                            250.0\t2022-01-04T12:00:00.000000000Z
+                            """);
         });
     }
 
@@ -1037,6 +1159,60 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
                     .withPlanContaining("Interval forward scan on: trades")
                     .returns("""
                             price\ttimestamp
+                            250.0\t2022-01-04T12:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testSubLongRuntimeNow() throws Exception {
+        assertMemoryLeak(() -> {
+            setCurrentMicros(1_641_081_600_000_000L); // 2022-01-02T00:00:00Z
+            try {
+                createTrades();
+                assertQuery("SELECT * FROM trades WHERE timestamp - 86_400_000_000 >= now()")
+                        .timestamp("timestamp")
+                        .withPlanContaining("Interval forward scan on: trades")
+                        .returns("""
+                                price\ttimestamp
+                                200.0\t2022-01-03T12:00:00.000000Z
+                                250.0\t2022-01-04T12:00:00.000000Z
+                                """);
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testTimestampCeilDay() throws Exception {
+        assertMemoryLeak(() -> {
+            createTrades();
+            assertQuery("SELECT * FROM trades WHERE timestamp_ceil('d', timestamp) >= '2022-01-04'")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Interval forward scan on: trades")
+                    .withPlanNotContaining("filter:")
+                    .returns("""
+                            price\ttimestamp
+                            200.0\t2022-01-03T12:00:00.000000Z
+                            250.0\t2022-01-04T12:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testTimestampCeilMonthFallsBack() throws Exception {
+        assertMemoryLeak(() -> {
+            createTrades();
+            // ceil by month is not epoch-aligned, so the arithmetic inverse cannot apply
+            assertQuery("SELECT * FROM trades WHERE timestamp_ceil('M', timestamp) >= '2022-02-01'")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Frame forward scan on: trades")
+                    .returns("""
+                            price\ttimestamp
+                            100.0\t2022-01-01T12:00:00.000000Z
+                            150.0\t2022-01-02T12:00:00.000000Z
+                            200.0\t2022-01-03T12:00:00.000000Z
                             250.0\t2022-01-04T12:00:00.000000Z
                             """);
         });

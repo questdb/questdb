@@ -146,10 +146,14 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
                 // Calendar add clamps day-of-month, so it is non-monotonic by up to
                 // one unit; widen the naive inverse and keep the residual filter.
                 if (lo != Numbers.LONG_NULL) {
-                    lo = periodAddFunction.add(periodAddFunction.add(lo, -stride), -1);
+                    final long m = periodAddFunction.add(lo, -stride);
+                    final long w = periodAddFunction.add(m, -1);
+                    lo = addOverflows(lo, m, -stride) || w >= m ? Numbers.LONG_NULL : w;
                 }
                 if (hi != Long.MAX_VALUE) {
-                    hi = periodAddFunction.add(periodAddFunction.add(hi, -stride), 1);
+                    final long m = periodAddFunction.add(hi, -stride);
+                    final long w = periodAddFunction.add(m, 1);
+                    hi = addOverflows(hi, m, -stride) || w <= m ? Long.MAX_VALUE : w;
                 }
                 io.of(lo, hi);
                 return SUPERSET;
@@ -179,6 +183,10 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val("dateadd('").val(period).val("',").val(stride).val(',').val(timestampFunc).val(')');
+        }
+
+        private static boolean addOverflows(long base, long result, int units) {
+            return units > 0 ? result <= base : units < 0 && result >= base;
         }
 
         private static boolean isFixedUnit(char period) {

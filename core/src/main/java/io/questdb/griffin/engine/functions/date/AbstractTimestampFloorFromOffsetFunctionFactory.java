@@ -310,6 +310,45 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
         return new RuntimeConstDstGapAwareFunc(name, returnUtc, timestampFunc, stride, unit, from, offset, offsetStr, timezoneFunc, timezonePos, timestampType);
     }
 
+    private static boolean floorPreimageShifted(
+            Interval io,
+            TimestampDriver timestampDriver,
+            TimestampDriver.TimestampFloorWithOffsetMethod floorFunc,
+            char addUnit,
+            int stride,
+            long offset,
+            long shift
+    ) {
+        long lo = io.getLo();
+        long hi = io.getHi();
+        if (offset != 0) {
+            if (hi < offset) {
+                io.of(Long.MAX_VALUE, Numbers.LONG_NULL);
+                return true;
+            }
+            if (lo != Numbers.LONG_NULL && lo <= offset) {
+                lo = Numbers.LONG_NULL;
+            }
+        }
+        if (lo != Numbers.LONG_NULL) {
+            final long b = floorFunc.floor(lo, stride, offset);
+            final long bound = b == lo ? lo : timestampDriver.add(b, addUnit, stride);
+            if ((shift > 0 && bound < Long.MIN_VALUE + shift) || (shift < 0 && bound > Long.MAX_VALUE + shift)) {
+                return false;
+            }
+            lo = bound - shift;
+        }
+        if (hi != Long.MAX_VALUE) {
+            final long bound = timestampDriver.add(floorFunc.floor(hi, stride, offset), addUnit, stride) - 1;
+            if ((shift > 0 && bound < Long.MIN_VALUE + shift) || (shift < 0 && bound > Long.MAX_VALUE + shift)) {
+                return false;
+            }
+            hi = bound - shift;
+        }
+        io.of(lo, hi);
+        return true;
+    }
+
     // Floors a UTC timestamp into local-time-aligned buckets.
     //
     // When returnUtc is true, converts the result back to UTC using the same timezone
@@ -381,45 +420,6 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
             result = floorFunc.floor(result - gapDuration, stride, effectiveOffset);
         }
         return result;
-    }
-
-    private static boolean floorPreimageShifted(
-            Interval io,
-            TimestampDriver timestampDriver,
-            TimestampDriver.TimestampFloorWithOffsetMethod floorFunc,
-            char addUnit,
-            int stride,
-            long offset,
-            long shift
-    ) {
-        long lo = io.getLo();
-        long hi = io.getHi();
-        if (offset != 0) {
-            if (hi < offset) {
-                io.of(Long.MAX_VALUE, Numbers.LONG_NULL);
-                return true;
-            }
-            if (lo != Numbers.LONG_NULL && lo <= offset) {
-                lo = Numbers.LONG_NULL;
-            }
-        }
-        if (lo != Numbers.LONG_NULL) {
-            final long b = floorFunc.floor(lo, stride, offset);
-            final long bound = b == lo ? lo : timestampDriver.add(b, addUnit, stride);
-            if ((shift > 0 && bound < Long.MIN_VALUE + shift) || (shift < 0 && bound > Long.MAX_VALUE + shift)) {
-                return false;
-            }
-            lo = bound - shift;
-        }
-        if (hi != Long.MAX_VALUE) {
-            final long bound = timestampDriver.add(floorFunc.floor(hi, stride, offset), addUnit, stride) - 1;
-            if ((shift > 0 && bound < Long.MIN_VALUE + shift) || (shift < 0 && bound > Long.MAX_VALUE + shift)) {
-                return false;
-            }
-            hi = bound - shift;
-        }
-        io.of(lo, hi);
-        return true;
     }
 
     private static boolean isFloorExactlyInvertible(

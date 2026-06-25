@@ -93,10 +93,20 @@ public final class TimestampFloorOffsetFunction extends TimestampFunction implem
         }
         if (lo != Numbers.LONG_NULL) {
             final long b = floor.floor(lo, stride, offset);
-            lo = b == lo ? lo : timestampDriver.add(b, addUnit, stride);
+            if (b != lo) {
+                final long c = timestampDriver.add(b, addUnit, stride);
+                if (c < lo) {
+                    return NONE;
+                }
+                lo = c;
+            }
         }
         if (hi != Long.MAX_VALUE) {
-            hi = timestampDriver.add(floor.floor(hi, stride, offset), addUnit, stride) - 1;
+            final long c = timestampDriver.add(floor.floor(hi, stride, offset), addUnit, stride);
+            if (c <= hi) {
+                return NONE;
+            }
+            hi = c - 1;
         }
         io.of(lo, hi);
         return EXACT;

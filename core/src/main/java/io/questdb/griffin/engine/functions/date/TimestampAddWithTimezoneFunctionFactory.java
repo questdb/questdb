@@ -181,18 +181,24 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory 
             long lo = io.getLo();
             long hi = io.getHi();
             if (lo != Numbers.LONG_NULL) {
-                lo = periodAddFunction.add(lo, -stride);
-                if (isCalendar) {
-                    lo = periodAddFunction.add(lo, -1);
+                long m = periodAddFunction.add(lo, -stride);
+                boolean overflow = addOverflows(lo, m, -stride);
+                if (isCalendar && !overflow) {
+                    final long w = periodAddFunction.add(m, -1);
+                    overflow = w >= m;
+                    m = w;
                 }
-                lo = lo < Long.MIN_VALUE + margin ? Numbers.LONG_NULL : lo - margin;
+                lo = overflow || m < Long.MIN_VALUE + margin ? Numbers.LONG_NULL : m - margin;
             }
             if (hi != Long.MAX_VALUE) {
-                hi = periodAddFunction.add(hi, -stride);
-                if (isCalendar) {
-                    hi = periodAddFunction.add(hi, 1);
+                long m = periodAddFunction.add(hi, -stride);
+                boolean overflow = addOverflows(hi, m, -stride);
+                if (isCalendar && !overflow) {
+                    final long w = periodAddFunction.add(m, 1);
+                    overflow = w <= m;
+                    m = w;
                 }
-                hi = hi > Long.MAX_VALUE - margin ? Long.MAX_VALUE : hi + margin;
+                hi = overflow || m > Long.MAX_VALUE - margin ? Long.MAX_VALUE : m + margin;
             }
             io.of(lo, hi);
             return SUPERSET;
@@ -201,6 +207,10 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory 
         @Override
         public void toPlan(PlanSink sink) {
             sink.val("dateadd('").val(period).val("',").val(stride).val(',').val(timestampFunc).val(',').val(tzFunc).val(')');
+        }
+
+        private static boolean addOverflows(long base, long result, int units) {
+            return units > 0 ? result <= base : units < 0 && result >= base;
         }
 
         private boolean tryExactShift(Interval io, long margin) {

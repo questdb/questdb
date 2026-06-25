@@ -2959,6 +2959,9 @@ public final class WhereClauseParser implements Mutable {
             return BOUND_CONST;
         }
         if (isFunc(boundNode)) {
+            if (referencesTimestamp(boundNode)) {
+                return BOUND_FAIL;
+            }
             final Function bound = functionParser.parseFunction(boundNode, metadata, executionContext);
             boolean isRetained = false;
             try {

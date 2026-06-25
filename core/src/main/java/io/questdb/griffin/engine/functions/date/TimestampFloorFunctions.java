@@ -81,12 +81,19 @@ final class TimestampFloorFunctions {
             }
             long lo = io.getLo();
             long hi = io.getHi();
-            if (lo != Numbers.LONG_NULL) {
-                lo = floor.floor(lo) == lo ? lo : ceil.ceil(lo);
+            if (lo != Numbers.LONG_NULL && floor.floor(lo) != lo) {
+                final long c = ceil.ceil(lo);
+                if (c < lo) {
+                    return NONE;
+                }
+                lo = c;
             }
             if (hi != Long.MAX_VALUE) {
                 // ceil is the identity for the smallest unit (us/ns), where the bucket is one tick
                 final long c = ceil.ceil(hi);
+                if (c < hi) {
+                    return NONE;
+                }
                 hi = c == hi ? hi : c - 1;
             }
             io.of(lo, hi);
@@ -173,10 +180,20 @@ final class TimestampFloorFunctions {
             long hi = io.getHi();
             if (lo != Numbers.LONG_NULL) {
                 final long b = floor.floor(lo, stride);
-                lo = b == lo ? lo : timestampDriver.add(b, addUnit, stride);
+                if (b != lo) {
+                    final long c = timestampDriver.add(b, addUnit, stride);
+                    if (c < lo) {
+                        return NONE;
+                    }
+                    lo = c;
+                }
             }
             if (hi != Long.MAX_VALUE) {
-                hi = timestampDriver.add(floor.floor(hi, stride), addUnit, stride) - 1;
+                final long c = timestampDriver.add(floor.floor(hi, stride), addUnit, stride);
+                if (c <= hi) {
+                    return NONE;
+                }
+                hi = c - 1;
             }
             io.of(lo, hi);
             return EXACT;
