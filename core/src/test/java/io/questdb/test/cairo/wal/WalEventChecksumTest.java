@@ -47,6 +47,8 @@ public class WalEventChecksumTest extends AbstractCairoTest {
             TableToken tt = engine.verifyTableName("x");
             byte[] bytes = Files.readAllBytes(findEventFile(tt.getDirName()));
             int magic = countMagic(bytes, WalUtils.WALE_CHECKSUM_MAGIC);
+            // 2 inserts -> 2 data records -> >= 2 trailers. Kept as >= (not ==) so the test stays
+            // non-flaky if a record's pseudo-random checksum bytes ever coincide with the magic.
             Assert.assertTrue("expected a checksum trailer per record, got " + magic, magic >= 2);
         });
     }
