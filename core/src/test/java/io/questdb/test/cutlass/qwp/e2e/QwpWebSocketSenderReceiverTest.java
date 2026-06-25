@@ -2251,8 +2251,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             long baseTimestamp = 1_704_067_200_000_000L; // 2024-01-01T00:00:00 in micros
 
             try (QwpWebSocketSender sender = createSender(port)) {
-                sender.setGorillaEnabled(false);
-
                 for (int i = 0; i < rowCount; i++) {
                     sender.table("ws_gorilla_disabled")
                             .longColumn("value", i)

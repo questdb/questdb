@@ -4647,7 +4647,6 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (QwpWebSocketSender sender = connectWs(port)) {
-                sender.setGorillaEnabled(false);
                 // Row 1: sub-microsecond nanos get truncated
                 sender.table(table)
                         .timestampColumn("ts_col", 1_645_747_200_123_456_789L, ChronoUnit.NANOS)

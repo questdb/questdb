@@ -96,6 +96,7 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     private final ParquetRecord record;
     private final RowGroupBuffers rowGroupBuffers;
     private long addr = 0;
+    private SqlExecutionCircuitBreaker circuitBreaker;
     private int currentRowInRowGroup;
     private long fd = -1;
     private long fileSize = 0;
@@ -268,16 +269,20 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
             }
             return false;
         } catch (CairoException ex) {
-            // A memory-limit breach (per-query or global RSS) is not corruption:
+            // A tripped circuit breaker (cancellation/timeout/remote-disconnect) must keep its
+            // classification and message, not be relabeled as a corrupt-file error, so wire processors
+            // that branch on isInterruption()/isCancellation() still see it rather than a read error.
+            // Every breaker exception sets the interruption flag (queryCancelled/queryTimedOut/remote
+            // disconnect), so isInterruption() identifies all of them; isCancellation() alone would miss
+            // a timeout, which sets interruption but not cancellation. Key on isInterruption().
+            // Likewise, a memory-limit breach (per-query or global RSS) is not corruption:
             // surface it unchanged so isOutOfMemory() and the limit message reach
             // the caller instead of a misleading "corrupted file" message.
-            if (ex.isOutOfMemory()) {
+            if (ex.isInterruption() || ex.isOutOfMemory()) {
                 throw ex;
             }
-            // Preserve the underlying decode error (e.g. the native parquet guard message)
-            // instead of discarding it. ex shares the thread-local CairoException flyweight
-            // that nonCritical() resets, so copy its message to a String first, then append
-            // it to the friendly wrapper.
+            // Preserve the underlying decode error (e.g. the native parquet guard message) instead of
+            // discarding it: read ex's message into a String before building the wrapper exception.
             final String cause = ex.getFlyweightMessage().toString();
             throw CairoException.nonCritical()
                     .put("Error reading. Parquet file is likely corrupted: ")
@@ -286,6 +291,7 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     }
 
     public void of(LPSZ path, SqlExecutionContext executionContext) throws SqlException {
+        this.circuitBreaker = executionContext.getCircuitBreaker();
         // Reopen the file, it could have changed
         this.fd = TableUtils.openRO(ff, path, LOG);
         this.fileSize = ff.length(fd);
@@ -348,6 +354,12 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
                             return;
                         }
                     } catch (CairoException ex) {
+                        // A tripped circuit breaker must keep its classification and message instead of
+                        // being relabeled as a corrupt-file error. Key on isInterruption(), set by every
+                        // breaker exception; isCancellation() alone would miss a timeout (see hasNext).
+                        if (ex.isInterruption()) {
+                            throw ex;
+                        }
                         // Preserve the underlying decode error instead of discarding it (see hasNext).
                         final String cause = ex.getFlyweightMessage().toString();
                         throw CairoException.nonCritical()
@@ -389,6 +401,9 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     }
 
     private boolean switchToNextRowGroup() {
+        // Consult the breaker once per row group (and once on the first call, even for an empty file),
+        // so a long sequential parquet scan stays cancellable.
+        circuitBreaker.statefulThrowExceptionIfTripped();
         dataPtrs.clear();
         auxPtrs.clear();
         while (++rowGroupIndex < decoder.metadata().getRowGroupCount()) {

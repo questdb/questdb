@@ -115,6 +115,12 @@ public class SampleByNanoTimestampConfigTest extends AbstractBootstrapTest {
                 // present, otherwise the configured default.
                 final boolean calendarAligned = Chars.contains(query, "ALIGN TO CALENDAR")
                         || (!Chars.contains(query, "ALIGN TO FIRST OBSERVATION") && expectedConfig);
+                // getMemUsedByFactories() accounts factory-tagged native memory
+                // process-wide, so background ServerMain threads (telemetry,
+                // mat-view refresh) allocating during the query get charged to this
+                // cursor and trip the post-close check. Skip it for the same reason
+                // ServerMainCleanStartupTest does: it is meaningful only in a bare
+                // CairoEngine, not under a full ServerMain.
                 new QueryAssertion(engine, sqlExecutionContext, () -> {
                 }, query)
                         .noLeakCheck()

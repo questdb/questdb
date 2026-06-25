@@ -27,10 +27,12 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import org.jetbrains.annotations.NotNull;
 
 final class StringLongTuplesRecordCursor implements NoRandomAccessRecordCursor {
     private final TableWriterMetricsRecord record = new TableWriterMetricsRecord();
+    private SqlExecutionCircuitBreaker circuitBreaker;
     private String[] keys;
     private int pos;
     private long[] values;
@@ -46,6 +48,7 @@ final class StringLongTuplesRecordCursor implements NoRandomAccessRecordCursor {
 
     @Override
     public boolean hasNext() {
+        circuitBreaker.statefulThrowExceptionIfTripped();
         if (keys.length > pos + 1) {
             pos++;
             return true;
@@ -53,10 +56,11 @@ final class StringLongTuplesRecordCursor implements NoRandomAccessRecordCursor {
         return false;
     }
 
-    public void of(String[] keys, long[] values) {
+    public void of(String[] keys, long[] values, SqlExecutionCircuitBreaker circuitBreaker) {
         assert keys.length == values.length;
         this.keys = keys;
         this.values = values;
+        this.circuitBreaker = circuitBreaker;
         toTop();
     }
 
