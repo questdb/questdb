@@ -1,0 +1,298 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package org.questdb;
+
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.log.LogFactory;
+import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.mp.WorkerPoolUtils;
+import io.questdb.std.Misc;
+import io.questdb.std.str.Utf8Sequence;
+import org.openjdk.jmh.annotations.Benchmark;
+import org.openjdk.jmh.annotations.BenchmarkMode;
+import org.openjdk.jmh.annotations.Fork;
+import org.openjdk.jmh.annotations.Level;
+import org.openjdk.jmh.annotations.Measurement;
+import org.openjdk.jmh.annotations.Mode;
+import org.openjdk.jmh.annotations.OutputTimeUnit;
+import org.openjdk.jmh.annotations.Param;
+import org.openjdk.jmh.annotations.Scope;
+import org.openjdk.jmh.annotations.Setup;
+import org.openjdk.jmh.annotations.State;
+import org.openjdk.jmh.annotations.TearDown;
+import org.openjdk.jmh.annotations.Warmup;
+import org.openjdk.jmh.infra.Blackhole;
+import org.openjdk.jmh.runner.Runner;
+import org.openjdk.jmh.runner.RunnerException;
+import org.openjdk.jmh.runner.options.Options;
+import org.openjdk.jmh.runner.options.OptionsBuilder;
+
+import java.util.concurrent.TimeUnit;
+
+/**
+ * Measures the parallel covered-index decode (PR "parallel covered-index decode for aggregation
+ * and filter") across a broad battery of query shapes. The covered table carries
+ * DOUBLE / LONG / SYMBOL / VARCHAR covered columns so every decode path is exercised.
+ * <p>
+ * {@code config} selects one of three comparison points, each filtered on a hot symbol key:
+ * <ul>
+ *   <li>{@code PARALLEL_COV} — the new path: N workers over the covering index.</li>
+ *   <li>{@code SERIAL_COV} — the same covered query at 1 worker (the parallelism this branch unlocks).</li>
+ *   <li>{@code PARALLEL_REF} — the same query over a NON-indexed twin at N workers (a full parallel scan;
+ *       the parity target the covered path should reach).</li>
+ * </ul>
+ * The data is built ONCE in {@link #main} into a fixed db root and reused by every trial's engine.
+ * Tunables (system properties): {@code covered.bench.rows} (default 12,000,000),
+ * {@code covered.bench.workers} (default 8).
+ * <p>
+ * Build (note {@code -am} so the benchmark links the in-tree core, not the installed jar) and run
+ * via this class's {@code main} (which builds the data first), passing the module flags the worker
+ * pool needs:
+ * <pre>
+ * mvn -pl benchmarks -am package -o -DskipTests
+ * java --add-exports=java.base/jdk.internal.vm=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED \
+ *      --sun-misc-unsafe-memory-access=allow --enable-native-access=ALL-UNNAMED \
+ *      -cp benchmarks/target/benchmarks.jar org.questdb.CoveredIndexDecodeBenchmark \
+ *      "CoveredIndexDecodeBenchmark" -r 2 -w 1            # shorter JMH iterations
+ * </pre>
+ * Extra args are passed through to JMH (e.g. {@code -p shape=sum,count -p config=PARALLEL_COV} to
+ * restrict the matrix).
+ */
+@State(Scope.Benchmark)
+@BenchmarkMode(Mode.AverageTime)
+@OutputTimeUnit(TimeUnit.MILLISECONDS)
+@Warmup(iterations = 3)
+@Measurement(iterations = 5)
+@Fork(value = 1, jvmArgs = {
+        // The worker pool uses jdk.internal.vm continuations and off-heap memory; the forked
+        // benchmark JVM needs the same module exports the test/run JVMs get (see core/pom.xml argLine).
+        "--add-exports=java.base/jdk.internal.vm=ALL-UNNAMED",
+        "--add-opens=java.base/java.lang=ALL-UNNAMED",
+        "--sun-misc-unsafe-memory-access=allow",
+        "--enable-native-access=ALL-UNNAMED"
+})
+public class CoveredIndexDecodeBenchmark {
+
+    private static final String HOT_KEY = "HOT";
+    private static final int PARALLEL_WORKERS = Integer.getInteger("covered.bench.workers", 8);
+    private static final long ROWS = Long.getLong("covered.bench.rows", 12_000_000L);
+    private static final String ROOT = System.getProperty("java.io.tmpdir") + java.io.File.separator + "covered-index-decode-bench";
+    private static final CairoConfiguration configuration = new DefaultCairoConfiguration(ROOT) {
+        @Override
+        public int getSqlPageFrameMaxRows() {
+            // Small-ish frames so a single hot key spreads into many frames across the workers.
+            return 100_000;
+        }
+
+        @Override
+        public boolean isSqlParallelGroupByEnabled() {
+            return true;
+        }
+    };
+
+    @Param({"sum", "multi_agg", "sum_long", "first_last", "count", "residual", "groupby_symbol", "groupby_varchar", "filter_project"})
+    public String shape;
+
+    @Param({"PARALLEL_COV", "SERIAL_COV", "PARALLEL_REF"})
+    public String config;
+
+    private SqlCompiler compiler;
+    private SqlExecutionContext ctx;
+    private CairoEngine engine;
+    private RecordCursorFactory factory;
+    private WorkerPool pool;
+
+    public static void main(String[] args) throws Exception {
+        // The engine requires its root directory to exist before it opens.
+        java.nio.file.Files.createDirectories(java.nio.file.Paths.get(ROOT));
+        // Build the data once into the shared root; trials reopen the same root.
+        try (CairoEngine engine = new CairoEngine(configuration)) {
+            final SqlExecutionContext ctx = newContext(engine, 1);
+            engine.execute("DROP TABLE IF EXISTS cov", ctx);
+            engine.execute("DROP TABLE IF EXISTS ref", ctx);
+            engine.execute(
+                    "CREATE TABLE cov (" +
+                            "  ts TIMESTAMP," +
+                            "  sym SYMBOL INDEX TYPE POSTING INCLUDE (px, qty, grp, tag)," +
+                            "  px DOUBLE, qty LONG, grp SYMBOL, tag VARCHAR" +
+                            ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
+            engine.execute(
+                    "CREATE TABLE ref (ts TIMESTAMP, sym SYMBOL, px DOUBLE, qty LONG, grp SYMBOL, tag VARCHAR)" +
+                            " TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
+            // Spread the rows over ~16 day-partitions (so frames distribute across workers without
+            // drowning in per-partition overhead), regardless of the configured row count.
+            final long spacingUs = Math.max(1L, 16L * 86_400_000_000L / ROWS);
+            final String gen =
+                    "SELECT" +
+                            " ('2024-01-01'::TIMESTAMP + (x - 1) * " + spacingUs + "L)::timestamp," +
+                            " (CASE WHEN (x % 10) < 4 THEN '" + HOT_KEY + "' ELSE 'C' || (x % 11) END)::symbol," +
+                            " (x % 997)::double," +
+                            " (x % 1000)::long," +
+                            " ('G' || (x % 8))::symbol," +
+                            " ('T' || (x % 8))::varchar" +
+                            " FROM long_sequence(" + ROWS + ")";
+            final long t0 = System.nanoTime();
+            engine.execute("INSERT INTO cov " + gen, ctx);
+            engine.execute("INSERT INTO ref " + gen, ctx);
+            engine.releaseAllWriters();
+            System.out.println("covered-bench data built: " + ROWS + " rows/table in " + (System.nanoTime() - t0) / 1_000_000 + "ms");
+        }
+
+        // Pass JMH CLI args through when provided (e.g. "CoveredIndexDecodeBenchmark -p shape=sum
+        // -p config=PARALLEL_COV -wi 1 -i 3"); otherwise run the full default matrix.
+        final Options opt = args.length > 0
+                ? new org.openjdk.jmh.runner.options.CommandLineOptions(args)
+                : new OptionsBuilder().include(CoveredIndexDecodeBenchmark.class.getSimpleName()).build();
+        new Runner(opt).run();
+        LogFactory.haltInstance();
+    }
+
+    @Benchmark
+    public void run(Blackhole bh) throws SqlException {
+        try (RecordCursor cursor = factory.getCursor(ctx)) {
+            final RecordMetadata m = factory.getMetadata();
+            final int n = m.getColumnCount();
+            final Record rec = cursor.getRecord();
+            while (cursor.hasNext()) {
+                // Touch every column by its real type so the optimizer cannot elide the decode.
+                for (int c = 0; c < n; c++) {
+                    switch (ColumnType.tagOf(m.getColumnType(c))) {
+                        case ColumnType.DOUBLE:
+                        case ColumnType.FLOAT:
+                            bh.consume(rec.getDouble(c));
+                            break;
+                        case ColumnType.LONG:
+                        case ColumnType.TIMESTAMP:
+                        case ColumnType.DATE:
+                            bh.consume(rec.getLong(c));
+                            break;
+                        case ColumnType.INT:
+                        case ColumnType.SYMBOL:
+                        case ColumnType.IPv4:
+                            bh.consume(rec.getInt(c));
+                            break;
+                        case ColumnType.VARCHAR:
+                            final Utf8Sequence v = rec.getVarcharA(c);
+                            bh.consume(v == null ? 0 : v.size());
+                            break;
+                        default:
+                            bh.consume(1);
+                            break;
+                    }
+                }
+            }
+        }
+    }
+
+    @Setup(Level.Trial)
+    public void setUp() throws Exception {
+        final boolean parallel = !"SERIAL_COV".equals(config);
+        final int workerCount = parallel ? PARALLEL_WORKERS : 1;
+        final String table = "PARALLEL_REF".equals(config) ? "ref" : "cov";
+
+        engine = new CairoEngine(configuration);
+        if (workerCount > 1) {
+            pool = new WorkerPool(new WorkerPoolConfiguration() {
+                @Override
+                public String getPoolName() {
+                    return "covered-index-decode-bench";
+                }
+
+                @Override
+                public int getWorkerCount() {
+                    return workerCount;
+                }
+            });
+            WorkerPoolUtils.setupQueryJobs(pool, engine);
+            pool.start();
+        }
+        ctx = newContext(engine, workerCount);
+        compiler = engine.getSqlCompiler();
+        factory = compiler.compile(query(shape, table), ctx).getRecordCursorFactory();
+    }
+
+    @TearDown(Level.Trial)
+    public void tearDown() {
+        factory = Misc.free(factory);
+        compiler = Misc.free(compiler);
+        if (pool != null) {
+            pool.halt();
+            pool = null;
+        }
+        engine = Misc.free(engine);
+    }
+
+    private static SqlExecutionContext newContext(CairoEngine engine, int workerCount) {
+        // Suppress per-query progress logging: JMH invokes the query thousands of times per
+        // iteration, which would otherwise flood stdout (and slow the run) with one log line each.
+        return new SqlExecutionContextImpl(engine, workerCount) {
+            @Override
+            public boolean shouldLogSql() {
+                return false;
+            }
+        }.with(
+                configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                null, null, -1, null
+        );
+    }
+
+    private static String query(String shape, String table) {
+        final String w = " WHERE sym = '" + HOT_KEY + "'";
+        switch (shape) {
+            case "sum":
+                return "SELECT sum(px) FROM " + table + w;
+            case "multi_agg":
+                return "SELECT sum(px), count(), avg(px), min(px), max(px) FROM " + table + w;
+            case "sum_long":
+                return "SELECT sum(qty), max(qty) FROM " + table + w;
+            case "first_last":
+                return "SELECT first(px), last(px) FROM " + table + w;
+            case "count":
+                return "SELECT count() FROM " + table + w;
+            case "residual":
+                return "SELECT sum(px) FROM " + table + w + " AND px > 500";
+            case "groupby_symbol":
+                return "SELECT grp, sum(px), count() FROM " + table + w + " GROUP BY grp ORDER BY grp";
+            case "groupby_varchar":
+                return "SELECT tag, sum(px), count() FROM " + table + w + " GROUP BY tag ORDER BY tag";
+            case "filter_project":
+                return "SELECT ts, px, qty, grp FROM " + table + w;
+            default:
+                throw new IllegalArgumentException("unknown shape: " + shape);
+        }
+    }
+}

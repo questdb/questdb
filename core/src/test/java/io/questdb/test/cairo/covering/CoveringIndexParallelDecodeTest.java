@@ -58,7 +58,6 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf8Sequence;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
@@ -211,187 +210,49 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
         assertParallelVerdict("residual", aRes, bRes, cRes, warmup, false);
     }
 
-    /**
-     * WIDE-QUERY PERFORMANCE HARNESS (companion to {@link #testCoveredDecodeParallelPerf}) —
-     * NOT an assertion test. Measures the covered parallel-decode win across a broad battery
-     * of query shapes, not just the headline {@code sum()}: multi-aggregate, LONG aggregate,
-     * first()/last() (the zero-copy stable case), count(), a residual filter, a vectorized
-     * (SYMBOL-keyed) GROUP BY, a NON-vectorized (VARCHAR-keyed, async) GROUP BY, and a pure
-     * filter projection (rows out). The covered table carries DOUBLE/LONG/SYMBOL/VARCHAR
-     * covered columns so every decode path is exercised.
-     * <p>
-     * For each shape it times three configs over the SAME db root and prints the per-query
-     * wall-clock plus B/A (parallelism speedup), A/C (covered-vs-scan parity) and B/C
-     * (pre-parallelism serial gap):
-     * <ul>
-     *   <li><b>A) parallel cov</b> — the new path, N workers over the covering index.</li>
-     *   <li><b>B) serial cov</b> — the same covered query at 1 worker.</li>
-     *   <li><b>C) parallel ref</b> — the same query over a NON-indexed twin at N workers.</li>
-     * </ul>
-     * Every shape is correctness-checked (cov == ref) before timing, and its plan routing is
-     * recorded, so the numbers are trustworthy. Report-only (no verdict asserts) since some
-     * shapes — count(), pure projection — legitimately do not parallelize the decode.
-     * <p>
-     * Gated behind {@code -Dcovering.perf=true}. Same tunables as
-     * {@link #testCoveredDecodeParallelPerf} ({@code covering.perf.partitions} etc.).
-     */
     @Test
-    public void testCoveredDecodeWideQueryPerf() throws Exception {
-        if (!"true".equals(System.getProperty("covering.perf"))) {
-            LOG.info().$("skipping testCoveredDecodeWideQueryPerf (enable with -Dcovering.perf=true)").$();
-            return;
-        }
-
-        final int partitions = Integer.getInteger("covering.perf.partitions", 16);
-        final int rowsPerPartition = Integer.getInteger("covering.perf.rowsPerPartition", 750_000);
-        final int parallelWorkers = Integer.getInteger("covering.perf.workers", 8);
-        final int warmup = Integer.getInteger("covering.perf.warmup", 2);
-        final int iters = Integer.getInteger("covering.perf.iters", 5);
-        final long rows = (long) rowsPerPartition * partitions;
-        final String hotKey = "HOT";
-        final int coldKeys = 11;
-
-        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 100_000);
-        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, "true");
-
-        // Richer covered schema: px DOUBLE, qty LONG, grp SYMBOL (low-card -> vectorized keyed
-        // GROUP BY), tag VARCHAR (low-card -> NON-vectorized async keyed GROUP BY). All covered.
-        final String gen =
-                "SELECT" +
-                        " ('2024-01-01'::TIMESTAMP + (x - 1) * " + (86_400_000_000L / rowsPerPartition) + "L)::timestamp ts," +
-                        " (CASE WHEN (x % 10) < 4 THEN '" + hotKey + "' ELSE 'C' || (x % " + coldKeys + ") END)::symbol sym," +
-                        " (x % 997)::double px," +
-                        " (x % 1000)::long qty," +
-                        " ('G' || (x % 8))::symbol grp," +
-                        " ('T' || (x % 8))::varchar tag" +
-                        " FROM long_sequence(" + rows + ")";
-        buildPerfDataWide(gen);
-
-        final String w = " WHERE sym = '" + hotKey + "'";
-        final String[][] battery = {
-                {"sum",             "SELECT sum(px) FROM %s" + w},
-                {"multi-agg",       "SELECT sum(px), count(), avg(px), min(px), max(px) FROM %s" + w},
-                {"sum(long)",       "SELECT sum(qty), max(qty) FROM %s" + w},
-                {"first/last",      "SELECT first(px), last(px) FROM %s" + w},
-                {"count",           "SELECT count() FROM %s" + w},
-                {"residual-filter", "SELECT sum(px) FROM %s" + w + " AND px > 500"},
-                {"groupby-symbol",  "SELECT grp, sum(px), count() FROM %s" + w + " GROUP BY grp ORDER BY grp"},
-                {"groupby-varchar", "SELECT tag, sum(px), count() FROM %s" + w + " GROUP BY tag ORDER BY tag"},
-                {"filter-project",  "SELECT ts, px, qty, grp FROM %s" + w},
-        };
-
-        // Correctness + routing pass under the parallel node.
-        final String[] route = new String[battery.length];
-        try (PerfNode node = new PerfNode(configuration, parallelWorkers)) {
-            for (int i = 0; i < battery.length; i++) {
-                final String name = battery[i][0];
-                final String cov = String.format(battery[i][1], "cov");
-                final String ref = String.format(battery[i][1], "ref");
-                if (name.equals("filter-project")) {
-                    // Millions of rows: compare the count + a checksum-ish aggregate rather than
-                    // every row, but still prove cov == ref.
-                    final String chk = "SELECT count(), sum(px), sum(qty) FROM (%s)";
-                    TestUtils.assertSqlCursors(node.compiler, node.ctx,
-                            String.format(chk, ref), String.format(chk, cov), LOG);
-                } else {
-                    TestUtils.assertSqlCursors(node.compiler, node.ctx, ref, cov, LOG);
-                }
-                route[i] = routingTag(node, cov);
-            }
-        }
-
-        // Time A / B / C for every shape.
-        final long[][] aTimes = new long[battery.length][];
-        final long[][] bTimes = new long[battery.length][];
-        final long[][] cTimes = new long[battery.length][];
-        for (int i = 0; i < battery.length; i++) {
-            final String name = battery[i][0];
-            aTimes[i] = timeConfigWide(name, "A parallel cov", String.format(battery[i][1], "cov"), parallelWorkers, warmup, iters);
-            bTimes[i] = timeConfigWide(name, "B serial   cov", String.format(battery[i][1], "cov"), 1, warmup, iters);
-            cTimes[i] = timeConfigWide(name, "C parallel ref", String.format(battery[i][1], "ref"), parallelWorkers, warmup, iters);
-        }
-
-        // Report.
-        final StringBuilder rpt = new StringBuilder();
-        rpt.append('\n');
-        rpt.append("==========================================================================================================\n");
-        rpt.append("  COVERED PARALLEL-DECODE — WIDE QUERY BATTERY  (branch nw_covering_parallel_decode)\n");
-        rpt.append("==========================================================================================================\n");
-        rpt.append(String.format("  rows/table=%,d  partitions=%d  rowsPerPartition=%,d  frameMaxRows=100,000%n", rows, partitions, rowsPerPartition));
-        rpt.append(String.format("  hotKey='%s' (~40%%)  coldKeys=%d   workers: parallel=%d serial=1   warmup=%d measured=%d%n",
-                hotKey, coldKeys, parallelWorkers, warmup, iters));
-        rpt.append("  A=parallel covered   B=serial covered   C=parallel non-indexed scan   (median of measured iters, ms)\n");
-        rpt.append("----------------------------------------------------------------------------------------------------------\n");
-        rpt.append(String.format("  %-16s %-16s %10s %10s %10s   %7s %7s %7s%n",
-                "shape", "routing", "A ms", "B ms", "C ms", "B/A", "A/C", "B/C"));
-        rpt.append("----------------------------------------------------------------------------------------------------------\n");
-        for (int i = 0; i < battery.length; i++) {
-            final double am = medianTail(aTimes[i], warmup), bm = medianTail(bTimes[i], warmup), cm = medianTail(cTimes[i], warmup);
-            rpt.append(String.format("  %-16s %-16s %10.1f %10.1f %10.1f   %6.2fx %6.2fx %6.2fx%n",
-                    battery[i][0], route[i], am / 1e6, bm / 1e6, cm / 1e6, bm / am, am / cm, bm / cm));
-        }
-        rpt.append("==========================================================================================================\n");
-        rpt.append("  B/A = parallelism speedup (higher better)   A/C = covered-vs-scan parity (~1 ideal)   B/C = serial gap\n");
-        rpt.append("==========================================================================================================\n");
-        // Per-shape raw timings for noise visibility.
-        for (int i = 0; i < battery.length; i++) {
-            appendPerf(rpt, battery[i][0] + " [" + route[i] + "]", aTimes[i], bTimes[i], cTimes[i], warmup, iters);
-        }
-
-        LOG.advisory().$safe(rpt).$();
-        System.out.println(rpt);
-    }
-
-    @Test
-    public void testCountOverCoveringIndexIsMetadataExactAndMatchesReference() throws Exception {
-        // count(*) WHERE sym = '<lit>' over a covering index is served by SingleKeyCoveringCursor.size()
-        // -> AbstractPostingIndexReader.countMatchesClamped (O(genCount) metadata, no covered decode,
-        // no posting walk). This locks in that the metadata count equals a full scan of the non-indexed
-        // twin across keys, NULLs, an absent key, and interval-narrowed (partial-frame) ranges.
+    public void testCountOverCoveringIndex() throws Exception {
+        // count(*) WHERE sym = '<lit>' is served from posting-index metadata
+        // (SingleKeyCoveringCursor.size() -> countMatchesClamped): the plan is Count over
+        // CoveringIndex, and the answer is exact -- no covered decode, no posting walk -- across
+        // keys, NULLs, an absent key, and a partial-frame (sub-day) interval. Deterministic data:
+        // x=1..100 -> 'A', 101..250 -> 'B', 251..300 -> NULL; one row per hour from 2024-01-01.
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
-            TestUtils.execute(
-                    pool,
-                    (engine, compiler, sqlExecutionContext) -> {
-                        engine.execute(
-                                "CREATE TABLE cov (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (px), px DOUBLE)" +
-                                        " TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", sqlExecutionContext);
-                        engine.execute(
-                                "CREATE TABLE ref (ts TIMESTAMP, sym SYMBOL, px DOUBLE)" +
-                                        " TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", sqlExecutionContext);
-                        // ~5 days x ~4000 rows: a hot key, several cold keys, and real NULL symbols.
-                        final String gen =
-                                "SELECT ('2024-01-01'::timestamp + (x - 1) * 1800000000L)::timestamp ts," +
-                                        " (CASE WHEN x % 7 = 0 THEN NULL WHEN x % 3 = 0 THEN 'HOT'" +
-                                        "       ELSE 'C' || (x % 5) END)::symbol sym," +
-                                        " (x % 13)::double px FROM long_sequence(20000)";
-                        engine.execute("INSERT INTO cov " + gen, sqlExecutionContext);
-                        engine.execute("INSERT INTO ref " + gen, sqlExecutionContext);
-                        engine.releaseAllWriters();
+            execute("CREATE TABLE cov (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (px), px DOUBLE)" +
+                    " TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO cov SELECT" +
+                    " ('2024-01-01T00:00:00.000000Z'::timestamp + (x - 1) * 3600000000L)::timestamp," +
+                    " CASE WHEN x <= 100 THEN 'A' WHEN x <= 250 THEN 'B' ELSE NULL END," +
+                    " x::double FROM long_sequence(300)");
+            engine.releaseAllWriters();
 
-                        // Confirm the metadata fast path is actually planned (Count over CoveringIndex).
-                        final StringSink plan = new StringSink();
-                        TestUtils.printSql(compiler, sqlExecutionContext, "EXPLAIN SELECT count() FROM cov WHERE sym = 'HOT'", plan);
-                        assertTrue("count() must plan Count over CoveringIndex, got:\n" + plan,
-                                plan.toString().contains("Count") && plan.toString().contains("CoveringIndex on: sym"));
-
-                        for (String pred : new String[]{
-                                "sym = 'HOT'",
-                                "sym = 'C1'",
-                                "sym = 'C4'",
-                                "sym IS NULL",
-                                "sym = 'NOPE'",                                  // absent key -> 0
-                                "sym = 'HOT' AND ts IN '2024-01-02'",            // single-partition interval
-                                "sym = 'HOT' AND ts >= '2024-01-02T06:00:00.000000Z'", // partial-frame ranges
-                        }) {
-                            final String q = "SELECT count() FROM %s WHERE " + pred;
-                            TestUtils.assertSqlCursors(compiler, sqlExecutionContext,
-                                    String.format(q, "ref"), String.format(q, "cov"), LOG);
-                        }
-                    },
-                    configuration,
-                    LOG
-            );
+            assertQuery("SELECT count() FROM cov WHERE sym = 'A'")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("Count", "CoveringIndex on: sym")
+                    .returns("count\n100\n");
+            assertQuery("SELECT count() FROM cov WHERE sym = 'B'")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("Count", "CoveringIndex on: sym")
+                    .returns("count\n150\n");
+            assertQuery("SELECT count() FROM cov WHERE sym = 'NOPE'")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("Count", "CoveringIndex on: sym")
+                    .returns("count\n0\n");
+            // Partial-frame interval: 2024-01-03 06:00..12:00 is hours 6..11 of day 3 = x 55..60,
+            // all 'A' -> 6 rows, from the clamped metadata count over a sub-partition range.
+            assertQuery("SELECT count() FROM cov WHERE sym = 'A'" +
+                    " AND ts >= '2024-01-03T06:00:00.000000Z' AND ts < '2024-01-03T12:00:00.000000Z'")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("Count", "CoveringIndex on: sym")
+                    .returns("count\n6\n");
         });
     }
 
@@ -2234,112 +2095,6 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
             }
         }
         return sum;
-    }
-
-    /**
-     * Builds the wide covered schema (px DOUBLE, qty LONG, grp SYMBOL, tag VARCHAR all covered)
-     * and its non-indexed twin, used by {@link #testCoveredDecodeWideQueryPerf}.
-     */
-    private void buildPerfDataWide(String gen) throws Exception {
-        try (PerfNode node = new PerfNode(configuration, 8)) {
-            node.engine.execute(
-                    "CREATE TABLE cov (" +
-                            "  ts TIMESTAMP," +
-                            "  sym SYMBOL INDEX TYPE POSTING INCLUDE (px, qty, grp, tag)," +
-                            "  px DOUBLE, qty LONG, grp SYMBOL, tag VARCHAR" +
-                            ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL",
-                    node.ctx
-            );
-            node.engine.execute(
-                    "CREATE TABLE ref (" +
-                            "  ts TIMESTAMP, sym SYMBOL, px DOUBLE, qty LONG, grp SYMBOL, tag VARCHAR" +
-                            ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL",
-                    node.ctx
-            );
-            final long t0 = System.nanoTime();
-            node.engine.execute("INSERT INTO cov " + gen, node.ctx);
-            node.engine.execute("INSERT INTO ref " + gen, node.ctx);
-            node.engine.releaseAllWriters();
-            LOG.advisory().$("wide perf data built in ").$((System.nanoTime() - t0) / 1_000_000).$("ms").$();
-        }
-    }
-
-    /**
-     * EXPLAINs the covered query and returns a short routing tag (and prints the full plan).
-     * Unlike {@link #assertOrReportAsyncCovered} this does not fail on a non-async plan — the
-     * wide battery includes shapes that legitimately don't route through an async group-by.
-     */
-    private String routingTag(PerfNode node, String coveredQuery) throws Exception {
-        final StringSink plan = new StringSink();
-        TestUtils.printSql(node.compiler, node.ctx, "EXPLAIN " + coveredQuery, plan);
-        final String p = plan.toString();
-        final boolean covered = p.contains("CoveringIndex on: sym");
-        final String tag;
-        if (!covered) {
-            tag = "NOT-COVERED";
-        } else if (p.contains("Async Group By") || p.contains("Async JIT Group By")) {
-            tag = "async-covered";        // non-vectorized parallel group-by (Unordered sequence)
-        } else if (p.contains("GroupBy vectorized")) {
-            tag = "vector-covered";       // vectorized parallel group-by (Rosti)
-        } else if (p.contains("Count")) {
-            tag = "covered-count";        // index count, no decode
-        } else if (p.contains("Async")) {
-            tag = "async-filter";         // parallel filter
-        } else {
-            tag = "covered-scan";         // streaming covered page-frame scan
-        }
-        System.out.println("routing [" + tag + "]: " + coveredQuery + "\n" + p);
-        return tag;
-    }
-
-    /**
-     * {@link #timeConfig} with a type-aware drain (the wide battery returns SYMBOL / VARCHAR /
-     * LONG columns, not just DOUBLE).
-     */
-    private long[] timeConfigWide(String shape, String cfg, String query, int workerCount, int warmup, int iters) throws Exception {
-        final long[] timings = new long[warmup + iters];
-        long guard = 0;
-        try (PerfNode node = new PerfNode(configuration, workerCount)) {
-            for (int i = 0; i < warmup + iters; i++) {
-                final long t0 = System.nanoTime();
-                guard += drainGuardWide(node, query);
-                timings[i] = System.nanoTime() - t0;
-            }
-        }
-        LOG.advisory().$("timed [").$(shape).$(' ').$(cfg).$("] guard=").$(guard).$();
-        return timings;
-    }
-
-    // Type-aware DCE guard: touch every column of every row by its real type so the optimizer
-    // cannot elide the decode, regardless of the result shape.
-    private static long drainGuardWide(PerfNode node, String query) throws Exception {
-        long guard = 0;
-        try (RecordCursorFactory factory = node.compiler.compile(query, node.ctx).getRecordCursorFactory()) {
-            final RecordMetadata m = factory.getMetadata();
-            final int n = m.getColumnCount();
-            try (RecordCursor cursor = factory.getCursor(node.ctx)) {
-                final Record rec = cursor.getRecord();
-                while (cursor.hasNext()) {
-                    for (int c = 0; c < n; c++) {
-                        switch (ColumnType.tagOf(m.getColumnType(c))) {
-                            case ColumnType.DOUBLE, ColumnType.FLOAT -> guard += (long) rec.getDouble(c);
-                            case ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE -> guard += rec.getLong(c);
-                            case ColumnType.INT, ColumnType.SYMBOL, ColumnType.IPv4 -> guard += rec.getInt(c);
-                            case ColumnType.VARCHAR -> {
-                                Utf8Sequence v = rec.getVarcharA(c);
-                                guard += v == null ? 0 : v.size();
-                            }
-                            case ColumnType.STRING -> {
-                                CharSequence s = rec.getStrA(c);
-                                guard += s == null ? 0 : s.length();
-                            }
-                            default -> guard += 1;
-                        }
-                    }
-                }
-            }
-        }
-        return guard;
     }
 
     // Mean of the MEASURED iterations only (the leading `skip` warmup samples are
