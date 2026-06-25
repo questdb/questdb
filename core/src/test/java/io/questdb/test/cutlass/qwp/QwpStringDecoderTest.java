@@ -337,7 +337,7 @@ public class QwpStringDecoderTest {
                     buffer.nextRow();
                 }
 
-                int size = encoder.encode(buffer, false);
+                int size = encoder.encode(buffer);
                 QwpBufferWriter buf = encoder.getBuffer();
                 long ptr = buf.getBufferPtr();
 

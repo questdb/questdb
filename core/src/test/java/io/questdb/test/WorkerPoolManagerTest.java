@@ -43,6 +43,7 @@ import io.questdb.mp.Job;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.std.Os;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -50,6 +51,7 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
@@ -61,6 +63,62 @@ public class WorkerPoolManagerTest {
     @Before
     public void setUp() throws Exception {
         Metrics.ENABLED.clear();
+    }
+
+    @Test
+    public void testBoundedHaltProceedsWhenWorkerWedged() {
+        // A worker stuck in a never-returning job would make an unbounded halt() block forever.
+        // The bounded halt(timeoutNanos) must instead wait up to the budget, log, and return.
+        final AtomicBoolean release = new AtomicBoolean(false);
+        final SOCountDownLatch jobEntered = new SOCountDownLatch(1);
+        final WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
+            @Override
+            public String getPoolName() {
+                return "wedged";
+            }
+
+            @Override
+            public int getWorkerCount() {
+                return 1;
+            }
+
+            @Override
+            public boolean isDaemonPool() {
+                // Daemon so the wedged worker cannot keep the JVM alive after the test returns.
+                return true;
+            }
+        });
+        pool.assign(workerContext -> {
+            jobEntered.countDown();
+            // Spin until released so the worker never reaches halted.countDown() within the bound.
+            while (!release.get()) {
+                Os.pause();
+            }
+            return false;
+        });
+        try {
+            pool.start(null);
+            Assert.assertTrue("worker job never started", jobEntered.await(TimeUnit.SECONDS.toNanos(30L)));
+
+            final long budgetNanos = TimeUnit.MILLISECONDS.toNanos(200L);
+            final long start = System.nanoTime();
+            pool.halt(budgetNanos);
+            final long elapsed = System.nanoTime() - start;
+
+            // halt() returned despite the wedged worker (log-and-proceed), and did so close to the
+            // budget rather than blocking forever. Allow generous slack for CI scheduling jitter.
+            Assert.assertTrue(
+                    "bounded halt returned too fast, budget not honoured [elapsedMs=" + (elapsed / 1_000_000) + "]",
+                    elapsed >= budgetNanos - TimeUnit.MILLISECONDS.toNanos(50L)
+            );
+            Assert.assertTrue(
+                    "bounded halt did not respect its timeout [elapsedMs=" + (elapsed / 1_000_000) + "]",
+                    elapsed < TimeUnit.SECONDS.toNanos(10L)
+            );
+        } finally {
+            // Let the wedged worker exit its job so the daemon thread can stop spinning.
+            release.set(true);
+        }
     }
 
     @Test
@@ -324,7 +382,7 @@ public class WorkerPoolManagerTest {
     }
 
     private static Job fastCountDownJob(SOCountDownLatch endLatch) {
-        return (workerId, runStatus) -> {
+        return workerContext -> {
             endLatch.countDown();
             if (endLatch.getCount() < 1) {
                 throw new RuntimeException(END_MESSAGE);
@@ -334,7 +392,7 @@ public class WorkerPoolManagerTest {
     }
 
     private static Job scrapeIntoPrometheusJob(AtomicReference<DirectUtf8Sink> sink) {
-        return (workerId, runStatus) -> {
+        return workerContext -> {
             final DirectUtf8Sink s = sink.get();
             s.clear();
             Metrics.ENABLED.scrapeIntoPrometheus(s);
@@ -343,7 +401,7 @@ public class WorkerPoolManagerTest {
     }
 
     private static Job slowCountUpJob(AtomicInteger count) {
-        return (workerId, runStatus) -> {
+        return workerContext -> {
             count.incrementAndGet();
             return false; // not eager
         };

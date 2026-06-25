@@ -36,7 +36,7 @@ import io.questdb.test.griffin.fuzz.expr.ExpressionGenerator;
 import io.questdb.test.griffin.fuzz.expr.FuzzExpr;
 
 /**
- * Single-table {@code SELECT expr[, expr]* FROM t [WHERE p]
+ * Single-table {@code SELECT [DISTINCT] expr[, expr]* FROM t [WHERE p]
  * [ORDER BY key[, key]* [ASC|DESC]] [LIMIT N]}. Projection entries are
  * typed expressions produced by {@link ExpressionGenerator}. A
  * {@code SELECT *} shape is still emitted occasionally for wildcard
@@ -44,35 +44,44 @@ import io.questdb.test.griffin.fuzz.expr.FuzzExpr;
  * aliases are off (or {@code SELECT *} was chosen), it falls back to
  * the designated timestamp column &mdash; or is skipped if the source
  * has none (virtual tables).
+ * <p>
+ * {@code DISTINCT} is emitted on a fraction of queries to fuzz the
+ * generic distinct execution paths (the DISTINCT-to-GROUP BY rewrite and
+ * its async variants) over arbitrary projections and source shapes &mdash;
+ * separate from the narrow single-column DISTINCT that
+ * {@link io.questdb.test.griffin.fuzz.clauses.PostingClause} emits to
+ * drive the posting index. The ts-fallback ORDER BY is suppressed under
+ * DISTINCT since DISTINCT forbids ordering by a non-projected column.
  */
 public final class SimpleClause {
 
     private SimpleClause() {
     }
 
-    public static GeneratedQuery generate(Rnd rnd, FuzzSource source, BindContext ctx) {
+    public static GeneratedQuery generate(Rnd rnd, FuzzSource source, BindContext ctx, boolean injectFaultFn) {
         FuzzTable table = source.getTable();
         boolean useTableAlias = rnd.nextBoolean();
         boolean useColAliases = rnd.nextBoolean();
+        boolean distinct = rnd.nextInt(4) == 0;
         String alias = useTableAlias ? "t0" : null;
         String qualifier = useTableAlias ? alias : null;
 
         StringSink sql = new StringSink();
         sql.put(source.getPrefixSql());
         sql.put("SELECT ");
+        if (distinct) {
+            sql.put("DISTINCT ");
+        }
         int numAliases = appendProjection(sql, rnd, table, qualifier, useColAliases, ctx);
         sql.put(" FROM ").put(source.getFromSqlWithGarble(rnd));
         if (useTableAlias) {
             sql.put(' ').put(alias);
         }
 
-        if (rnd.nextBoolean()) {
-            String pred = new PredicateGenerator(rnd, 2).generate(table.getColumns(), qualifier, ctx);
-            sql.put(" WHERE ").put(pred);
-        }
+        PredicateGenerator.appendWhere(sql, rnd, table.getColumns(), qualifier, 2, ctx, injectFaultFn);
 
         if (rnd.nextBoolean()) {
-            appendOrderBy(sql, rnd, table, qualifier, numAliases);
+            appendOrderBy(sql, rnd, table, qualifier, numAliases, distinct);
         }
 
         // LIMIT without a fully-disambiguating ORDER BY can pick a different
@@ -91,9 +100,13 @@ public final class SimpleClause {
             Rnd rnd,
             FuzzTable table,
             String qualifier,
-            int numAliases
+            int numAliases,
+            boolean distinct
     ) {
-        if (numAliases == 0 && table.getTsColumnName() == null) {
+        // With DISTINCT the ts-fallback would order by a possibly-unprojected
+        // column, which DISTINCT forbids; only the alias/positional path below
+        // (numAliases > 0) is guaranteed to reference projected columns.
+        if (numAliases == 0 && (distinct || table.getTsColumnName() == null)) {
             return;
         }
         sink.put(" ORDER BY ");

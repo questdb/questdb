@@ -31,19 +31,21 @@ public class SumLong256VecGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAllNullThenOne() throws Exception {
-        assertQuery("sum\n\n", "select sum(f) from tab", "create table tab as (select cast(null as long256) f from long_sequence(33))", null, "insert into tab select cast(123L as long256) from long_sequence(1)", "sum\n0x7b\n", false, true, false);
+        assertQuery("select sum(f) from tab")
+                .ddl("create table tab as (select cast(null as long256) f from long_sequence(33))")
+                .mutateWith("insert into tab select cast(123L as long256) from long_sequence(1)")
+                .noRandomAccess()
+                .expectSize()
+                .returns("sum\n\n", "sum\n0x7b\n");
     }
 
     @Test
     public void testSimple() throws Exception {
-        assertQuery(
-                "sum\tsum1\n5050\t0x13ba\n",
-                "select sum(x), sum(y) from tab",
-                "create table tab as (select x, cast(x as long256) y from long_sequence(100))\n",
-                null,
-                false,
-                true
-        );
+        assertQuery("select sum(x), sum(y) from tab")
+                .ddl("create table tab as (select x, cast(x as long256) y from long_sequence(100))\n")
+                .noRandomAccess()
+                .expectSize()
+                .returns("sum\tsum1\n5050\t0x13ba\n");
     }
 
     @Test
@@ -57,7 +59,11 @@ public class SumLong256VecGroupByFunctionFactoryTest extends AbstractCairoTest {
             execute("insert into tab values (0xb6292e820db4d91ba9a74c8c459676d127590af55a4eccba93a826db814c49c6)");
             String query = "select sum(x) from tab";
             String ex = "sum\n0x67f8b94c324a68824df7e1b864ec7baaeebec676cc2ab629ee23e1880d646e59\n";
-            printSqlResult(ex, query, null, false, true);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(ex);
         });
     }
 }

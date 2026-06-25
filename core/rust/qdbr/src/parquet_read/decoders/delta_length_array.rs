@@ -57,6 +57,13 @@ impl<'a> DeltaLAVarcharSliceDecoder<'a> {
             None => (Miniblock::default(), packs_per_miniblock),
         };
 
+        // A zero-value page (empty length buffer or a value_count=0 header) has
+        // no real first length -- `first_value` is a phantom default. Mark it
+        // already consumed so the first value request fails with "not enough
+        // values to iterate" instead of emitting a phantom zero-length string.
+        // All-null pages are unaffected: their definition levels drive only
+        // push_nulls.
+        let consumed_initial = !iterator.has_values;
         Ok(Self {
             data: unsafe { data.as_ptr().add(data_offset) },
             data_len: data.len() - data_offset,
@@ -65,7 +72,7 @@ impl<'a> DeltaLAVarcharSliceDecoder<'a> {
             ascii,
             iterator,
             current_value: first_value,
-            consumed_initial: false,
+            consumed_initial,
             first_value,
             values: [0i32; 32],
             value_index: 32,
@@ -108,14 +115,37 @@ impl<'a> DeltaLAVarcharSliceDecoder<'a> {
             }
         }
 
-        let num_bits = self.miniblock.num_bits;
-        let pack_size = 32 * num_bits as usize / 8;
+        let num_bits = self.miniblock.num_bits as usize;
+        // i32 lengths only pack into widths 0..=32; a wider field comes from a
+        // foreign or corrupt page. Without this guard unpack32 hits
+        // unreachable!, panicking and aborting the JVM over JNI. Mirrors the
+        // guard in DeltaBinaryPackedDecoder::unpack_next.
+        if num_bits > 32 {
+            return Err(fmt_err!(
+                Layout,
+                "DELTA_LENGTH_BYTE_ARRAY bit width {} exceeds 32-bit length width",
+                num_bits
+            ));
+        }
+        let pack_size = 32 * num_bits / 8;
         let offset = self.miniblock_pack_index * pack_size;
-        let data_ptr = self.miniblock.data.as_ptr();
-        let data = unsafe { std::slice::from_raw_parts(data_ptr.add(offset), pack_size) };
+        // Bounds-checked slice rather than from_raw_parts: with num_bits <= 32
+        // the pack always lies within the miniblock, but the checked get()
+        // turns any miniblock-size inconsistency into an error instead of
+        // out-of-bounds UB.
+        let data = self
+            .miniblock
+            .data
+            .get(offset..offset + pack_size)
+            .ok_or_else(|| {
+                fmt_err!(
+                    Layout,
+                    "DELTA_LENGTH_BYTE_ARRAY pack exceeds miniblock size"
+                )
+            })?;
         self.miniblock_pack_index += 1;
 
-        unpack32(data, self.values.as_mut_ptr().cast(), num_bits as usize);
+        unpack32(data, self.values.as_mut_ptr().cast(), num_bits);
 
         Ok(())
     }
@@ -399,7 +429,10 @@ mod tests {
             aux_size: 0,
             aux_ptr: ptr::null_mut(),
             aux_vec: AcVec::new_in(allocator.clone()),
+            page_buffers_size: 0,
             page_buffers: Vec::new(),
+            page_buffers_charged: 0,
+            page_buffers_counted: 0,
         }
     }
 
@@ -1250,13 +1283,198 @@ mod tests {
     }
 
     #[test]
-    fn test_invalid_header() {
+    fn test_empty_page_pushes_nulls() {
+        // Path 1 (backward compat): an *empty* length buffer, as emitted by the
+        // pre-fix integer writer and tolerated here so the varchar decoder shares
+        // the same empty-buffer handling. QuestDB's varchar writer never produces
+        // this shape (see `test_value_count_zero_header_pushes_nulls` for the real
+        // production page); this only proves the empty branch fills nulls.
         let tas = TestAllocatorState::new();
         let allocator = tas.allocator();
         let mut buffers = create_test_buffers(&allocator);
-        // Empty data → can't decode ULEB128 header
         let data: &[u8] = &[];
-        let result = DeltaLAVarcharSliceDecoder::try_new(data, &mut buffers, true);
-        assert!(result.is_err(), "expected error for empty header");
+        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(data, &mut buffers, true).unwrap();
+        decoder.reserve(4).unwrap();
+        decoder.push_nulls(4).unwrap();
+
+        let entries = read_aux_entries(&buffers);
+        assert_eq!(entries.len(), 4);
+        for e in &entries {
+            assert!(is_null_entry(e.0, e.1));
+        }
+    }
+
+    #[test]
+    fn test_value_count_zero_header_pushes_nulls() {
+        // Path 2 (production): an all-null varchar partition is written by
+        // `encode_varchar_delta` as a *self-describing* DELTA_BINARY_PACKED
+        // lengths header with value_count=0 (block_size=128, miniblocks=1,
+        // first_value=0) -- NOT an empty buffer. Decoding it exercises the
+        // normal (non-empty) `MiniblockIterator::try_new` path plus
+        // `get_end_pointer` for a zero-value header, then fills nulls.
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let mut buffers = create_test_buffers(&allocator);
+
+        // The exact bytes QuestDB's varlen writer emits for zero lengths.
+        let mut header = Vec::new();
+        parquet2::encoding::delta_bitpacked::encode(std::iter::empty::<i64>(), &mut header);
+        assert!(
+            !header.is_empty(),
+            "a value_count=0 delta header must carry bytes"
+        );
+
+        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&header, &mut buffers, true).unwrap();
+        decoder.reserve(4).unwrap();
+        decoder.push_nulls(4).unwrap();
+
+        let entries = read_aux_entries(&buffers);
+        assert_eq!(entries.len(), 4);
+        for e in &entries {
+            assert!(is_null_entry(e.0, e.1));
+        }
+    }
+
+    #[test]
+    fn test_empty_page_value_request_errors() {
+        // Companion to `test_empty_page_pushes_nulls`: an all-null varchar page
+        // only fills nulls, but if a value is requested anyway (a corrupt page),
+        // the FIRST request fails with "not enough values to iterate" and writes
+        // nothing -- no phantom zero-length string is emitted.
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
+        // push(): the first value request errors.
+        {
+            let mut buffers = create_test_buffers(&allocator);
+            let err = {
+                let mut decoder =
+                    DeltaLAVarcharSliceDecoder::try_new(&[], &mut buffers, true).unwrap();
+                decoder.reserve(2).unwrap();
+                decoder.push().unwrap_err()
+            };
+            assert!(
+                format!("{err}").contains("not enough values to iterate"),
+                "got: {err}"
+            );
+            assert_eq!(
+                read_aux_entries(&buffers).len(),
+                0,
+                "errored push must not write"
+            );
+        }
+
+        // push_slice(1): same contract via the batched path.
+        {
+            let mut buffers = create_test_buffers(&allocator);
+            let err = {
+                let mut decoder =
+                    DeltaLAVarcharSliceDecoder::try_new(&[], &mut buffers, true).unwrap();
+                decoder.reserve(2).unwrap();
+                decoder.push_slice(1).unwrap_err()
+            };
+            assert!(
+                format!("{err}").contains("not enough values to iterate"),
+                "got: {err}"
+            );
+        }
+    }
+
+    // --- Bit width overflow ---
+
+    /// Build a malformed DELTA_LENGTH_BYTE_ARRAY page whose first miniblock
+    /// declares the given bit width. With `bit_width > 32` this is a foreign /
+    /// corrupt page: the i32 length unpacker only handles widths 0..=32.
+    ///
+    /// Layout: block_size=128, miniblocks_per_block=1, value_count=2,
+    /// first_value=0, min_delta=0, bitwidth=`bit_width`, then `128*bit_width/8`
+    /// packed bytes. The spec requires block_size to be a multiple of 128, which
+    /// MiniblockIterator::try_new now enforces, so this minimal page uses 128 (the
+    /// block size is irrelevant to the bit-width guard these tests exercise).
+    fn bit_width_page(bit_width: u8) -> Vec<u8> {
+        let mut data = vec![0x80u8, 0x01, 0x01, 0x02, 0x00, 0x00, bit_width];
+        data.extend(std::iter::repeat_n(0u8, 128 * bit_width as usize / 8));
+        data
+    }
+
+    #[test]
+    fn test_bit_width_exceeds_length_width_push() {
+        // A foreign page whose first miniblock declares bitwidth=33 (> 32, the
+        // i32 length width). Without a guard, the 2nd push() reaches
+        // unpack32(.., 33) and panics via unreachable!, which aborts the JVM
+        // over JNI. It must instead surface a clean Layout error.
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let mut buffers = create_test_buffers(&allocator);
+        let data = bit_width_page(33);
+
+        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, &mut buffers, true).unwrap();
+        decoder.reserve(2).unwrap();
+        decoder.push().unwrap(); // first value (0) OK
+        let err = decoder.push().err();
+        assert!(err.is_some(), "expected Err for bitwidth>32, not a panic");
+        assert!(
+            format!("{}", err.unwrap()).contains("exceeds 32-bit length width"),
+            "wrong error message"
+        );
+    }
+
+    #[test]
+    fn test_bit_width_exceeds_length_width_push_slice() {
+        // Same malformed page, exercised through the batched push_slice path,
+        // which also routes through unpack_next.
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let mut buffers = create_test_buffers(&allocator);
+        let data = bit_width_page(255);
+
+        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, &mut buffers, true).unwrap();
+        decoder.reserve(2).unwrap();
+        let err = decoder.push_slice(2).err();
+        assert!(err.is_some(), "expected Err for bitwidth>32, not a panic");
+        assert!(
+            format!("{}", err.unwrap()).contains("exceeds 32-bit length width"),
+            "wrong error message"
+        );
+    }
+
+    #[test]
+    fn test_bit_width_exceeds_length_width_skip() {
+        // Same malformed page, exercised through the skip path, which also
+        // routes through unpack_next once the initial value is consumed.
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let mut buffers = create_test_buffers(&allocator);
+        let data = bit_width_page(33);
+
+        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, &mut buffers, true).unwrap();
+        let err = decoder.skip(2).err();
+        assert!(err.is_some(), "expected Err for bitwidth>32, not a panic");
+        assert!(
+            format!("{}", err.unwrap()).contains("exceeds 32-bit length width"),
+            "wrong error message"
+        );
+    }
+
+    #[test]
+    fn test_bit_width_at_limit_is_accepted() {
+        // bitwidth=32 is the maximum valid width for i32 lengths and must NOT
+        // be rejected by the guard. The packed bytes are all zero, so every
+        // decoded delta is min_delta (0): lengths stay 0 and decode cleanly.
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let mut buffers = create_test_buffers(&allocator);
+        let data = bit_width_page(32);
+
+        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, &mut buffers, true).unwrap();
+        decoder.reserve(2).unwrap();
+        decoder.push().unwrap();
+        decoder.push().unwrap();
+
+        let entries = read_aux_entries(&buffers);
+        assert_eq!(entries.len(), 2);
+        // Both lengths are 0 -> empty-string header (flags=3).
+        assert_eq!(entries[0].0, 3);
+        assert_eq!(entries[1].0, 3);
     }
 }

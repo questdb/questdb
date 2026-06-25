@@ -55,6 +55,7 @@ import io.questdb.std.str.Utf8s;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.QueryAssertion;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -633,37 +634,36 @@ public class O3FailureTest extends AbstractO3Test {
                     } catch (CairoException ignored) {
                     }
 
-                    TestUtils.assertSql(
-                            compiler,
-                            sqlExecutionContext,
-                            "select * from " + tableName + " limit -5",
-                            sink,
-                            replaceTimestampSuffix1("""
+                    new QueryAssertion(engine, sqlExecutionContext, () -> {
+                    }, "select * from " + tableName + " limit -5")
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .expectSize()
+                            .returns(replaceTimestampSuffix1("""
                                     x\tts
                                     496\t2022-02-24T00:00:00.495000Z
                                     497\t2022-02-24T00:00:00.496000Z
                                     498\t2022-02-24T00:00:00.497000Z
                                     499\t2022-02-24T00:00:00.498000Z
                                     500\t2022-02-24T00:00:00.499000Z
-                                    """, timestampTypeAndName)
-                    );
+                                    """, timestampTypeAndName));
 
                     // Insert ok after failure
                     o3Ts = MICRO_DRIVER.toMSecString(maxTimestamp - 3000);
                     engine.execute("insert into " + tableName + " VALUES(-1, '" + o3Ts + "')", sqlExecutionContext);
-                    TestUtils.assertSql(
-                            compiler,
-                            sqlExecutionContext, "select * from " + tableName + " limit -5",
-                            sink,
-                            replaceTimestampSuffix1("""
+                    new QueryAssertion(engine, sqlExecutionContext, () -> {
+                    }, "select * from " + tableName + " limit -5")
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .expectSize()
+                            .returns(replaceTimestampSuffix1("""
                                     x\tts
                                     497\t2022-02-24T00:00:00.496000Z
                                     498\t2022-02-24T00:00:00.497000Z
                                     -1\t2022-02-24T00:00:00.497000Z
                                     499\t2022-02-24T00:00:00.498000Z
                                     500\t2022-02-24T00:00:00.499000Z
-                                    """, timestampTypeAndName)
-                    );
+                                    """, timestampTypeAndName));
                 },
                 new TestFilesFacadeImpl() {
                     @Override
@@ -994,33 +994,32 @@ public class O3FailureTest extends AbstractO3Test {
                     } catch (CairoException ignored) {
                     }
 
-                    TestUtils.assertSql(
-                            compiler,
-                            sqlExecutionContext,
-                            "select * from " + tableName + " limit -5",
-                            sink,
-                            replaceTimestampSuffix1("str\tts\n" +
+                    new QueryAssertion(engine, sqlExecutionContext, () -> {
+                    }, "select * from " + tableName + " limit -5")
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .expectSize()
+                            .returns(replaceTimestampSuffix1("str\tts\n" +
                                     strColVal + "\t2022-02-24T00:00:00.495000Z\n" +
                                     strColVal + "\t2022-02-24T00:00:00.496000Z\n" +
                                     strColVal + "\t2022-02-24T00:00:00.497000Z\n" +
                                     strColVal + "\t2022-02-24T00:00:00.498000Z\n" +
-                                    strColVal + "\t2022-02-24T00:00:00.499000Z\n", timestampTypeAndName)
-                    );
+                                    strColVal + "\t2022-02-24T00:00:00.499000Z\n", timestampTypeAndName));
 
                     // Insert ok after failure
                     o3Ts = MICRO_DRIVER.toMSecString(maxTimestamp - 3000);
                     engine.execute("insert into " + tableName + " VALUES('abcd', '" + o3Ts + "')", sqlExecutionContext);
-                    TestUtils.assertSql(
-                            compiler,
-                            sqlExecutionContext, "select * from " + tableName + " limit -5",
-                            sink,
-                            replaceTimestampSuffix1("str\tts\n" +
+                    new QueryAssertion(engine, sqlExecutionContext, () -> {
+                    }, "select * from " + tableName + " limit -5")
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .expectSize()
+                            .returns(replaceTimestampSuffix1("str\tts\n" +
                                     strColVal + "\t2022-02-24T00:00:00.496000Z\n" +
                                     strColVal + "\t2022-02-24T00:00:00.497000Z\n" +
                                     "abcd\t2022-02-24T00:00:00.497000Z\n" +
                                     strColVal + "\t2022-02-24T00:00:00.498000Z\n" +
-                                    strColVal + "\t2022-02-24T00:00:00.499000Z\n", timestampTypeAndName)
-                    );
+                                    strColVal + "\t2022-02-24T00:00:00.499000Z\n", timestampTypeAndName));
                 },
                 new TestFilesFacadeImpl() {
                     @Override
@@ -3348,7 +3347,7 @@ public class O3FailureTest extends AbstractO3Test {
                     private boolean toRun = true;
 
                     @Override
-                    public boolean run(int workerId, @NotNull RunStatus runStatus) {
+                    public boolean run(@NotNull WorkerContext workerContext) {
                         if (toRun) {
                             try {
                                 toRun = false;
@@ -3371,7 +3370,7 @@ public class O3FailureTest extends AbstractO3Test {
                         private boolean toRun = true;
 
                         @Override
-                        public boolean run(int workerId, @NotNull RunStatus runStatus) {
+                        public boolean run(@NotNull WorkerContext workerContext) {
                             if (toRun) {
                                 try {
                                     toRun = false;
@@ -3703,46 +3702,43 @@ public class O3FailureTest extends AbstractO3Test {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
             String timestampTypeName
-    ) throws SqlException {
+    ) throws Exception {
         engine.execute(
                 "create table x (ts " + timestampTypeName + ", block_nr long) timestamp (ts) partition by DAY",
                 sqlExecutionContext
         );
 
-        TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
-                "x",
-                sink,
-                "ts\tblock_nr\n"
-        );
+        new QueryAssertion(engine, sqlExecutionContext, () -> {
+        }, "x")
+                .noLeakCheck()
+                .timestamp("ts")
+                .expectSize()
+                .returns("ts\tblock_nr\n");
 
         engine.execute("insert into x values(cast('2010-02-04T21:43:14.000000Z' as timestamp), 38304)", sqlExecutionContext);
 
-        TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
-                "x",
-                sink,
-                replaceTimestampSuffix1("""
+        new QueryAssertion(engine, sqlExecutionContext, () -> {
+        }, "x")
+                .noLeakCheck()
+                .timestamp("ts")
+                .expectSize()
+                .returns(replaceTimestampSuffix1("""
                         ts\tblock_nr
                         2010-02-04T21:43:14.000000Z\t38304
-                        """, timestampTypeName)
-        );
+                        """, timestampTypeName));
 
         engine.execute("insert into x values(cast('2010-02-14T23:52:59.000000Z' as timestamp), 40320)", sqlExecutionContext);
 
-        TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
-                "x",
-                sink,
-                replaceTimestampSuffix1("""
+        new QueryAssertion(engine, sqlExecutionContext, () -> {
+        }, "x")
+                .noLeakCheck()
+                .timestamp("ts")
+                .expectSize()
+                .returns(replaceTimestampSuffix1("""
                         ts\tblock_nr
                         2010-02-04T21:43:14.000000Z\t38304
                         2010-02-14T23:52:59.000000Z\t40320
-                        """, timestampTypeName)
-        );
+                        """, timestampTypeName));
 
     }
 
@@ -3878,7 +3874,7 @@ public class O3FailureTest extends AbstractO3Test {
     protected static void drainWalQueue(CairoEngine engine) {
         try (final ApplyWal2TableJob walApplyJob = createWalApplyJob(engine)) {
             walApplyJob.drain(0);
-            new CheckWalTransactionsJob(engine).run(0);
+            new CheckWalTransactionsJob(engine).run();
             // run once again as there might be notifications to handle now
             walApplyJob.drain(0);
         }

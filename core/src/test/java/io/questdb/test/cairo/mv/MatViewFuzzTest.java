@@ -164,13 +164,14 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 drainWalAndMatViewQueues();
 
                 LOG.info().$("asserting view ").$(mvName).$(" against ").$(viewSql).$();
-                assertSql(
-                        """
+                assertQuery("select count() from materialized_views where view_name = '" + mvName + "' and view_status <> 'invalid';")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("""
                                 count
                                 1
-                                """,
-                        "select count() from materialized_views where view_name = '" + mvName + "' and view_status <> 'invalid';"
-                );
+                                """);
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
                     TestUtils.assertSqlCursors(
                             compiler,
@@ -654,25 +655,27 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 final String mvName = testTableName + "_" + i + "_mv";
                 LOG.info().$("asserting view ").$(mvName).$(" against ").$(viewSql).$();
                 // Check that the view exists.
-                assertSql(
-                        """
+                assertQuery("select count() " +
+                        "from materialized_views " +
+                        "where view_name = '" + mvName + "';")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("""
                                 count
                                 1
-                                """,
-                        "select count() " +
-                                "from materialized_views " +
-                                "where view_name = '" + mvName + "';"
-                );
+                                """);
                 if (expectValidMatViews) {
-                    assertSql(
-                            """
+                    assertQuery("select count() " +
+                            "from materialized_views " +
+                            "where view_name = '" + mvName + "' and view_status <> 'invalid';")
+                            .noLeakCheck()
+                            .expectSize()
+                            .noRandomAccess()
+                            .returns("""
                                     count
                                     1
-                                    """,
-                            "select count() " +
-                                    "from materialized_views " +
-                                    "where view_name = '" + mvName + "' and view_status <> 'invalid';"
-                    );
+                                    """);
                     TestUtils.assertSqlCursors(
                             compiler,
                             sqlExecutionContext,
@@ -747,15 +750,16 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 final String viewSql = viewSqls.getQuick(i);
                 final String mvName = testTableName + "_" + i + "_mv";
                 LOG.info().$("asserting view ").$(mvName).$(" against ").$(viewSql).$();
-                assertSql(
-                        """
+                assertQuery("select count() " +
+                        "from materialized_views " +
+                        "where view_name = '" + mvName + "' and view_status <> 'invalid';")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("""
                                 count
                                 1
-                                """,
-                        "select count() " +
-                                "from materialized_views " +
-                                "where view_name = '" + mvName + "' and view_status <> 'invalid';"
-                );
+                                """);
                 TestUtils.assertSqlCursors(
                         compiler,
                         sqlExecutionContext,
@@ -825,15 +829,16 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 final String viewSql = viewSqls.getQuick(i);
                 final String mvName = testTableName + "_" + i + "_mv";
                 LOG.info().$("asserting view ").$(mvName).$(" against ").$(viewSql).$();
-                assertSql(
-                        """
+                assertQuery("select count() " +
+                        "from materialized_views " +
+                        "where view_name = '" + mvName + "' and view_status <> 'invalid';")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("""
                                 count
                                 1
-                                """,
-                        "select count() " +
-                                "from materialized_views " +
-                                "where view_name = '" + mvName + "' and view_status <> 'invalid';"
-                );
+                                """);
                 TestUtils.assertSqlCursors(
                         compiler,
                         sqlExecutionContext,
@@ -890,7 +895,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                     try {
                         try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(workerId, engine, 0)) {
                             while (!stop.get()) {
-                                refreshJob.run(workerId);
+                                refreshJob.run();
                                 Os.sleep(rnd.nextInt(50));
                             }
 
@@ -898,7 +903,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                             try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
                                 do {
                                     drainWalQueue(walApplyJob, engine);
-                                } while (refreshJob.run(workerId));
+                                } while (refreshJob.run());
                             }
                         }
                     } catch (Throwable throwable) {
@@ -928,7 +933,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                         try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(workerId, engine, 0)) {
                             while (!stop.get()) {
                                 drainMatViewTimerQueue(timerJob);
-                                refreshJob.run(workerId);
+                                refreshJob.run();
                                 Os.sleep(rnd.nextInt(10));
                                 if (rnd.nextBoolean()) {
                                     // Try to move the clock one jump forward.
@@ -946,7 +951,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                             try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
                                 do {
                                     drainWalQueue(walApplyJob, engine);
-                                } while (refreshJob.run(workerId));
+                                } while (refreshJob.run());
                             }
                         }
                     } catch (Throwable throwable) {

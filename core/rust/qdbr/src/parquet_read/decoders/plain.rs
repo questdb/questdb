@@ -386,7 +386,10 @@ mod tests {
             aux_size: 0,
             aux_ptr: ptr::null_mut(),
             aux_vec: AcVec::new_in(allocator.clone()),
+            page_buffers_size: 0,
             page_buffers: Vec::new(),
+            page_buffers_charged: 0,
+            page_buffers_counted: 0,
         }
     }
 

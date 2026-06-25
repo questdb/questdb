@@ -51,22 +51,86 @@ impl ColumnChunkBuffers {
             aux_vec: AcVec::new_in(allocator),
             aux_ptr: ptr::null_mut(),
             aux_size: 0,
+            page_buffers_size: 0,
             page_buffers: Vec::new(),
+            page_buffers_charged: 0,
+            page_buffers_counted: 0,
         }
     }
 
-    pub fn refresh_ptrs(&mut self) {
-        if self.data_ptr.is_null() {
-            self.data_size = self.data_vec.len();
-            self.data_ptr = self.data_vec.as_mut_ptr();
-        }
+    // Unconditional re-read so a hypothetical second call between resets cannot keep
+    // a stale ptr after a Vec reallocation. Returns an error when charging the
+    // retained VarcharSlice page bytes against the per-query memory tracker
+    // crosses the configured limit.
+    pub fn refresh_ptrs(&mut self) -> ParquetResult<()> {
+        // Always recompute the exposed pointer/size from the backing vectors.
+        // Appending additional column chunks into the same buffer (see
+        // decode_row_group_range, which decodes a run of row groups without
+        // resetting between them) can reallocate data_vec/aux_vec, moving the
+        // allocation and invalidating any pointer cached by an earlier refresh.
+        // The vectors are the single source of truth, so recomputing every time
+        // is correct and yields identical results for the single-chunk callers.
+        self.data_size = self.data_vec.len();
+        self.data_ptr = self.data_vec.as_mut_ptr();
+        self.aux_size = self.aux_vec.len();
+        self.aux_ptr = self.aux_vec.as_mut_ptr();
 
-        if self.aux_ptr.is_null() {
-            self.aux_size = self.aux_vec.len();
-            self.aux_ptr = self.aux_vec.as_mut_ptr();
+        // Sum of decompressed page/dict buffer bytes referenced by VarcharSlice aux entries.
+        // Appends only grow page_buffers (a multi-row-group decode concatenates into the same
+        // buffers without resetting), and already-counted entries are immutable, so add only
+        // the buffers appended since the last refresh instead of re-summing the whole vector
+        // -- otherwise a run of N row groups costs O(N^2). A shrink (truncate/partial drain)
+        // falls back to a full recompute; reset() zeroes both fields.
+        if self.page_buffers.len() < self.page_buffers_counted {
+            self.page_buffers_size = self.page_buffers.iter().map(Vec::len).sum();
+        } else {
+            for buf in &self.page_buffers[self.page_buffers_counted..] {
+                self.page_buffers_size += buf.len();
+            }
+        }
+        self.page_buffers_counted = self.page_buffers.len();
+
+        // Reconcile the per-query tracker charge to the retained payload. A net
+        // growth is checked against the limit and may breach; a net shrink is
+        // always credited. See `page_buffers_charged`.
+        self.reconcile_page_buffers_charge()
+    }
+
+    // Charges or credits the per-query tracker so that exactly
+    // `page_buffers_size` bytes stay reserved for this chunk's retained payload.
+    // The growth path can breach the limit and return an error; the shrink path
+    // never fails. On a breach `page_buffers_charged` is left at the prior value
+    // so `reset`/`Drop` later credit only what was actually charged.
+    fn reconcile_page_buffers_charge(&mut self) -> ParquetResult<()> {
+        let target = self.page_buffers_size;
+        if target > self.page_buffers_charged {
+            let delta = target - self.page_buffers_charged;
+            self.data_vec.allocator().charge_tracked(delta)?;
+            self.page_buffers_charged = target;
+        } else if target < self.page_buffers_charged {
+            let delta = self.page_buffers_charged - target;
+            self.data_vec.allocator().credit_tracked(delta);
+            self.page_buffers_charged = target;
+        }
+        Ok(())
+    }
+
+    // Releases the whole per-query tracker charge held for `page_buffers`. Used
+    // by `reset` and `Drop`, both of which empty (or hand off to the reuse pool)
+    // the retained payload.
+    fn release_page_buffers_charge(&mut self) {
+        if self.page_buffers_charged > 0 {
+            self.data_vec
+                .allocator()
+                .credit_tracked(self.page_buffers_charged);
+            self.page_buffers_charged = 0;
         }
     }
 
+    // Callers drain `page_buffers` (into a reuse pool) before invoking; this only clears
+    // the outer Vec and the inner data/aux vectors. The inner Vecs keep their capacity
+    // so the next decode can grow into them via realloc only when the new chunk exceeds
+    // the buffer's historical peak.
     pub fn reset(&mut self) {
         self.data_vec.clear();
         self.data_size = 0;
@@ -76,7 +140,20 @@ impl ColumnChunkBuffers {
         self.aux_size = 0;
         self.aux_ptr = ptr::null_mut();
 
+        self.release_page_buffers_charge();
+        self.page_buffers_size = 0;
         self.page_buffers.clear();
+        self.page_buffers_counted = 0;
+    }
+}
+
+impl Drop for ColumnChunkBuffers {
+    // The `data_vec` / `aux_vec` `AcVec`s credit the per-query tracker through
+    // their own allocator on drop; `page_buffers` is a system-allocated `Vec`,
+    // so its charge must be credited explicitly here to keep the tracker
+    // balanced when a cursor closes without a final `reset`.
+    fn drop(&mut self) {
+        self.release_page_buffers_charge();
     }
 }
 
@@ -1799,22 +1876,32 @@ pub(super) fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
                     if FILL_NULLS {
                         while output_row < row_hi && (current_row + bit_offset) < run_end_in_page {
                             let abs_row = page_row_start + current_row + bit_offset;
-                            let in_filter = filter_idx < filter_len
-                                && (rows_filter[filter_idx] as usize + row_group_lo) == abs_row;
-
-                            if in_filter {
-                                if get_bit_at(values, bit_offset) {
-                                    sink.push()?;
-                                } else {
-                                    sink.push_null()?;
-                                }
+                            while filter_idx < filter_len
+                                && (rows_filter[filter_idx] as usize + row_group_lo) < abs_row
+                            {
                                 filter_idx += 1;
+                            }
+                            let gap = if filter_idx < filter_len {
+                                (rows_filter[filter_idx] as usize + row_group_lo) - abs_row
                             } else {
-                                if get_bit_at(values, bit_offset) {
-                                    sink.skip(1)?;
-                                }
+                                row_hi - output_row
+                            };
+                            let bulk = gap
+                                .min(row_hi - output_row)
+                                .min(run_end_in_page - (current_row + bit_offset));
+                            if bulk > 0 {
+                                sink.skip(count_ones_in_bitmap(values, bit_offset, bulk))?;
+                                sink.push_nulls(bulk)?;
+                                bit_offset += bulk;
+                                output_row += bulk;
+                                continue;
+                            }
+                            if get_bit_at(values, bit_offset) {
+                                sink.push()?;
+                            } else {
                                 sink.push_null()?;
                             }
+                            filter_idx += 1;
                             bit_offset += 1;
                             output_row += 1;
                         }
@@ -1901,22 +1988,34 @@ pub(super) fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
                     if FILL_NULLS {
                         while output_row < row_hi && (current_row + row_offset) < run_end_in_page {
                             let abs_row = page_row_start + current_row + row_offset;
-                            let in_filter = filter_idx < filter_len
-                                && (rows_filter[filter_idx] as usize + row_group_lo) == abs_row;
-
-                            if in_filter {
-                                if is_set {
-                                    sink.push()?;
-                                } else {
-                                    sink.push_null()?;
-                                }
+                            while filter_idx < filter_len
+                                && (rows_filter[filter_idx] as usize + row_group_lo) < abs_row
+                            {
                                 filter_idx += 1;
+                            }
+                            let gap = if filter_idx < filter_len {
+                                (rows_filter[filter_idx] as usize + row_group_lo) - abs_row
                             } else {
+                                row_hi - output_row
+                            };
+                            let bulk = gap
+                                .min(row_hi - output_row)
+                                .min(run_end_in_page - (current_row + row_offset));
+                            if bulk > 0 {
                                 if is_set {
-                                    sink.skip(1)?;
+                                    sink.skip(bulk)?;
                                 }
+                                sink.push_nulls(bulk)?;
+                                row_offset += bulk;
+                                output_row += bulk;
+                                continue;
+                            }
+                            if is_set {
+                                sink.push()?;
+                            } else {
                                 sink.push_null()?;
                             }
+                            filter_idx += 1;
                             row_offset += 1;
                             output_row += 1;
                         }
@@ -1964,16 +2063,26 @@ pub(super) fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
 
             while output_row < row_hi {
                 let abs_row = page_row_start + page_row;
-                let in_filter = filter_idx < filter_len
-                    && (rows_filter[filter_idx] as usize + row_group_lo) == abs_row;
-
-                if in_filter {
-                    sink.push()?;
+                while filter_idx < filter_len
+                    && (rows_filter[filter_idx] as usize + row_group_lo) < abs_row
+                {
                     filter_idx += 1;
-                } else {
-                    sink.skip(1)?;
-                    sink.push_null()?;
                 }
+                let gap = if filter_idx < filter_len {
+                    (rows_filter[filter_idx] as usize + row_group_lo) - abs_row
+                } else {
+                    row_hi - output_row
+                };
+                let bulk = gap.min(row_hi - output_row);
+                if bulk > 0 {
+                    sink.skip(bulk)?;
+                    sink.push_nulls(bulk)?;
+                    page_row += bulk;
+                    output_row += bulk;
+                    continue;
+                }
+                sink.push()?;
+                filter_idx += 1;
                 page_row += 1;
                 output_row += 1;
             }
@@ -2094,7 +2203,10 @@ fn count_ones_in_bitmap(values: &[u8], offset: usize, length: usize) -> usize {
 fn get_bit_at(values: &[u8], bit_offset: usize) -> bool {
     let byte_idx = bit_offset >> 3;
     let bit_idx = bit_offset & 7;
-    unsafe { (values.get_unchecked(byte_idx) >> bit_idx) & 1 == 1 }
+    debug_assert!(byte_idx < values.len());
+    values
+        .get(byte_idx)
+        .is_some_and(|byte| (byte >> bit_idx) & 1 == 1)
 }
 
 fn decode_null_bitmap<'a>(
@@ -2116,13 +2228,50 @@ fn decode_null_bitmap<'a>(
     Ok(Some(iter))
 }
 
+/// Sizes `buffer` to hold a `size`-byte decompressed page using a fallible
+/// reservation, returning a clean error instead of aborting the process when the
+/// allocation fails.
+///
+/// `size` is the page header's `uncompressed_page_size`. It is attacker-controlled
+/// up to `i32::MAX` and, unlike `compressed_page_size`, is NOT bounded by
+/// `max_page_size` on the read path: `max_page_size` is the compressed
+/// column-chunk size, and a highly compressible page can legitimately decompress
+/// to more than that, so the size cannot be range-checked up front. A plain
+/// `Vec::resize` aborts the JVM over JNI on allocation failure; `try_reserve`
+/// turns a decompression-bomb header into a recoverable out-of-memory error while
+/// still decoding any page that genuinely fits in memory. Every reachable `size`
+/// is `<= i32::MAX`, so a failure here is always an allocation shortfall, never a
+/// malformed layout: classifying it `OutOfMemory` lets a caller retry on transient
+/// memory pressure instead of treating the page as corrupt.
+///
+/// The sizing is grow-only and deliberately does not `clear()`: callers thread one
+/// buffer through every page of a file, so clearing would force `resize` to memset
+/// the whole page on every call only for the decompressor to overwrite it. Growing
+/// in place zeros just the delta a larger page adds beyond the previous one. A
+/// malformed page whose codec under-fills the buffer (Snappy/LZ4 do not check the
+/// fill) thus keeps stale bytes from an earlier page of the same file in its tail;
+/// a caller needing a zeroed tail must `clear()` first (see
+/// `decompress_varchar_slice_dict`).
+pub(super) fn resize_decompress_buffer(buffer: &mut Vec<u8>, size: usize) -> ParquetResult<()> {
+    if size > buffer.len() {
+        buffer.try_reserve(size - buffer.len()).map_err(|_| {
+            fmt_err!(
+                OutOfMemory(None),
+                "cannot allocate {} bytes for a decompressed page",
+                size
+            )
+        })?;
+    }
+    buffer.resize(size, 0);
+    Ok(())
+}
+
 pub(super) fn decompress_sliced_dict<'a>(
     page: SlicedDictPage<'a>,
     buffer: &'a mut Vec<u8>,
 ) -> ParquetResult<DictPage<'a>> {
     let buf = if page.compression != parquet2::compression::Compression::Uncompressed {
-        let read_size = page.uncompressed_size;
-        buffer.resize(read_size, 0);
+        resize_decompress_buffer(buffer, page.uncompressed_size)?;
         parquet2::compression::decompress(page.compression, page.buffer, buffer)?;
         buffer
     } else {
@@ -2142,8 +2291,7 @@ pub(super) fn decompress_sliced_data<'a>(
     let buffer = if page.compression != parquet2::compression::Compression::Uncompressed {
         match &page.header {
             DataPageHeader::V1(_) => {
-                let read_size = page.uncompressed_size;
-                decompress_buffer.resize(read_size, 0);
+                resize_decompress_buffer(decompress_buffer, page.uncompressed_size)?;
                 parquet2::compression::decompress(
                     page.compression,
                     page.buffer,
@@ -2152,12 +2300,11 @@ pub(super) fn decompress_sliced_data<'a>(
                 decompress_buffer
             }
             DataPageHeader::V2(header) => {
-                let read_size = page.uncompressed_size;
-                decompress_buffer.resize(read_size, 0);
                 let offset = (header.definition_levels_byte_length
                     + header.repetition_levels_byte_length) as usize;
                 let can_decompress = header.is_compressed.unwrap_or(true);
                 if can_decompress {
+                    resize_decompress_buffer(decompress_buffer, page.uncompressed_size)?;
                     if offset > decompress_buffer.len() || offset > page.buffer.len() {
                         return Err(fmt_err!(
                             Layout,
@@ -2172,7 +2319,12 @@ pub(super) fn decompress_sliced_data<'a>(
                     )?;
                     decompress_buffer
                 } else {
-                    if decompress_buffer.len() != page.buffer.len() {
+                    // is_compressed=false: the page body is already uncompressed and
+                    // returned as-is, so the decompress buffer is never read. Compare
+                    // the header's uncompressed_size against the actual body directly
+                    // -- sizing (and zeroing) an i32::MAX-capable buffer only to read
+                    // back its length is pure waste with no decompression to amortize.
+                    if page.uncompressed_size != page.buffer.len() {
                         return Err(fmt_err!(
                             Layout,
                             "V2 Page Header reported incorrect decompressed size"
@@ -2256,8 +2408,12 @@ pub(super) fn page_row_count(page: &DataPage, column_type: ColumnType) -> Parque
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_page, decode_page_filtered};
+    use super::{
+        decode_page, decode_page_filtered, decompress_sliced_data, decompress_sliced_dict,
+        resize_decompress_buffer,
+    };
     use crate::allocator::{AcVec, TestAllocatorState};
+    use crate::parquet::error::ParquetErrorReason;
     use crate::parquet::qdb_metadata::{QdbMetaCol, QdbMetaColFormat};
     use crate::parquet::tests::ColumnTypeTagExt;
     use crate::parquet_read::page::{DataPage, DictPage};
@@ -2270,11 +2426,13 @@ mod tests {
     use crate::parquet_write::schema::{Column, Partition};
     use crate::parquet_write::varchar::{append_varchar, append_varchar_null};
     use arrow::datatypes::ToByteSlice;
+    use parquet2::compression::{compress, Compression, CompressionOptions};
     use parquet2::encoding::hybrid_rle::encode_u32;
     use parquet2::encoding::Encoding;
     use parquet2::metadata::Descriptor;
-    use parquet2::page::{DataPageHeader, DataPageHeaderV1};
+    use parquet2::page::{DataPageHeader, DataPageHeaderV1, DataPageHeaderV2};
     use parquet2::read::levels::get_bit_width;
+    use parquet2::read::{SlicedDataPage, SlicedDictPage};
     use parquet2::schema::types::{FieldInfo, PhysicalType, PrimitiveLogicalType, PrimitiveType};
     use parquet2::schema::Repetition;
     use parquet2::write::Version;
@@ -2287,6 +2445,153 @@ mod tests {
     const INT_NULL: [u8; 4] = i32::MIN.to_le_bytes();
     const LONG_NULL: [u8; 8] = i64::MIN.to_le_bytes();
     const UUID_NULL: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 128, 0, 0, 0, 0, 0, 0, 0, 128];
+
+    #[test]
+    fn page_buffers_size_tracks_retained_page_bytes() {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let mut bufs = ColumnChunkBuffers::new(allocator);
+
+        // Fresh buffer: nothing retained.
+        bufs.refresh_ptrs().unwrap();
+        assert_eq!(bufs.page_buffers_size, 0);
+
+        // A VarcharSlice decode retains decompressed page/dict buffers here, with the
+        // aux pointers referencing them. refresh_ptrs must sum their lengths so the
+        // Java decode-cache budget counts the string bytes.
+        bufs.page_buffers.push(vec![0u8; 100]);
+        bufs.page_buffers.push(vec![0u8; 56]);
+        bufs.refresh_ptrs().unwrap();
+        assert_eq!(bufs.page_buffers_size, 156);
+
+        // reset() must zero it so a reused buffer does not carry stale bytes.
+        bufs.reset();
+        assert_eq!(bufs.page_buffers_size, 0);
+        assert!(bufs.page_buffers.is_empty());
+    }
+
+    #[test]
+    fn page_buffers_charge_tracks_per_query_memory() {
+        let tas = TestAllocatorState::new().with_memory_tracker();
+        let allocator = tas.allocator();
+        let mut bufs = ColumnChunkBuffers::new(allocator);
+
+        // The system-allocated page_buffers are otherwise invisible to the
+        // per-query tracker; refresh_ptrs charges their retained bytes so a wide
+        // VarcharSlice payload still counts against the limit.
+        bufs.page_buffers.push(vec![0u8; 1000]);
+        bufs.page_buffers.push(vec![0u8; 24]);
+        bufs.refresh_ptrs().unwrap();
+        assert_eq!(bufs.page_buffers_size, 1024);
+        assert_eq!(tas.tracker_used(), 1024);
+
+        // A subsequent decode that retains fewer bytes credits the difference.
+        bufs.page_buffers.truncate(1);
+        bufs.refresh_ptrs().unwrap();
+        assert_eq!(bufs.page_buffers_size, 1000);
+        assert_eq!(tas.tracker_used(), 1000);
+
+        // reset() releases the whole charge back to the tracker.
+        bufs.reset();
+        assert_eq!(tas.tracker_used(), 0);
+
+        // A retained charge still outstanding at drop is credited too.
+        bufs.page_buffers.push(vec![0u8; 512]);
+        bufs.refresh_ptrs().unwrap();
+        assert_eq!(tas.tracker_used(), 512);
+        drop(bufs);
+        assert_eq!(tas.tracker_used(), 0);
+    }
+
+    #[test]
+    fn page_buffers_charge_breaches_per_query_limit() {
+        let tas = TestAllocatorState::new().with_memory_tracker();
+        let allocator = tas.allocator();
+        let mut bufs = ColumnChunkBuffers::new(allocator);
+        tas.set_tracker_limit(4096);
+
+        // Under the limit: charged and accepted.
+        bufs.page_buffers.push(vec![0u8; 2048]);
+        bufs.refresh_ptrs().unwrap();
+        assert_eq!(tas.tracker_used(), 2048);
+
+        // A wide payload pushes the retained bytes over the limit: refresh_ptrs
+        // breaches at the per-query scope and leaves the charge at its prior value.
+        // The "query" scope label in the message distinguishes a per-query breach
+        // from a global-RSS one.
+        bufs.page_buffers.push(vec![0u8; 8192]);
+        let err = bufs.refresh_ptrs().unwrap_err();
+        assert!(
+            err.to_string().contains("query memory limit exceeded"),
+            "unexpected error: {err}"
+        );
+        assert_eq!(bufs.page_buffers_charged, 2048);
+
+        // The uncharged excess never reached the tracker; drop credits only the
+        // 2048 bytes that were charged, returning the counter to zero.
+        drop(bufs);
+        assert_eq!(tas.tracker_used(), 0);
+    }
+
+    #[test]
+    fn decode_row_group_clears_varchar_slice_reuse_pool() {
+        // The VarcharSlice page-buffer reuse pool lives on the DecodeContext, which outlives
+        // individual decode-cache entries. Spare buffers left in it are uncounted by the Java
+        // byte budget and would otherwise survive cache eviction and releaseParquetBuffers(),
+        // letting the budget read zero while RSS still held varchar page allocations. A
+        // row-group decode must drop the pool at the end. The live buffers a decode produces
+        // are held in ColumnChunkBuffers::page_buffers (counted), not the pool.
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let row_count = 10;
+        let row_group_size = 50;
+        let data_page_size = 50;
+        let version = Version::V2;
+        let expected_buff =
+            create_col_data_buff::<i32, 4, _>(row_count, INT_NULL, |int| int.to_le_bytes());
+        let file = write_parquet_file(
+            row_count,
+            row_group_size,
+            data_page_size,
+            version,
+            expected_buff.data_vec.as_ref(),
+        );
+
+        let file_len = file.len() as u64;
+        let mut reader = Cursor::new(&file);
+        let decoder = ParquetDecoder::read(allocator.clone(), &mut reader, file_len).unwrap();
+        let mut rgb = RowGroupBuffers::new(allocator.clone());
+        let mut ctx = DecodeContext::new(file.as_ptr(), file_len);
+
+        // Simulate spare page buffers retained from a prior column-chunk decode.
+        ctx.varchar_slice_buf_pool.push(vec![0u8; 4096]);
+        ctx.varchar_slice_buf_pool.push(vec![0u8; 4096]);
+
+        let column_type = decoder.columns[0].column_type.unwrap();
+        decoder
+            .decode_row_group(
+                &mut ctx,
+                &mut rgb,
+                &[(0, column_type)],
+                0,
+                0,
+                row_count as u32,
+            )
+            .unwrap();
+
+        assert!(
+            ctx.varchar_slice_buf_pool.is_empty(),
+            "row-group decode must release the varchar-slice reuse pool"
+        );
+        assert!(
+            ctx.varchar_slice_page_bufs_scratch.is_empty(),
+            "row-group decode must leave the page-buffer scratch empty"
+        );
+        assert!(
+            ctx.varchar_slice_dict_bufs_scratch.is_empty(),
+            "row-group decode must leave the dict-buffer scratch empty"
+        );
+    }
 
     #[test]
     fn test_decode_int_column_v2_nulls() {
@@ -2945,6 +3250,19 @@ mod tests {
                 id: None,
             },
             logical_type: Some(PrimitiveLogicalType::Decimal(precision, scale)),
+            converted_type: None,
+            physical_type: PhysicalType::ByteArray,
+        }
+    }
+
+    fn make_byte_array_type() -> PrimitiveType {
+        PrimitiveType {
+            field_info: FieldInfo {
+                name: "str_col".to_string(),
+                repetition: Repetition::Required,
+                id: None,
+            },
+            logical_type: None,
             converted_type: None,
             physical_type: PhysicalType::ByteArray,
         }
@@ -3873,6 +4191,1221 @@ mod tests {
         expected.extend_from_slice(&be_to_le_truncate(&values[0], 8));
         expected.extend_from_slice(&be_to_le_truncate(&values[1], 8));
         assert_eq!(bufs.data_vec.as_slice(), expected.as_slice());
+    }
+
+    // Decode an all-null V1 page whose DELTA_BINARY_PACKED values buffer is EMPTY
+    // (no header) -- the shape pre-fix QuestDB and some foreign encoders produce
+    // -- through the real decode_page path, asserting every row is the given
+    // Int64-width null sentinel. Every all-null integration test goes through the
+    // current header-emitting writer, so this is the only coverage of
+    // MiniblockIterator::try_new's empty-buffer branch via decode_page. Reverting
+    // just the reader fix makes this fail (try_new rejects the empty buffer)
+    // while the integration round-trips still pass.
+    fn assert_empty_delta_int64_page_all_null(column_type: ColumnType, null_sentinel: i64) {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let n = 10usize;
+
+        // Definition levels: n rows, all null (level 0), RLE-encoded (bit width 1).
+        let mut def_levels = Vec::new();
+        encode_u32(&mut def_levels, std::iter::repeat_n(0u32, n), n, 1).unwrap();
+
+        // V1 optional page layout: [u32 def-levels length][def-levels][values].
+        // The values buffer is left empty -- the shape this branch must tolerate.
+        let mut buffer = Vec::new();
+        buffer.extend_from_slice(&(def_levels.len() as u32).to_le_bytes());
+        buffer.extend_from_slice(&def_levels);
+
+        let page = TestDataPage {
+            header: DataPageHeader::V1(DataPageHeaderV1 {
+                num_values: n as i32,
+                encoding: Encoding::DeltaBinaryPacked.into(),
+                definition_level_encoding: Encoding::Rle.into(),
+                repetition_level_encoding: Encoding::Rle.into(),
+                statistics: None,
+            }),
+            descriptor: Descriptor {
+                primitive_type: PrimitiveType {
+                    field_info: FieldInfo {
+                        name: "col".to_string(),
+                        repetition: Repetition::Optional,
+                        id: None,
+                    },
+                    logical_type: None,
+                    converted_type: None,
+                    physical_type: PhysicalType::Int64,
+                },
+                max_def_level: 1,
+                max_rep_level: 0,
+            },
+            buffer,
+        };
+        let page = page.as_page();
+
+        let mut bufs = ColumnChunkBuffers::new(allocator);
+        let col_info = QdbMetaCol {
+            column_type,
+            column_top: 0,
+            format: None,
+            ascii: None,
+        };
+
+        decode_page(&page, None, &mut bufs, col_info, 0, n).unwrap();
+
+        assert_eq!(bufs.data_vec.len(), n * size_of::<i64>());
+        let out: &[i64] = unsafe { std::slice::from_raw_parts(bufs.data_vec.as_ptr().cast(), n) };
+        assert_eq!(out, &[null_sentinel; 10]);
+    }
+
+    #[test]
+    fn decode_page_empty_delta_buffer_decodes_all_null() {
+        // LONG: the common all-null delta column type.
+        assert_empty_delta_int64_page_all_null(ColumnTypeTag::Long.into_type(), i64::MIN);
+    }
+
+    #[test]
+    fn decode_page_empty_delta_buffer_decimal64_all_null() {
+        // Decimal64 (Int64 physical type) also dispatches DELTA pages, with its
+        // own null sentinel. QuestDB's writer never emits DELTA for decimals, so
+        // this reader-side path is only reachable from foreign files; covers the
+        // distinct decode.rs dispatch arm.
+        assert_empty_delta_int64_page_all_null(ColumnTypeTag::Decimal64.into_type(), i64::MIN);
+    }
+
+    // Decode an all-null V1 ByteArray page (n rows, every definition level 0) whose
+    // values buffer is exactly `values`, through the real decode_page dispatch, and
+    // return its (data_vec, aux_vec). With `values` empty this is the header-less
+    // shape a foreign encoder can emit for an all-null DELTA varlen column and that
+    // read_parquet() hands straight to the slicers.
+    fn decode_all_null_varlen_page(
+        column_type: ColumnType,
+        encoding: Encoding,
+        values: &[u8],
+    ) -> (Vec<u8>, Vec<u8>) {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let n = 10usize;
+
+        // Definition levels: n rows, all null (level 0), RLE-encoded (bit width 1).
+        let mut def_levels = Vec::new();
+        encode_u32(&mut def_levels, std::iter::repeat_n(0u32, n), n, 1).unwrap();
+
+        // V1 optional page layout: [u32 def-levels length][def-levels][values].
+        let mut buffer = Vec::new();
+        buffer.extend_from_slice(&(def_levels.len() as u32).to_le_bytes());
+        buffer.extend_from_slice(&def_levels);
+        buffer.extend_from_slice(values);
+
+        let page = TestDataPage {
+            header: DataPageHeader::V1(DataPageHeaderV1 {
+                num_values: n as i32,
+                encoding: encoding.into(),
+                definition_level_encoding: Encoding::Rle.into(),
+                repetition_level_encoding: Encoding::Rle.into(),
+                statistics: None,
+            }),
+            descriptor: Descriptor {
+                primitive_type: PrimitiveType {
+                    field_info: FieldInfo {
+                        name: "col".to_string(),
+                        repetition: Repetition::Optional,
+                        id: None,
+                    },
+                    logical_type: None,
+                    converted_type: None,
+                    physical_type: PhysicalType::ByteArray,
+                },
+                max_def_level: 1,
+                max_rep_level: 0,
+            },
+            buffer,
+        };
+        let page = page.as_page();
+
+        let mut bufs = ColumnChunkBuffers::new(allocator);
+        let col_info = QdbMetaCol {
+            column_type,
+            column_top: 0,
+            format: None,
+            ascii: None,
+        };
+
+        decode_page(&page, None, &mut bufs, col_info, 0, n).unwrap();
+        (
+            bufs.data_vec.as_slice().to_vec(),
+            bufs.aux_vec.as_slice().to_vec(),
+        )
+    }
+
+    // A compliant zero-value delta header for `encoding` -- the self-describing
+    // shape a spec-following encoder emits for an all-null page. It decodes cleanly
+    // today (block_size/num_mini_blocks are non-zero), so it serves as the golden
+    // reference for what the header-less empty-buffer page must decode to.
+    fn compliant_zero_value_delta_values(encoding: Encoding) -> Vec<u8> {
+        let mut values = Vec::new();
+        match encoding {
+            Encoding::DeltaLengthByteArray => {
+                parquet2::encoding::delta_length_byte_array::encode(
+                    std::iter::empty::<&[u8]>(),
+                    &mut values,
+                );
+            }
+            Encoding::DeltaByteArray => {
+                parquet2::encoding::delta_byte_array::encode(
+                    std::iter::empty::<&[u8]>(),
+                    &mut values,
+                );
+            }
+            other => panic!("unsupported delta encoding {other:?}"),
+        }
+        assert!(
+            !values.is_empty(),
+            "reference zero-value header must be non-empty"
+        );
+        values
+    }
+
+    // An all-null varlen page whose values buffer is EMPTY (no delta header) must
+    // decode byte-identically to the same page carrying a compliant zero-value
+    // delta header. For an all-null page the values buffer is never read, so the
+    // two agree -- but before the slicer empty-buffer guard, the empty buffer drove
+    // the vendored parquet2 delta decoder into a 0/0 division that panicked and
+    // aborted the JVM across the JNI boundary.
+    fn assert_empty_delta_varlen_page_all_null(column_type: ColumnType, encoding: Encoding) {
+        let reference = compliant_zero_value_delta_values(encoding);
+        let (empty_data, empty_aux) = decode_all_null_varlen_page(column_type, encoding, &[]);
+        let (ref_data, ref_aux) = decode_all_null_varlen_page(column_type, encoding, &reference);
+        assert_eq!(
+            empty_data, ref_data,
+            "data_vec from empty buffer must match the compliant zero-value page"
+        );
+        assert_eq!(
+            empty_aux, ref_aux,
+            "aux_vec from empty buffer must match the compliant zero-value page"
+        );
+    }
+
+    #[test]
+    fn decode_page_empty_delta_length_buffer_string_all_null() {
+        assert_empty_delta_varlen_page_all_null(
+            ColumnTypeTag::String.into_type(),
+            Encoding::DeltaLengthByteArray,
+        );
+    }
+
+    #[test]
+    fn decode_page_empty_delta_length_buffer_varchar_all_null() {
+        assert_empty_delta_varlen_page_all_null(
+            ColumnTypeTag::Varchar.into_type(),
+            Encoding::DeltaLengthByteArray,
+        );
+    }
+
+    #[test]
+    fn decode_page_empty_delta_length_buffer_binary_all_null() {
+        assert_empty_delta_varlen_page_all_null(
+            ColumnTypeTag::Binary.into_type(),
+            Encoding::DeltaLengthByteArray,
+        );
+    }
+
+    #[test]
+    fn decode_page_empty_delta_length_buffer_array_all_null() {
+        assert_empty_delta_varlen_page_all_null(
+            encode_array_type(ColumnTypeTag::Double, 1).unwrap(),
+            Encoding::DeltaLengthByteArray,
+        );
+    }
+
+    #[test]
+    fn decode_page_empty_delta_byte_array_buffer_varchar_all_null() {
+        assert_empty_delta_varlen_page_all_null(
+            ColumnTypeTag::Varchar.into_type(),
+            Encoding::DeltaByteArray,
+        );
+    }
+
+    #[test]
+    fn decode_page_empty_delta_byte_array_buffer_varchar_slice_all_null() {
+        assert_empty_delta_varlen_page_all_null(
+            ColumnTypeTag::VarcharSlice.into_type(),
+            Encoding::DeltaByteArray,
+        );
+    }
+
+    #[test]
+    fn decode_page_empty_delta_length_buffer_string_null_layout() {
+        // Anchors the golden-reference checks above: confirm the all-null result is
+        // genuine, not merely a non-panicking artifact. A QuestDB String column
+        // materializes each null row as a -1 length marker (4 bytes), no payload.
+        let (data, _aux) = decode_all_null_varlen_page(
+            ColumnTypeTag::String.into_type(),
+            Encoding::DeltaLengthByteArray,
+            &[],
+        );
+        assert_eq!(data.len(), 10 * size_of::<i32>());
+        let lengths: &[i32] = unsafe { std::slice::from_raw_parts(data.as_ptr().cast(), 10) };
+        assert_eq!(lengths, &[-1i32; 10]);
+    }
+
+    #[test]
+    fn decode_page_empty_delta_length_buffer_partial_null_errors_not_panics() {
+        // A corrupt page that claims a non-null (definition level 1) yet provides
+        // an EMPTY values buffer must surface a clean decode error, never abort the
+        // JVM. The empty-buffer try_new guard alone would relocate the parquet2 0/0
+        // panic into DeltaLengthArraySlicer::next()'s length-index lookup; the
+        // bounds check there turns it into a Layout error instead.
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let n = 10usize;
+
+        // One non-null followed by nine nulls, RLE-encoded (bit width 1).
+        let levels = [1u32, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        let mut def_levels = Vec::new();
+        encode_u32(&mut def_levels, levels.into_iter(), n, 1).unwrap();
+
+        let mut buffer = Vec::new();
+        buffer.extend_from_slice(&(def_levels.len() as u32).to_le_bytes());
+        buffer.extend_from_slice(&def_levels);
+        // values buffer intentionally empty -- contradicts the claimed non-null.
+
+        let page = TestDataPage {
+            header: DataPageHeader::V1(DataPageHeaderV1 {
+                num_values: n as i32,
+                encoding: Encoding::DeltaLengthByteArray.into(),
+                definition_level_encoding: Encoding::Rle.into(),
+                repetition_level_encoding: Encoding::Rle.into(),
+                statistics: None,
+            }),
+            descriptor: Descriptor {
+                primitive_type: PrimitiveType {
+                    field_info: FieldInfo {
+                        name: "col".to_string(),
+                        repetition: Repetition::Optional,
+                        id: None,
+                    },
+                    logical_type: None,
+                    converted_type: None,
+                    physical_type: PhysicalType::ByteArray,
+                },
+                max_def_level: 1,
+                max_rep_level: 0,
+            },
+            buffer,
+        };
+        let page = page.as_page();
+
+        let mut bufs = ColumnChunkBuffers::new(allocator);
+        let col_info = QdbMetaCol {
+            column_type: ColumnTypeTag::String.into_type(),
+            column_top: 0,
+            format: None,
+            ascii: None,
+        };
+
+        let err = decode_page(&page, None, &mut bufs, col_info, 0, n)
+            .expect_err("a non-null claim over an empty values buffer must be a decode error");
+        assert!(
+            err.to_string().contains("not enough length values"),
+            "unexpected error: {err}"
+        );
+    }
+
+    // Decode an all-non-null V1 ByteArray page of `strings` under `encoding` through
+    // the real decode_page dispatch, reading only rows [0, row_hi). Returns its
+    // (data_vec, aux_vec). With row_hi < strings.len() this is the partial-range read
+    // that regressed C1: decode_byte_array_dispatch hands row_hi straight to the
+    // DELTA slicer, so the value-bytes offset must be computed over the whole length
+    // stream, not the blocks take(row_hi) entered.
+    fn decode_delta_varlen_page_partial(
+        column_type: ColumnType,
+        encoding: Encoding,
+        strings: &[&[u8]],
+        row_hi: usize,
+    ) -> (Vec<u8>, Vec<u8>) {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let n = strings.len();
+
+        let mut values = Vec::new();
+        match encoding {
+            Encoding::DeltaLengthByteArray => {
+                parquet2::encoding::delta_length_byte_array::encode(
+                    strings.iter().copied(),
+                    &mut values,
+                );
+            }
+            Encoding::DeltaByteArray => {
+                parquet2::encoding::delta_byte_array::encode(strings.iter().copied(), &mut values);
+            }
+            other => panic!("unsupported delta encoding {other:?}"),
+        }
+
+        // Definition levels: n rows, all non-null (level 1), RLE-encoded (bit width 1).
+        let mut def_levels = Vec::new();
+        encode_u32(&mut def_levels, std::iter::repeat_n(1u32, n), n, 1).unwrap();
+
+        // V1 optional page layout: [u32 def-levels length][def-levels][values].
+        let mut buffer = Vec::new();
+        buffer.extend_from_slice(&(def_levels.len() as u32).to_le_bytes());
+        buffer.extend_from_slice(&def_levels);
+        buffer.extend_from_slice(&values);
+
+        let page = TestDataPage {
+            header: DataPageHeader::V1(DataPageHeaderV1 {
+                num_values: n as i32,
+                encoding: encoding.into(),
+                definition_level_encoding: Encoding::Rle.into(),
+                repetition_level_encoding: Encoding::Rle.into(),
+                statistics: None,
+            }),
+            descriptor: Descriptor {
+                primitive_type: PrimitiveType {
+                    field_info: FieldInfo {
+                        name: "col".to_string(),
+                        repetition: Repetition::Optional,
+                        id: None,
+                    },
+                    logical_type: None,
+                    converted_type: None,
+                    physical_type: PhysicalType::ByteArray,
+                },
+                max_def_level: 1,
+                max_rep_level: 0,
+            },
+            buffer,
+        };
+        let page = page.as_page();
+
+        let mut bufs = ColumnChunkBuffers::new(allocator);
+        let col_info = QdbMetaCol {
+            column_type,
+            column_top: 0,
+            format: None,
+            ascii: None,
+        };
+
+        decode_page(&page, None, &mut bufs, col_info, 0, row_hi).unwrap();
+        (
+            bufs.data_vec.as_slice().to_vec(),
+            bufs.aux_vec.as_slice().to_vec(),
+        )
+    }
+
+    // Reading the first `row_hi` values of a multi-block DELTA page must yield
+    // exactly what fully decoding a page of just those `row_hi` values yields -- the
+    // decoded prefix cannot depend on how many more values follow it. Before the
+    // offset fix the partial read of the 300-value page (length stream spanning
+    // three 128-value blocks) began inside the length stream and diverged from the
+    // reference. 300 distinct varying-length values exercise non-zero-bit-width
+    // later blocks, whose miniblock bytes the buggy offset also dropped.
+    fn assert_delta_varlen_partial_matches_prefix(column_type: ColumnType, encoding: Encoding) {
+        let owned: Vec<String> = (0..300).map(|i| format!("v{i}")).collect();
+        let all: Vec<&[u8]> = owned.iter().map(|s| s.as_bytes()).collect();
+        let row_hi = 5;
+
+        let (partial_data, partial_aux) =
+            decode_delta_varlen_page_partial(column_type, encoding, &all, row_hi);
+        let (ref_data, ref_aux) =
+            decode_delta_varlen_page_partial(column_type, encoding, &all[..row_hi], row_hi);
+
+        assert_eq!(
+            partial_data, ref_data,
+            "partial multi-block decode data_vec must match the prefix-only decode"
+        );
+        assert_eq!(
+            partial_aux, ref_aux,
+            "partial multi-block decode aux_vec must match the prefix-only decode"
+        );
+    }
+
+    #[test]
+    fn decode_page_delta_length_string_partial_range_multi_block() {
+        assert_delta_varlen_partial_matches_prefix(
+            ColumnTypeTag::String.into_type(),
+            Encoding::DeltaLengthByteArray,
+        );
+    }
+
+    #[test]
+    fn decode_page_delta_length_varchar_partial_range_multi_block() {
+        assert_delta_varlen_partial_matches_prefix(
+            ColumnTypeTag::Varchar.into_type(),
+            Encoding::DeltaLengthByteArray,
+        );
+    }
+
+    #[test]
+    fn decode_page_delta_byte_array_varchar_partial_range_multi_block() {
+        // The DeltaByteArray path (prefix + suffix streams, DeltaBytesArraySlicer) is
+        // foreign-only today, but its offset carries the same latent bug, so guard
+        // its partial-range read too.
+        assert_delta_varlen_partial_matches_prefix(
+            ColumnTypeTag::Varchar.into_type(),
+            Encoding::DeltaByteArray,
+        );
+    }
+
+    // Like decode_delta_varlen_page_partial but with an explicit null pattern:
+    // def_levels[i] == 1 marks a non-null row, 0 a null row, and non_null_strings
+    // holds only the non-null values (its length must equal the number of 1s). The
+    // DELTA_LENGTH stream encodes only the non-null lengths, so this exercises the
+    // interaction between the ROW count (row_hi, which bounds the slicer's take())
+    // and the smaller NON-NULL count the slicer actually yields.
+    fn decode_delta_string_with_nulls_partial(
+        def_levels: &[u32],
+        non_null_strings: &[&[u8]],
+        row_hi: usize,
+    ) -> (Vec<u8>, Vec<u8>) {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let n = def_levels.len();
+        assert_eq!(
+            def_levels.iter().filter(|&&d| d == 1).count(),
+            non_null_strings.len(),
+            "non_null_strings must match the number of non-null def levels"
+        );
+
+        let mut values = Vec::new();
+        parquet2::encoding::delta_length_byte_array::encode(
+            non_null_strings.iter().copied(),
+            &mut values,
+        );
+
+        let mut def_buf = Vec::new();
+        encode_u32(&mut def_buf, def_levels.iter().copied(), n, 1).unwrap();
+
+        // V1 optional page layout: [u32 def-levels length][def-levels][values].
+        let mut buffer = Vec::new();
+        buffer.extend_from_slice(&(def_buf.len() as u32).to_le_bytes());
+        buffer.extend_from_slice(&def_buf);
+        buffer.extend_from_slice(&values);
+
+        let page = TestDataPage {
+            header: DataPageHeader::V1(DataPageHeaderV1 {
+                num_values: n as i32,
+                encoding: Encoding::DeltaLengthByteArray.into(),
+                definition_level_encoding: Encoding::Rle.into(),
+                repetition_level_encoding: Encoding::Rle.into(),
+                statistics: None,
+            }),
+            descriptor: Descriptor {
+                primitive_type: PrimitiveType {
+                    field_info: FieldInfo {
+                        name: "col".to_string(),
+                        repetition: Repetition::Optional,
+                        id: None,
+                    },
+                    logical_type: None,
+                    converted_type: None,
+                    physical_type: PhysicalType::ByteArray,
+                },
+                max_def_level: 1,
+                max_rep_level: 0,
+            },
+            buffer,
+        };
+        let page = page.as_page();
+
+        let mut bufs = ColumnChunkBuffers::new(allocator);
+        let col_info = QdbMetaCol {
+            column_type: ColumnTypeTag::String.into_type(),
+            column_top: 0,
+            format: None,
+            ascii: None,
+        };
+
+        decode_page(&page, None, &mut bufs, col_info, 0, row_hi).unwrap();
+        (
+            bufs.data_vec.as_slice().to_vec(),
+            bufs.aux_vec.as_slice().to_vec(),
+        )
+    }
+
+    #[test]
+    fn decode_page_delta_length_string_partial_range_multi_block_with_nulls() {
+        // The partial-range multi-block DELTA decode, but with NULLs in the cut
+        // range. row_hi is a ROW count and bounds the slicer's take(), while the
+        // DELTA length stream holds only the NON-NULL lengths -- a smaller count. A
+        // partial read must still locate the value bytes correctly and place
+        // nulls/values in the right rows. 300 rows with a null every 7th row give
+        // 258 non-null values (a 3-block length stream); cutting at row 137 lands
+        // inside the stream with 19 nulls before the cut. Reading [0, 137) from the
+        // full page must match decoding a page of just those first 137 rows.
+        let n = 300usize;
+        let row_hi = 137usize;
+        let def_levels: Vec<u32> = (0..n).map(|i| if i % 7 == 6 { 0 } else { 1 }).collect();
+        // Varying-length non-null values so the delta blocks carry non-zero bit
+        // widths (real miniblock bytes the offset walk must skip).
+        let owned: Vec<String> = (0..n)
+            .filter(|i| def_levels[*i] == 1)
+            .map(|i| "ab".repeat(1 + (i % 9)))
+            .collect();
+        let non_null: Vec<&[u8]> = owned.iter().map(|s| s.as_bytes()).collect();
+
+        let (partial_data, partial_aux) =
+            decode_delta_string_with_nulls_partial(&def_levels, &non_null, row_hi);
+
+        // Reference: a page of just the first row_hi rows (same null pattern, same
+        // non-null values among them), decoded over the same range.
+        let ref_def: Vec<u32> = def_levels[..row_hi].to_vec();
+        let ref_non_null_count = ref_def.iter().filter(|&&d| d == 1).count();
+        let ref_non_null: Vec<&[u8]> = non_null[..ref_non_null_count].to_vec();
+        let (ref_data, ref_aux) =
+            decode_delta_string_with_nulls_partial(&ref_def, &ref_non_null, row_hi);
+
+        assert_eq!(
+            partial_data, ref_data,
+            "partial multi-block decode with nulls must match the prefix-only decode"
+        );
+        assert_eq!(
+            partial_aux, ref_aux,
+            "partial multi-block decode with nulls must match the prefix-only decode"
+        );
+    }
+
+    #[test]
+    fn decode_page_dict_num_values_over_buffer_errors_not_panics() {
+        // End-to-end through decode_page: a dictionary-encoded Varchar column
+        // whose dictionary page header claims far more values (i32::MAX) than its
+        // buffer can hold. decode_page builds BaseVarDictDecoder, whose num_values
+        // guard must surface a clean Layout error before it reaches the
+        // dictionary-value reservation (try_reserve_dict_values), whose
+        // tens-of-gigabytes request would otherwise abort the JVM when the
+        // allocator refuses it. Proves the guard propagates through the full
+        // decode dispatch, not just the direct constructor. The reservation
+        // allocates eagerly, but whether such a request actually aborts is
+        // allocator/overcommit dependent, so this test pins propagation of the
+        // guard's rejection, not the abort.
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
+        // A valid 1-entry var-width dictionary buffer, but a lying header.
+        let mut dict_page = make_dict_page_var(&[b"aaa".to_vec()]);
+        dict_page.num_values = i32::MAX as usize;
+        let dict_page = dict_page.as_page();
+
+        let indices = [0u32];
+        let page = make_dict_data_page(make_byte_array_type(), Encoding::RleDictionary, &indices);
+        let page = page.as_page();
+
+        let mut bufs = ColumnChunkBuffers::new(allocator);
+        let col_info = QdbMetaCol {
+            column_type: ColumnTypeTag::Varchar.into_type(),
+            column_top: 0,
+            format: None,
+            ascii: None,
+        };
+
+        let err = decode_page(
+            &page,
+            Some(&dict_page),
+            &mut bufs,
+            col_info,
+            0,
+            indices.len(),
+        )
+        .expect_err("an oversized dictionary num_values must error, not abort");
+        assert!(
+            err.to_string().contains("too short to hold"),
+            "unexpected error: {err}"
+        );
+        // The rejected decode must free everything it allocated on the way to the
+        // error: no leak across JNI on the abort-class path it replaces.
+        drop(bufs);
+        assert_eq!(tas.rss_mem_used(), 0, "decode error path leaked memory");
+    }
+
+    #[test]
+    fn decode_page_dict_index_bitwidth_over_32_errors_not_panics() {
+        // End-to-end through decode_page: a dictionary-encoded String column whose
+        // index bit width (40) exceeds the 32-bit u32 the indices unpack into. The
+        // RLE_DICTIONARY index decode reaches bitpacked::Decoder::<u32>::try_new,
+        // whose num_bits guard must surface a clean error rather than reaching
+        // unreachable!("invalid num_bits 40") and aborting the JVM. Proves the
+        // guard propagates through the full decode dispatch. Values-buffer wire
+        // format: [40 = bit width, 0x03 = bitpacked indicator (1 group of 8), then
+        // 40 data bytes = 8 * 40 bits].
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
+        // A valid var-width dictionary so the only fault is the index bit width.
+        let dict_page = make_dict_page_var(&[b"aaa".to_vec(), b"bbb".to_vec(), b"ccc".to_vec()]);
+        let dict_page = dict_page.as_page();
+
+        let mut values = vec![40u8, 0x03];
+        values.extend(std::iter::repeat_n(0u8, 40));
+        let page = make_required_page(make_byte_array_type(), Encoding::RleDictionary, values, 8);
+        let page = page.as_page();
+
+        let mut bufs = ColumnChunkBuffers::new(allocator);
+        let col_info = QdbMetaCol {
+            column_type: ColumnTypeTag::String.into_type(),
+            column_top: 0,
+            format: None,
+            ascii: None,
+        };
+
+        let err = decode_page(&page, Some(&dict_page), &mut bufs, col_info, 0, 8)
+            .expect_err("an index bit width over 32 must error, not abort");
+        assert!(
+            err.to_string().contains("exceeds"),
+            "unexpected error: {err}"
+        );
+        // The rejected decode must free everything it allocated on the way to the
+        // error: no leak across JNI on the abort-class path it replaces.
+        drop(bufs);
+        assert_eq!(tas.rss_mem_used(), 0, "decode error path leaked memory");
+    }
+
+    #[test]
+    fn resize_decompress_buffer_rejects_unsatisfiable_size_instead_of_aborting() {
+        // uncompressed_page_size is attacker-controlled and drives the up-front
+        // decompression-buffer allocation. Unlike compressed_page_size it is not
+        // bounded by max_page_size on the read path (a highly compressible page
+        // can legitimately decompress to more than the compressed chunk), so it
+        // cannot be range-checked; the buffer sizing must instead be fallible. A
+        // genuine i32::MAX (~2 GiB) request may succeed on a large host, so to pin
+        // the fallible path deterministically we ask for usize::MAX: try_reserve
+        // fails with CapacityOverflow without attempting (and aborting on) a real
+        // allocation. Proves the sizing surfaces a clean error rather than the
+        // process-aborting Vec::resize.
+        let mut buf = Vec::new();
+        let err = resize_decompress_buffer(&mut buf, usize::MAX)
+            .expect_err("an unsatisfiable decompressed size must error, not abort");
+        assert!(
+            err.to_string().contains("cannot allocate"),
+            "unexpected error: {err}"
+        );
+        // The failure must be classified OutOfMemory, not Layout: on the write
+        // path (parquet merges under ApplyWal2TableJob) a Layout error suspends
+        // the table, whereas OutOfMemory backs off and retries -- the correct
+        // response to transient memory pressure.
+        assert!(
+            matches!(err.reason(), ParquetErrorReason::OutOfMemory(_)),
+            "allocation failure must be classified OutOfMemory, not Layout: {err:?}"
+        );
+    }
+
+    #[test]
+    fn resize_decompress_buffer_grows_in_place_without_clearing() {
+        // The helper threads one buffer through every page of a file. It must
+        // size in place without clear()ing -- a clear() would make resize memset
+        // the whole uncompressed_page_size on every page (a per-page regression)
+        // only for the decompressor to overwrite it. Pin the observable contract:
+        // growing preserves the bytes already present (zeroing only the added
+        // tail), and shrinking truncates. A clear()-first implementation would
+        // zero byte 0 here and fail this assertion.
+        let mut buf = vec![0xAB_u8; 4];
+        resize_decompress_buffer(&mut buf, 8).unwrap();
+        assert_eq!(buf.len(), 8);
+        assert_eq!(&buf[..4], &[0xAB; 4], "grow must not memset existing bytes");
+        assert_eq!(&buf[4..], &[0; 4], "grown tail must be zeroed");
+
+        resize_decompress_buffer(&mut buf, 2).unwrap();
+        assert_eq!(buf.as_slice(), &[0xAB; 2], "shrink must truncate in place");
+    }
+
+    #[test]
+    fn decompress_sliced_data_v2_uncompressed_does_not_size_buffer() {
+        fn v2_uncompressed_page(body: &[u8], uncompressed_size: usize) -> SlicedDataPage<'_> {
+            SlicedDataPage {
+                header: DataPageHeader::V2(DataPageHeaderV2 {
+                    num_values: 1,
+                    num_nulls: 0,
+                    num_rows: 1,
+                    encoding: Encoding::Plain.into(),
+                    definition_levels_byte_length: 0,
+                    repetition_levels_byte_length: 0,
+                    is_compressed: Some(false),
+                    statistics: None,
+                }),
+                buffer: body,
+                compression: Compression::Snappy,
+                uncompressed_size,
+                descriptor: Descriptor {
+                    primitive_type: PrimitiveType::from_physical(
+                        "c".to_string(),
+                        PhysicalType::Int32,
+                    ),
+                    max_def_level: 0,
+                    max_rep_level: 0,
+                },
+            }
+        }
+
+        // A V2 page with is_compressed=false is already uncompressed: the body is
+        // returned as-is and the decompress buffer is never read. It must not be
+        // sized -- the pre-hoist code resized it to the attacker-controlled
+        // uncompressed_size (up to i32::MAX, unbounded by max_page_size) purely to
+        // compare its length, memsetting a buffer with no decompression to amortize.
+        let body = [10u8, 20, 30, 40];
+        let page = v2_uncompressed_page(&body, body.len());
+        let mut decompress_buffer = Vec::new();
+        {
+            let data_page = decompress_sliced_data(&page, &mut decompress_buffer).unwrap();
+            assert_eq!(data_page.buffer, &body[..]);
+            assert_eq!(
+                data_page.buffer.as_ptr(),
+                body.as_ptr(),
+                "must return the page body itself, not a decompressed copy"
+            );
+        }
+        assert_eq!(
+            decompress_buffer.capacity(),
+            0,
+            "is_compressed=false must not allocate or size the decompress buffer"
+        );
+
+        // The length check is preserved, now compared directly against the body:
+        // a header whose uncompressed_size disagrees with the body still errors.
+        let bad = v2_uncompressed_page(&body, body.len() + 1);
+        let mut scratch = Vec::new();
+        let err = decompress_sliced_data(&bad, &mut scratch).unwrap_err();
+        assert!(
+            err.to_string().contains("incorrect decompressed size"),
+            "unexpected error: {err}"
+        );
+    }
+
+    fn snappy_compress(bytes: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        compress(CompressionOptions::Snappy, bytes, &mut out).unwrap();
+        out
+    }
+
+    fn int32_descriptor() -> Descriptor {
+        Descriptor {
+            primitive_type: PrimitiveType::from_physical("c".to_string(), PhysicalType::Int32),
+            max_def_level: 0,
+            max_rep_level: 0,
+        }
+    }
+
+    #[test]
+    fn decompress_sliced_data_v1_compressed_round_trips() {
+        // V1 compressed arm: resize_decompress_buffer sizes the reused buffer to
+        // uncompressed_size, then the whole page body is decompressed into it.
+        let values: Vec<u8> = (0..64u8).collect();
+        let compressed = snappy_compress(&values);
+        let page = SlicedDataPage {
+            header: DataPageHeader::V1(DataPageHeaderV1 {
+                num_values: values.len() as i32,
+                encoding: Encoding::Plain.into(),
+                definition_level_encoding: Encoding::Rle.into(),
+                repetition_level_encoding: Encoding::Rle.into(),
+                statistics: None,
+            }),
+            buffer: &compressed,
+            compression: Compression::Snappy,
+            uncompressed_size: values.len(),
+            descriptor: int32_descriptor(),
+        };
+        let mut decompress_buffer = Vec::new();
+        let data_page = decompress_sliced_data(&page, &mut decompress_buffer).unwrap();
+        assert_eq!(data_page.buffer, &values[..]);
+    }
+
+    #[test]
+    fn decompress_sliced_data_v2_compressed_round_trips() {
+        // V2 compressed arm (can_decompress=true): the first `offset` bytes are
+        // uncompressed levels copied verbatim, and only the values after them are
+        // compressed and decompressed into decompress_buffer[offset..].
+        let levels = [0xAAu8, 0xBB, 0xCC];
+        let values: Vec<u8> = (0..40u8).collect();
+        let mut body = levels.to_vec();
+        body.extend_from_slice(&snappy_compress(&values));
+        let page = SlicedDataPage {
+            header: DataPageHeader::V2(DataPageHeaderV2 {
+                num_values: values.len() as i32,
+                num_nulls: 0,
+                num_rows: values.len() as i32,
+                encoding: Encoding::Plain.into(),
+                definition_levels_byte_length: levels.len() as i32,
+                repetition_levels_byte_length: 0,
+                is_compressed: Some(true),
+                statistics: None,
+            }),
+            buffer: &body,
+            compression: Compression::Snappy,
+            uncompressed_size: levels.len() + values.len(),
+            descriptor: int32_descriptor(),
+        };
+        let mut decompress_buffer = Vec::new();
+        let data_page = decompress_sliced_data(&page, &mut decompress_buffer).unwrap();
+        let mut expected = levels.to_vec();
+        expected.extend_from_slice(&values);
+        assert_eq!(data_page.buffer, &expected[..]);
+    }
+
+    #[test]
+    fn decompress_sliced_dict_compressed_round_trips() {
+        // decompress_sliced_dict sizes the buffer to uncompressed_size and
+        // decompresses the whole dict page body into it.
+        let values: Vec<u8> = (0..48u8).collect();
+        let compressed = snappy_compress(&values);
+        let page = SlicedDictPage {
+            buffer: &compressed,
+            compression: Compression::Snappy,
+            uncompressed_size: values.len(),
+            num_values: 12,
+            is_sorted: false,
+        };
+        let mut buffer = Vec::new();
+        let dict = decompress_sliced_dict(page, &mut buffer).unwrap();
+        assert_eq!(dict.buffer, &values[..]);
+        assert_eq!(dict.num_values, 12);
+    }
+
+    #[test]
+    fn decompress_sliced_data_compressed_lying_size_errors() {
+        // A compressed page whose uncompressed_size under-claims the real
+        // decompressed length must surface a clean error, not panic or abort:
+        // resize_decompress_buffer sizes the output too small, so the codec
+        // cannot fill it and returns an error that propagates out.
+        let values: Vec<u8> = (0..64u8).collect();
+        let compressed = snappy_compress(&values);
+        let page = SlicedDataPage {
+            header: DataPageHeader::V1(DataPageHeaderV1 {
+                num_values: values.len() as i32,
+                encoding: Encoding::Plain.into(),
+                definition_level_encoding: Encoding::Rle.into(),
+                repetition_level_encoding: Encoding::Rle.into(),
+                statistics: None,
+            }),
+            buffer: &compressed,
+            compression: Compression::Snappy,
+            uncompressed_size: values.len() - 1, // lies: one byte short of the real output
+            descriptor: int32_descriptor(),
+        };
+        let mut decompress_buffer = Vec::new();
+        assert!(
+            decompress_sliced_data(&page, &mut decompress_buffer).is_err(),
+            "a compressed page whose uncompressed_size under-claims the body must error"
+        );
+    }
+
+    #[test]
+    fn decompress_sliced_data_v2_compressed_lying_size_errors() {
+        // V2 counterpart of the V1 lying-size test: a V2 compressed page whose
+        // uncompressed_size under-claims the real decompressed length (levels +
+        // values) must surface a clean error, not panic or abort. The PR hoisted
+        // the buffer sizing into the can_decompress arm, so resize_decompress_buffer
+        // sizes decompress_buffer one byte short of levels+values, leaving its
+        // [offset..] values region too small for the codec to fill -- the error must
+        // propagate out rather than reach an unwritten tail.
+        let levels = [0xAAu8, 0xBB, 0xCC];
+        let values: Vec<u8> = (0..40u8).collect();
+        let mut body = levels.to_vec();
+        body.extend_from_slice(&snappy_compress(&values));
+        let page = SlicedDataPage {
+            header: DataPageHeader::V2(DataPageHeaderV2 {
+                num_values: values.len() as i32,
+                num_nulls: 0,
+                num_rows: values.len() as i32,
+                encoding: Encoding::Plain.into(),
+                definition_levels_byte_length: levels.len() as i32,
+                repetition_levels_byte_length: 0,
+                is_compressed: Some(true),
+                statistics: None,
+            }),
+            buffer: &body,
+            compression: Compression::Snappy,
+            uncompressed_size: levels.len() + values.len() - 1, // lies: one byte short
+            descriptor: int32_descriptor(),
+        };
+        let mut decompress_buffer = Vec::new();
+        assert!(
+            decompress_sliced_data(&page, &mut decompress_buffer).is_err(),
+            "a V2 compressed page whose uncompressed_size under-claims the body must error"
+        );
+    }
+
+    // Regenerates the committed end-to-end fixture
+    // core/src/test/resources/sqllogictest/data/parquet-testing/broken/rle_dict_index_bitwidth_over_32.parquet
+    // read by the Java `ReadParquetFunctionTest`. Ignored by default; run with
+    // `cargo test -p qdbr -- --ignored generate_rle_dict_index_bitwidth_fixture`
+    // after the on-disk page layout changes. It writes a valid dictionary-encoded
+    // parquet, locates the RLE_DICTIONARY index bit-width byte (the first byte of
+    // a required column's data page) by pointer offset, patches it to 40 (> 32),
+    // and asserts the patched bytes trip the guard with a clean "exceeds" error
+    // (not a JVM abort) before committing them.
+    #[test]
+    #[ignore = "regenerates a committed test fixture on disk"]
+    fn generate_rle_dict_index_bitwidth_fixture() {
+        // Low cardinality (2 distinct values) so the writer dictionary-encodes it.
+        let values: Vec<i32> = vec![7, 7, 7, 9, 9, 7, 9, 7];
+
+        let col = std::sync::Arc::new(
+            parquet::schema::types::Type::primitive_type_builder("v", parquet::basic::Type::INT32)
+                .with_id(Some(0))
+                .with_repetition(parquet::basic::Repetition::REQUIRED)
+                .build()
+                .unwrap(),
+        );
+        let schema = std::sync::Arc::new(
+            parquet::schema::types::Type::group_type_builder("schema")
+                .with_fields(vec![col])
+                .build()
+                .unwrap(),
+        );
+        let props = std::sync::Arc::new(
+            parquet::file::properties::WriterProperties::builder()
+                .set_dictionary_enabled(true)
+                .set_writer_version(parquet::file::properties::WriterVersion::PARQUET_1_0)
+                .build(),
+        );
+
+        let mut cursor = Cursor::new(Vec::new());
+        {
+            let mut file_writer =
+                parquet::file::writer::SerializedFileWriter::new(&mut cursor, schema, props)
+                    .unwrap();
+            let mut row_group_writer = file_writer.next_row_group().unwrap();
+            let mut col_writer = row_group_writer.next_column().unwrap().unwrap();
+            col_writer
+                .typed::<parquet::data_type::Int32Type>()
+                .write_batch(&values, None, None)
+                .unwrap();
+            col_writer.close().unwrap();
+            row_group_writer.close().unwrap();
+            file_writer.close().unwrap();
+        }
+        let mut file = cursor.into_inner();
+
+        // Locate the data page's first byte (the dict-index bit width) by reading
+        // the column chunk's pages as slices into `file` and taking the pointer
+        // offset of the first data page (a required column carries no levels, so
+        // the bit-width byte is buffer[0]).
+        let bitwidth_offset = {
+            let metadata =
+                parquet2::read::read_metadata(&mut Cursor::new(file.as_slice())).unwrap();
+            let column = &metadata.row_groups[0].columns()[0];
+            let reader = parquet2::read::SlicePageReader::new(&file, column, 1 << 20).unwrap();
+            let mut saw_dict = false;
+            let mut offset = None;
+            for page in reader {
+                match page.unwrap() {
+                    parquet2::read::SlicedPage::Dict(_) => saw_dict = true,
+                    parquet2::read::SlicedPage::Data(data) => {
+                        offset = Some((data.buffer.as_ptr() as usize) - (file.as_ptr() as usize));
+                        break;
+                    }
+                }
+            }
+            assert!(
+                saw_dict,
+                "column was not dictionary-encoded; adjust the values"
+            );
+            offset.expect("expected a data page after the dictionary page")
+        };
+
+        let original = file[bitwidth_offset];
+        assert!(
+            original <= 32,
+            "expected a small real bit width at the located offset, got {original}"
+        );
+        file[bitwidth_offset] = 40; // > 32: trips bitpacked::Decoder::<u32>::try_new
+
+        // The patched bytes must trip the guard with a clean error, not abort.
+        {
+            let tas = TestAllocatorState::new();
+            let allocator = tas.allocator();
+            let buf_len = file.len() as u64;
+            let mut reader = Cursor::new(&file);
+            let decoder = ParquetDecoder::read(allocator.clone(), &mut reader, buf_len).unwrap();
+            let mut rgb = RowGroupBuffers::new(allocator);
+            let mut ctx = DecodeContext::new(file.as_ptr(), buf_len);
+            let err = decoder
+                .decode_row_group(
+                    &mut ctx,
+                    &mut rgb,
+                    &[(0, ColumnTypeTag::Int.into_type())],
+                    0,
+                    0,
+                    values.len() as u32,
+                )
+                .expect_err("the patched fixture must error, not abort");
+            assert!(
+                err.to_string().contains("exceeds"),
+                "fixture must trip the bit-width guard, got: {err}"
+            );
+        }
+
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../src/test/resources/sqllogictest/data/parquet-testing/broken/rle_dict_index_bitwidth_over_32.parquet"
+        );
+        std::fs::write(path, &file).unwrap();
+    }
+
+    // Regenerates the committed end-to-end fixture
+    // core/src/test/resources/sqllogictest/data/parquet-testing/broken/dict_num_values_over_buffer.parquet
+    // read by the Java `ReadParquetFunctionTest`. Ignored by default; run with
+    // `cargo test -p qdbr -- --ignored generate_dict_num_values_over_buffer_fixture`
+    // after the on-disk page layout changes. It writes a valid dictionary-encoded
+    // BYTE_ARRAY column, then patches the dictionary page header's num_values to a
+    // count the dict buffer cannot hold (each value needs at least a 4-byte length
+    // prefix). BaseVarDictDecoder::try_new now rejects that up front with "too short
+    // to hold"; before the guard it reserved a Vec sized by the attacker-controlled
+    // num_values (up to ~2.1 billion entries), and the allocator refusing that
+    // multi-gigabyte request aborted the JVM over JNI. Asserts the patched bytes trip
+    // the guard with a clean error before committing them. The magnitude that
+    // actually drives the abort (i32::MAX) is covered by the Rust unit tests; this
+    // fixture pins that the guard's rejection crosses the JNI boundary as a clean
+    // CairoException rather than an abort.
+    #[test]
+    #[ignore = "regenerates a committed test fixture on disk"]
+    fn generate_dict_num_values_over_buffer_fixture() {
+        // Low cardinality (4 distinct short values) so the writer dictionary-encodes
+        // it; UNCOMPRESSED so the on-disk dict page buffer is the raw dict bytes the
+        // num_values guard measures against.
+        let strings = ["aa", "bb", "cc", "dd", "aa", "cc", "bb", "dd"];
+        let values: Vec<parquet::data_type::ByteArray> = strings
+            .iter()
+            .map(|s| parquet::data_type::ByteArray::from(s.as_bytes().to_vec()))
+            .collect();
+
+        let col = std::sync::Arc::new(
+            parquet::schema::types::Type::primitive_type_builder(
+                "v",
+                parquet::basic::Type::BYTE_ARRAY,
+            )
+            .with_id(Some(0))
+            .with_repetition(parquet::basic::Repetition::REQUIRED)
+            // STRING logical type so QuestDB infers VARCHAR (the common foreign-string
+            // case), whose dictionary decode routes through BaseVarDictDecoder.
+            .with_logical_type(Some(parquet::basic::LogicalType::String))
+            .build()
+            .unwrap(),
+        );
+        let schema = std::sync::Arc::new(
+            parquet::schema::types::Type::group_type_builder("schema")
+                .with_fields(vec![col])
+                .build()
+                .unwrap(),
+        );
+        let props = std::sync::Arc::new(
+            parquet::file::properties::WriterProperties::builder()
+                .set_dictionary_enabled(true)
+                .set_compression(parquet::basic::Compression::UNCOMPRESSED)
+                .set_writer_version(parquet::file::properties::WriterVersion::PARQUET_1_0)
+                .build(),
+        );
+
+        let mut cursor = Cursor::new(Vec::new());
+        {
+            let mut file_writer =
+                parquet::file::writer::SerializedFileWriter::new(&mut cursor, schema, props)
+                    .unwrap();
+            let mut row_group_writer = file_writer.next_row_group().unwrap();
+            let mut col_writer = row_group_writer.next_column().unwrap().unwrap();
+            col_writer
+                .typed::<parquet::data_type::ByteArrayType>()
+                .write_batch(&values, None, None)
+                .unwrap();
+            col_writer.close().unwrap();
+            row_group_writer.close().unwrap();
+            file_writer.close().unwrap();
+        }
+        let mut file = cursor.into_inner();
+
+        // Locate the dictionary page header (from dictionary_page_offset to the dict
+        // page body the reader hands back) and its real num_values.
+        let (dict_offset, body_start, dict_num_values, dict_buf_len) = {
+            let metadata =
+                parquet2::read::read_metadata(&mut Cursor::new(file.as_slice())).unwrap();
+            let column = &metadata.row_groups[0].columns()[0];
+            let dict_offset = column
+                .dictionary_page_offset()
+                .expect("column was not dictionary-encoded; adjust the values")
+                as usize;
+            let reader = parquet2::read::SlicePageReader::new(&file, column, 1 << 20).unwrap();
+            let mut found = None;
+            for page in reader {
+                if let parquet2::read::SlicedPage::Dict(dict) = page.unwrap() {
+                    let body_start = (dict.buffer.as_ptr() as usize) - (file.as_ptr() as usize);
+                    found = Some((body_start, dict.num_values, dict.buffer.len()));
+                    break;
+                }
+            }
+            let (body_start, num_values, buf_len) = found.expect("expected a dictionary page");
+            (dict_offset, body_start, num_values, buf_len)
+        };
+
+        // The original count must fit the buffer (a valid page) and encode in a
+        // single zigzag byte so the in-place patch preserves the header length: for a
+        // small non-negative i32 the thrift-compact zigzag varint is one byte equal
+        // to num_values * 2.
+        assert!(
+            dict_num_values <= dict_buf_len / 4,
+            "expected a valid dict (num_values {dict_num_values} <= buffer/4 {})",
+            dict_buf_len / 4
+        );
+        assert!(
+            dict_num_values < 64,
+            "num_values must be a 1-byte zigzag varint"
+        );
+
+        // A patched count that overflows the buffer guard yet still fits one zigzag
+        // byte. 63 * 4 bytes per value far exceeds the few-dozen-byte dict buffer.
+        const PATCHED: usize = 63;
+        assert!(
+            PATCHED > dict_buf_len / 4,
+            "patched num_values {PATCHED} must exceed buffer/4 {}",
+            dict_buf_len / 4
+        );
+
+        // Find the num_values byte: in thrift-compact the PageHeader encodes the
+        // DictionaryPageHeader as a struct field (low nibble 0xC), whose first field
+        // is num_values (i32 field header 0x15) followed by its zigzag byte.
+        let header = &file[dict_offset..body_start];
+        let expect_byte = (dict_num_values as u8) * 2;
+        let mut hits = header
+            .windows(3)
+            .enumerate()
+            .filter(|(_, w)| (w[0] & 0x0F) == 0x0C && w[1] == 0x15 && w[2] == expect_byte);
+        let (rel, _) = hits
+            .next()
+            .expect("could not locate the dictionary num_values field in the page header");
+        assert!(
+            hits.next().is_none(),
+            "ambiguous num_values field location; tighten the search"
+        );
+        let num_values_byte = dict_offset + rel + 2;
+        assert_eq!(file[num_values_byte], expect_byte);
+        file[num_values_byte] = (PATCHED as u8) * 2;
+
+        // The patched bytes must trip the num_values guard with a clean error, not abort.
+        {
+            let tas = TestAllocatorState::new();
+            let allocator = tas.allocator();
+            let buf_len = file.len() as u64;
+            let mut reader = Cursor::new(&file);
+            let decoder = ParquetDecoder::read(allocator.clone(), &mut reader, buf_len).unwrap();
+            let mut rgb = RowGroupBuffers::new(allocator);
+            let mut ctx = DecodeContext::new(file.as_ptr(), buf_len);
+            let err = decoder
+                .decode_row_group(
+                    &mut ctx,
+                    &mut rgb,
+                    &[(0, ColumnTypeTag::Varchar.into_type())],
+                    0,
+                    0,
+                    strings.len() as u32,
+                )
+                .expect_err("the patched fixture must error, not abort");
+            assert!(
+                err.to_string().contains("too short to hold"),
+                "fixture must trip the num_values guard, got: {err}"
+            );
+        }
+
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../src/test/resources/sqllogictest/data/parquet-testing/broken/dict_num_values_over_buffer.parquet"
+        );
+        std::fs::write(path, &file).unwrap();
     }
 
     #[test]

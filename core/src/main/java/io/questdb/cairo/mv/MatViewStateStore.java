@@ -78,6 +78,11 @@ public interface MatViewStateStore extends QuietCloseable, Mutable {
     // and wants to send refresh job an incremental refresh message.
     void notifyBaseTableCommit(MatViewRefreshTask task, long seqTxn);
 
+    // Re-publishes a dequeued task verbatim so the refresh job can put one back when the
+    // suspend gate is observed set after the dequeue (the promote window), letting the task
+    // run after writes open instead of being refused and dropped.
+    void reenqueueRefreshTask(MatViewRefreshTask task);
+
     void removeViewState(TableToken matViewToken);
 
     boolean tryDequeueRefreshTask(MatViewRefreshTask task);

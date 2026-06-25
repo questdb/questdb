@@ -61,18 +61,19 @@ public class ParquetMetaWriteTest extends AbstractCairoTest {
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
             drainWalQueue();
 
-            assertHasParquetPartition("x");
-            assertParquetMetadata("x", 3);
-            assertSql(
-                    """
+            assertHasParquetPartition();
+            assertParquetMetadata(3);
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             x\ty\tts
                             1\t100\t2020-01-01T00:00:00.000000Z
                             2\t200\t2020-01-01T01:00:00.000000Z
                             3\t300\t2020-01-01T02:00:00.000000Z
                             99\t999\t2020-01-02T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM x"
-            );
+                            """);
         });
     }
 
@@ -107,8 +108,12 @@ public class ParquetMetaWriteTest extends AbstractCairoTest {
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
             drainWalQueue();
 
-            assertHasParquetPartition("x");
-            assertSql("count\n10\n", "SELECT count() FROM x WHERE ts >= '2020-01-01' AND ts < '2020-01-02'");
+            assertHasParquetPartition();
+            assertQuery("SELECT count() FROM x WHERE ts >= '2020-01-01' AND ts < '2020-01-02'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n10\n");
         });
     }
 
@@ -134,17 +139,29 @@ public class ParquetMetaWriteTest extends AbstractCairoTest {
 
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
             drainWalQueue();
-            assertSql("count\n3\n", "SELECT count() FROM x WHERE ts >= '2020-01-01' AND ts < '2020-01-02'");
+            assertQuery("SELECT count() FROM x WHERE ts >= '2020-01-01' AND ts < '2020-01-02'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n3\n");
 
             execute("ALTER TABLE x CONVERT PARTITION TO NATIVE LIST '2020-01-01'");
             drainWalQueue();
-            assertSql("count\n3\n", "SELECT count() FROM x WHERE ts >= '2020-01-01' AND ts < '2020-01-02'");
+            assertQuery("SELECT count() FROM x WHERE ts >= '2020-01-01' AND ts < '2020-01-02'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n3\n");
 
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
             drainWalQueue();
 
-            assertHasParquetPartition("x");
-            assertSql("count\n3\n", "SELECT count() FROM x WHERE ts >= '2020-01-01' AND ts < '2020-01-02'");
+            assertHasParquetPartition();
+            assertQuery("SELECT count() FROM x WHERE ts >= '2020-01-01' AND ts < '2020-01-02'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n3\n");
         });
     }
 
@@ -175,20 +192,21 @@ public class ParquetMetaWriteTest extends AbstractCairoTest {
             execute("INSERT INTO x(x, ts) VALUES (50, '2020-01-01T01:30:00.000Z')");
             drainWalQueue();
 
-            assertNotSuspended("x");
-            assertHasParquetPartition("x");
-            assertParquetMetadata("x", 2);
-            assertSql(
-                    """
+            assertNotSuspended();
+            assertHasParquetPartition();
+            assertParquetMetadata(2);
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             x\tts
                             1\t2020-01-01T00:00:00.000000Z
                             2\t2020-01-01T01:00:00.000000Z
                             50\t2020-01-01T01:30:00.000000Z
                             3\t2020-01-01T02:00:00.000000Z
                             99\t2020-01-02T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM x"
-            );
+                            """);
         });
     }
 
@@ -231,11 +249,14 @@ public class ParquetMetaWriteTest extends AbstractCairoTest {
             execute("INSERT INTO x(x, ts) VALUES (100, '2020-01-01T04:30:00.000Z')");
             drainWalQueue();
 
-            assertNotSuspended("x");
-            assertHasParquetPartition("x");
-            assertParquetMetadata("x", 2);
-            assertSql(
-                    """
+            assertNotSuspended();
+            assertHasParquetPartition();
+            assertParquetMetadata(2);
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             x\tts
                             1\t2020-01-01T00:00:00.000000Z
                             2\t2020-01-01T01:00:00.000000Z
@@ -251,9 +272,7 @@ public class ParquetMetaWriteTest extends AbstractCairoTest {
                             11\t2020-01-01T10:00:00.000000Z
                             12\t2020-01-01T11:00:00.000000Z
                             99\t2020-01-02T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM x"
-            );
+                            """);
         });
     }
 
@@ -293,12 +312,16 @@ public class ParquetMetaWriteTest extends AbstractCairoTest {
                 String ts = "2020-01-01T0" + merge + ":30:00.000Z";
                 execute("INSERT INTO x(x, ts) VALUES (" + (100 + merge) + ", '" + ts + "')");
                 drainWalQueue();
-                assertNotSuspended("x");
+                assertNotSuspended();
             }
 
-            assertHasParquetPartition("x");
-            assertParquetMetadata("x", 2);
-            assertSql("count\n11\n", "SELECT count() FROM x WHERE ts >= '2020-01-01' AND ts < '2020-01-02'");
+            assertHasParquetPartition();
+            assertParquetMetadata(2);
+            assertQuery("SELECT count() FROM x WHERE ts >= '2020-01-01' AND ts < '2020-01-02'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n11\n");
         });
     }
 
@@ -333,19 +356,20 @@ public class ParquetMetaWriteTest extends AbstractCairoTest {
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
             drainWalQueue();
 
-            assertHasParquetPartition("x");
-            assertParquetMetadata("x", 9);
+            assertHasParquetPartition();
+            assertParquetMetadata(9);
             // Note: FLOAT column 'f' renders with DOUBLE precision when read through
             // the _pm decode path because the parquet decoder promotes f32 to f64.
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             b\ti\tl\tf\td\tdt\tts\ts\tv
                             true\t1\t100\t1.5\t2.5\t2020-01-01T00:00:00.000Z\t2020-01-01T00:00:00.000000Z\thello\tworld
                             false\t2\t200\t3.5\t4.5\t2020-01-02T00:00:00.000Z\t2020-01-01T01:00:00.000000Z\tfoo\tbar
                             true\t99\t999\t9.9\t9.9\t2020-01-03T00:00:00.000Z\t2020-01-02T00:00:00.000000Z\tz\tz
-                            """,
-                    "SELECT * FROM x"
-            );
+                            """);
         });
     }
 
@@ -376,23 +400,24 @@ public class ParquetMetaWriteTest extends AbstractCairoTest {
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
             drainWalQueue();
 
-            assertHasParquetPartition("x");
-            assertParquetMetadata("x", 4);
-            assertSql(
-                    """
+            assertHasParquetPartition();
+            assertParquetMetadata(4);
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             a\tb\tc\tts
                             1\t\tnull\t2020-01-01T00:00:00.000000Z
                             2\t\tnull\t2020-01-01T01:00:00.000000Z
                             3\t\tnull\t2020-01-01T02:00:00.000000Z
                             99\t\tnull\t2020-01-02T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM x"
-            );
+                            """);
         });
     }
 
-    private void assertHasParquetPartition(String tableName) throws Exception {
-        try (TableReader reader = getReader(tableName)) {
+    private void assertHasParquetPartition() {
+        try (TableReader reader = getReader("x")) {
             boolean found = false;
             for (int i = 0; i < reader.getPartitionCount(); i++) {
                 if (reader.getPartitionFormat(i) == PartitionFormat.PARQUET) {
@@ -400,19 +425,19 @@ public class ParquetMetaWriteTest extends AbstractCairoTest {
                     break;
                 }
             }
-            Assert.assertTrue("expected at least one parquet partition in " + tableName, found);
+            Assert.assertTrue("expected at least one parquet partition in " + "x", found);
         }
     }
 
-    private void assertNotSuspended(String tableName) {
+    private void assertNotSuspended() {
         Assert.assertFalse(
-                "table " + tableName + " should not be suspended",
-                engine.getTableSequencerAPI().isSuspended(engine.verifyTableName(tableName))
+                "table " + "x" + " should not be suspended",
+                engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
         );
     }
 
-    private void assertParquetMetadata(String tableName, int expectedColumnCount) {
-        try (TableReader reader = getReader(tableName)) {
+    private void assertParquetMetadata(int expectedColumnCount) {
+        try (TableReader reader = getReader("x")) {
             for (int i = 0; i < reader.getPartitionCount(); i++) {
                 if (reader.getPartitionFormat(i) != PartitionFormat.PARQUET) {
                     continue;

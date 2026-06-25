@@ -171,7 +171,8 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     min_compression_ratio: jdouble,
     parquet_meta_fd: jint,
     parquet_meta_file_size: jlong,
-    existing_parquet_meta_file_size: jlong,
+    append_base: jlong,
+    existing_parquet_file_size: jlong,
 ) -> *mut ParquetUpdater {
     let env = &mut env;
     let create = || -> ParquetResult<ParquetUpdater> {
@@ -220,7 +221,8 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
             min_compression_ratio,
             parquet_meta_fd_handle,
             parquet_meta_file_size as u64,
-            existing_parquet_meta_file_size,
+            append_base as u64,
+            existing_parquet_file_size,
         )
     };
 
@@ -316,22 +318,23 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_syncParquetMeta(
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_commitParquetMeta(
     mut env: JNIEnv,
     _class: JClass,
     updater: *mut ParquetUpdater,
+    sync: jboolean,
 ) {
     let env = &mut env;
     if updater.is_null() {
         let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
-        err.add_context("error in PartitionUpdater.syncParquetMeta");
+        err.add_context("error in PartitionUpdater.commitParquetMeta");
         err.into_cairo_exception().throw::<()>(env);
         return;
     }
 
     let parquet_updater = unsafe { &mut *updater };
-    if let Err(mut err) = parquet_updater.sync_parquet_meta() {
-        err.add_context("error in PartitionUpdater.syncParquetMeta");
+    if let Err(mut err) = parquet_updater.commit_parquet_meta(sync != 0) {
+        err.add_context("error in PartitionUpdater.commitParquetMeta");
         err.into_cairo_exception().throw::<()>(env);
     }
 }
@@ -1668,73 +1671,115 @@ fn convert_row_group_buffers_to_partition(
 mod tests {
     use super::*;
     use std::os::unix::io::AsRawFd;
-    use tempfile::NamedTempFile;
 
-    /// Returns true iff `fd` still refers to an open file descriptor in this
-    /// process.
-    fn fd_is_open(fd: i32) -> bool {
-        // SAFETY: fcntl(F_GETFD) returns -1 and sets errno=EBADF for a closed
-        // fd; the call has no side effects on still-open fds.
-        unsafe { libc::fcntl(fd, libc::F_GETFD) != -1 }
+    /// Creates a pipe and returns its (read_end, write_end) as raw fds. The
+    /// caller owns both and must close whatever it still holds.
+    fn make_pipe() -> (i32, i32) {
+        let mut fds = [0i32; 2];
+        // SAFETY: `fds` is a valid 2-element buffer for pipe(2) to populate.
+        let rc = unsafe { libc::pipe(fds.as_mut_ptr()) };
+        assert_eq!(rc, 0, "pipe() failed");
+        (fds[0], fds[1])
+    }
+
+    /// Returns true iff the write end of the pipe whose read end is `read_fd`
+    /// has been fully closed (no open fd refers to it).
+    ///
+    /// This observes the kernel pipe's write-side reference count via EOF, NOT
+    /// a global fd number, so it is immune to fd-number recycling by the other
+    /// tests cargo runs in parallel -- a thread reopening the same fd *number*
+    /// for a different file does not add a reference to this pipe. A
+    /// non-blocking read keeps it from hanging while the write end is open.
+    fn pipe_write_end_closed(read_fd: i32) -> bool {
+        // SAFETY: `read_fd` is a pipe read end owned by the caller.
+        unsafe {
+            let flags = libc::fcntl(read_fd, libc::F_GETFL);
+            libc::fcntl(read_fd, libc::F_SETFL, flags | libc::O_NONBLOCK);
+            let mut buf = [0u8; 1];
+            // read() == 0 means EOF: every write end is closed. -1 (EAGAIN)
+            // means the write end is still open with no data buffered.
+            libc::read(read_fd, buf.as_mut_ptr().cast::<libc::c_void>(), 1) == 0
+        }
     }
 
     #[test]
     fn reader_writer_fd_aliased_returns_err_and_closes_fd() {
-        let tmp = NamedTempFile::new().unwrap();
-        let fd = tmp.as_file().as_raw_fd();
-        // Leak the temp-file handle so we retain the fd after close detection;
-        // the Rust side is expected to close it on the error path.
-        let _file_retained = tmp.into_file();
-        std::mem::forget(_file_retained);
-
-        let result = take_partition_updater_fds(fd, fd, -1);
+        // Hand the pipe's write end in as an aliased reader==writer fd. The
+        // error path must take ownership and close it (seen as EOF on the read
+        // end), not leak it.
+        let (read_fd, write_fd) = make_pipe();
+        let result = take_partition_updater_fds(write_fd, write_fd, -1);
         assert!(result.is_err(), "expected Err for aliased fds");
         assert!(
-            !fd_is_open(fd),
+            pipe_write_end_closed(read_fd),
             "aliased reader/writer fd was not closed by the error path"
         );
+        // SAFETY: `read_fd` is still owned here.
+        unsafe { libc::close(read_fd) };
     }
 
     #[test]
     fn reader_writer_fd_aliased_also_closes_parquet_meta_fd() {
-        let tmp1 = NamedTempFile::new().unwrap();
-        let tmp2 = NamedTempFile::new().unwrap();
-        let shared_fd = tmp1.as_file().as_raw_fd();
-        let parquet_meta_fd_handle = tmp2.as_file().as_raw_fd();
-        // Retain both handles as owned fds and detach them.
-        std::mem::forget(tmp1.into_file());
-        std::mem::forget(tmp2.into_file());
+        let (read_shared, write_shared) = make_pipe();
+        let (read_meta, write_meta) = make_pipe();
 
-        let result = take_partition_updater_fds(shared_fd, shared_fd, parquet_meta_fd_handle);
+        let result = take_partition_updater_fds(write_shared, write_shared, write_meta);
         assert!(
             result.is_err(),
             "expected Err for aliased reader/writer fds"
         );
-        assert!(!fd_is_open(shared_fd), "shared fd was not closed");
         assert!(
-            !fd_is_open(parquet_meta_fd_handle),
+            pipe_write_end_closed(read_shared),
+            "shared fd was not closed"
+        );
+        assert!(
+            pipe_write_end_closed(read_meta),
             "parquet_meta fd was not closed on the error path"
         );
+        // SAFETY: both read ends are still owned here.
+        unsafe {
+            libc::close(read_shared);
+            libc::close(read_meta);
+        }
     }
 
     #[test]
     fn distinct_fds_return_ok_and_retain_ownership() {
-        let tmp_reader = NamedTempFile::new().unwrap();
-        let tmp_writer = NamedTempFile::new().unwrap();
-        let reader_fd = tmp_reader.as_file().as_raw_fd();
-        let writer_fd = tmp_writer.as_file().as_raw_fd();
-        std::mem::forget(tmp_reader.into_file());
-        std::mem::forget(tmp_writer.into_file());
+        let (read_r, write_r) = make_pipe();
+        let (read_w, write_w) = make_pipe();
 
-        let result = take_partition_updater_fds(reader_fd, writer_fd, -1);
+        let result = take_partition_updater_fds(write_r, write_w, -1);
         let (reader_file, writer_file, parquet_meta_fd_handle) =
             result.expect("distinct fds must succeed");
         assert!(parquet_meta_fd_handle.is_none());
-        // Drop the returned Files to close the fds; the helper must have
-        // given us ownership.
+        // Ownership transferred: the returned Files wrap exactly our fds...
+        assert_eq!(reader_file.as_raw_fd(), write_r);
+        assert_eq!(writer_file.as_raw_fd(), write_w);
+        // ...and the helper did NOT close them itself -- both write ends stay
+        // open while we hold the Files.
+        assert!(
+            !pipe_write_end_closed(read_r),
+            "reader fd was closed; ownership not retained"
+        );
+        assert!(
+            !pipe_write_end_closed(read_w),
+            "writer fd was closed; ownership not retained"
+        );
+        // Dropping the returned Files closes the fds (OwnedFd guarantee) -> EOF.
         drop(reader_file);
         drop(writer_file);
-        assert!(!fd_is_open(reader_fd));
-        assert!(!fd_is_open(writer_fd));
+        assert!(
+            pipe_write_end_closed(read_r),
+            "dropping reader File did not close the fd"
+        );
+        assert!(
+            pipe_write_end_closed(read_w),
+            "dropping writer File did not close the fd"
+        );
+        // SAFETY: both read ends are still owned here.
+        unsafe {
+            libc::close(read_r);
+            libc::close(read_w);
+        }
     }
 }

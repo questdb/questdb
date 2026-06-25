@@ -38,7 +38,6 @@ import io.questdb.cutlass.line.tcp.WalTableUpdateDetails;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.protocol.QwpMessageCursor;
 import io.questdb.cutlass.qwp.protocol.QwpParseException;
-import io.questdb.cutlass.qwp.protocol.QwpSchemaRegistry;
 import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -74,6 +73,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     private final StringSink deferredCloseReason = new StringSink();
     private final StringSink deferredErrorMessage = new StringSink();
     private final CharSequenceLongHashMap durableProgressSnapshot = new CharSequenceLongHashMap();
+    private final CairoEngine engine;
     private final StringSink error = new StringSink();
     private final CharSequenceLongHashMap lastDurableSeqTxns = new CharSequenceLongHashMap();
     private final long maxBufferSize;
@@ -105,7 +105,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     private long highestProcessedSequence = -1;
     private long lastAckedSequence = -1;
     private long messageSequence;
-    private byte negotiatedVersion = QwpConstants.VERSION_1;
+    private byte negotiatedVersion = QwpConstants.VERSION;
     // Bytes that onHeadersReady staged in the raw response buffer waiting to
     // be flushed by onRequestComplete. Carried across the two calls so
     // resumeSend can finalise after a parked write.
@@ -126,12 +126,12 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
             LineHttpProcessorConfiguration configuration
     ) {
         assert initBufferSize > 0;
+        this.engine = engine;
         this.configuration = configuration;
         this.maxBufferSize = Math.min(configuration.getMaxRecvBufferSize(), Integer.MAX_VALUE);
         this.maxResponseErrorMessageLength = Math.max(0, (int) ((maxResponseContentLength - 100) / 1.5));
         try {
             this.streamingDecoder = new QwpStreamingDecoder(
-                    new QwpSchemaRegistry(configuration.getQwpMaxSchemasPerConnection()),
                     configuration.getQwpMaxRowsPerTable()
             );
             this.walAppender = new QwpWalAppender(
@@ -457,7 +457,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     @Override
     public void onDisconnected() {
         clear();
-        streamingDecoder.resetConnectionState();
+        streamingDecoder.reset();
         tudCache.reset();
         connectionSymbolDict.clear();  // Reset delta symbol dictionary on disconnect
 
@@ -609,6 +609,18 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         }
 
         try {
+            // Re-check the LIVE write-refusal state on every batch. A QWP ingress connection
+            // caches its SecurityContext (and a per-table WAL writer) at handshake time, so a
+            // connection opened while this node was PRIMARY would otherwise keep writing after an
+            // in-place PRIMARY-to-REPLICA switch flips the node read-only -- the cached state
+            // bypasses per-write authorization entirely. Consulting engine.isReadOnlyMode() here
+            // closes that boundary race: the instant the node starts demoting (the dynamic
+            // read-only-replica flag flips FIRST in the switch cascade), the whole batch is
+            // rejected as an authorization error, which maps to Status.SECURITY_ERROR below.
+            if (engine.isReadOnlyMode()) {
+                throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+            }
+
             // Verify the message version matches what was negotiated during the upgrade
             if (bufferPosition >= QwpConstants.HEADER_SIZE) {
                 byte messageVersion = Unsafe.getByte(bufferAddress + QwpConstants.HEADER_OFFSET_VERSION);
@@ -624,6 +636,17 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
             // Decode using streaming decoder with delta symbol dictionary support
             QwpMessageCursor messageCursor = streamingDecoder.decode(
                     bufferAddress, bufferPosition, connectionSymbolDict);
+
+            // A redefined client symbol dictionary (orphan-adoption replays a
+            // different sender's dict-from-0 into this connection, remapping
+            // existing client symbol IDs to new strings) leaves the
+            // clientSymbolId -> tableSymbolId cache pointing at the prior
+            // sender's keys. Drop it so symbols re-resolve against the
+            // refreshed dictionary; the watermark check alone cannot catch a
+            // remap that adds no new table symbols.
+            if (messageCursor.isSymbolDictRedefined()) {
+                symbolCache.clear();
+            }
 
             // Process each table block using streaming cursors
             while (messageCursor.hasNextTable()) {

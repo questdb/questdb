@@ -85,10 +85,16 @@ public interface GroupByFunction extends Function, Mutable {
      * Performs the first aggregation within a group.
      * <p>
      * Row id is provided for aggregation functions that consider row order, such as first/last.
-     * The value is guaranteed to be growing between subsequent calls. In case of parallel GROUP BY,
-     * this means that all row ids of a later page frame are guaranteed to be greater than row ids
-     * of all previous page frames. {@link Record#getRowId()} shouldn't be used for this purpose
-     * since not all records implement it, and it's not guaranteed to be growing.
+     * A larger rowId always denotes a later row: all row ids of a later page frame are greater
+     * than the row ids of every earlier frame. However, the rowId is NOT guaranteed to grow
+     * between subsequent calls for the same group. In parallel GROUP BY a worker reduces page
+     * frames into its slot map in an order that depends on dynamic slot acquisition and work
+     * stealing, so a group can receive a higher-rowId frame's rows before a lower-rowId frame's
+     * rows. Order-sensitive aggregates (first/last and their not-null variants) must therefore
+     * pick the winning row by comparing the provided rowId against the stored one, never by
+     * relying on the order in which computeFirst/computeNext are called. {@link Record#getRowId()}
+     * shouldn't be used for this purpose since not all records implement it, and it's not
+     * guaranteed to be growing.
      *
      * @param mapValue map value holding the group
      * @param record   record holding the aggregated row
@@ -149,10 +155,16 @@ public interface GroupByFunction extends Function, Mutable {
      * Performs a subsequent aggregation within a group.
      * <p>
      * Row id is provided for aggregation functions that consider row order, such as first/last.
-     * The value is guaranteed to be growing between subsequent calls. In case of parallel GROUP BY,
-     * this means that all row ids of a later page frame are guaranteed to be greater than row ids
-     * of all previous page frames. {@link Record#getRowId()} shouldn't be used for this purpose
-     * since not all records implement it, and it's not guaranteed to be growing.
+     * A larger rowId always denotes a later row: all row ids of a later page frame are greater
+     * than the row ids of every earlier frame. However, the rowId is NOT guaranteed to grow
+     * between subsequent calls for the same group. In parallel GROUP BY a worker reduces page
+     * frames into its slot map in an order that depends on dynamic slot acquisition and work
+     * stealing, so a group can receive a higher-rowId frame's rows before a lower-rowId frame's
+     * rows. Order-sensitive aggregates (first/last and their not-null variants) must therefore
+     * pick the winning row by comparing the provided rowId against the stored one, never by
+     * relying on the order in which computeFirst/computeNext are called. {@link Record#getRowId()}
+     * shouldn't be used for this purpose since not all records implement it, and it's not
+     * guaranteed to be growing.
      *
      * @param mapValue map value holding the group
      * @param record   record holding the aggregated row
@@ -217,7 +229,12 @@ public interface GroupByFunction extends Function, Mutable {
     }
 
     /**
-     * Returns the sample by flags supported by this function.
+     * Returns the sample by fill modes supported by this function as a bitmask of
+     * {@code SAMPLE_BY_FILL_*} constants.
+     * <p>
+     * {@link #SAMPLE_BY_FILL_NONE} MUST always be set. The SQL optimizer and the fill-mode
+     * validation in GroupByUtils rely on this invariant. If you relax this requirement,
+     * audit the optimizer and downstream validation for assumptions that depend on it.
      *
      * @return the sample by flags
      */

@@ -2,7 +2,9 @@ package io.questdb.test.cairo.mv;
 
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.file.AppendableBlock;
 import io.questdb.cairo.file.BlockFileReader;
+import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateReader;
 import io.questdb.cairo.wal.WalWriter;
@@ -65,12 +67,11 @@ public class MatViewStateTest extends AbstractCairoTest {
                 assertFalse(configuration.getFilesFacade().exists(path.$()));
                 final long coldStart = timestampType.getDriver()
                         .fromMicros(MatViewState.COLD_START_GAP_THRESHOLD_MICROS);
-                assertQueryNoLeakCheck(
-                        "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_period_hi\trefresh_base_table_txn\tbase_table_txn\trefresh_limit\trefresh_limit_unit\ttimer_time_zone\ttimer_start\ttimer_interval\ttimer_interval_unit\tperiod_length\tperiod_length_unit\tperiod_delay\tperiod_delay_unit\trefresh_avg_commit_nanos\trefresh_avg_scan_sample_nanos\trefresh_avg_scan_range_ts_units\trefresh_gap_threshold_ts_units\tbackfill_max_ts\n" +
-                                "price_1h\timmediate\tbase_price\t\t\tselect sym0, last(price0) price, ts0 from (select ts as ts0, sym as sym0, price as price0 from base_price) sample by 1h\tprice_1h~2\t\tvalid\t\t-1\t0\t0\t\t\t\t0\t\t0\t\t0\t\t0\t0\t0\t" + coldStart + "\t\n",
-                        "select * from materialized_views()",
-                        null
-                );
+                assertQuery("select * from materialized_views()")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_period_hi\trefresh_base_table_txn\tbase_table_txn\trefresh_limit\trefresh_limit_unit\ttimer_time_zone\ttimer_start\ttimer_interval\ttimer_interval_unit\tperiod_length\tperiod_length_unit\tperiod_delay\tperiod_delay_unit\trefresh_avg_commit_nanos\trefresh_avg_scan_sample_nanos\trefresh_avg_scan_range_ts_units\trefresh_gap_threshold_ts_units\tbackfill_max_ts\n" +
+                                "price_1h\timmediate\tbase_price\t\t\tselect sym0, last(price0) price, ts0 from (select ts as ts0, sym as sym0, price as price0 from base_price) sample by 1h\tprice_1h~2\t\tvalid\t\t-1\t0\t0\t\t\t\t0\t\t0\t\t0\t\t0\t0\t0\t" + coldStart + "\t\n");
             }
         });
     }
@@ -201,6 +202,75 @@ public class MatViewStateTest extends AbstractCairoTest {
                 long lastMatViewTxn = (iterations - 1) - 1;
                 long lastPeriodHi = (iterations - 1) - 1;
                 assertState(tableToken, lastMatViewTxn, lastMatViewTxn, false, null, lastPeriodHi, null, -1);
+            }
+        });
+    }
+
+    @Test
+    public void testReusedReaderResetsStaleStateWhenLaterBlocksAbsent() throws Exception {
+        // A reused MatViewStateReader must not carry the later-block fields (lastPeriodHi,
+        // refreshIntervalsBaseTxn, refreshIntervals) from a previously-read view into a state file that
+        // lacks those blocks. Pre-intervals-block _mv files (written before the intervals block was added)
+        // exist on upgraded deployments and load via the of(BlockFileReader) fallback/checkpoint path, which
+        // sets those fields only from the later blocks. Without a reset, a stale refreshIntervalsBaseTxn
+        // carried over here corrupts the loaded view's refresh baseline (the next incremental refresh skips
+        // the gap between the real and stale watermark). of(BlockFileReader) must reset first, the way its
+        // of(MatViewDataInfo) / of(MatViewInvalidationInfo) siblings already fully repopulate.
+        assertMemoryLeak(() -> {
+            execute("create table base_tok (ts timestamp) timestamp(ts) partition by DAY WAL");
+            final TableToken token = engine.verifyTableName("base_tok");
+            final FilesFacade ff = configuration.getFilesFacade();
+            final int commitMode = configuration.getCommitMode();
+
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot());
+                final int rootLen = path.size();
+
+                // File A -- a full state with a period hi and tracked intervals (all blocks present).
+                final LongList intervals = new LongList();
+                intervals.add(100L, 200L);
+                path.trimTo(rootLen).concat("mv_full_state").$();
+                ff.touch(path.$());
+                try (BlockFileWriter writer = new BlockFileWriter(ff, commitMode)) {
+                    writer.of(path.$());
+                    MatViewState.append(1_000L, 7L, false, null, 50L, intervals, 5L, Long.MIN_VALUE, Numbers.LONG_NULL, writer);
+                }
+
+                // File B -- a legacy state with ONLY the first block (no ts/period/intervals blocks).
+                path.trimTo(rootLen).concat("mv_legacy_state").$();
+                ff.touch(path.$());
+                try (BlockFileWriter writer = new BlockFileWriter(ff, commitMode)) {
+                    writer.of(path.$());
+                    final AppendableBlock block = writer.append();
+                    MatViewState.appendState(10L, false, null, block);
+                    block.commit(MatViewState.MAT_VIEW_STATE_FORMAT_MSG_TYPE);
+                    writer.commit();
+                }
+
+                final MatViewStateReader reader = new MatViewStateReader();
+
+                // Prime the reader from the full file: it now holds positive later-block fields.
+                try (BlockFileReader br = new BlockFileReader(configuration)) {
+                    path.trimTo(rootLen).concat("mv_full_state").$();
+                    br.of(path.$());
+                    reader.of(br, token);
+                }
+                assertEquals(5L, reader.getRefreshIntervalsBaseTxn());
+                assertEquals(50L, reader.getLastPeriodHi());
+
+                // Read the legacy file with the SAME reader: the absent blocks' fields must reset, not carry.
+                try (BlockFileReader br = new BlockFileReader(configuration)) {
+                    path.trimTo(rootLen).concat("mv_legacy_state").$();
+                    br.of(path.$());
+                    reader.of(br, token);
+                }
+                assertEquals("lastRefreshBaseTxn must come from the first block", 10L, reader.getLastRefreshBaseTxn());
+                assertEquals("refreshIntervalsBaseTxn must reset when the intervals block is absent",
+                        -1L, reader.getRefreshIntervalsBaseTxn());
+                assertEquals("lastPeriodHi must reset when the period block is absent",
+                        Numbers.LONG_NULL, reader.getLastPeriodHi());
+                assertTrue("refreshIntervals must reset when the intervals block is absent",
+                        reader.getRefreshIntervals() == null || reader.getRefreshIntervals().size() == 0);
             }
         });
     }

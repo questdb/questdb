@@ -265,15 +265,15 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                     barrier.await();
                     while (!done.get()) {
                         //noinspection StatementWithEmptyBody
-                        while (walApplyJob.run(0)) {
+                        while (walApplyJob.run()) {
                             // run until empty
                         }
 
-                        checkWalTransactionsJob.run(0);
+                        checkWalTransactionsJob.run();
 
                         // run once again as there might be notifications to handle now
                         //noinspection StatementWithEmptyBody
-                        while (walApplyJob.run(0)) {
+                        while (walApplyJob.run()) {
                             // run until empty
                         }
                     }
@@ -293,7 +293,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                 ) {
                     barrier.await();
                     //noinspection StatementWithEmptyBody
-                    while (!done.get() && job.run(0)) {
+                    while (!done.get() && job.run()) {
                         // run until empty
                     }
                 } catch (Throwable e) {
@@ -765,13 +765,14 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             // Write a line into the table
             execute("insert into tab1(a, b, timestamp) values(0, 1, '2022-02-24')");
 
-            assertSql(
-                    """
+            assertQuery("tab1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("timestamp")
+                    .returns("""
                             a\tb\ttimestamp
                             0\t1\t2022-02-24T00:00:00.000000Z
-                            """,
-                    "tab1"
-            );
+                            """);
 
             Assert.assertFalse(engine.verifyTableName("tab1").isWal());
         });
@@ -1205,9 +1206,9 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                 // verify steps
                 for (int i = 0; i < n; i++) {
                     CharSequence oldTableName = null;
-                    CharSequence tableName = tableNames.getQuick(i) + Thread.currentThread().getId();
+                    CharSequence tableName = tableNames.getQuick(i) + Thread.currentThread().threadId();
                     if (i > 0) {
-                        oldTableName = tableNames.getQuick(i - 1) + Thread.currentThread().getId();
+                        oldTableName = tableNames.getQuick(i - 1) + Thread.currentThread().threadId();
                     }
                     if (!success.get(i)) {
                         continue;
@@ -1228,7 +1229,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                                 drainWalQueue();
                                 break;
                             case FUZZ_SWEEP:
-                                purgeJob.run(thread);
+                                purgeJob.run();
                                 break;
                             default:
                                 assert false;

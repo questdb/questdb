@@ -53,6 +53,12 @@ public class GenerateSeriesTimestampRecordCursorFactory extends AbstractGenerate
 
     @Override
     public int getScanDirection() {
+        // A bind-variable step is only known at runtime, so the order cannot be guaranteed
+        // at plan time. Reading getLong() off an unbound function would yield a misleading
+        // direction, so report the order only for a constant step.
+        if (!stepFunc.isConstant()) {
+            return SCAN_DIRECTION_OTHER;
+        }
         if (stepFunc.getLong(null) > 0) {
             return SCAN_DIRECTION_FORWARD;
         } else {
@@ -85,6 +91,7 @@ public class GenerateSeriesTimestampRecordCursorFactory extends AbstractGenerate
 
         @Override
         public boolean hasNext() {
+            circuitBreaker.statefulThrowExceptionIfTripped();
             recordA.curr += step;
             if (step >= 0) {
                 return recordA.curr <= end;
@@ -128,13 +135,12 @@ public class GenerateSeriesTimestampRecordCursorFactory extends AbstractGenerate
         }
 
         @Override
-        public void skipRows(Counter rowCount) {
-            long currentRowId = recordA.getRowId()
-                    - 1  // one-indexed
-                    - 1; // we increment at the start of hasNext()
-            long rowsToSkip = Math.min(rowCount.get(), size() - currentRowId);
-            long newRowId = currentRowId + rowsToSkip;
-            recordAt(recordA, newRowId);
+        public void skipRows(Counter rowCount, long maxRowsAfterSkip) {
+            // curr is always on-grid at start + step * (rowId - 1), so the signed offset
+            // maps the top sentinel to rowId 0 and makes skip-of-0 a positional no-op.
+            long currentRowId = (recordA.curr - start) / step + 1;
+            long rowsToSkip = Math.max(0, Math.min(rowCount.get(), size() - currentRowId));
+            recordAt(recordA, currentRowId + rowsToSkip);
             rowCount.dec(rowsToSkip);
         }
 

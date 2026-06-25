@@ -80,23 +80,22 @@ public class MatViewRefreshRetryTest extends AbstractCairoTest {
             );
 
             drainWalAndMatViewQueues();
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select view_name, view_status from materialized_views")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             view_name\tview_status
                             price_1h\tvalid
-                            """,
-                    "select view_name, view_status from materialized_views",
-                    null,
-                    false
-            );
+                            """);
 
-            assertSql(
-                    """
+            assertQuery("select count() from wal_transactions('price_1h')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
                             count
                             56
-                            """,
-                    "select count() from wal_transactions('price_1h')"
-            );
+                            """);
         });
     }
 
@@ -138,30 +137,31 @@ public class MatViewRefreshRetryTest extends AbstractCairoTest {
 
             // Set RSS limit, so that the refresh will fail due to OOM.
             Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + 500 * 1024); // 500KB gap
-            drainWalAndMatViewQueues();
-            assertQueryNoLeakCheck(
-                    """
-                            view_name\tview_status
-                            price_1h\tinvalid
-                            """,
-                    "select view_name, view_status from materialized_views",
-                    null,
-                    false
-            );
+            try {
+                drainWalAndMatViewQueues();
+                assertQuery("select view_name, view_status from materialized_views")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("""
+                                view_name\tview_status
+                                price_1h\tinvalid
+                                """);
+            } finally {
+                // Always clear the global RSS limit, even if the assertion above throws, so a failure
+                // here cannot leak the tight limit into later tests that share this JVM fork.
+                Unsafe.setRssMemLimit(0);
+            }
 
-            // Now, remove the limit and run full refresh. This time, it should succeed.
-            Unsafe.setRssMemLimit(0);
+            // Now, run full refresh. This time, it should succeed.
             execute("refresh materialized view price_1h full;");
             drainWalAndMatViewQueues();
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select view_name, view_status from materialized_views")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             view_name\tview_status
                             price_1h\tvalid
-                            """,
-                    "select view_name, view_status from materialized_views",
-                    null,
-                    false
-            );
+                            """);
         });
     }
 }

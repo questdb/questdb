@@ -64,6 +64,8 @@ import io.questdb.griffin.engine.functions.columns.StrColumn;
 import io.questdb.griffin.engine.functions.columns.TimestampColumn;
 import io.questdb.griffin.engine.functions.columns.UuidColumn;
 import io.questdb.griffin.engine.functions.columns.VarcharColumn;
+import io.questdb.griffin.engine.functions.groupby.SparklineGroupByFunction;
+import io.questdb.griffin.engine.functions.groupby.TwapGroupByFunction;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.QueryColumn;
@@ -79,7 +81,6 @@ import java.util.ArrayDeque;
 import static io.questdb.griffin.model.ExpressionNode.LITERAL;
 
 public class GroupByUtils {
-    public static final int PROJECTION_FUNCTION_FLAG_ANY = -1;
     public static final int PROJECTION_FUNCTION_FLAG_COLUMN = 0;
     public static final int PROJECTION_FUNCTION_FLAG_GROUP_BY = 2;
     public static final int PROJECTION_FUNCTION_FLAG_VIRTUAL = 1;
@@ -91,6 +92,7 @@ public class GroupByUtils {
             SqlExecutionContext executionContext,
             RecordMetadata baseMetadata,
             int timestampIndex,
+            boolean isBaseTimestampAscending,
             boolean timestampUnimportant,
             ObjList<GroupByFunction> outGroupByFunctions,
             IntList outGroupByFunctionPositions,
@@ -192,6 +194,42 @@ public class GroupByUtils {
                 projectionMetadata.add(m);
             }
 
+            // When the user provided more than one FILL entry but fewer than the
+            // aggregate count, reject up front with the precise "not enough fill
+            // values" error. The per-aggregate validator below would otherwise
+            // clamp later aggregates onto fill[fillCount - 1] and could fire a
+            // misleading "support for X fill is not yet implemented" for any
+            // aggregate that does not accept the clamped fill type. The same
+            // count condition is re-checked in SqlCodeGenerator.generateFill as
+            // a backstop for the non-keyed FILL(value) rewrite path. Defer when
+            // FILL(NONE) is mixed with other fills -- that case has a more
+            // specific error ("FILL(NONE) cannot be combined with other fill
+            // values") that fires later in generateFill and should win. Only
+            // outerProjectionFunctions has been populated by this point, so the
+            // count uses GroupByFunction instances from that list (key columns
+            // and CAST-wrapped column functions never report as GroupByFunction
+            // per findColumnKeyIndex).
+            if (validateFill && fillCount > 1) {
+                boolean hasNoneMixed = false;
+                for (int i = 0; i < fillCount; i++) {
+                    if (SqlKeywords.isNoneKeyword(sampleByFill.getQuick(i).token)) {
+                        hasNoneMixed = true;
+                        break;
+                    }
+                }
+                if (!hasNoneMixed) {
+                    int aggregateCount = 0;
+                    for (int i = 0, n = outerProjectionFunctions.size(); i < n; i++) {
+                        if (outerProjectionFunctions.getQuick(i) instanceof GroupByFunction) {
+                            aggregateCount++;
+                        }
+                    }
+                    if (fillCount < aggregateCount) {
+                        throw SqlException.$(sampleByFill.getQuick(0).position, "not enough fill values");
+                    }
+                }
+            }
+
             // There are two iterations over the model's columns. The first iterations create value
             // slots for the group-by functions. They are added first because each group-by function is likely
             // to require several slots. The number of slots for each function is not known upfront and
@@ -226,27 +264,34 @@ public class GroupByUtils {
                         // fill type. it's to close the function properly when the validation fails
                         outGroupByFunctions.add(groupByFunc);
                         outGroupByFunctionPositions.add(node.position);
+                        if (groupByFunc instanceof TwapGroupByFunction twapFunc) {
+                            twapFunc.validateTimestampArg(timestampIndex, isBaseTimestampAscending, node.position);
+                        } else if (groupByFunc instanceof SparklineGroupByFunction sparklineFunc) {
+                            sparklineFunc.validateScanDirection(isBaseTimestampAscending, node.position);
+                        }
                         if (fillCount > 0) {
-                            // index of the function relative to the list of fill values
-                            // we might have the same fill value for all functions
-                            int funcIndex = outGroupByFunctions.size();
+                            // 0-based index of the just-added aggregate. The Math.min clamp
+                            // below covers only the single-fill broadcast case (FILL(NULL)
+                            // applied to N aggregates -- every iteration lands on fill[0]).
+                            // The multi-fill count mismatch (fillCount > 1, fillCount <
+                            // aggregateCount) is rejected as "not enough fill values" up
+                            // front, so it cannot reach this loop.
+                            int funcIndex = outGroupByFunctions.size() - 1;
                             int sampleByFlags = groupByFunc.getSampleByFlags();
                             ExpressionNode fillNode = sampleByFill.getQuick(Math.min(funcIndex, fillCount - 1));
                             if (validateFill) {
+                                assert (sampleByFlags & GroupByFunction.SAMPLE_BY_FILL_NONE) != 0 :
+                                        "aggregate must support FILL(NONE): " + groupByFunc.getClass().getName();
                                 if (SqlKeywords.isNullKeyword(fillNode.token) && (sampleByFlags & GroupByFunction.SAMPLE_BY_FILL_NULL) == 0) {
-                                    throw SqlException.$(node.position, "support for NULL fill is not yet implemented [function=").put(node)
+                                    throw SqlException.$(fillNode.position, "support for NULL fill is not yet implemented [function=").put(node)
                                             .put(", class=").put(groupByFunc.getClass().getName())
                                             .put(']');
                                 } else if (SqlKeywords.isPrevKeyword(fillNode.token) && (sampleByFlags & GroupByFunction.SAMPLE_BY_FILL_PREVIOUS) == 0) {
-                                    throw SqlException.$(node.position, "support for PREV fill is not yet implemented [function=").put(node)
+                                    throw SqlException.$(fillNode.position, "support for PREV fill is not yet implemented [function=").put(node)
                                             .put(", class=").put(groupByFunc.getClass().getName())
                                             .put(']');
                                 } else if (SqlKeywords.isLinearKeyword(fillNode.token) && (sampleByFlags & GroupByFunction.SAMPLE_BY_FILL_LINEAR) == 0) {
-                                    throw SqlException.$(node.position, "support for LINEAR fill is not yet implemented [function=").put(node)
-                                            .put(", class=").put(groupByFunc.getClass().getName())
-                                            .put(']');
-                                } else if (SqlKeywords.isNoneKeyword(fillNode.token) && (sampleByFlags & GroupByFunction.SAMPLE_BY_FILL_NONE) == 0) {
-                                    throw SqlException.$(node.position, "support for NONE fill is not yet implemented [function=").put(node)
+                                    throw SqlException.$(fillNode.position, "support for LINEAR fill is not yet implemented [function=").put(node)
                                             .put(", class=").put(groupByFunc.getClass().getName())
                                             .put(']');
                                 } else if (
@@ -256,7 +301,7 @@ public class GroupByUtils {
                                                 !SqlKeywords.isNoneKeyword(fillNode.token) &&
                                                 (sampleByFlags & GroupByFunction.SAMPLE_BY_FILL_VALUE) == 0
                                 ) {
-                                    throw SqlException.$(node.position, "support for VALUE fill is not yet implemented [function=").put(node)
+                                    throw SqlException.$(fillNode.position, "support for VALUE fill is not yet implemented [function=").put(node)
                                             .put(", class=").put(groupByFunc.getClass().getName())
                                             .put(']');
                                 }
@@ -355,6 +400,11 @@ public class GroupByUtils {
             }
             outerProjectionFunctions.clear();
             innerProjectionFunctions.clear();
+            // Every group-by function was also added to outerProjectionFunctions (same
+            // instance) and freed by the loop above. Clear the list so callers that free
+            // it on their own error path (the JOIN callsites call
+            // Misc.freeObjList(groupByFunctions)) don't close the same instance twice.
+            outGroupByFunctions.clear();
             if (extraOuterProjectionFunctions != null) {
                 for (int i = 0, n = extraOuterProjectionFunctions.size(); i < n; i++) {
                     Misc.freeObjListAndClear(extraOuterProjectionFunctions.getQuick(i));

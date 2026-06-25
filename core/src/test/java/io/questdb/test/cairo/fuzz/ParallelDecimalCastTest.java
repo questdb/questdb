@@ -301,7 +301,12 @@ public class ParallelDecimalCastTest extends AbstractCairoTest {
                                 ddl,
                                 sqlExecutionContext
                         );
-                        TestUtils.assertSql(engine, sqlExecutionContext, sql, sink, expected);
+                        assertQuery(sql)
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns(expected);
                     },
                     configuration,
                     LOG

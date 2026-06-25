@@ -168,15 +168,27 @@ public class ValidationOnlyAlterTest extends AbstractCairoTest {
             execute("CREATE TABLE x (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("INSERT INTO x VALUES ('2024-01-01T00:00:00', 1), ('2024-01-01T01:00:00', 2)");
             drainWalQueue();
-            assertSql("count\n2\n", "SELECT count() FROM x");
+            assertQuery("SELECT count() FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n2\n");
 
             validate("TRUNCATE TABLE x");
             drainWalQueue();
-            assertSql("count\n2\n", "SELECT count() FROM x");
+            assertQuery("SELECT count() FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n2\n");
 
             execute("TRUNCATE TABLE x");
             drainWalQueue();
-            assertSql("count\n0\n", "SELECT count() FROM x");
+            assertQuery("SELECT count() FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
         });
     }
 

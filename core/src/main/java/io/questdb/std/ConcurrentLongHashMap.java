@@ -63,7 +63,6 @@ import org.jetbrains.annotations.NotNull;
 
 import java.io.ObjectStreamField;
 import java.io.Serializable;
-import java.lang.ThreadLocal;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.util.Arrays;
@@ -454,7 +453,7 @@ public class ConcurrentLongHashMap<V> implements Serializable {
             new ObjectStreamField("segmentShift", Integer.TYPE)
     };
     private static final long serialVersionUID = 7249069246763182397L;
-    private final java.lang.ThreadLocal<Traverser<V>> tlTraverser = ThreadLocal.withInitial(Traverser::new);
+    private final CarrierLocal<Traverser<V>> tlTraverser = CarrierLocal.withInitial(Traverser::new);
     /**
      * The array of bins. Lazily initialized upon first insertion.
      * Size is always a power of two. Accessed directly by iterators.
@@ -772,6 +771,7 @@ public class ConcurrentLongHashMap<V> implements Serializable {
         for (Node<V>[] tab = table; ; ) {
             Node<V> f;
             int n, i, fh;
+            V fv;
             if (tab == null || (n = tab.length) == 0)
                 tab = initTable();
             else if ((f = tabAt(tab, i = (n - 1) & h)) == null) {
@@ -792,6 +792,9 @@ public class ConcurrentLongHashMap<V> implements Serializable {
                     break;
             } else if ((fh = f.hash) == MOVED)
                 tab = helpTransfer(tab, f);
+            else if (fh == h && f.key == key    // check first node without acquiring lock
+                    && (fv = f.val) != null)
+                return fv;
             else {
                 boolean added = false;
                 synchronized (f) {
@@ -874,6 +877,7 @@ public class ConcurrentLongHashMap<V> implements Serializable {
         for (Node<V>[] tab = table; ; ) {
             Node<V> f;
             int n, i, fh;
+            V fv;
             if (tab == null || (n = tab.length) == 0)
                 tab = initTable();
             else if ((f = tabAt(tab, i = (n - 1) & h)) == null) {
@@ -894,6 +898,9 @@ public class ConcurrentLongHashMap<V> implements Serializable {
                     break;
             } else if ((fh = f.hash) == MOVED)
                 tab = helpTransfer(tab, f);
+            else if (fh == h && f.key == key    // check first node without acquiring lock
+                    && (fv = f.val) != null)
+                return fv;
             else {
                 boolean added = false;
                 synchronized (f) {
@@ -2276,7 +2283,7 @@ public class ConcurrentLongHashMap<V> implements Serializable {
             int m = (int) sz;
             T[] r = (a.length >= m) ? a :
                     (T[]) java.lang.reflect.Array
-                          .newInstance(a.getClass().getComponentType(), m);
+                            .newInstance(a.getClass().getComponentType(), m);
             int n = r.length;
             int i = 0;
             for (E e : this) {
@@ -2364,7 +2371,7 @@ public class ConcurrentLongHashMap<V> implements Serializable {
             implements Set<LongEntry<V>>, java.io.Serializable {
         private static final long serialVersionUID = 2249069246763182397L;
 
-        private final ThreadLocal<EntryIterator<V>> tlEntryIterator = ThreadLocal.withInitial(EntryIterator::new);
+        private final CarrierLocal<EntryIterator<V>> tlEntryIterator = CarrierLocal.withInitial(EntryIterator::new);
 
         EntrySetView(ConcurrentLongHashMap<V> map) {
             super(map);
@@ -2506,7 +2513,7 @@ public class ConcurrentLongHashMap<V> implements Serializable {
     public static class KeySetView<V> implements java.io.Serializable {
         private static final long serialVersionUID = 7249069246763182397L;
         private final ConcurrentLongHashMap<V> map;
-        private final ThreadLocal<KeyIterator<V>> tlKeyIterator = ThreadLocal.withInitial(KeyIterator::new);
+        private final CarrierLocal<KeyIterator<V>> tlKeyIterator = CarrierLocal.withInitial(KeyIterator::new);
         private final V value;
 
         KeySetView(ConcurrentLongHashMap<V> map, V value) {  // non-public
@@ -3530,7 +3537,7 @@ public class ConcurrentLongHashMap<V> implements Serializable {
     static final class ValuesView<V> extends CollectionView<V, V>
             implements Collection<V>, java.io.Serializable {
         private static final long serialVersionUID = 2249069246763182397L;
-        private final ThreadLocal<ValueIterator<V>> tlValueIterator = ThreadLocal.withInitial(ValueIterator::new);
+        private final CarrierLocal<ValueIterator<V>> tlValueIterator = CarrierLocal.withInitial(ValueIterator::new);
 
         ValuesView(ConcurrentLongHashMap<V> map) {
             super(map);

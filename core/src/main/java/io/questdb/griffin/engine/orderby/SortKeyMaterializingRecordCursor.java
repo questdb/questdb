@@ -24,10 +24,13 @@
 
 package io.questdb.griffin.engine.orderby;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.DelegatingRecordCursor;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
@@ -52,6 +55,7 @@ class SortKeyMaterializingRecordCursor implements DelegatingRecordCursor {
     private final MaterializedRecord recordB = new MaterializedRecord();
     private final DirectLongLongHashMap rowIdToOrdinal;
     private RecordCursor baseCursor;
+    private SqlExecutionCircuitBreaker circuitBreaker;
     private boolean isOpen;
     private boolean materialized;
     private long nextOrdinal;
@@ -60,8 +64,16 @@ class SortKeyMaterializingRecordCursor implements DelegatingRecordCursor {
             int columnCount,
             IntList materializedColIndices,
             IntList materializedColTypes,
-            int maxPages
+            long maxBytes
     ) {
+        // Split the operator-wide budget across per-column buffers proportionally to each
+        // column's fixed-size width: a wide column (e.g. DECIMAL256, 32B) consumes 32x the
+        // memory per row of a narrow column (e.g. BOOLEAN, 1B), so an equal byte share would
+        // cap the wide buffer 32x earlier than the narrow one. The size-weighted share keeps
+        // each buffer's row capacity roughly balanced. Floored at PAGE_SIZE per buffer so
+        // each can always allocate its initial page even when (maxBytes / bufferCount) is
+        // sub-page; sub-PAGE_SIZE budgets thus overshoot the operator-wide ceiling by up to
+        // bufferCount * PAGE_SIZE, the smallest amount that allows the cursor to initialize.
         final int bufferCount = materializedColIndices.size();
         this.buffers = new MemoryCARW[bufferCount];
         this.colToBufferIndex = new int[columnCount];
@@ -73,16 +85,36 @@ class SortKeyMaterializingRecordCursor implements DelegatingRecordCursor {
             colToBufferIndex[i] = -1;
         }
 
+        // First pass: capture per-buffer metadata and aggregate the size weights.
+        int totalWeight = 0;
+        for (int i = 0; i < bufferCount; i++) {
+            final int colIndex = materializedColIndices.getQuick(i);
+            final int colType = materializedColTypes.getQuick(i);
+            colToBufferIndex[colIndex] = i;
+            bufferToColIndex[i] = colIndex;
+            colTypes[i] = colType;
+            colSizes[i] = ColumnType.sizeOf(colType);
+            totalWeight += colSizes[i];
+        }
+        // Divide first, then multiply per column: each colSize is a summand of totalWeight,
+        // so (safeMaxBytes / totalWeight) * colSizes[i] stays within Long range even when
+        // safeMaxBytes is Long.MAX_VALUE. Clamp a negative cap (a legacy *.max.pages=-1
+        // propagated through deriveMaxBytesDefault) to 0 so the floor takes over.
+        final long safeMaxBytes = Math.max(0L, maxBytes);
+        final long bytesPerWeight = totalWeight > 0 ? safeMaxBytes / totalWeight : 0L;
+
         this.rowIdToOrdinal = new DirectLongLongHashMap(64, 0.7, Long.MIN_VALUE, -1L, MemoryTag.NATIVE_TREE_CHAIN);
         try {
             for (int i = 0; i < bufferCount; i++) {
-                final int colIndex = materializedColIndices.getQuick(i);
-                final int colType = materializedColTypes.getQuick(i);
-                buffers[i] = Vm.getCARWInstance(PAGE_SIZE, maxPages, MemoryTag.NATIVE_TREE_CHAIN);
-                colToBufferIndex[colIndex] = i;
-                bufferToColIndex[i] = colIndex;
-                colTypes[i] = colType;
-                colSizes[i] = ColumnType.sizeOf(colType);
+                final long perBufferBytes = bytesPerWeight * colSizes[i];
+                final long maxPagesFromBytes = Math.max(1L, perBufferBytes / PAGE_SIZE);
+                final int maxPages = (int) Math.min(maxPagesFromBytes, Integer.MAX_VALUE);
+                buffers[i] = Vm.getCARWInstance(
+                        PAGE_SIZE,
+                        maxPages,
+                        MemoryTag.NATIVE_TREE_CHAIN,
+                        PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath()
+                );
             }
         } catch (Throwable th) {
             freeBuffers();
@@ -120,6 +152,7 @@ class SortKeyMaterializingRecordCursor implements DelegatingRecordCursor {
 
     @Override
     public boolean hasNext() {
+        circuitBreaker.statefulThrowExceptionIfTripped();
         if (baseCursor.hasNext()) {
             final Record baseRecord = recordA.getBaseRecord();
             final long rowId = baseRecord.getRowId();
@@ -148,6 +181,7 @@ class SortKeyMaterializingRecordCursor implements DelegatingRecordCursor {
     @Override
     public void of(RecordCursor baseCursor, SqlExecutionContext executionContext) {
         this.baseCursor = baseCursor;
+        this.circuitBreaker = executionContext.getCircuitBreaker();
         isOpen = true;
         for (int i = 0, n = buffers.length; i < n; i++) {
             buffers[i].truncate();
@@ -174,6 +208,11 @@ class SortKeyMaterializingRecordCursor implements DelegatingRecordCursor {
         baseCursor.recordAt(((MaterializedRecord) record).getBaseRecord(), atRowId);
         final long ordinal = rowIdToOrdinal.get(atRowId);
         ((MaterializedRecord) record).setOrdinal(ordinal);
+    }
+
+    @Override
+    public void setParquetDecodeHint(ParquetDecodeHint hint) {
+        baseCursor.setParquetDecodeHint(hint);
     }
 
     @Override

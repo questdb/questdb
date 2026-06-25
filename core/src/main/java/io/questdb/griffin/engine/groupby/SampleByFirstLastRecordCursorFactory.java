@@ -44,6 +44,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SingleSymbolFilter;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -56,6 +57,7 @@ import io.questdb.std.BitmapIndexUtilsNative;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -116,6 +118,8 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
             int blockSize = metadata.getIndexValueBlockCapacity(groupBySymbolColIndex);
             pageSize = configPageSize < 16 ? Math.max(blockSize, 16) : configPageSize;
             maxSamplePeriodSize = pageSize * 4;
+            // Fixed-size scratch (samplePeriodAddress reset per frame), so global-counter only;
+            // the frame memory pool, which scales with the data, carries the per-query tracker.
             int outSize = pageSize << ITEMS_PER_OUT_ARRAY_SHIFT;
             rowIdOutAddress = new DirectLongList(outSize, MemoryTag.NATIVE_SAMPLE_BY_LONG_LIST);
             rowIdOutAddress.setPos(outSize);
@@ -146,6 +150,9 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        // Consult the breaker at open, so even the empty paths below (no matching symbol key, or a
+        // base scan that yields no rows) still observe cancellation and stay cancellable.
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
         // pageFrameCursor must be acquired before the groupByIndexKey lookup
         final PageFrameCursor pageFrameCursor = base.getPageFrameCursor(executionContext, ORDER_ASC);
         final int groupByIndexKey = symbolFilter.getSymbolFilterKey();
@@ -299,6 +306,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         private final PageFrameAddressCache frameAddressCache;
         private final PageFrameMemoryPool frameMemoryPool;
         private final SampleByFirstLastRecord record = new SampleByFirstLastRecord();
+        private SqlExecutionCircuitBreaker circuitBreaker;
         private int crossRowState;
         private long currentRow;
         private int frameCount = 0;
@@ -312,6 +320,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         private IndexFrame indexFrame;
         private int indexFramePosition = -1;
         private boolean initialized;
+        private MemoryTracker memoryTracker;
         private long prevSamplePeriodOffset = 0;
         private int rowsFound;
         private long samplePeriodIndexOffset = 0;
@@ -343,9 +352,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                     sampleToFuncPos
             );
             frameAddressCache = new PageFrameAddressCache();
-            // We're using page frame memory only and do single scan
-            // with no random access, hence cache size of 1.
-            frameMemoryPool = new PageFrameMemoryPool(1);
+            frameMemoryPool = new PageFrameMemoryPool(0L);
         }
 
         @Override
@@ -440,6 +447,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
             crossRowState = NONE;
             frameCursor.toTop();
             frameAddressCache.clear();
+            frameMemoryPool.setMemoryTracker(memoryTracker);
             frameMemoryPool.of(frameAddressCache);
             frameMemory = null;
         }
@@ -646,6 +654,9 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
             rowsFound = 0;
 
             while (state != STATE_DONE) {
+                // The state machine fetches/searches page frames here; observe the breaker on every
+                // transition so a long scan stays cancellable (a cold-open-only check would not).
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 state = getNextState(state);
                 if (state < 0) {
                     state = -state;
@@ -717,6 +728,8 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         ) throws SqlException {
             this.frameCursor = frameCursor;
             this.groupBySymbolKey = groupBySymbolKey;
+            this.circuitBreaker = sqlExecutionContext.getCircuitBreaker();
+            this.memoryTracker = sqlExecutionContext.getMemoryTracker();
             frameAddressCache.of(metadata, frameCursor.getColumnMapping(), frameCursor.isExternal());
             toTop();
             parseParams(this, sqlExecutionContext);
@@ -982,12 +995,15 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                 public long getLong(int col) {
                     long pageAddress = pageAddresses[col];
                     if (pageAddress > 0) {
-                        if (col != timestampIndex) {
+                        if (col != groupByTimestampIndex) {
                             return Unsafe.getLong(pageAddress + (getRowId(firstLastIndexByCol[col]) << 3));
                         }
-                        // Special case - timestamp the sample by runs on
-                        // Take it from timestampOutBuff instead of column
-                        // It's the value of the beginning of the group, not where the first row found
+                        // Special case - the projected designated timestamp the sample by runs on.
+                        // Take it from the sample period buffer instead of the column, so it reports
+                        // the value of the beginning of the group, not where the first row was found.
+                        // groupByTimestampIndex is the projection-space index of that column (-1 when
+                        // it is not projected); comparing against the base-table timestampIndex would
+                        // alias an unrelated projected column whenever the two index spaces disagree.
                         return samplePeriodAddress.get(getRowId(TIMESTAMP_OUT_INDEX) - prevSamplePeriodOffset);
                     } else {
                         return Numbers.LONG_NULL;

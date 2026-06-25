@@ -36,9 +36,12 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.qwp.codec.DefaultQwpServerInfoProvider;
 import io.questdb.cutlass.qwp.codec.QwpServerInfoProvider;
 import io.questdb.cutlass.text.TextConfiguration;
+import io.questdb.mp.continuation.DelayedFireable;
+import io.questdb.mp.continuation.TimerShards;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IOURingFacade;
 import io.questdb.std.IOURingFacadeImpl;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.Rnd;
 import io.questdb.std.RostiAllocFacade;
@@ -363,6 +366,12 @@ public interface CairoConfiguration {
 
     int getMatViewRefreshMaxClusters();
 
+    /**
+     * @return the per-event byte limit applied to one materialized view refresh
+     * attempt. {@code 0} means unlimited; only the global RSS limit applies.
+     */
+    long getMatViewRefreshMemoryLimitBytes();
+
     long getMatViewRefreshOomRetryTimeout();
 
     long getMatViewRowsPerQueryEstimate();
@@ -499,26 +508,6 @@ public interface CairoConfiguration {
 
     int getPoolSegmentSize();
 
-    default double getPostingIndexAlignedBitWidthThreshold() {
-        return 0.0;
-    }
-
-    /**
-     * Maximum bytes the posting index writer's per-key spill buffers may hold
-     * before it triggers a mid-stream {@code flushAllPending} + free cycle to
-     * bound peak RSS during long indexing runs (ALTER ADD INDEX TYPE POSTING,
-     * IndexBuilder, the per-O3-seal rebuild loop). Returning {@code 0} or a
-     * negative value disables the back-pressure entirely (legacy behaviour:
-     * accumulate until {@code seal()}). Default is 256 MiB.
-     */
-    default long getPostingIndexerSpillBytesMax() {
-        return 256L << 20;
-    }
-
-    default byte getPostingIndexRowIdEncoding() {
-        return PostingIndexUtils.ENCODING_ADAPTIVE;
-    }
-
     /**
      * Threshold at which the adaptive posting-index row-id encoder forces
      * DELTA instead of running the size-only EF-vs-DELTA race. When a key has
@@ -539,19 +528,40 @@ public interface CairoConfiguration {
         return 2000;
     }
 
+    default double getPostingIndexAlignedBitWidthThreshold() {
+        return 0.0;
+    }
+
+    default byte getPostingIndexRowIdEncoding() {
+        return PostingIndexUtils.ENCODING_ADAPTIVE;
+    }
+
+    /**
+     * Maximum bytes the posting index writer's per-key spill buffers may hold
+     * before it triggers a mid-stream {@code flushAllPending} + free cycle to
+     * bound peak RSS during long indexing runs (ALTER ADD INDEX TYPE POSTING,
+     * IndexBuilder, the per-O3-seal rebuild loop). Returning {@code 0} or a
+     * negative value disables the back-pressure entirely (legacy behaviour:
+     * accumulate until {@code seal()}). Default is 256 MiB.
+     */
+    default long getPostingIndexerSpillBytesMax() {
+        return 256L << 20;
+    }
+
     int getPostingSealGenThreshold();
 
     /**
      * Hard cap on the per-writer in-memory outbox of superseded posting-seal
      * generations awaiting publish to the global purge queue. When the cap
      * is reached the writer evicts the oldest entry and emits a critical
-     * log message — the file the entry pointed at is recovered later by the
-     * writer-open orphan scan.
+     * log message -- the file the entry pointed at is then left on disk (a
+     * bounded leak); no writer-open scan reclaims it.
      * <p>
      * Sized for steady-state operation where the purge queue is healthy. If
      * the queue is saturated for an extended period (e.g. background job
-     * disabled) the outbox saturates, oldest entries are dropped, and the
-     * orphan scan picks up the slack on the next reopen.
+     * disabled) the outbox saturates and oldest entries are dropped, leaking
+     * their files until the partition is rewritten -- keep the purge job
+     * running to avoid this.
      */
     default int getPostingSealPurgeOutboxMax() {
         return 8192;
@@ -560,6 +570,14 @@ public interface CairoConfiguration {
     int getPreferencesStringPoolCapacity();
 
     int getQueryCacheEventQueueCapacity();
+
+    long getQueryContinuationWakeIntervalMillis();
+
+    /**
+     * @return the per-query byte limit applied to user SQL execution. {@code 0}
+     * means unlimited; only the global RSS limit applies.
+     */
+    long getQueryMemoryLimitBytes();
 
     int getQueryRegistryPoolSize();
 
@@ -774,7 +792,7 @@ public interface CairoConfiguration {
 
     int getSqlParallelWorkStealingThreshold();
 
-    int getSqlParquetFrameCacheCapacity();
+    long getSqlParquetCacheMemorySize();
 
     int getSqlPivotMaxProducedColumns();
 
@@ -790,25 +808,42 @@ public interface CairoConfiguration {
 
     int getSqlSortKeyMaterializationThreshold();
 
-    int getSqlSortKeyMaxPages();
+    long getSqlSortKeyMaxBytes();
 
     long getSqlSortKeyPageSize();
 
-    int getSqlSortLightValueMaxPages();
+    long getSqlSortLightValueMaxBytes();
 
     long getSqlSortLightValuePageSize();
 
-    int getSqlSortValueMaxPages();
+    long getSqlSortValueMaxBytes();
 
     int getSqlSortValuePageSize();
 
     int getSqlUnorderedMapMaxEntrySize();
 
+    long getSqlWindowCacheMaxBytes();
+
+    /**
+     * Resolves which config key the CachedWindow record-store cap was sourced from. Returned as a
+     * property path string (e.g. "cairo.sql.window.cache.max.bytes") so error messages can name the
+     * actual binding constraint when growth fails. The new bytes key wins when explicitly set; the
+     * legacy pages key wins when only it is explicit; the new bytes default wins otherwise.
+     */
+    String getSqlWindowCacheMaxPagesConfigKey();
+
+    /**
+     * Effective cap (in pages of {@link #getSqlWindowStorePageSize()}) on the CachedWindow record
+     * store, after reconciling cairo.sql.window.cache.max.bytes and the legacy
+     * cairo.sql.window.store.max.pages. Paired with {@link #getSqlWindowCacheMaxPagesConfigKey()}.
+     */
+    int getSqlWindowCacheMaxPagesResolved();
+
     int getSqlWindowInitialRangeBufferSize();
 
     int getSqlWindowMaxRecursion();
 
-    int getSqlWindowRowIdMaxPages();
+    long getSqlWindowRowIdMaxBytes();
 
     int getSqlWindowRowIdPageSize();
 
@@ -816,7 +851,7 @@ public interface CairoConfiguration {
 
     int getSqlWindowStorePageSize();
 
-    int getSqlWindowTreeKeyMaxPages();
+    long getSqlWindowTreeKeyMaxBytes();
 
     int getSqlWindowTreeKeyPageSize();
 
@@ -849,6 +884,14 @@ public interface CairoConfiguration {
     @NotNull
     TextConfiguration getTextConfiguration();
 
+    /**
+     * Number of {@link TimerShards} shards (one daemon thread each) used
+     * to fire timer-based wakeups for parked SQL continuations and other
+     * {@link DelayedFireable} entries. Higher values reduce
+     * {@code DelayQueue} lock contention but cost one always-on thread per shard.
+     */
+    int getTimerShardCount();
+
     int getTxnScoreboardEntryCount();
 
     int getUnorderedPageFrameReduceQueueCapacity();
@@ -864,7 +907,39 @@ public interface CairoConfiguration {
 
     int getWalApplyLookAheadTransactionCount();
 
+    /**
+     * @return the per-event byte limit applied to one WAL apply batch.
+     * {@code 0} means unlimited; only the global RSS limit applies.
+     */
+    long getWalApplyMemoryLimitBytes();
+
+    /**
+     * Set of table directory names (e.g. {@code my_table~3}) whose WAL transactions must not be
+     * applied by the ApplyWal2Table job ("hard suspended" tables). Directory names are matched, not
+     * logical names, so the suspension binds to the physical table across a rename and a fresh table
+     * reusing the name is unaffected. Configured via {@code cairo.wal.apply.suspended.tables}
+     * (comma-separated) and reloadable. The runtime set extended through
+     * {@code ALTER TABLE ... SUSPEND WAL} is held separately on the engine.
+     *
+     * @return the configured set, or null when none are configured (treated as empty).
+     */
+    @Nullable
+    default ObjHashSet<String> getWalApplySuspendedTables() {
+        return null;
+    }
+
     long getWalApplyTableTimeQuota();
+
+    /**
+     * Whether WAL-apply-suspended tables (see {@link #getWalApplySuspendedTables()} and
+     * {@code ALTER TABLE ... SUSPEND WAL}) also deny WAL writes, rejecting commits like a dropped
+     * table but with a distinct exception. When false, suspension only excludes the table from WAL
+     * apply while writes keep buffering for later. Configured via
+     * {@code cairo.wal.apply.suspended.write.denied} and reloadable.
+     */
+    default boolean isWalApplySuspendedWriteDenied() {
+        return false;
+    }
 
     long getWalDataAppendPageSize();
 
@@ -931,6 +1006,18 @@ public interface CairoConfiguration {
     int getWriterTickRowsCountMod();
 
     boolean isCairoMetadataCacheSnapshotOrdered();
+
+    /**
+     * Rollback flag for the by-name column emit to UNION siblings in the SQL optimizer's top-down
+     * column propagation. The optimizer matches UNION columns by position; the legacy by-name emit
+     * could prune one branch inconsistently and crash code generation when branch aliases differed.
+     * When {@code true}, restores the legacy by-name behavior. Defaults to {@code false}.
+     *
+     * @return whether to restore the legacy by-name UNION column propagation
+     */
+    default boolean isCairoSqlLegacyUnionColumnPropagation() {
+        return false;
+    }
 
     /**
      * A flag to enable/disable checkpoint recovery mechanism. Defaults to {@code true}.
@@ -1003,6 +1090,12 @@ public interface CairoConfiguration {
 
     boolean isReadOnlyInstance();
 
+    // Test-only seam, with no backing production property: always true in a running server, so
+    // the optimiser always rewrites SELECT DISTINCT to GROUP BY. Tests override it to false in a
+    // CairoConfiguration subclass to keep DISTINCT as a Distinct factory and reach
+    // DistinctTimeSeriesRecordCursorFactory.
+    boolean isSqlDistinctGroupByRewriteEnabled();
+
     boolean isSqlJitDebugEnabled();
 
     boolean isSqlOrderBySortEnabled();
@@ -1020,6 +1113,8 @@ public interface CairoConfiguration {
     boolean isSqlParallelWindowJoinEnabled();
 
     boolean isSqlParquetRowGroupPruningEnabled();
+
+    boolean isSqlWindowCachedLightEnabled();
 
     boolean isTableTypeConversionEnabled();
 

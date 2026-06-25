@@ -41,19 +41,19 @@ public class RndSymbolZipfFunctionFactoryTest extends AbstractFunctionFactoryTes
                 """);
 
         // Should return all 5 symbols, but with different frequencies (AAPL most common)
-        assertSql(
-                """
+        assertQuery("""
+                select testCol, count() as cnt from abc order by 1
+                """)
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         testCol	cnt
                         1AAPL	53
                         2GOOGL	12
                         2MSFT	20
                         4TSLA	9
                         5AMZN	6
-                        """,
-                """
-                        select testCol, count() as cnt from abc order by 1
-                        """
-        );
+                        """);
     }
 
     @Test
@@ -66,55 +66,47 @@ public class RndSymbolZipfFunctionFactoryTest extends AbstractFunctionFactoryTes
                 """);
 
         // The first symbol should have significantly more occurrences
-        assertSql("""
+        assertQuery("select testCol, count() as cnt from abc order by 1")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
                         testCol\tcnt
                         A\t666
                         B\t185
                         C\t76
                         D\t49
                         E\t24
-                        """,
-                "select testCol, count() as cnt from abc order by 1"
-        );
+                        """);
     }
 
     @Test
     public void testExplainPlan() throws Exception {
-        assertSql(
-                """
-                        QUERY PLAN
+        assertQuery("select rnd_symbol_zipf('AAPL', 'MSFT', 'GOOGL', 1.5) from long_sequence(10)")
+                .assertsPlan("""
                         VirtualRecord
                           functions: [rnd_symbol_zipf([AAPL,MSFT,GOOGL],1.5)]
                             long_sequence count: 10
-                        """,
-                "explain select rnd_symbol_zipf('AAPL', 'MSFT', 'GOOGL', 1.5) from long_sequence(10)"
-        );
+                        """);
     }
 
     @Test
     public void testExplainPlanLowAlpha() throws Exception {
-        assertSql(
-                """
-                        QUERY PLAN
+        assertQuery("select rnd_symbol_zipf('X', 'Y', 'Z', 0.5) from long_sequence(3)")
+                .assertsPlan("""
                         VirtualRecord
                           functions: [rnd_symbol_zipf([X,Y,Z],0.5)]
                             long_sequence count: 3
-                        """,
-                "explain select rnd_symbol_zipf('X', 'Y', 'Z', 0.5) from long_sequence(3)"
-        );
+                        """);
     }
 
     @Test
     public void testExplainPlanTwoSymbols() throws Exception {
-        assertSql(
-                """
-                        QUERY PLAN
+        assertQuery("select rnd_symbol_zipf('A', 'B', 2.0) from long_sequence(5)")
+                .assertsPlan("""
                         VirtualRecord
                           functions: [rnd_symbol_zipf([A,B],2.0)]
                             long_sequence count: 5
-                        """,
-                "explain select rnd_symbol_zipf('A', 'B', 2.0) from long_sequence(5)"
-        );
+                        """);
     }
 
     @Test
@@ -127,21 +119,21 @@ public class RndSymbolZipfFunctionFactoryTest extends AbstractFunctionFactoryTes
                 """);
 
         // With alpha=5.0, AAPL should dominate
-        assertSql("""
-                testCol\tcnt
-                1AAPL\t98
-                2MSFT\t2
-                """, "select testCol, count() as cnt from abc order by 1");
+        assertQuery("select testCol, count() as cnt from abc order by 1")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        testCol\tcnt
+                        1AAPL\t98
+                        2MSFT\t2
+                        """);
     }
 
     @Test
     public void testInsufficientArgs() throws Exception {
         // Need at least 2 arguments: one symbol and alpha
-        assertException(
-                "select rnd_symbol_zipf('AAPL') as testCol from long_sequence(10)",
-                7,
-                "expected at least 2 arguments: symbol list and alpha parameter"
-        );
+        assertQuery("select rnd_symbol_zipf('AAPL') as testCol from long_sequence(10)")
+                .fails(7, "expected at least 2 arguments: symbol list and alpha parameter");
     }
 
     @Test
@@ -154,23 +146,23 @@ public class RndSymbolZipfFunctionFactoryTest extends AbstractFunctionFactoryTes
                 """);
 
         // With alpha=0.5, distribution should be more even
-        assertSql("""
-                testCol\tcnt
-                1AAPL\t26
-                2MSFT\t22
-                3GOOGL\t20
-                4TSLA\t14
-                5AMZN\t18
-                """, "select testCol, count() as cnt from abc order by 1");
+        assertQuery("select testCol, count() as cnt from abc order by 1")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        testCol\tcnt
+                        1AAPL\t26
+                        2MSFT\t22
+                        3GOOGL\t20
+                        4TSLA\t14
+                        5AMZN\t18
+                        """);
     }
 
     @Test
     public void testNegativeAlpha() throws Exception {
-        assertException(
-                "select rnd_symbol_zipf('AAPL', 'MSFT', -1.0) as testCol from long_sequence(10)",
-                39,
-                "alpha must be positive"
-        );
+        assertQuery("select rnd_symbol_zipf('AAPL', 'MSFT', -1.0) as testCol from long_sequence(10)")
+                .fails(39, "alpha must be positive");
     }
 
     @Test
@@ -182,11 +174,14 @@ public class RndSymbolZipfFunctionFactoryTest extends AbstractFunctionFactoryTes
                 )
                 """);
 
-        assertSql("""
-                testCol\tcnt
-                A\t63
-                B\t37
-                """, "select testCol, count() as cnt from abc order by 1");
+        assertQuery("select testCol, count() as cnt from abc order by 1")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        testCol\tcnt
+                        A\t63
+                        B\t37
+                        """);
     }
 
     @Test
@@ -198,11 +193,14 @@ public class RndSymbolZipfFunctionFactoryTest extends AbstractFunctionFactoryTes
                 )
                 """);
 
-        assertSql("""
-                testCol\tcnt
-                A\t63
-                B\t37
-                """, "select testCol, count() as cnt from abc order by 1");
+        assertQuery("select testCol, count() as cnt from abc order by 1")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        testCol\tcnt
+                        A\t63
+                        B\t37
+                        """);
     }
 
     @Test
@@ -214,11 +212,14 @@ public class RndSymbolZipfFunctionFactoryTest extends AbstractFunctionFactoryTes
                 )
                 """);
 
-        assertSql("""
-                testCol\tcnt
-                A\t63
-                B\t37
-                """, "select testCol, count() as cnt from abc order by 1");
+        assertQuery("select testCol, count() as cnt from abc order by 1")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        testCol\tcnt
+                        A\t63
+                        B\t37
+                        """);
     }
 
     @Test
@@ -230,11 +231,14 @@ public class RndSymbolZipfFunctionFactoryTest extends AbstractFunctionFactoryTes
                 )
                 """);
 
-        assertSql("""
-                testCol\tcnt
-                A\t63
-                B\t37
-                """, "select testCol, count() as cnt from abc order by 1");
+        assertQuery("select testCol, count() as cnt from abc order by 1")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        testCol\tcnt
+                        A\t63
+                        B\t37
+                        """);
     }
 
     @Test
@@ -246,11 +250,14 @@ public class RndSymbolZipfFunctionFactoryTest extends AbstractFunctionFactoryTes
                 )
                 """);
 
-        assertSql("""
-                testCol\tcnt
-                A\t63
-                B\t37
-                """, "select testCol, count() as cnt from abc order by 1");
+        assertQuery("select testCol, count() as cnt from abc order by 1")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        testCol\tcnt
+                        A\t63
+                        B\t37
+                        """);
     }
 
     @Test
@@ -262,20 +269,20 @@ public class RndSymbolZipfFunctionFactoryTest extends AbstractFunctionFactoryTes
                 )
                 """);
 
-        assertSql("""
-                testCol\tcnt
-                A\t63
-                B\t37
-                """, "select testCol, count() as cnt from abc order by 1");
+        assertQuery("select testCol, count() as cnt from abc order by 1")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        testCol\tcnt
+                        A\t63
+                        B\t37
+                        """);
     }
 
     @Test
     public void testZeroAlpha() throws Exception {
-        assertException(
-                "select rnd_symbol_zipf('AAPL', 'MSFT', 0.0) as testCol from long_sequence(10)",
-                39,
-                "alpha must be positive"
-        );
+        assertQuery("select rnd_symbol_zipf('AAPL', 'MSFT', 0.0) as testCol from long_sequence(10)")
+                .fails(39, "alpha must be positive");
     }
 
     @Override

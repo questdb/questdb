@@ -207,7 +207,7 @@ fn encode_decode_and_verify_varchar_slice(
     // Set up allocator.
     let mem_tracking = Box::new(MemTracking::new());
     let tagged_used = Box::new(AtomicUsize::new(0));
-    let allocator = QdbAllocator::new(&*mem_tracking, &*tagged_used, 65);
+    let allocator = QdbAllocator::new(&*mem_tracking, std::ptr::null(), &*tagged_used, 65);
 
     let buf_len = buf.len() as u64;
     let mut reader = Cursor::new(&buf);
@@ -437,6 +437,38 @@ fn test_varchar_slice_all_nulls() {
         eprintln!("Testing all nulls with version={version:?}");
         let schema = optional_byte_array_schema("col", Some(LogicalType::String));
         let props = qdb_props_ascii(ColumnTypeTag::VarcharSlice, *version, Encoding::Plain, true);
+        encode_decode_and_verify_varchar_slice(
+            &values,
+            &nulls,
+            schema,
+            props,
+            &expected_values,
+            true,
+        );
+    }
+}
+
+#[test]
+fn test_varchar_slice_all_nulls_delta_length() {
+    // All-null VarcharSlice page with DELTA_LENGTH_BYTE_ARRAY. The lengths page is
+    // a value_count=0 DELTA_BINARY_PACKED header decoded via
+    // DeltaLAVarcharSliceDecoder -> MiniblockIterator::try_new -- the decoder the
+    // all-null delta fix touches. The other all-null slice tests only cover Plain
+    // and RleDictionary, leaving this (delta) read path uncovered end-to-end.
+    let count = 500;
+    let values: Vec<ByteArray> = Vec::new();
+    let expected_values: Vec<String> = (0..count).map(|_| String::new()).collect();
+    let nulls = vec![true; count];
+
+    for version in &VERSIONS {
+        eprintln!("Testing all nulls DeltaLengthByteArray with version={version:?}");
+        let schema = optional_byte_array_schema("col", Some(LogicalType::String));
+        let props = qdb_props_ascii(
+            ColumnTypeTag::VarcharSlice,
+            *version,
+            Encoding::DeltaLengthByteArray,
+            true,
+        );
         encode_decode_and_verify_varchar_slice(
             &values,
             &nulls,
@@ -959,7 +991,7 @@ fn encode_decode_and_verify_varchar_slice_filtered(
 
     let mem_tracking = Box::new(MemTracking::new());
     let tagged_used = Box::new(AtomicUsize::new(0));
-    let allocator = QdbAllocator::new(&*mem_tracking, &*tagged_used, 65);
+    let allocator = QdbAllocator::new(&*mem_tracking, std::ptr::null(), &*tagged_used, 65);
 
     let buf_len = buf.len() as u64;
     let mut reader = Cursor::new(&buf);
@@ -1400,7 +1432,7 @@ fn encode_decode_and_verify_varchar_slice_filtered_fill_nulls(
 
     let mem_tracking = Box::new(MemTracking::new());
     let tagged_used = Box::new(AtomicUsize::new(0));
-    let allocator = QdbAllocator::new(&*mem_tracking, &*tagged_used, 65);
+    let allocator = QdbAllocator::new(&*mem_tracking, std::ptr::null(), &*tagged_used, 65);
 
     let buf_len = buf.len() as u64;
     let mut reader = Cursor::new(&buf);

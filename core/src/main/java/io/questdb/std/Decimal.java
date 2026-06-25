@@ -140,6 +140,14 @@ public interface Decimal {
     void ofZero();
 
     /**
+     * Returns a reusable {@code int[1]} scratch slot for the Ryu double decomposition performed by
+     * {@link Numbers#doubleToDecimal}. Each decimal owns one cached array so the conversion never
+     * does a thread-local/carrier-local lookup per value. The array is consumed within a single
+     * conversion call, so one slot per instance is safe.
+     */
+    int[] ryuScratch();
+
+    /**
      * Sets the scale directly without performing any rescaling operations on the underlying value.
      * <p>
      * <b>Warning:</b> This is a low-level operation that changes only the scale metadata

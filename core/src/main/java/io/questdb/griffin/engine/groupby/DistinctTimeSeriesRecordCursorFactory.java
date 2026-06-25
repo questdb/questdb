@@ -32,6 +32,7 @@ import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.OrderedMap;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -64,12 +65,17 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
             // sink will be storing record columns to map key
             columnFilter.of(metadata.getColumnCount());
             RecordSink recordSink = RecordSinkFactory.getInstance(configuration, asm, metadata, columnFilter);
+            // Lazy variant (openOnInit=false): the map allocates no native backing until the first
+            // cursor's of() binds a MemoryTracker and calls reopen(), keeping malloc/free symmetric on
+            // the per-query counter from the very first cursor.
             Map dataMap = new OrderedMap(
                     configuration.getSqlSmallMapPageSize(),
                     metadata,
+                    null,
                     configuration.getSqlDistinctTimestampKeyCapacity(),
                     configuration.getSqlDistinctTimestampLoadFactor(),
-                    Integer.MAX_VALUE
+                    Integer.MAX_VALUE,
+                    false
             );
             this.cursor = new DistinctTimeSeriesRecordCursor(
                     getMetadata().getTimestampIndex(),
@@ -91,6 +97,7 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor baseCursor = base.getCursor(executionContext);
         try {
+            baseCursor.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
             return cursor.of(baseCursor, executionContext);
         } catch (Throwable th) {
             cursor.close();
@@ -138,7 +145,8 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
             this.timestampIndex = timestampIndex;
             this.dataMap = dataMap;
             this.recordSink = recordSink;
-            this.isOpen = true;
+            // Start closed so the first of() binds the tracker and reopens the lazy map.
+            this.isOpen = false;
         }
 
         @Override
@@ -204,6 +212,7 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
             recordB = baseCursor.getRecordB();
             if (!isOpen) {
                 isOpen = true;
+                dataMap.setMemoryTracker(sqlExecutionContext.getMemoryTracker());
                 dataMap.reopen();
             }
             circuitBreaker = sqlExecutionContext.getCircuitBreaker();
@@ -220,6 +229,11 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
         @Override
         public void recordAt(Record record, long atRowId) {
             baseCursor.recordAt(record, atRowId);
+        }
+
+        @Override
+        public void setParquetDecodeHint(ParquetDecodeHint hint) {
+            baseCursor.setParquetDecodeHint(hint);
         }
 
         @Override

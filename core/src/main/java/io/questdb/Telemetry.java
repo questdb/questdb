@@ -63,6 +63,8 @@ import static io.questdb.std.Files.DT_FILE;
 import static io.questdb.std.Files.notDots;
 
 public class Telemetry<T extends AbstractTelemetryTask> implements Closeable {
+    // Writer lock reason used when the telemetry subsystem acquires its own table writer.
+    public static final String WRITER_LOCK_REASON = "telemetry";
     private static final Log LOG = LogFactory.getLog(Telemetry.class);
     private final long ThrottleInterval;
     private final MicrosecondClock clock;
@@ -186,7 +188,7 @@ public class Telemetry<T extends AbstractTelemetryTask> implements Closeable {
         telemetryType.getCreateSql(compiler.query(), ttlWeeks).createTable(sqlExecutionContext);
         tableToken = engine.verifyTableName(tableName);
         try {
-            writer = engine.getWriter(tableToken, "telemetry");
+            writer = engine.getWriter(tableToken, WRITER_LOCK_REASON);
         } catch (CairoException ex) {
             LOG.error()
                     .$("could not open [table=").$(tableToken)

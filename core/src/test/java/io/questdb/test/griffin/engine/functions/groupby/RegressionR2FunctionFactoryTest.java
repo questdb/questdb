@@ -31,26 +31,22 @@ public class RegressionR2FunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testRegrR2AllNull() throws Exception {
-        assertMemoryLeak(() -> assertQueryNoLeakCheck(
-                "regr_r2\nnull\n",
-                "select regr_r2(y, x) from (select cast(null as double) x, cast(null as double) y from long_sequence(100))",
-                null,
-                false,
-                true
-        ));
+        assertMemoryLeak(() -> assertQuery("select regr_r2(y, x) from (select cast(null as double) x, cast(null as double) y from long_sequence(100))")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("regr_r2\nnull\n"));
     }
 
     @Test
     public void testRegrR2AllSameValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tbl1 as (select 17.2151921 x, 17.2151921 y from long_sequence(100))");
-            assertQueryNoLeakCheck(
-                    "regr_r2\nnull\n",
-                    "select regr_r2(y, x) from tbl1",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("select regr_r2(y, x) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("regr_r2\nnull\n");
         });
     }
 
@@ -59,13 +55,11 @@ public class RegressionR2FunctionFactoryTest extends AbstractCairoTest {
         // X is constant, Y varies. Sxx = 0 => regr_r2 is NULL per SQL:2003.
         assertMemoryLeak(() -> {
             execute("create table tbl1 as (select 5.0 x, cast(x as double) y from long_sequence(100))");
-            assertQueryNoLeakCheck(
-                    "regr_r2\nnull\n",
-                    "select regr_r2(y, x) from tbl1",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("select regr_r2(y, x) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("regr_r2\nnull\n");
         });
     }
 
@@ -75,13 +69,11 @@ public class RegressionR2FunctionFactoryTest extends AbstractCairoTest {
         // (a horizontal line is a perfect fit of constant Y).
         assertMemoryLeak(() -> {
             execute("create table tbl1 as (select cast(x as double) x, 5.0 y from long_sequence(100))");
-            assertQueryNoLeakCheck(
-                    "regr_r2\n1.0\n",
-                    "select regr_r2(y, x) from tbl1",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("select regr_r2(y, x) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("regr_r2\n1.0\n");
         });
     }
 
@@ -90,13 +82,11 @@ public class RegressionR2FunctionFactoryTest extends AbstractCairoTest {
         // Perfect linear relationship y = x => r^2 = 1.0
         assertMemoryLeak(() -> {
             execute("create table tbl1 as (select cast(x as double) x, cast(x as double) y from long_sequence(100))");
-            assertQueryNoLeakCheck(
-                    "regr_r2\n1.0\n",
-                    "select regr_r2(y, x) from tbl1",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("select regr_r2(y, x) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("regr_r2\n1.0\n");
         });
     }
 
@@ -112,13 +102,11 @@ public class RegressionR2FunctionFactoryTest extends AbstractCairoTest {
                             "cast(x * 2.5 + 7 + rnd_double() * 0.1 as double) y " +
                             "from long_sequence(1000))"
             );
-            assertQueryNoLeakCheck(
-                    "diff\n0.0\n",
-                    "select round(regr_r2(y, x) - corr(y, x) * corr(y, x), 12) diff from tbl1",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("select round(regr_r2(y, x) - corr(y, x) * corr(y, x), 12) diff from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("diff\n0.0\n");
         });
     }
 
@@ -129,16 +117,17 @@ public class RegressionR2FunctionFactoryTest extends AbstractCairoTest {
         // in query plans and SHOW FUNCTIONS output.
         assertMemoryLeak(() -> {
             execute("create table tbl1 (x double, y double)");
-            assertPlanNoLeakCheck(
-                    "select regr_r2(y, x) from tbl1",
-                    "Async Group By workers: 1\n" +
-                            "  vectorized: false\n" +
-                            "  values: [regr_r2(y,x)]\n" +
-                            "  filter: null\n" +
-                            "    PageFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: tbl1\n"
-            );
+            assertQuery("select regr_r2(y, x) from tbl1")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Async Group By workers: 1
+                              vectorized: false
+                              values: [regr_r2(y,x)]
+                              filter: null
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tbl1
+                            """);
         });
     }
 
@@ -146,13 +135,11 @@ public class RegressionR2FunctionFactoryTest extends AbstractCairoTest {
     public void testRegrR2FloatValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tbl1 as (select cast(x as float) x, cast(x as float) y from long_sequence(100))");
-            assertQueryNoLeakCheck(
-                    "regr_r2\n1.0\n",
-                    "select regr_r2(y, x) from tbl1",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("select regr_r2(y, x) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("regr_r2\n1.0\n");
         });
     }
 
@@ -174,13 +161,10 @@ public class RegressionR2FunctionFactoryTest extends AbstractCairoTest {
                             "  case when x % 2 = 0 then cast(x as double) else 42.0 end y " +
                             "from long_sequence(1000))"
             );
-            assertQueryNoLeakCheck(
-                    "g\tregr_r2\nA\t1.0\nB\t1.0\n",
-                    "select g, regr_r2(y, x) from tbl1 order by g",
-                    null,
-                    true,
-                    true
-            );
+            assertQuery("select g, regr_r2(y, x) from tbl1 order by g")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("g\tregr_r2\nA\t1.0\nB\t1.0\n");
         });
     }
 
@@ -188,13 +172,11 @@ public class RegressionR2FunctionFactoryTest extends AbstractCairoTest {
     public void testRegrR2IntValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tbl1 as (select cast(x as int) x, cast(x as int) y from long_sequence(100))");
-            assertQueryNoLeakCheck(
-                    "regr_r2\n1.0\n",
-                    "select regr_r2(y, x) from tbl1",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("select regr_r2(y, x) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("regr_r2\n1.0\n");
         });
     }
 
@@ -208,13 +190,11 @@ public class RegressionR2FunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table tbl1 (x double, y double)");
             execute("insert into tbl1 values (1, 2), (2, 4), (3, 5), (4, 4), (5, 5)");
-            assertQueryNoLeakCheck(
-                    "regr_r2\n0.6\n",
-                    "select round(regr_r2(y, x), 10) regr_r2 from tbl1",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("select round(regr_r2(y, x), 10) regr_r2 from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("regr_r2\n0.6\n");
         });
     }
 
@@ -227,13 +207,11 @@ public class RegressionR2FunctionFactoryTest extends AbstractCairoTest {
         // round() absorbs any 1-ulp drift from the Welford updates.
         assertMemoryLeak(() -> {
             execute("create table tbl1 as (select cast(x * 1e8 as double) x, cast(x * 2e8 + 1e9 as double) y from long_sequence(1_000_000))");
-            assertQueryNoLeakCheck(
-                    "regr_r2\n1.0\n",
-                    "select round(regr_r2(y, x), 10) regr_r2 from tbl1",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("select round(regr_r2(y, x), 10) regr_r2 from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("regr_r2\n1.0\n");
         });
     }
 
@@ -245,13 +223,11 @@ public class RegressionR2FunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table tbl1 as (select cast(x as double) x, cast(x as double) y from long_sequence(100))");
             execute("insert into tbl1 values ('NaN'::double, 1.0), (1.0, 'NaN'::double), ('+Infinity'::double, 2.0), (2.0, '-Infinity'::double)");
-            assertQueryNoLeakCheck(
-                    "regr_r2\n1.0\n",
-                    "select regr_r2(y, x) from tbl1",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("select regr_r2(y, x) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("regr_r2\n1.0\n");
         });
     }
 
@@ -264,13 +240,11 @@ public class RegressionR2FunctionFactoryTest extends AbstractCairoTest {
         // far from 1.0.
         assertMemoryLeak(() -> {
             execute("create table tbl1 as (select cast(x as double) x, cast(-2 * x + 5 as double) y from long_sequence(100))");
-            assertQueryNoLeakCheck(
-                    "regr_r2\n1.0\n",
-                    "select regr_r2(y, x) from tbl1",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("select regr_r2(y, x) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("regr_r2\n1.0\n");
         });
     }
 
@@ -278,25 +252,21 @@ public class RegressionR2FunctionFactoryTest extends AbstractCairoTest {
     public void testRegrR2NoValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tbl1(x int, y int)");
-            assertQueryNoLeakCheck(
-                    "regr_r2\nnull\n",
-                    "select regr_r2(y, x) from tbl1",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("select regr_r2(y, x) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("regr_r2\nnull\n");
         });
     }
 
     @Test
     public void testRegrR2OneColumnAllNull() throws Exception {
-        assertMemoryLeak(() -> assertQueryNoLeakCheck(
-                "regr_r2\nnull\n",
-                "select regr_r2(y, x) from (select cast(null as double) x, x as y from long_sequence(100))",
-                null,
-                false,
-                true
-        ));
+        assertMemoryLeak(() -> assertQuery("select regr_r2(y, x) from (select cast(null as double) x, x as y from long_sequence(100))")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("regr_r2\nnull\n"));
     }
 
     @Test
@@ -305,13 +275,11 @@ public class RegressionR2FunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table tbl1(x double, y double)");
             execute("insert into tbl1 VALUES (17.2151920, 17.2151920)");
-            assertQueryNoLeakCheck(
-                    "regr_r2\nnull\n",
-                    "select regr_r2(y, x) from tbl1",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("select regr_r2(y, x) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("regr_r2\nnull\n");
         });
     }
 
@@ -321,13 +289,11 @@ public class RegressionR2FunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table tbl1 as (select cast(x as double) x, cast(x as double) y from long_sequence(100))");
             execute("insert into tbl1 VALUES (null, null)");
-            assertQueryNoLeakCheck(
-                    "regr_r2\n1.0\n",
-                    "select regr_r2(y, x) from tbl1",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("select regr_r2(y, x) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("regr_r2\n1.0\n");
         });
     }
 }

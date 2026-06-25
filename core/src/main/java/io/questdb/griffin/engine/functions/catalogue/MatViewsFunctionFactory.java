@@ -45,6 +45,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
@@ -139,6 +140,8 @@ public class MatViewsFunctionFactory implements FunctionFactory {
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
+            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
+            cursor.circuitBreaker = executionContext.getCircuitBreaker();
             cursor.toTop();
             return cursor;
         }
@@ -180,6 +183,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
             private long cachedBaseMaxTs = Long.MIN_VALUE;
             private TableToken cachedBaseMaxTsToken;
             private long cachedBaseMaxTsTxn = Long.MIN_VALUE;
+            private SqlExecutionCircuitBreaker circuitBreaker;
             private int viewIndex = 0;
 
             public ViewsListCursor(CairoEngine engine) {
@@ -207,6 +211,8 @@ public class MatViewsFunctionFactory implements FunctionFactory {
 
                 final int n = viewTokens.size();
                 for (; viewIndex < n; viewIndex++) {
+                    // reads a view state file per row, so observe the breaker each iteration
+                    circuitBreaker.statefulThrowExceptionIfTripped();
                     final TableToken viewToken = viewTokens.get(viewIndex);
                     if (engine.getTableTokenIfExists(viewToken.getTableName()) != null) {
                         final MatViewDefinition viewDefinition = engine.getMatViewGraph().getViewDefinition(viewToken);

@@ -35,6 +35,7 @@ import io.questdb.cairo.wal.WalDirectoryPolicy;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
@@ -55,8 +56,8 @@ import static io.questdb.cairo.wal.WalUtils.*;
 
 public class TableTransactionLog implements Closeable {
     private static final Log LOG = LogFactory.getLog(TableTransactionLog.class);
-    private static final ThreadLocal<AlterOperation> tlAlterOperation = new ThreadLocal<>();
-    private static final ThreadLocal<TableMetadataChangeLogImpl> tlStructChangeCursor = new ThreadLocal<>();
+    private static final CarrierLocal<AlterOperation> tlAlterOperation = new CarrierLocal<>();
+    private static final CarrierLocal<TableMetadataChangeLogImpl> tlStructChangeCursor = new CarrierLocal<>();
     private final CairoConfiguration configuration;
     private final FilesFacade ff;
     private final AtomicLong maxMetadataVersion = new AtomicLong();
