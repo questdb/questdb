@@ -287,7 +287,11 @@ public class Worker extends Thread {
                         // pool instead of leaking them in ownedJobClones until halt.
                         recycleJobList(cont);
                         cont = handoff;
-                        mountForeignCont(cont);
+                        if (!mountForeignCont(cont)) {
+                            // Dropped as a phantom or re-enqueued for the shutdown drain;
+                            // the cont is no longer ours to inspect. Stop walking the chain.
+                            break;
+                        }
                         if (cont.isDone()) {
                             recycleJobList(cont);
                             break;
@@ -301,11 +305,7 @@ public class Worker extends Thread {
                     // next cont runs shares no live state with any parked or spent cont.
                     currentJobsGen = mintNextGen(currentJobsGen);
                 }
-                // Lifecycle flipped to HALTED. signalClose() may have scheduled resumes for
-                // continuations parked on suspending queries (e.g. sleep) so their bodies
-                // observe isShuttingDown() and unwind on a live carrier, releasing checked-out
-                // resources such as connection contexts. The RUNNING loop can exit before
-                // draining them; finish here so they are not stranded with resources unreleased.
+                // Drain any continuations scheduled for resume after the RUNNING loop exited.
                 drainShutdownContinuations();
             }
         } catch (Throwable e) {
@@ -338,8 +338,11 @@ public class Worker extends Thread {
      * RUNNING loop exits. Mirrors the outer driver's handoff walk: each parked cont is
      * remounted and run to completion so its body observes {@code isShuttingDown()} and
      * unwinds, releasing any checked-out resource (e.g. a connection context). A cont
-     * parked long enough to reach here is past the benign mount-race window, so
-     * {@link #mountForeignCont} runs it rather than abandoning it.
+     * scheduled in the narrow window before its registering carrier reached suspend() is
+     * still transiently mounted there, so its remount throws and {@link #mountForeignCont}
+     * re-enqueues it; this loop re-dequeues and retries until that carrier unmounts
+     * (nanoseconds later), rather than stranding the cont off-queue with its resource
+     * unreleased.
      */
     private void drainShutdownContinuations() {
         if (continuationQueue == null) {
@@ -348,18 +351,30 @@ public class Worker extends Thread {
         final ContinuationQueue.ResumeTask scratch = new ContinuationQueue.ResumeTask();
         WorkerContinuation cont;
         while ((cont = continuationQueue.tryDequeue(scratch)) != null) {
-            mountForeignCont(cont);
+            if (!mountForeignCont(cont)) {
+                // Phantom resume (dropped), or re-enqueued because its registering carrier
+                // still has it mounted. A re-enqueue lands back on this queue, so pause and
+                // let the loop re-dequeue until the carrier unmounts -- bounded, since a cont
+                // on the resume queue is one suspend() away from parking.
+                Os.pause();
+                continue;
+            }
             while (!cont.isDone()) {
                 WorkerContinuation handoff = cont.takeHandoff();
                 if (handoff == null) {
-                    // Parked deep without a handoff; leave it for the halt-timeout backstop.
+                    // Re-parked deep without a handoff; nothing more to run here. In-tree
+                    // suspending functions throw on isShuttingDown() rather than re-park, so
+                    // this is not reached by them.
                     break;
                 }
                 recycleJobList(cont);
                 cont = handoff;
-                mountForeignCont(cont);
+                if (!mountForeignCont(cont)) {
+                    cont = null;
+                    break;
+                }
             }
-            if (cont.isDone()) {
+            if (cont != null && cont.isDone()) {
                 recycleJobList(cont);
             }
         }
@@ -540,24 +555,44 @@ public class Worker extends Thread {
      *       a cont that has already completed via another path. cont.isDone() is
      *       the structural test.</li>
      * </ol>
-     * Lifecycle bail-out: if this worker is halting, abandon the spin so the pool
-     * can shut down. The cont stays mounted on its carrier; when that carrier
-     * finishes its body the cont becomes done and is naturally disposed of.
+     * Lifecycle handling: if this worker is halting, it does not keep spinning to
+     * completion here -- a slow registering carrier could stall the pool's shutdown.
+     * Instead it re-enqueues the cont so the shutdown drain
+     * ({@link #drainShutdownContinuations}) retries it once that carrier unmounts,
+     * which happens within nanoseconds since a cont on the resume queue is one
+     * {@code suspend()} from parking. Returning the cont to the queue rather than
+     * abandoning it keeps a cont caught in the benign-mount-race window from being
+     * stranded off-queue with its checked-out resources unreleased.
+     *
+     * @return {@code true} if the cont ran on this carrier and is now parked or done,
+     * so the caller owns it and may inspect its handoff slot or recycle it;
+     * {@code false} if the cont was not run here and the caller must not touch it --
+     * either a phantom resume still owned by its polling carrier, or a cont
+     * re-enqueued for the shutdown drain to retry.
      */
-    private void mountForeignCont(WorkerContinuation cont) {
-        if (cont.consumeParkRefused() || cont.isDone()) {
-            return;
+    private boolean mountForeignCont(WorkerContinuation cont) {
+        if (cont.consumeParkRefused()) {
+            return false;
+        }
+        if (cont.isDone()) {
+            return true;
         }
         while (true) {
             try {
                 cont.run();
-                return;
+                return true;
             } catch (IllegalStateException e) {
-                if (cont.isDone() || cont.consumeParkRefused()) {
-                    return;
+                if (cont.isDone()) {
+                    return true;
+                }
+                if (cont.consumeParkRefused()) {
+                    return false;
                 }
                 if (lifecycle.get() != WorkerLifecycle.RUNNING) {
-                    return;
+                    // Halting: hand the cont back to the queue so the drain retries it
+                    // once its registering carrier unmounts, instead of stranding it.
+                    continuationQueue.put(cont);
+                    return false;
                 }
                 Os.pause();
             }
