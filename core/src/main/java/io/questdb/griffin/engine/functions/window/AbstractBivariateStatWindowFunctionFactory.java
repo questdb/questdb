@@ -79,27 +79,7 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         if (cYY < 0) {
             cYY = 0;
         }
-        // Prefer the single-rounding sqrt(cXX * cYY) (bit-exact agreement with prior
-        // behaviour). Fall back to the split form only when the product is unusable: it
-        // overflows to +Infinity (large inputs, ~1e153) or underflows to 0.0 (small inputs,
-        // ~1e-150). Both cXX and cYY are clamped to >= 0 above; a genuine zero factor (zero
-        // variance) keeps the product at 0.0 and falls through to the denom == 0 guard below.
-        double prod = cXX * cYY;
-        boolean splitDenom = !Double.isFinite(prod) || (prod == 0.0 && cXX != 0.0 && cYY != 0.0);
-        double denom = splitDenom ? Math.sqrt(cXX) * Math.sqrt(cYY) : Math.sqrt(prod);
-        if (denom == 0.0) {
-            return Double.NaN;
-        }
-        // Pearson correlation is mathematically bounded to [-1, 1]; clamp to absorb
-        // up to 1-2 ULP of rounding error from the fallback split-sqrt path.
-        double r = cXY / denom;
-        if (r > 1.0) {
-            return 1.0;
-        }
-        if (r < -1.0) {
-            return -1.0;
-        }
-        return r;
+        return Numbers.corrFromSums(cXY, cXX, cYY);
     }
 
     // Welford's online algorithm result for correlation.
@@ -113,22 +93,7 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         if (sumYY < 0) {
             sumYY = 0;
         }
-        // See computeCorr() for the rationale behind the conditional split-sqrt fallback.
-        double prod = sumXX * sumYY;
-        boolean splitDenom = !Double.isFinite(prod) || (prod == 0.0 && sumXX != 0.0 && sumYY != 0.0);
-        double denom = splitDenom ? Math.sqrt(sumXX) * Math.sqrt(sumYY) : Math.sqrt(prod);
-        if (denom == 0.0) {
-            return Double.NaN;
-        }
-        // See computeCorr() for the rationale behind clamping to [-1, 1].
-        double r = sumXY / denom;
-        if (r > 1.0) {
-            return 1.0;
-        }
-        if (r < -1.0) {
-            return -1.0;
-        }
-        return r;
+        return Numbers.corrFromSums(sumXY, sumXX, sumYY);
     }
 
     // Naive sum-of-products formula for covariance, used by sliding-window (removable) frames.

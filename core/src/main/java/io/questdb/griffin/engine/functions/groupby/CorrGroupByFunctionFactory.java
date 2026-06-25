@@ -107,31 +107,7 @@ public class CorrGroupByFunctionFactory implements FunctionFactory {
             if (count <= 1) {
                 return Double.NaN;
             }
-
-            // Prefer the single-rounding sqrt(sumY * sumX), the accurate denominator for
-            // normal inputs. Fall back to the split form only when the product is unusable:
-            // it overflows to +Infinity (large inputs, ~1e153) or underflows to 0.0 (small
-            // inputs, ~1e-150), while each factor stays in range (both are Welford sums of
-            // squared deviations, so >= 0). A genuine zero factor (zero variance) keeps the
-            // product at 0.0 and falls through to the denom == 0 guard below, yielding NaN.
-            double prod = sumY * sumX;
-            boolean splitDenom = !Double.isFinite(prod) || (prod == 0.0 && sumY != 0.0 && sumX != 0.0);
-            double denom = splitDenom ? Math.sqrt(sumY) * Math.sqrt(sumX) : Math.sqrt(prod);
-            if (denom == 0) {
-                return Double.NaN;
-            }
-
-            // Pearson correlation is mathematically bounded to [-1, 1]; clamp to
-            // absorb at most 1-2 ULP of rounding error from the fallback split-sqrt
-            // path above (which uses two sqrt roundings instead of one).
-            double r = sumXY / denom;
-            if (r > 1.0) {
-                return 1.0;
-            }
-            if (r < -1.0) {
-                return -1.0;
-            }
-            return r;
+            return Numbers.corrFromSums(sumXY, sumY, sumX);
         }
 
         @Override
