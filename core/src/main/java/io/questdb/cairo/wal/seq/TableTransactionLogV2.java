@@ -340,6 +340,15 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
                 txnPartMem.sync(async);
             }
             txnMem.sync(async);
+            // ADAPTIVE: make the sequencer durable. fdatasync part file first, then the header
+            // that points to it — same ordering invariant as the msync above. The header's
+            // maxTxn=N must not be device-visible before the record at txn N in the part file.
+            if (commitMode == CommitMode.ADAPTIVE) {
+                if (txnPartMem.isOpen()) {
+                    ff.fdatasync(txnPartMem.getFd());
+                }
+                ff.fdatasync(txnMem.getFd());
+            }
         }
     }
 

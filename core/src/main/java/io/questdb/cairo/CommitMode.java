@@ -26,6 +26,14 @@ package io.questdb.cairo;
 
 public final class CommitMode {
     public static final int ASYNC = 0;
-    public static final int NOSYNC = 2;
     public static final int SYNC = 1;
+    public static final int NOSYNC = 2;
+    /**
+     * ADAPTIVE: every WAL commit is made durable (fdatasync of segment column data →
+     * WAL-e events file → sequencer record, in that order) before the commit returns.
+     * Unlike SYNC (which relies on msync alone), ADAPTIVE additionally calls fdatasync
+     * after each msync so that a crash-replay can recover every acked transaction.
+     * The table-apply (TableWriter) path is unchanged; laziness there is a separate task.
+     */
+    public static final int ADAPTIVE = 3;
 }

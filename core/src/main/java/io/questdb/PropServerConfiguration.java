@@ -2583,6 +2583,10 @@ public class PropServerConfiguration implements ServerConfiguration {
             return CommitMode.SYNC;
         }
 
+        if (Chars.equalsLowerCaseAscii(commitMode, "adaptive")) {
+            return CommitMode.ADAPTIVE;
+        }
+
         return CommitMode.NOSYNC;
     }
 

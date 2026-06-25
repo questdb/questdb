@@ -1954,6 +1954,17 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                     column.sync(async);
                 }
             }
+            // ADAPTIVE: make segment column data durable with fdatasync before signalling
+            // the events file. This preserves the data→events→seq ordering invariant:
+            // a durable events pointer must never precede its column data.
+            if (commitMode == CommitMode.ADAPTIVE) {
+                for (int i = 0, n = columns.size(); i < n; i++) {
+                    MemoryMA column = columns.getQuick(i);
+                    if (column != null && column.isOpen()) {
+                        ff.fdatasync(column.getFd());
+                    }
+                }
+            }
             events.sync();
         }
     }

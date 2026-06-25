@@ -59,7 +59,8 @@ public class BlockFileWriter implements Closeable {
     public BlockFileWriter(FilesFacade ff, int commitMode) {
         assert commitMode == CommitMode.ASYNC
                 || commitMode == CommitMode.NOSYNC
-                || commitMode == CommitMode.SYNC;
+                || commitMode == CommitMode.SYNC
+                || commitMode == CommitMode.ADAPTIVE;
         this.ff = ff;
         this.commitMode = commitMode;
     }

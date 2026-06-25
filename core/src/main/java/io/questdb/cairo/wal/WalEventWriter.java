@@ -490,6 +490,18 @@ class WalEventWriter implements Closeable {
         if (commitMode != CommitMode.NOSYNC) {
             eventMem.sync(commitMode == CommitMode.ASYNC);
             eventIndexMem.sync(commitMode == CommitMode.ASYNC);
+            // ADAPTIVE: make the events file durable. msync flushes data to the page cache;
+            // fdatasync ensures both the data and the inode size reach the device before the
+            // sequencer record is written. Events must be durable before the sequencer pointer
+            // is committed (events before seq, matching data→events→seq order).
+            if (commitMode == CommitMode.ADAPTIVE) {
+                if (eventMem.isOpen()) {
+                    ff.fdatasync(eventMem.getFd());
+                }
+                if (eventIndexMem.isOpen()) {
+                    ff.fdatasync(eventIndexMem.getFd());
+                }
+            }
         }
     }
 
