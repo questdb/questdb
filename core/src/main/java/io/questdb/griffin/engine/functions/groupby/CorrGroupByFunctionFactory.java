@@ -108,13 +108,15 @@ public class CorrGroupByFunctionFactory implements FunctionFactory {
                 return Double.NaN;
             }
 
-            // Prefer sqrt(sumY * sumX) when the product is finite, since it is more
-            // numerically accurate than sqrt(sumY) * sqrt(sumX) (one rounding vs. two).
-            // Fall back to the split form only when sumY * sumX would overflow to +Infinity
-            // (inputs of very large magnitude, e.g. near +/-1e153). sumX and sumY are sums
-            // of squared deviations produced by Welford's algorithm, so they are always >= 0.
+            // Prefer the single-rounding sqrt(sumY * sumX), the accurate denominator for
+            // normal inputs. Fall back to the split form only when the product is unusable:
+            // it overflows to +Infinity (large inputs, ~1e153) or underflows to 0.0 (small
+            // inputs, ~1e-150), while each factor stays in range (both are Welford sums of
+            // squared deviations, so >= 0). A genuine zero factor (zero variance) keeps the
+            // product at 0.0 and falls through to the denom == 0 guard below, yielding NaN.
             double prod = sumY * sumX;
-            double denom = Double.isFinite(prod) ? Math.sqrt(prod) : Math.sqrt(sumY) * Math.sqrt(sumX);
+            boolean splitDenom = !Double.isFinite(prod) || (prod == 0.0 && sumY != 0.0 && sumX != 0.0);
+            double denom = splitDenom ? Math.sqrt(sumY) * Math.sqrt(sumX) : Math.sqrt(prod);
             if (denom == 0) {
                 return Double.NaN;
             }

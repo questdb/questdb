@@ -79,12 +79,14 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         if (cYY < 0) {
             cYY = 0;
         }
-        // Prefer sqrt(cXX * cYY) when the product is finite (one rounding step,
-        // bit-exact agreement with prior behaviour). Fall back to sqrt(cXX) * sqrt(cYY)
-        // only when the product would overflow to +Infinity (inputs of very large
-        // magnitude, e.g. near +/-1e153). Both cXX and cYY are clamped to >= 0 above.
+        // Prefer the single-rounding sqrt(cXX * cYY) (bit-exact agreement with prior
+        // behaviour). Fall back to the split form only when the product is unusable: it
+        // overflows to +Infinity (large inputs, ~1e153) or underflows to 0.0 (small inputs,
+        // ~1e-150). Both cXX and cYY are clamped to >= 0 above; a genuine zero factor (zero
+        // variance) keeps the product at 0.0 and falls through to the denom == 0 guard below.
         double prod = cXX * cYY;
-        double denom = Double.isFinite(prod) ? Math.sqrt(prod) : Math.sqrt(cXX) * Math.sqrt(cYY);
+        boolean splitDenom = !Double.isFinite(prod) || (prod == 0.0 && cXX != 0.0 && cYY != 0.0);
+        double denom = splitDenom ? Math.sqrt(cXX) * Math.sqrt(cYY) : Math.sqrt(prod);
         if (denom == 0.0) {
             return Double.NaN;
         }
@@ -113,7 +115,8 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         }
         // See computeCorr() for the rationale behind the conditional split-sqrt fallback.
         double prod = sumXX * sumYY;
-        double denom = Double.isFinite(prod) ? Math.sqrt(prod) : Math.sqrt(sumXX) * Math.sqrt(sumYY);
+        boolean splitDenom = !Double.isFinite(prod) || (prod == 0.0 && sumXX != 0.0 && sumYY != 0.0);
+        double denom = splitDenom ? Math.sqrt(sumXX) * Math.sqrt(sumYY) : Math.sqrt(prod);
         if (denom == 0.0) {
             return Double.NaN;
         }

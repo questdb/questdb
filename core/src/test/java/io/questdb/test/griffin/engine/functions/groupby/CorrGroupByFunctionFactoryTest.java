@@ -285,6 +285,27 @@ public class CorrGroupByFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCorrSmallMagnitudeUnderflow() throws Exception {
+        // Regression test: for inputs of very small magnitude (~1e-150) the sums of squared
+        // deviations are ~1e-300, so their product sumY * sumX underflows to exactly 0.0
+        // while each factor stays finite and non-zero. Prior to widening the split-sqrt
+        // fallback to this case, sqrt(0.0) made the denominator 0.0 and corr() returned NaN
+        // instead of the true correlation.
+        assertMemoryLeak(() -> {
+            execute("create table tbl1(x double, y double)");
+            execute("insert into 'tbl1' VALUES (1e-150, 1e-150), (-1e-150, -1e-150)");
+            // The split-sqrt fallback uses two sqrt roundings instead of one, so the result
+            // lands 1 ULP below the true 1.0 rather than overshooting it (the clamp only
+            // bounds the > 1 / < -1 tails). The point is that it is finite, not NaN.
+            assertQuery("select corr(x, y) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("corr\n0.9999999999999999\n");
+        });
+    }
+
+    @Test
     public void testCorrSomeNull() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tbl1 as (select cast(x as double) x, cast(x as double) y from long_sequence(100))");
