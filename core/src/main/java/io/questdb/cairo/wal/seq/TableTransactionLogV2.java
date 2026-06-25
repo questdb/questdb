@@ -129,6 +129,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
     public long addEntry(long structureVersion, int walId, int segmentId, int segmentTxn, long timestamp, long txnMinTimestamp, long txnMaxTimestamp, long txnRowCount) {
         openTxnPart();
 
+        final long recordStart = txnPartMem.getAppendOffset();
         txnPartMem.putLong(structureVersion);
         txnPartMem.putInt(walId);
         txnPartMem.putInt(segmentId);
@@ -137,7 +138,8 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         txnPartMem.putLong(txnMinTimestamp);
         txnPartMem.putLong(txnMaxTimestamp);
         txnPartMem.putLong(txnRowCount);
-        txnPartMem.putLong(0L);
+        // Write CRC over the body [recordStart, recordStart+RESERVED_OFFSET) in the reserved trailing slot.
+        txnPartMem.putLong(TableUtils.calculateCvAreaChecksum(txnPartMem.addressOf(recordStart), RESERVED_OFFSET));
 
         Unsafe.storeFence();
         long maxTxn = this.maxTxn.incrementAndGet();
@@ -151,6 +153,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
     public void beginMetadataChangeEntry(long newStructureVersion, MemorySerializer serializer, Object instance, long timestamp) {
         openTxnPart();
 
+        final long recordStart = txnPartMem.getAppendOffset();
         txnPartMem.putLong(newStructureVersion);
         txnPartMem.putInt(STRUCTURAL_CHANGE_WAL_ID);
         txnPartMem.putInt(-1);
@@ -159,7 +162,8 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         txnPartMem.putLong(serializer.getCommandType(instance));
         txnPartMem.putLong(0L);
         txnPartMem.putLong(0L);
-        txnPartMem.putLong(0L);
+        // Write CRC over the body [recordStart, recordStart+RESERVED_OFFSET) in the reserved trailing slot.
+        txnPartMem.putLong(TableUtils.calculateCvAreaChecksum(txnPartMem.addressOf(recordStart), RESERVED_OFFSET));
     }
 
     @Override
@@ -467,8 +471,30 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             }
 
             openPart(txn);
+            verifyRecordChecksum();
             txn++;
             return true;
+        }
+
+        // Verify the per-record CRC in the reserved trailing slot, if present.
+        // 0 in the reserved slot means a legacy/V1-compat record with no CRC: skip verification (back-compat).
+        // calculateCvAreaChecksum never returns 0, so 0 unambiguously means "no CRC written".
+        // A non-zero slot that does not match the body checksum means a torn/partially-written record.
+        private void verifyRecordChecksum() {
+            final long recordBase = address + txnOffset;
+            final long stored = Unsafe.getLong(recordBase + RESERVED_OFFSET);
+            if (stored == 0L) {
+                return; // legacy record without CRC — read unverified for backward compatibility
+            }
+            final long actual = TableUtils.calculateCvAreaChecksum(recordBase, RESERVED_OFFSET);
+            if (actual != stored) {
+                throw CairoException.critical(CairoException.METADATA_VALIDATION)
+                        .put("torn sequencer txnlog record [txn=").put(txn)
+                        .put(", txnOffset=").put(txnOffset)
+                        .put(", expected=").put(stored)
+                        .put(", actual=").put(actual)
+                        .put(']');
+            }
         }
 
         @Override
