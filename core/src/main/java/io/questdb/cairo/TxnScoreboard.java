@@ -34,6 +34,13 @@ import io.questdb.std.QuietCloseable;
  */
 public interface TxnScoreboard extends QuietCloseable {
     int CHECKPOINT_ID = -1;
+    // Virtual pin used by the adaptive durable-epoch path (Plan 3B) to hold the epoch's
+    // partition-version set so partition purge cannot reclaim partitions the epoch references
+    // (needed for O3-rewritten partitions). It is an INDEPENDENT virtual id from CHECKPOINT_ID:
+    // both can pin overlapping txns at once without clobbering each other's slot. See
+    // TxnScoreboardV2.toInternalId() for the id->slot mapping (CHECKPOINT_ID and EPOCH_ID map to
+    // distinct reserved slots ahead of the real reader slots).
+    int EPOCH_ID = -2;
 
     boolean acquireTxn(int id, long txn);
 
