@@ -162,6 +162,12 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
      * {@link AbstractPostingIndexReader#warmForKeys} for concurrent use to be
      * safe. Does NOT stamp the operating-thread tripwire (detached cursors run
      * off the reader's owning thread by design).
+     * <p>
+     * Provided for API symmetry with the forward reader. The covered parallel-decode
+     * pipeline reads each frame forward (even DESC frames are decoded ascending; the
+     * cheap selectKthMatch partitioning is forward-only), so this backward variant is
+     * not currently exercised by that pipeline — it is internally correct but untested
+     * in the concurrent path.
      */
     public RowCursor getDetachedCursor(int key, long minValue, long maxValue, int[] requiredCoverColumns) {
         reloadConditionally();
@@ -173,7 +179,15 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         if (key == 0 && columnTop > 0 && minValue < columnTop) {
             NullCursor nc = new NullCursor();
             nc.isDetached = true;
-            nc.of(key, minValue, indexMaxValue);
+            // of() can throw (e.g. OOM growing the block buffer). A detached cursor is
+            // never in the reader's free list, so nothing else would reclaim it; release
+            // its native scratch on a mid-of() failure (mirrors getCursor).
+            try {
+                nc.of(key, minValue, indexMaxValue);
+            } catch (Throwable th) {
+                nc.releaseResources();
+                throw th;
+            }
             final long hi = maxValue == Long.MAX_VALUE ? Long.MAX_VALUE : maxValue + 1;
             nc.nullCount = Math.min(columnTop, hi);
             nc.nullPos = nc.nullCount;
@@ -184,7 +198,12 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             openRequiredSidecars(requiredCoverColumns);
             Cursor c = new Cursor();
             c.isDetached = true;
-            c.of(key, minValue, indexMaxValue);
+            try {
+                c.of(key, minValue, indexMaxValue);
+            } catch (Throwable th) {
+                c.releaseResources();
+                throw th;
+            }
             return c;
         }
 

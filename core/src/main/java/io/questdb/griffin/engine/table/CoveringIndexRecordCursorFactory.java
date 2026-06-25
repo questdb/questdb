@@ -1233,8 +1233,15 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     ? (int) ((-(dataOffset + shapeBytes)) & (elemSize - 1))
                     : 0;
             long dataBytes = cardinality * elemSize;
-            int postPad = (int) ((-(dataOffset + shapeBytes + prePad + dataBytes)) & (Integer.BYTES - 1));
-            int totalBytes = (int) (shapeBytes + prePad + dataBytes + postPad);
+            long postPad = (-(dataOffset + shapeBytes + prePad + dataBytes)) & (Integer.BYTES - 1);
+            // The var-data vector is int-addressed; guard before the (int) cast so a >2GB
+            // ARRAY fails loud rather than truncating and overrunning the buffer. Keep in
+            // sync with CoveredColumnDecoder.writeArray (the worker covered path).
+            long totalBytesLong = shapeBytes + prePad + dataBytes + postPad;
+            if (totalBytesLong > Integer.MAX_VALUE) {
+                throw CairoException.nonCritical().put("covered ARRAY value too large [bytes=").put(totalBytesLong).put(']');
+            }
+            int totalBytes = (int) totalBytesLong;
 
             Unsafe.putLong(auxEntry + Long.BYTES, totalBytes);
             ensureVarDataCapacity(varDataAddrs, varDataPos, varDataCap, q, totalBytes);
@@ -1274,7 +1281,12 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 varDataPos[q] += Long.BYTES;
             } else {
                 long len = value.length();
-                int totalBytes = (int) (Long.BYTES + len);
+                // Guard the int cast (keep in sync with CoveredColumnDecoder.writeBinary).
+                long totalBytesLong = Long.BYTES + len;
+                if (totalBytesLong > Integer.MAX_VALUE) {
+                    throw CairoException.nonCritical().put("covered BINARY value too large [len=").put(len).put(']');
+                }
+                int totalBytes = (int) totalBytesLong;
                 ensureVarDataCapacity(varDataAddrs, varDataPos, varDataCap, q, totalBytes);
                 long dst = varDataAddrs[q] + varDataPos[q];
                 Unsafe.putLong(dst, len);
@@ -1348,7 +1360,13 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 varDataPos[q] += Integer.BYTES;
             } else {
                 int charCount = value.length();
-                int totalBytes = Integer.BYTES + charCount * Character.BYTES;
+                // charCount * 2 can overflow int for a multi-GB STRING; compute in long and
+                // guard (keep in sync with CoveredColumnDecoder.writeString).
+                long totalBytesLong = Integer.BYTES + (long) charCount * Character.BYTES;
+                if (totalBytesLong > Integer.MAX_VALUE) {
+                    throw CairoException.nonCritical().put("covered STRING value too large [chars=").put(charCount).put(']');
+                }
+                int totalBytes = (int) totalBytesLong;
                 ensureVarDataCapacity(varDataAddrs, varDataPos, varDataCap, q, totalBytes);
                 long dst = varDataAddrs[q] + varDataPos[q];
                 Unsafe.putInt(dst, charCount);

@@ -316,6 +316,11 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             if (count <= 0) {
                 continue; // key absent / empty in this gen
             }
+            // The per-gen ordinal is int-indexed throughout the index format (the cursor
+            // itself walks int ordinals), so a single (key, gen) never holds > 2^31
+            // postings. Assert it so the (int) casts below fail loud rather than silently
+            // truncating if that cap is ever raised.
+            assert count <= Integer.MAX_VALUE : "per-gen match count exceeds int range: " + count;
             long exactMin = gkc >= 0
                     ? selectDenseKthValue(key, g, gkc, 0)
                     : selectSparseKthValue(key, g, -gkc, 0);
@@ -428,6 +433,9 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             if (count <= 0) {
                 continue; // key absent / empty in this gen
             }
+            // Per-gen ordinals are int-indexed (see countMatchesClamped); assert so the
+            // (int) casts of count-1 / k-acc below fail loud rather than silently truncate.
+            assert count <= Integer.MAX_VALUE : "per-gen match count exceeds int range: " + count;
             // Exact (not slack) coverage check: read the gen's first and last posting
             // for the key directly. If the whole list sits inside [minValue, clamp] the
             // O(1) full count equals the cursor's range-filtered count, so the walk is
@@ -1622,6 +1630,9 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         int kk = key - minKey;
         int start = Unsafe.getInt(prefixSumAddr + (long) kk * Integer.BYTES);
         int end = Unsafe.getInt(prefixSumAddr + (long) (kk + 1) * Integer.BYTES);
+        // Equivalent to the cursor's start == end empty-key test (PostingIndexFwdReader's
+        // loadSparseGenByPrefixSum): prefix sums are monotonic non-decreasing so start > end
+        // cannot occur; >= is the same check, kept defensive against a corrupt prefix sum.
         if (start >= end) {
             return 0;
         }
@@ -1757,6 +1768,18 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         if (coverCount == 0) {
             return;
         }
+        if (frozen) {
+            // Parallel decode in progress. warmForKeys (single-threaded, pre-freeze)
+            // already opened every required sidecar and populated coveredAvailable[]
+            // for the query's full cover-column set. Detached worker cursors call this
+            // from N threads concurrently, so it MUST NOT mutate the shared reader state
+            // here: zeroing-then-rewriting coveredAvailable[] would race sibling workers
+            // and momentarily publish a false availability. The array is already correct,
+            // so this is a no-op while frozen.
+            assert allRequiredCoveredAvailable(requiredCoverColumns)
+                    : "frozen reader missing a warm-opened sidecar for the requested cover columns";
+            return;
+        }
         if (coveredAvailable == null || coveredAvailable.length < coverCount) {
             coveredAvailable = new boolean[coverCount];
         } else {
@@ -1773,6 +1796,25 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 coveredAvailable[c] = sidecarMems.getQuick(c).getFd() != -1;
             }
         }
+    }
+
+    // -ea-only invariant check used by the frozen no-op path of openRequiredSidecars:
+    // every column a detached worker cursor requests must already have been opened and
+    // marked available by the single-threaded warm pass, so the frozen reader never needs
+    // to (and never may) rewrite the shared coveredAvailable[] from a worker thread.
+    private boolean allRequiredCoveredAvailable(int[] requiredCoverColumns) {
+        if (requiredCoverColumns == null) {
+            return true;
+        }
+        if (coveredAvailable == null) {
+            return false;
+        }
+        for (int c : requiredCoverColumns) {
+            if (c >= 0 && c < coverCount && !coveredAvailable[c]) {
+                return false;
+            }
+        }
+        return true;
     }
 
     protected abstract class AbstractCoveringCursor implements CoveringRowCursor {

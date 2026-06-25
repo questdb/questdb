@@ -1241,6 +1241,80 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCoveredDecodeBuffersAreTrackedAndReleased() throws Exception {
+        // Level-3 review follow-up (M1/M2): covered decode buffers charge a tracked byte
+        // counter (getCoveredCachedBytes) that grows as covered frames decode and returns
+        // to zero once the buffers are released. This keeps the query-lifetime covered
+        // buffers observable (they cannot be LRU-evicted mid-query, so the per-query
+        // MemoryTracker captured by each CoveringBuffers is the real ceiling) and proves
+        // the symmetric free accounts every byte it allocated -- a leak would leave the
+        // counter non-zero (and trip releaseCoveringBuffers()'s assert) and assertMemoryLeak
+        // would fail on the native allocation.
+        final int coveredColumnIndex = 1;
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_pf_bytes (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (payload),
+                        payload VARCHAR
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_pf_bytes
+                    SELECT
+                        '2024-01-01T00:00:00'::TIMESTAMP + x * 1_000_000L,
+                        'A',
+                        'payload-value-' || x
+                    FROM long_sequence(50)
+                    """);
+            engine.releaseAllWriters();
+
+            try (RecordCursorFactory factory = select("SELECT sym, payload FROM t_pf_bytes WHERE sym = 'A'");
+                 PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC);
+                 PageFrameAddressCache addressCache = new PageFrameAddressCache();
+                 PageFrameMemoryPool pool = new PageFrameMemoryPool(0L);
+                 PageFrameMemoryRecord record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER)) {
+                addressCache.of(factory.getMetadata(), cursor.getColumnMapping(), cursor.isExternal());
+                int frameCount = 0;
+                PageFrame f;
+                while ((f = cursor.next(0)) != null) {
+                    addressCache.add(frameCount++, f);
+                }
+                assertTrue("expected at least one covering page frame", frameCount > 0);
+
+                pool.of(addressCache);
+                record.of(cursor);
+
+                assertEquals("no covered bytes before any decode", 0L, pool.getCoveredCachedBytes());
+
+                // Drive the covered VARCHAR through the worker decode path (aux + data
+                // native buffers, both tracked) and read it so the data vector grows.
+                final StringSink sink = new StringSink();
+                for (int frameIndex = 0; frameIndex < frameCount; frameIndex++) {
+                    pool.navigateTo(frameIndex, record);
+                    final long frameSize = addressCache.getFrameSize(frameIndex);
+                    for (long r = 0; r < frameSize; r++) {
+                        record.setRowIndex(r);
+                        sink.clear();
+                        sink.put(record.getVarcharA(coveredColumnIndex));
+                        assertTrue("covered VARCHAR must decode", sink.toString().startsWith("payload-value-"));
+                    }
+                }
+                assertTrue(
+                        "covered decode buffers must be tracked after navigation",
+                        pool.getCoveredCachedBytes() > 0
+                );
+
+                // Releasing the covered buffers (new query / clear path via of()) accounts
+                // every byte back to zero and drops the retained per-frame buffers.
+                pool.of(addressCache);
+                assertEquals("covered byte accounting must net to zero after release", 0L, pool.getCoveredCachedBytes());
+                assertEquals("covered frame buffers must be dropped after release", 0, pool.getCoveredFrameCount());
+            }
+        });
+    }
+
+    @Test
     public void testSingleKeyProductionIsMetadataOnlyMultiKeyEager() throws Exception {
         // Task 7 headline: single-key frame production NO LONGER materializes
         // covered values (decode runs only on the workers), while the multi-key

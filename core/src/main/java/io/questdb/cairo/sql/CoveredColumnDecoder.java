@@ -41,10 +41,13 @@ import org.jetbrains.annotations.Nullable;
  * covered (posting-index sidecar) columns into native page-frame buffers, plus
  * the broadcast of a symbol key column. The byte layout it produces is exactly
  * what a downstream native page-frame consumer (vectorized aggregation, JIT /
- * non-JIT filter, group-by) reads, so the same logic must drive both eager
- * frame production (at the covering page-frame cursor) and the worker-side
- * covered decode (in {@link PageFrameMemoryPool}). Keeping a single source of
- * truth here prevents the two paths from drifting.
+ * non-JIT filter, group-by) reads. This class drives the worker-side covered
+ * decode (in {@link PageFrameMemoryPool}). The eager, multi-key frame-production
+ * path in {@code CoveringIndexRecordCursorFactory} writes the IDENTICAL byte
+ * layout via its own {@code write*ToFrame} methods; the two must stay in lockstep
+ * (size guards included) — any change to the layout here must be mirrored there.
+ * The paths never decode the same value (workers skip multi-key frames), so the
+ * duplication is a drift risk rather than an active divergence.
  * <p>
  * Var-size columns (VARCHAR / STRING / BINARY / ARRAY) append into a per-column
  * data buffer fronted by a {@link VarDataSink} that the caller supplies; the
@@ -155,8 +158,16 @@ public final class CoveredColumnDecoder {
                 ? (int) ((-(dataOffset + shapeBytes)) & (elemSize - 1))
                 : 0;
         long dataBytes = cardinality * elemSize;
-        int postPad = (int) ((-(dataOffset + shapeBytes + prePad + dataBytes)) & (Integer.BYTES - 1));
-        int totalBytes = (int) (shapeBytes + prePad + dataBytes + postPad);
+        long postPad = (-(dataOffset + shapeBytes + prePad + dataBytes)) & (Integer.BYTES - 1);
+        // The var-data sink is int-addressed, so an array whose framed size overflows int
+        // cannot be stored; guard before the (int) cast so a pathological >2GB ARRAY fails
+        // loud rather than truncating the size and copying its element data past the
+        // under-allocated buffer (mirrors writeString/writeBinary).
+        long totalBytesLong = shapeBytes + prePad + dataBytes + postPad;
+        if (totalBytesLong > Integer.MAX_VALUE) {
+            throw CairoException.nonCritical().put("covered ARRAY value too large [bytes=").put(totalBytesLong).put(']');
+        }
+        int totalBytes = (int) totalBytesLong;
 
         Unsafe.putLong(auxEntry + Long.BYTES, totalBytes);
         long dst = varData.ensureCapacity(q, totalBytes) + dataOffset;

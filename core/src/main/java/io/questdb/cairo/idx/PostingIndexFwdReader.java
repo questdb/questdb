@@ -192,7 +192,15 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         if (key == 0 && columnTop > 0 && minValue < columnTop) {
             NullCursor nc = new NullCursor();
             nc.isDetached = true;
-            nc.of(key, minValue, indexMaxValue);
+            // of() can throw (e.g. OOM growing the block buffer). A detached cursor is
+            // never in the reader's free list, so nothing else would reclaim it; release
+            // its native scratch on a mid-of() failure (mirrors getCursor).
+            try {
+                nc.of(key, minValue, indexMaxValue);
+            } catch (Throwable th) {
+                nc.releaseResources();
+                throw th;
+            }
             nc.nullPos = minValue;
             final long hi = maxValue == Long.MAX_VALUE ? Long.MAX_VALUE : maxValue + 1;
             nc.nullCount = Math.min(columnTop, hi);
@@ -203,7 +211,12 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             openRequiredSidecars(requiredCoverColumns);
             Cursor c = new Cursor();
             c.isDetached = true;
-            c.of(key, minValue, indexMaxValue);
+            try {
+                c.of(key, minValue, indexMaxValue);
+            } catch (Throwable th) {
+                c.releaseResources();
+                throw th;
+            }
             return c;
         }
 
