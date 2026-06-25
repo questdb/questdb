@@ -370,15 +370,23 @@ fn apply_thrift_stats(
         raw.distinct_count = dc.max(0) as u64;
     }
 
+    // Parquet treats an absent is_*_value_exact as exact: the field post-dates the
+    // statistic, so a writer that never widens a bound leaves it unset. Only an
+    // explicit Some(false) -- emitted when UTF-8/opaque-Binary min/max truncation
+    // widens the bound -- means inexact. Carry that through so the _pm exact bit
+    // matches the parquet footer instead of always claiming exact.
+    let is_min_exact = stats.is_min_value_exact != Some(false);
+    let is_max_exact = stats.is_max_value_exact != Some(false);
+
     if let Some(min_val) = stats.min_value.as_deref() {
         if !min_val.is_empty() {
             if min_val.len() <= 8 {
-                stat_flags = stat_flags.with_min(true, true);
+                stat_flags = stat_flags.with_min(true, is_min_exact);
                 let mut buf = [0u8; 8];
                 buf[..min_val.len()].copy_from_slice(min_val);
                 raw.min_stat = u64::from_le_bytes(buf);
             } else {
-                stat_flags = stat_flags.with_min(false, true);
+                stat_flags = stat_flags.with_min(false, is_min_exact);
                 ool_min = Some(min_val.to_vec());
             }
         }
@@ -387,12 +395,12 @@ fn apply_thrift_stats(
     if let Some(max_val) = stats.max_value.as_deref() {
         if !max_val.is_empty() {
             if max_val.len() <= 8 {
-                stat_flags = stat_flags.with_max(true, true);
+                stat_flags = stat_flags.with_max(true, is_max_exact);
                 let mut buf = [0u8; 8];
                 buf[..max_val.len()].copy_from_slice(max_val);
                 raw.max_stat = u64::from_le_bytes(buf);
             } else {
-                stat_flags = stat_flags.with_max(false, true);
+                stat_flags = stat_flags.with_max(false, is_max_exact);
                 ool_max = Some(max_val.to_vec());
             }
         }
@@ -1773,6 +1781,163 @@ mod tests {
         // did not widen i32 days to i64 millis before writing the slot.
         assert_eq!(&min_bytes[4..], &[0u8; 4]);
         assert_eq!(&max_bytes[4..], &[0u8; 4]);
+    }
+
+    /// Run `apply_thrift_stats` over a thrift `Statistics` carrying the given
+    /// min/max values and exactness flags, returning the resulting `_pm` raw plus
+    /// any out-of-line stat bytes.
+    fn apply_thrift_stats_for(
+        min_value: Option<Vec<u8>>,
+        max_value: Option<Vec<u8>>,
+        is_min_value_exact: Option<bool>,
+        is_max_value_exact: Option<bool>,
+    ) -> (ColumnChunkRaw, Option<Vec<u8>>, Option<Vec<u8>>) {
+        let stats = parquet2::thrift_format::Statistics {
+            max: None,
+            min: None,
+            null_count: None,
+            distinct_count: None,
+            max_value,
+            min_value,
+            is_max_value_exact,
+            is_min_value_exact,
+        };
+        let mut raw = ColumnChunkRaw::zeroed();
+        let (ool_min, ool_max) = apply_thrift_stats(&mut raw, Some(&stats));
+        (raw, ool_min, ool_max)
+    }
+
+    #[test]
+    fn pm_exact_bit_set_when_thrift_flag_absent() {
+        // An absent is_*_value_exact is Parquet's "exact" default: short inline
+        // bounds with no flag must mark _pm exact.
+        let (raw, _, _) = apply_thrift_stats_for(Some(vec![1, 2]), Some(vec![9, 9]), None, None);
+        let sf = raw.stat_flags();
+        assert!(sf.has_min_stat() && sf.is_min_inlined() && sf.is_min_exact());
+        assert!(sf.has_max_stat() && sf.is_max_inlined() && sf.is_max_exact());
+    }
+
+    #[test]
+    fn pm_exact_bit_set_when_thrift_flag_explicitly_true() {
+        let (raw, _, _) =
+            apply_thrift_stats_for(Some(vec![1, 2]), Some(vec![9, 9]), Some(true), Some(true));
+        let sf = raw.stat_flags();
+        assert!(sf.is_min_exact());
+        assert!(sf.is_max_exact());
+    }
+
+    #[test]
+    fn pm_exact_bit_cleared_when_thrift_flag_false_inline() {
+        // The core fix: a bound the writer marked inexact (Some(false)) must clear
+        // the _pm exact bit even when it is short enough to inline -- e.g. an
+        // external parquet that truncated a min/max to a short prefix.
+        let (raw, _, _) =
+            apply_thrift_stats_for(Some(vec![1, 2]), Some(vec![9, 9]), Some(false), Some(false));
+        let sf = raw.stat_flags();
+        assert!(sf.has_min_stat() && sf.is_min_inlined() && !sf.is_min_exact());
+        assert!(sf.has_max_stat() && sf.is_max_inlined() && !sf.is_max_exact());
+    }
+
+    #[test]
+    fn pm_exact_bit_cleared_for_truncated_ool_bounds() {
+        // The realistic UTF-8/opaque-Binary truncation case: a 64-byte bound goes
+        // out-of-line and is flagged inexact; _pm must record OOL + not-exact and
+        // carry the full bytes out of line.
+        let long_min = vec![b'a'; 64];
+        let long_max = vec![b'z'; 64];
+        let (raw, ool_min, ool_max) = apply_thrift_stats_for(
+            Some(long_min.clone()),
+            Some(long_max.clone()),
+            Some(false),
+            Some(false),
+        );
+        let sf = raw.stat_flags();
+        assert!(sf.has_min_stat() && !sf.is_min_inlined() && !sf.is_min_exact());
+        assert!(sf.has_max_stat() && !sf.is_max_inlined() && !sf.is_max_exact());
+        assert_eq!(ool_min.as_deref(), Some(long_min.as_slice()));
+        assert_eq!(ool_max.as_deref(), Some(long_max.as_slice()));
+    }
+
+    #[test]
+    fn pm_exact_bit_kept_for_exact_ool_bounds() {
+        // A long bound is not automatically inexact: fixed-length byte arrays
+        // (Uuid/Long256/Decimal) store exact bounds verbatim. A 16-byte exact min
+        // must stay OOL and exact.
+        let exact_min = vec![7u8; 16];
+        let (raw, ool_min, _) = apply_thrift_stats_for(Some(exact_min.clone()), None, None, None);
+        let sf = raw.stat_flags();
+        assert!(sf.has_min_stat() && !sf.is_min_inlined() && sf.is_min_exact());
+        assert_eq!(ool_min.as_deref(), Some(exact_min.as_slice()));
+    }
+
+    #[test]
+    fn pm_min_and_max_exactness_are_independent() {
+        // An inexact min must not drag the max's exact bit down, and vice versa.
+        let (raw, _, _) =
+            apply_thrift_stats_for(Some(vec![1, 2]), Some(vec![9, 9]), Some(false), None);
+        let sf = raw.stat_flags();
+        assert!(!sf.is_min_exact());
+        assert!(sf.is_max_exact());
+
+        let (raw, _, _) =
+            apply_thrift_stats_for(Some(vec![1, 2]), Some(vec![9, 9]), None, Some(false));
+        let sf = raw.stat_flags();
+        assert!(sf.is_min_exact());
+        assert!(!sf.is_max_exact());
+    }
+
+    #[test]
+    fn pm_no_stat_bits_for_absent_or_empty_value() {
+        // An absent or empty bound sets no present/inlined/exact bit at all: the
+        // exactness flag is irrelevant when there is no value to qualify.
+        let (raw, ool_min, ool_max) =
+            apply_thrift_stats_for(None, Some(Vec::new()), Some(false), Some(false));
+        let sf = raw.stat_flags();
+        assert!(!sf.has_min_stat() && !sf.is_min_exact());
+        assert!(!sf.has_max_stat() && !sf.is_max_exact());
+        assert!(ool_min.is_none() && ool_max.is_none());
+    }
+
+    #[test]
+    fn build_column_chunk_from_thrift_carries_inexact_bit() {
+        // End-to-end through the thrift column builder: a truncated (inexact) min
+        // on a BYTE_ARRAY column must surface as a not-exact _pm bit, proving the
+        // exactness survives the full convert path rather than just the helper.
+        use parquet2::thrift_format::{
+            ColumnMetaData, CompressionCodec, Encoding as ThriftEncoding, Statistics, Type,
+        };
+        let long_min = vec![b'a'; 64];
+        let stats = Statistics {
+            max: None,
+            min: None,
+            null_count: Some(0),
+            distinct_count: None,
+            max_value: None,
+            min_value: Some(long_min.clone()),
+            is_max_value_exact: None,
+            is_min_value_exact: Some(false),
+        };
+        let meta = ColumnMetaData {
+            type_: Type::BYTE_ARRAY,
+            encodings: vec![ThriftEncoding::PLAIN],
+            path_in_schema: vec!["s".to_string()],
+            codec: CompressionCodec::UNCOMPRESSED,
+            num_values: 10,
+            total_uncompressed_size: 100,
+            total_compressed_size: 100,
+            key_value_metadata: None,
+            data_page_offset: 4,
+            index_page_offset: None,
+            dictionary_page_offset: None,
+            statistics: Some(stats),
+            encoding_stats: None,
+            bloom_filter_offset: None,
+            bloom_filter_length: None,
+        };
+        let built = build_column_chunk_from_thrift(&meta).unwrap();
+        let sf = built.raw.stat_flags();
+        assert!(sf.has_min_stat() && !sf.is_min_inlined() && !sf.is_min_exact());
+        assert_eq!(built.ool_min.as_deref(), Some(long_min.as_slice()));
     }
 
     #[test]
