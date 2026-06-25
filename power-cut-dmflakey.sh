@@ -257,8 +257,8 @@ run_one() {
     # Un-fsync'd data never reaches the loop device or image → exactly a power cut.
     local DROP_TABLE="0 $SECTORS flakey $LOOP 0 0 180 1 drop_writes"
     echo "  [9] --- POWER CUT ---"
-    echo "      suspending dm-flakey..."
-    dmsetup suspend "$DM_NAME"
+    echo "      suspending dm-flakey (--nolockfs: do NOT sync the fs, else dirty data flushes before the cut)..."
+    dmsetup suspend --nolockfs "$DM_NAME"
     echo "      loading drop_writes table: $DROP_TABLE"
     dmsetup load "$DM_NAME" --table "$DROP_TABLE"
     echo "      resuming (dm-flakey now drops all writes)..."
@@ -362,7 +362,8 @@ prove_cut_drops_unsynced() {
     dd if=/dev/zero of="$MNT/ephemeral.bin" bs=1M count=20 status=none 2>/dev/null || true
 
     # THE CUT (no sleep): drop_writes, umount (page-cache writeback DROPPED), restore, remount.
-    dmsetup suspend "$DM_NAME"
+    # --nolockfs: suspend WITHOUT syncing the fs, else the dirty page cache flushes before the cut.
+    dmsetup suspend --nolockfs "$DM_NAME"
     dmsetup load "$DM_NAME" --table "$DROP_TABLE"
     dmsetup resume "$DM_NAME"
     umount "$MNT"
