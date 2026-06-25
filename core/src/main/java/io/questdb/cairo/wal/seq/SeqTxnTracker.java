@@ -45,6 +45,11 @@ public class SeqTxnTracker {
     private final Metrics metrics;
     private final TableWriterPressureControlImpl pressureControl;
     private final CountedConcurrentQueue<WaiterHolder> waiters = CountedConcurrentQueue.create(WaiterHolder::new);
+    // The last seqTxn that has been made durable as an adaptive epoch.
+    // Default 0 means "no epoch committed yet — retain all WAL" (safe conservative default for a
+    // fresh adaptive table; the epoch job advances this as epochs are confirmed durable).
+    // Read by WalPurgeJob to floor the purge seqTxn for ADAPTIVE commit mode only.
+    private volatile long durableEpochSeqTxn = 0;
     private volatile long dirtyWriterTxn;
     // Volatile because fireWaiters() and registerWaiter() can race. See comments there
     private volatile boolean dropped;
@@ -79,6 +84,10 @@ public class SeqTxnTracker {
 
     public TableWriterPressureControl getMemPressureControl() {
         return pressureControl;
+    }
+
+    public long getDurableEpochSeqTxn() {
+        return durableEpochSeqTxn;
     }
 
     public long getSeqTxn() {
@@ -191,6 +200,10 @@ public class SeqTxnTracker {
 
         metrics.tableWriterMetrics().incSuspendedTables();
         fireWaiters();
+    }
+
+    public void setDurableEpochSeqTxn(long durableEpochSeqTxn) {
+        this.durableEpochSeqTxn = durableEpochSeqTxn;
     }
 
     public void setUnsuspended() {

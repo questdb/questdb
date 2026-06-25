@@ -27,12 +27,14 @@ package io.questdb.cairo.wal;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.log.Log;
@@ -522,6 +524,15 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                     }
                 }
             }
+        }
+        // Under ADAPTIVE commit mode, WAL segments must be retained back to the last durable epoch
+        // so that adaptive crash-recovery can re-apply from that seqTxn.  The durableEpochSeqTxn
+        // defaults to 0 (retain everything) for a fresh adaptive table; the epoch job advances it
+        // as epochs are confirmed durable.  For non-adaptive modes this check is skipped entirely
+        // so existing behaviour is completely unchanged.
+        if (configuration.getCommitMode() == CommitMode.ADAPTIVE) {
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
+            safeToPurgeTxn = Math.min(safeToPurgeTxn, tracker.getDurableEpochSeqTxn());
         }
         return safeToPurgeTxn;
     }

@@ -1514,6 +1514,108 @@ public class WalPurgeJobTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * Verifies the adaptive WAL-purge floor: with commit.mode=adaptive, WAL segments for seqTxns
+     * above durableEpochSeqTxn are retained until the epoch is advanced.
+     * Also verifies that with commit.mode=nosync the durableEpochSeqTxn field is ignored.
+     */
+    @Test
+    public void testAdaptiveDurableEpochPurgeFloor() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 100);
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+
+        assertMemoryLeak(() -> {
+            final String tableName = testName.getMethodName();
+            execute("create table " + tableName + "("
+                    + "x long,"
+                    + "ts timestamp"
+                    + ") timestamp(ts) partition by DAY WAL");
+
+            // Commit several transactions into the WAL.
+            execute("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
+            execute("insert into " + tableName + " values (2, '2022-02-24T00:00:01.000000Z')");
+            execute("insert into " + tableName + " values (3, '2022-02-24T00:00:02.000000Z')");
+
+            // Apply all WAL txns to the table so readerSeqTxn advances.
+            drainWalQueue();
+
+            final TableToken tableToken = engine.verifyTableName(tableName);
+
+            // Confirm there is a WAL segment on disk.
+            assertWalExistence(true, tableName, 1);
+            assertSegmentExistence(true, tableName, 1, 0);
+
+            // Grab the tracker and set durableEpochSeqTxn to 0 (default — retain all WAL).
+            // With epoch=0, purge must retain the WAL segment even though all txns are applied.
+            final io.questdb.cairo.wal.seq.SeqTxnTracker tracker =
+                    engine.getTableSequencerAPI().getTxnTracker(tableToken);
+            Assert.assertEquals("fresh tracker should have durableEpochSeqTxn=0", 0, tracker.getDurableEpochSeqTxn());
+
+            engine.releaseInactive();
+
+            // RED assertion: without the floor the segment would be purged; with it, it must be retained.
+            drainPurgeJob();
+
+            // Epoch still 0 → no WAL should be purged (adaptive retains all).
+            assertWalExistence(true, tableName, 1);
+            assertSegmentExistence(true, tableName, 1, 0);
+
+            // Now advance epoch to the applied seqTxn (i.e. make all txns "durable").
+            // The applied seqTxn is what was in the sequencer, which equals number of inserts + create = 4 txns
+            // in practice. We use getSeqTxn() to be exact.
+            final long appliedSeqTxn = tracker.getWriterTxn();
+            Assert.assertTrue("writerTxn must be positive after drainWalQueue", appliedSeqTxn > 0);
+            tracker.setDurableEpochSeqTxn(appliedSeqTxn);
+
+            // Now purge should proceed because durableEpochSeqTxn == appliedSeqTxn.
+            drainPurgeJob();
+
+            assertSegmentExistence(false, tableName, 1, 0);
+            assertWalExistence(false, tableName, 1);
+        });
+    }
+
+    /**
+     * Verifies that with commit.mode=nosync the durableEpochSeqTxn field in the tracker
+     * is NOT consulted — purge proceeds to the applied seqTxn as usual.
+     */
+    @Test
+    public void testNosyncModeIgnoresDurableEpochFloor() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 100);
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+
+        assertMemoryLeak(() -> {
+            final String tableName = testName.getMethodName();
+            execute("create table " + tableName + "("
+                    + "x long,"
+                    + "ts timestamp"
+                    + ") timestamp(ts) partition by DAY WAL");
+
+            execute("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
+            execute("insert into " + tableName + " values (2, '2022-02-24T00:00:01.000000Z')");
+
+            drainWalQueue();
+
+            final TableToken tableToken = engine.verifyTableName(tableName);
+
+            assertWalExistence(true, tableName, 1);
+            assertSegmentExistence(true, tableName, 1, 0);
+
+            // Set durableEpochSeqTxn=0 on the tracker — under nosync mode this should NOT floor purge.
+            final io.questdb.cairo.wal.seq.SeqTxnTracker tracker =
+                    engine.getTableSequencerAPI().getTxnTracker(tableToken);
+            tracker.setDurableEpochSeqTxn(0);
+
+            engine.releaseInactive();
+
+            // Under nosync, WAL is purgeable once applied regardless of durableEpochSeqTxn.
+            drainPurgeJob();
+
+            assertSegmentExistence(false, tableName, 1, 0);
+            assertWalExistence(false, tableName, 1);
+        });
+    }
+
     private static void addColumnAndRow(WalWriter writer, String columnName) {
         TestUtils.unchecked(() -> {
             addColumn(writer, columnName);
