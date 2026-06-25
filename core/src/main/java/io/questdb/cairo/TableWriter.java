@@ -13566,6 +13566,28 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         setAppendPosition(0, false);
     }
 
+    /**
+     * Returns true if and only if this commit mode requires a per-commit msync/fdatasync flush
+     * of the TABLE PARTITION COLUMN FILES on the apply path (TableWriter.syncColumns).
+     *
+     * <p>SYNC and ASYNC both flush column files on every commit — SYNC blocks until the data is
+     * durable, ASYNC schedules writeback. NOSYNC never flushes.
+     *
+     * <p>ADAPTIVE is intentionally excluded here. Under ADAPTIVE the WAL commit is made durable
+     * (fdatasync of segment→events→sequencer, Task A), so the table-apply is a REBUILDABLE CACHE
+     * of the WAL: if the process crashes the WAL is replayed and the table is re-derived on recovery.
+     * Flushing the materialized column files on every apply would negate the performance advantage
+     * of adaptive (fsync the small log, not the big table).
+     *
+     * <p>Non-WAL tables: for non-WAL tables there is no durable WAL to replay, so ADAPTIVE on a
+     * non-WAL table degrades to NOSYNC-grade apply durability — the same as the current engine
+     * default. This is explicitly documented here so the semantics are clear: if you need
+     * per-commit apply durability on a non-WAL table, use SYNC instead of ADAPTIVE.
+     */
+    private static boolean appliesColumnSync(int commitMode) {
+        return commitMode == CommitMode.SYNC || commitMode == CommitMode.ASYNC;
+    }
+
     private void syncColumns() {
         final int commitMode = configuration.getCommitMode();
         // Always commit indexers: PostingIndexWriter buffers add() calls in native
@@ -13585,7 +13607,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 throwDistressException(e);
             }
         }
-        if (commitMode != CommitMode.NOSYNC) {
+        // ADAPTIVE skips this block: the WAL is durable (Task A fdatasync), so the table partition
+        // columns are a rebuildable cache — no apply-side flush needed. See appliesColumnSync().
+        if (appliesColumnSync(commitMode)) {
             if (commitMode == CommitMode.SYNC && Os.isLinux() && configuration.isBatchedColumnSyncEnabled()) {
                 // Linux SYNC: BATCH the per-file device flushes into ~one. Instead of N blocking
                 // msync(MS_SYNC) (each carrying a device flush), every dirty column/symbol mem is

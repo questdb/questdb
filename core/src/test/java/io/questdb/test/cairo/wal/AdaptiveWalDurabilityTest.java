@@ -40,18 +40,27 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * TDD tests for Plan 2 Task A — CommitMode.ADAPTIVE + durable WAL commit.
+ * TDD tests for Plan 2 — CommitMode.ADAPTIVE: durable WAL commit (Task A) + lazy table apply (Task B).
  *
- * <p>Asserts that under ADAPTIVE mode, every WAL commit issues {@code fdatasync} on the
- * segment column data file(s), the WAL-e events file ({@code _event}), AND the sequencer
- * part file ({@code _txn_parts/…}) and header ({@code _txnlog}), IN THAT ORDER
+ * <p>Task A: under ADAPTIVE, every WAL commit issues {@code fdatasync} on the segment column
+ * data file(s), the WAL-e events file ({@code _event}), AND the sequencer part file
+ * ({@code _txn_parts/…}) and header ({@code _txnlog}), IN THAT ORDER
  * (data → events → sequencer), before the commit returns.
  *
- * <p>Under NOSYNC mode, zero fdatasync calls must be issued to these files.
+ * <p>Task B: under ADAPTIVE, {@code ApplyWal2TableJob} (drainWalQueue) must NOT issue any
+ * msync or fdatasync on the TABLE PARTITION column files during apply. The table is a
+ * rebuildable cache of the durable WAL, so flushing it on apply wastes I/O.
+ * Under SYNC mode, the column files ARE flushed — the test distinguishes both.
  *
- * <p>(a) ordering test — RED before implementation, GREEN after.
- * <p>(b) NOSYNC zero-fdatasync test — GREEN before and after (regression guard).
+ * <p>Under NOSYNC mode, zero fdatasync calls must be issued to any files.
+ *
+ * <p>(a) ordering test — RED before Task A, GREEN after.
+ * <p>(b) NOSYNC zero-fdatasync test — regression guard.
  * <p>(c) round-trip data-integrity test — ingest → drainWalQueue → select returns data.
+ * <p>(d) ADAPTIVE no-crash on dropped column (NullMemory guard, Task A review).
+ * <p>(e) Task B — ADAPTIVE apply: ZERO msync/fdatasync on table partition column files.
+ * <p>(f) Task B — SYNC apply: NON-ZERO msync/fdatasync on table partition column files.
+ * <p>(g) Task B — correctness: adaptive lazy apply produces correct query results.
  */
 public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
 
@@ -245,6 +254,121 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
         });
     }
 
+    // ---------- Task B: lazy apply tests ----------
+
+    /**
+     * (e) Task B — ADAPTIVE apply: ZERO msync/fdatasync on table partition column files.
+     *
+     * <p>The tracking facade records every {@code msync} and {@code fdatasync} call, mapping
+     * mmap addresses to file paths via open-time tracking. We reset the counters AFTER the
+     * WAL insert (so WAL-commit syncs from Task A are excluded) and BEFORE {@code drainWalQueue}.
+     * After apply, table partition column-file sync count must be zero.
+     *
+     * <p>RED before Task B (ADAPTIVE currently falls through to syncColumns0 = per-file msync).
+     * GREEN after making syncColumns skip SYNC/ASYNC paths for ADAPTIVE.
+     */
+    @Test
+    public void testAdaptiveApplyIssuezZeroColumnSyncsOnApply() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 16);
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+
+        final TableSyncTrackingFacade trackFf = new TableSyncTrackingFacade();
+        assertMemoryLeak(trackFf, () -> {
+            execute("create table tab_e (ts timestamp, v long) timestamp(ts) partition by day wal");
+
+            // Insert: triggers WAL commit with Task A fdatasyncs (segment/events/seq).
+            execute("insert into tab_e values ('2024-06-01T00:00:00.000000Z', 42)");
+
+            // Reset counters AFTER insert so WAL-commit syncs are excluded.
+            // Only apply-side syncs (from drainWalQueue) are counted below.
+            trackFf.resetTableColumnSyncs();
+
+            // Apply: ApplyWal2TableJob materialises the WAL txn into the table partition.
+            // Under ADAPTIVE (Task B), syncColumns() must behave like NOSYNC here — no msync/fdatasync.
+            drainWalQueue();
+
+            long tableColumnSyncs = trackFf.getTableColumnSyncCount();
+            Assert.assertEquals(
+                    "ADAPTIVE apply must issue ZERO msync/fdatasync on table partition column files, but got: "
+                            + tableColumnSyncs + "; synced paths: " + trackFf.getTableColumnSyncPaths(),
+                    0, tableColumnSyncs
+            );
+
+            // Correctness: data must be visible after the lazy apply.
+            assertQuery("select * from tab_e order by ts")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tv\n" +
+                            "2024-06-01T00:00:00.000000Z\t42\n");
+        });
+    }
+
+    /**
+     * (f) Task B — SYNC apply: NON-ZERO msync/fdatasync on table partition column files.
+     *
+     * <p>Contrast test: proves the tracking facade correctly distinguishes table-partition
+     * column syncs from WAL syncs, and that SYNC mode DOES flush the columns on apply.
+     * If this test passes but (e) also passes, that means adaptive genuinely skips what
+     * SYNC does — i.e. the two tests form a paired RED/GREEN guard.
+     */
+    @Test
+    public void testSyncApplyFlushesTableColumnFiles() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 16);
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
+
+        final TableSyncTrackingFacade trackFf = new TableSyncTrackingFacade();
+        assertMemoryLeak(trackFf, () -> {
+            execute("create table tab_f (ts timestamp, v long) timestamp(ts) partition by day wal");
+
+            execute("insert into tab_f values ('2024-06-02T00:00:00.000000Z', 99)");
+
+            // Reset AFTER insert, BEFORE apply — same discipline as test (e).
+            trackFf.resetTableColumnSyncs();
+
+            drainWalQueue();
+
+            long tableColumnSyncs = trackFf.getTableColumnSyncCount();
+            Assert.assertTrue(
+                    "SYNC apply must issue at least one msync/fdatasync on table partition column files, but got 0",
+                    tableColumnSyncs > 0
+            );
+
+            assertQuery("select * from tab_f order by ts")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tv\n" +
+                            "2024-06-02T00:00:00.000000Z\t99\n");
+        });
+    }
+
+    /**
+     * (g) Task B — correctness: adaptive lazy apply produces correct data for multi-row txn.
+     *
+     * <p>Verifies that skipping the column flush on apply does not corrupt the materialized
+     * state — reads after drainWalQueue return all inserted rows in order.
+     */
+    @Test
+    public void testAdaptiveLazyApplyCorrectness() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 16);
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+
+        assertMemoryLeak(() -> {
+            execute("create table tab_g (ts timestamp, v long) timestamp(ts) partition by day wal");
+            execute("insert into tab_g values ('2024-07-01T00:00:00.000000Z', 1)");
+            execute("insert into tab_g values ('2024-07-01T01:00:00.000000Z', 2)");
+            execute("insert into tab_g values ('2024-07-01T02:00:00.000000Z', 3)");
+            drainWalQueue();
+
+            assertQuery("select * from tab_g order by ts")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tv\n" +
+                            "2024-07-01T00:00:00.000000Z\t1\n" +
+                            "2024-07-01T01:00:00.000000Z\t2\n" +
+                            "2024-07-01T02:00:00.000000Z\t3\n");
+        });
+    }
+
     // ---------- helpers ----------
 
     /**
@@ -294,6 +418,167 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
             sb.append("  [").append(i).append("] ").append(order.get(i)).append('\n');
         }
         return sb;
+    }
+
+    /**
+     * A FilesFacade that counts every {@code msync} and {@code fdatasync} call on TABLE
+     * PARTITION COLUMN FILES (i.e. not in {@code wal<N>/} segment dirs, not in
+     * {@code txn_seq/}, and not control/metadata files).
+     *
+     * <p>It tracks: fd→path (on open), addr→fd (on mmap), then resolves msync(addr) and
+     * fdatasync(fd) to a path and classifies it. Only table-partition column file syncs
+     * are counted; WAL-segment and sequencer syncs are ignored so the test can reset
+     * AFTER the WAL insert (Task A syncs) and measure ONLY the apply-side syncs.
+     */
+    static class TableSyncTrackingFacade extends TestFilesFacadeImpl {
+        // fd -> file path (populated on every open call)
+        private final Map<Long, String> fdToPath = new HashMap<>();
+        // mmap address -> fd (populated on mmap, removed on munmap)
+        private final Map<Long, Long> addrToFd = new HashMap<>();
+        // paths of table-partition column files that were synced (msync or fdatasync)
+        private final List<String> tableColumnSyncPaths = new ArrayList<>();
+        // total sync count on table partition column files
+        private long tableColumnSyncCount = 0;
+
+        public long getTableColumnSyncCount() {
+            return tableColumnSyncCount;
+        }
+
+        public List<String> getTableColumnSyncPaths() {
+            return new ArrayList<>(tableColumnSyncPaths);
+        }
+
+        public void resetTableColumnSyncs() {
+            tableColumnSyncCount = 0;
+            tableColumnSyncPaths.clear();
+        }
+
+        @Override
+        public boolean close(long fd) {
+            fdToPath.remove(fd);
+            return super.close(fd);
+        }
+
+        @Override
+        public void fdatasync(long fd) {
+            super.fdatasync(fd);
+            String p = fdToPath.get(fd);
+            if (p != null && isTablePartitionColumnFile(p)) {
+                tableColumnSyncCount++;
+                tableColumnSyncPaths.add("fdatasync:" + p);
+            }
+        }
+
+        @Override
+        public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+            long addr = super.mmap(fd, len, offset, flags, memoryTag);
+            if (addr != -1L && addr != 0L) {
+                addrToFd.put(addr, fd);
+            }
+            return addr;
+        }
+
+        @Override
+        public long mmapNoCache(long fd, long len, long offset, int flags, int memoryTag) {
+            long addr = super.mmapNoCache(fd, len, offset, flags, memoryTag);
+            if (addr != -1L && addr != 0L) {
+                addrToFd.put(addr, fd);
+            }
+            return addr;
+        }
+
+        @Override
+        public void msync(long addr, long len, boolean async) {
+            super.msync(addr, len, async);
+            Long fd = addrToFd.get(addr);
+            if (fd != null) {
+                String p = fdToPath.get(fd);
+                if (p != null && isTablePartitionColumnFile(p)) {
+                    tableColumnSyncCount++;
+                    tableColumnSyncPaths.add("msync(" + (async ? "async" : "sync") + "):" + p);
+                }
+            }
+        }
+
+        @Override
+        public void munmap(long address, long size, int memoryTag) {
+            addrToFd.remove(address);
+            super.munmap(address, size, memoryTag);
+        }
+
+        @Override
+        public long openAppend(LPSZ name) {
+            long fd = super.openAppend(name);
+            trackFd(fd, name);
+            return fd;
+        }
+
+        @Override
+        public long openCleanRW(LPSZ name, long size) {
+            long fd = super.openCleanRW(name, size);
+            trackFd(fd, name);
+            return fd;
+        }
+
+        @Override
+        public long openRO(LPSZ name) {
+            long fd = super.openRO(name);
+            trackFd(fd, name);
+            return fd;
+        }
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            long fd = super.openRW(name, opts);
+            trackFd(fd, name);
+            return fd;
+        }
+
+        private void trackFd(long fd, LPSZ name) {
+            if (fd > -1) {
+                fdToPath.put(fd, Utf8String.newInstance(name).toString());
+            }
+        }
+    }
+
+    /**
+     * Returns true if the given path is a TABLE PARTITION column file — i.e. a file that
+     * {@code syncColumns()} flushes on each commit. Specifically, it must NOT be in the WAL
+     * segment directory ({@code /wal<N>/}), NOT in the sequencer directory ({@code /txn_seq/}),
+     * and NOT a table-level control file ({@code _txn}, {@code _cv}, {@code _meta}, {@code _todo}).
+     *
+     * <p>Table partition column files live at paths like:
+     * {@code <root>/<tableName>/2024-01-01/ts.d} or {@code <root>/<tableName>/2024-01-01/v.d}.
+     */
+    private static boolean isTablePartitionColumnFile(String p) {
+        if (p == null) {
+            return false;
+        }
+        // WAL segment files contain "/wal" in the path (e.g. .../wal1/0/ts.d)
+        if (p.contains("/wal") || p.contains("\\wal")) {
+            return false;
+        }
+        // Sequencer files contain "/txn_seq/" (or SEQ_DIR)
+        if (p.contains(WalUtils.SEQ_DIR) || p.contains(WalUtils.SEQ_DIR_DEPRECATED)) {
+            return false;
+        }
+        // Table-root control files: _txn, _cv, _meta, _todo, _lock, bitmap indexes (_k, _v)
+        // that live AT the table root level (not in a date-partition subdirectory).
+        // We only want partition column data files (.d, or fixed-size columns).
+        // Filter: must end with .d (variable-len data/aux) or look like a fixed-size column
+        // (no extension, e.g. "ts", "v"). Accept only if the last path component is a
+        // plausible column file (not a QuestDB control file).
+        String name = p;
+        int sep = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'));
+        if (sep >= 0) {
+            name = p.substring(sep + 1);
+        }
+        // Exclude known control/index file suffixes at all levels
+        if (name.startsWith("_") || name.endsWith(".k") || name.endsWith(".v")
+                || name.endsWith(".lock") || name.endsWith(".swp")) {
+            return false;
+        }
+        return true;
     }
 
     /**
