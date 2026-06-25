@@ -80,6 +80,59 @@ public class HttpMultipartContentParserTest {
     }
 
     @Test
+    public void testBoundaryWithLineFeedStartsNextPart() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (HttpMultipartContentParser multipartContentParser = new HttpMultipartContentParser(new HttpHeaderParser(1024, pool))) {
+                final String content = "--AaB03x\r\n" +
+                        "Content-Disposition: form-data; name=\"one\"\r\n" +
+                        "\r\n" +
+                        "one\r\n" +
+                        "--AaB03x\n" +
+                        "Content-Disposition: form-data; name=\"two\"\r\n" +
+                        "\r\n" +
+                        "two\r\n" +
+                        "--AaB03x--";
+                final String expected = "Content-Disposition: form-data; name=\"one\"\r\n" +
+                        "\r\n" +
+                        "one\r\n" +
+                        "-----------------------------\r\n" +
+                        "Content-Disposition: form-data; name=\"two\"\r\n" +
+                        "\r\n" +
+                        "two\r\n" +
+                        "-----------------------------\r\n";
+
+                int len = content.length();
+                long p = TestUtils.toMemory(content);
+                try {
+                    String boundary = "\r\n--AaB03x";
+                    long pBoundary = TestUtils.toMemory(boundary);
+                    DirectUtf8String boundaryCs = new DirectUtf8String().of(pBoundary, pBoundary + boundary.length());
+                    try {
+                        for (int i = 0; i < len; i++) {
+                            sink.clear();
+                            multipartContentParser.clear();
+                            multipartContentParser.of(boundaryCs);
+                            boolean complete = multipartContentParser.parse(p, p + i, LISTENER);
+                            if (!complete) {
+                                complete = multipartContentParser.parse(p + i, p + i + 1, LISTENER);
+                            }
+                            if (!complete && len > i + 1) {
+                                complete = multipartContentParser.parse(p + i + 1, p + len, LISTENER);
+                            }
+                            Assert.assertTrue("Break at " + i, complete);
+                            Assert.assertEquals("Break at " + i, expected, sink.toString());
+                        }
+                    } finally {
+                        Unsafe.free(pBoundary, boundary.length(), MemoryTag.NATIVE_DEFAULT);
+                    }
+                } finally {
+                    Unsafe.free(p, len, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testEmpty() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (HttpMultipartContentParser multipartContentParser = new HttpMultipartContentParser(new HttpHeaderParser(1024, pool))) {
@@ -383,6 +436,65 @@ public class HttpMultipartContentParserTest {
                         Assert.fail();
                     } catch (HttpException e) {
                         TestUtils.assertContains(e.getFlyweightMessage(), "Malformed start boundary");
+                    } finally {
+                        Unsafe.free(pBoundary, boundary.length(), MemoryTag.NATIVE_DEFAULT);
+                    }
+                } finally {
+                    Unsafe.free(p, len, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testMalformedStartBoundaryAfterSingleDash() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (HttpMultipartContentParser multipartContentParser = new HttpMultipartContentParser(new HttpHeaderParser(1024, pool))) {
+                final String content = "--AaB03x-X";
+                int len = content.length();
+                long p = TestUtils.toMemory(content);
+                try {
+                    String boundary = "\r\n--AaB03x";
+                    long pBoundary = TestUtils.toMemory(boundary);
+                    DirectUtf8String boundaryCs = new DirectUtf8String().of(pBoundary, pBoundary + boundary.length());
+                    try {
+                        multipartContentParser.of(boundaryCs);
+                        multipartContentParser.parse(p, p + len, LISTENER);
+                        Assert.fail();
+                    } catch (HttpException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "Malformed start boundary");
+                    } finally {
+                        Unsafe.free(pBoundary, boundary.length(), MemoryTag.NATIVE_DEFAULT);
+                    }
+                } finally {
+                    Unsafe.free(p, len, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testNotEnoughLinesFromBodyChunkIsRethrown() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (HttpMultipartContentParser multipartContentParser = new HttpMultipartContentParser(new HttpHeaderParser(1024, pool))) {
+                final String content = "--AaB03x\r\n" +
+                        "Content-Disposition: form-data; name=\"data\"\r\n" +
+                        "\r\n" +
+                        "value\r\n" +
+                        "--AaB03x--";
+
+                int len = content.length();
+                long p = TestUtils.toMemory(content);
+                try {
+                    String boundary = "\r\n--AaB03x";
+                    long pBoundary = TestUtils.toMemory(boundary);
+                    DirectUtf8String boundaryCs = new DirectUtf8String().of(pBoundary, pBoundary + boundary.length());
+                    try {
+                        multipartContentParser.of(boundaryCs);
+                        multipartContentParser.parse(p, p + len, new NotEnoughLinesOnChunkProcessor(1));
+                        Assert.fail();
+                    } catch (NotEnoughLinesException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "not enough lines");
                     } finally {
                         Unsafe.free(pBoundary, boundary.length(), MemoryTag.NATIVE_DEFAULT);
                     }
