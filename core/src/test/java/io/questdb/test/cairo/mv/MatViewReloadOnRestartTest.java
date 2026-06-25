@@ -410,6 +410,93 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
         });
     }
 
+    // Crash-replay path: a backfill committed to the WAL but NOT yet applied (so the validator's
+    // in-memory frontier advance is lost on restart AND _mv.s was never updated) must have its
+    // frontier RECONSTRUCTED when the WAL is replayed on restart. This is the same code path a
+    // replica hits applying replicated backfills. The reload harness no-ops the WAL apply job, so
+    // leaving out drainWalQueue() before closing main1 faithfully simulates a crash between commit
+    // and apply. After restart the frontier starts at MIN (nothing persisted), and the replay must
+    // bring it back so the backfill survives a subsequent base-retreat + FULL refresh.
+    @Test
+    public void testBackfillFrontierReconstructedOnReplay() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final TestMicroClock testClock = new TestMicroClock(parseFloorPartialTimestamp("2024-09-12T00:00:00.000000Z"));
+
+            try (final TestServerMain main1 = startMainPortsDisabled(testClock)) {
+                executeWithRewriteTimestamp(main1);
+                execute(
+                        main1,
+                        "insert into base_price values('a', 5.0, '2024-09-10T12:00')" +
+                                ",('a', 7.0, '2024-09-12T12:00')" +
+                                ",('a', 9.0, '2024-09-13T12:00')"
+                );
+                execute(
+                        main1,
+                        "create materialized view price_1h refresh manual deferred as " +
+                                "select sym, last(price) as price, ts from base_price sample by 1h;"
+                );
+                execute(main1, "alter materialized view price_1h set refresh limit 2 days;");
+                drainWalQueue(main1.getEngine());
+
+                // Backfill R = 09-10T18:00 (frozen below the 09-11T12:00 boundary). The INSERT commits
+                // to the WAL (validator accepts, advances main1's in-memory frontier) but we deliberately
+                // DO NOT drainWalQueue -> the txn is never applied, so _mv.s is never updated. Closing
+                // main1 here = a crash between commit and apply.
+                testClock.micros.set(parseFloorPartialTimestamp("2024-09-13T12:30:00.000000Z"));
+                execute(main1, "insert into price_1h values('a', 1.0, '2024-09-10T18:00')");
+                // no drainWalQueue: simulate crash before apply
+            }
+
+            try (final TestServerMain main2 = startMainPortsDisabled(testClock)) {
+                final TableToken viewToken = main2.getEngine().getTableTokenIfExists("price_1h");
+                Assert.assertNotNull(viewToken);
+                final MatViewState viewState = main2.getEngine().getMatViewStateStore().getViewState(viewToken);
+                Assert.assertNotNull(viewState);
+
+                // Nothing was applied/persisted before the crash, so the frontier starts unset.
+                Assert.assertEquals("frontier must be unset before replay", Long.MIN_VALUE, viewState.getBackfillFrontier());
+
+                // Replay the pending WAL: this applies the backfill and must reconstruct the frontier
+                // from the applied txn (the validator does not run on replay).
+                drainWalQueue(main2.getEngine());
+                Assert.assertTrue(
+                        "frontier must be reconstructed from the replayed backfill",
+                        viewState.getBackfillFrontier() != Long.MIN_VALUE
+                );
+
+                // The backfilled row is now in the view.
+                assertSql(
+                        main2,
+                        replaceExpectedTimestamp("""
+                                sym\tprice\tts
+                                a\t1.0\t2024-09-10T18:00:00.000000Z
+                                """),
+                        "price_1h order by ts"
+                );
+
+                // Retreat max(base_ts) into [R, R+LIMIT) and FULL-refresh. Without the reconstructed
+                // frontier the boundary would slide back over R and wipe it.
+                execute(main2, "alter table base_price drop partition list '2024-09-13'");
+                drainWalQueue(main2.getEngine());
+                try (MatViewRefreshJob refreshJob = createMatViewRefreshJob(main2.getEngine())) {
+                    execute(main2, "refresh materialized view price_1h full;");
+                    drainWalAndMatViewQueues(refreshJob, main2.getEngine());
+                }
+
+                // R survives.
+                assertSql(
+                        main2,
+                        replaceExpectedTimestamp("""
+                                sym\tprice\tts
+                                a\t1.0\t2024-09-10T18:00:00.000000Z
+                                a\t7.0\t2024-09-12T12:00:00.000000Z
+                                """),
+                        "price_1h order by ts"
+                );
+            }
+        });
+    }
+
     // Control: identical sequence to testBackfillSurvivesBaseRetreatAcrossRestart but with NO restart,
     // so the in-memory backfillFrontier stays alive. R must survive here too -- the across-restart test
     // proves the persisted frontier reproduces this same outcome after a reload.

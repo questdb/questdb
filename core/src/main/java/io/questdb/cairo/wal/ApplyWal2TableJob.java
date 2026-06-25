@@ -36,9 +36,12 @@ import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.mv.MatViewRefreshTask;
+import io.questdb.cairo.mv.MatViewBackfillValidator;
+import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateReader;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
@@ -48,6 +51,7 @@ import io.questdb.cairo.wal.seq.TableMetadataChangeLog;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -711,6 +715,12 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
                 if (writer.getTableToken().isMatView()) {
                     final TableToken token = writer.getTableToken();
+                    // Reconstruct the backfill frontier from any user-backfill txns just applied.
+                    // The validator advances the in-memory frontier only on the commit path
+                    // (WalWriter.commit0), which never runs during WAL replay after a crash or on a
+                    // replica applying replicated backfills. Deriving it here from the applied txns
+                    // makes the frontier a deterministic function of the WAL, so it survives both.
+                    reconstructBackfillFrontier(token, txnDetails, seqTxn, lastCommittedSeqTxn);
                     boolean refreshStateWritten = false;
                     for (long s = lastCommittedSeqTxn; s >= seqTxn; s--) {
                         byte txnType = txnDetails.getWalTxnType(s);
@@ -976,6 +986,69 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
      * the refresh job publishes the boundary floor; persisting them with every state-file write keeps
      * an accepted backfill durable across a restart.
      */
+    /**
+     * Minimal backfill-frontier anchor that keeps a backfill whose sample-by bucket ends at
+     * {@code bucketEnd} frozen: the {@code A} for which {@code boundaryFromAnchor(driver, A, limit)
+     * == bucketEnd}. The refresh job folds the frontier into its boundary anchor, so recording this
+     * guarantees the refresh boundary floor stays at-or-above {@code bucketEnd} and the bucket is
+     * never recomputed. Saturates to {@link Long#MAX_VALUE} on overflow (an absurd multi-century
+     * limit), which the refresh job's own {@code boundaryFromAnchor} then treats as the whole view
+     * frozen -- the conservative direction. Cannot over-freeze legitimate managed buckets because
+     * {@code bucketEnd} sits at-or-below the boundary the validator already accepted the row under.
+     */
+    private static long safeBackfillAnchor(TimestampDriver driver, long bucketEnd, int limitHoursOrMonths) {
+        final long anchor = limitHoursOrMonths > 0
+                ? bucketEnd + driver.fromHours(limitHoursOrMonths)
+                : driver.addMonths(bucketEnd, -limitHoursOrMonths);
+        // anchor must be >= bucketEnd (we add a positive limit); a smaller value means the duration
+        // arithmetic overflowed/wrapped -- saturate so we never record a wrapped (too-low) frontier.
+        return anchor < bucketEnd ? Long.MAX_VALUE : anchor;
+    }
+
+    /**
+     * Advances the in-memory backfill frontier of {@code viewToken} from the user-backfill txns in
+     * {@code [fromSeqTxn, toSeqTxn]} just applied. Gated identically to
+     * {@link MatViewBackfillValidator#validate} -- only generic {@link WalTxnType#DATA} with the
+     * default dedup mode (user INSERT/COPY/ILP/QWP) is considered; refresh writes (MAT_VIEW_DATA, or
+     * DATA + REPLACE_RANGE) are skipped. No-op when the view has no {@code REFRESH LIMIT} or the
+     * wall-clock escape-hatch is on. Idempotent against the validator's own commit-time advance
+     * (CAS-max), so normal operation is unaffected; only crash-replay and replicas rely on it.
+     */
+    private void reconstructBackfillFrontier(TableToken viewToken, WalTxnDetails txnDetails, long fromSeqTxn, long toSeqTxn) {
+        final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
+        if (state == null) {
+            return;
+        }
+        final MatViewDefinition def = state.getViewDefinition();
+        if (def == null || def.getRefreshLimitHoursOrMonths() == 0) {
+            return;
+        }
+        if (config.isMatViewRefreshLimitWallClockEnabled()) {
+            return;
+        }
+        final int limit = def.getRefreshLimitHoursOrMonths();
+        final TimestampDriver driver = def.getBaseTableTimestampDriver();
+        TimestampSampler sampler = null; // built lazily on the first user-backfill txn in the batch
+        for (long s = fromSeqTxn; s <= toSeqTxn; s++) {
+            if (txnDetails.getWalTxnType(s) != DATA || txnDetails.getDedupMode(s) != WAL_DEDUP_MODE_DEFAULT) {
+                continue;
+            }
+            final long maxTs = txnDetails.getMaxTimestamp(s);
+            if (maxTs < 0) {
+                continue; // empty txn
+            }
+            if (sampler == null) {
+                sampler = MatViewBackfillValidator.createSampler(def);
+                if (sampler == null) {
+                    return; // stored sampler params unreadable (corruption); refresh would skip too
+                }
+                sampler.setOffset(def.getFixedOffset());
+            }
+            final long bucketEnd = sampler.nextTimestamp(sampler.round(maxTs));
+            state.advanceBackfillFrontier(safeBackfillAnchor(driver, bucketEnd, limit));
+        }
+    }
+
     private long matViewBackfillFrontier(TableToken viewToken) {
         final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
         return state != null ? state.getBackfillFrontier() : Long.MIN_VALUE;
