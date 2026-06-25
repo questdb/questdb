@@ -629,6 +629,9 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
 
         boolean expectFormData = true;
         boolean swallowSpace = true;
+        boolean valueQuoted = false;
+        boolean valueEscaped = false;
+        boolean valueStart = false;
 
         DirectUtf8String name = null;
 
@@ -640,7 +643,31 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
                 continue;
             }
 
-            if (p > hi || b == ';') {
+            if (name != null && valueStart) {
+                valueStart = false;
+                if (b == '"') {
+                    valueQuoted = true;
+                    valueEscaped = false;
+                    continue;
+                }
+            }
+
+            if (valueQuoted) {
+                if (valueEscaped) {
+                    valueEscaped = false;
+                    continue;
+                }
+                if (b == '\\') {
+                    valueEscaped = true;
+                    continue;
+                }
+                if (b == '"') {
+                    valueQuoted = false;
+                    continue;
+                }
+            }
+
+            if (p > hi || (b == ';' && !valueQuoted)) {
                 if (expectFormData) {
                     this.contentDisposition = csPool.next().of(_lo, p - 1);
                     _lo = p;
@@ -654,26 +681,27 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
 
                 if (Utf8s.equalsAscii("name", name)) {
                     this.contentDispositionName = unquote("name", csPool.next().of(_lo, p - 1));
-                    swallowSpace = true;
-                    _lo = p;
-                    name = null;
-                    continue;
+                } else if (Utf8s.equalsAscii("filename", name)) {
+                    this.contentDispositionFilename = unquote("filename", csPool.next().of(_lo, p - 1));
                 }
 
-                if (Utf8s.equalsAscii("filename", name)) {
-                    this.contentDispositionFilename = unquote("filename", csPool.next().of(_lo, p - 1));
-                    _lo = p;
-                    name = null;
-                    continue;
-                }
+                swallowSpace = true;
+                valueQuoted = false;
+                valueEscaped = false;
+                valueStart = false;
+                _lo = p;
+                name = null;
 
                 if (p > hi) {
                     break;
                 }
-            } else if (b == '=') {
+            } else if (b == '=' && !valueQuoted) {
                 name = name == null ? csPool.next().of(_lo, p - 1) : name.of(_lo, p - 1);
                 _lo = p;
                 swallowSpace = false;
+                valueQuoted = false;
+                valueEscaped = false;
+                valueStart = true;
             }
         }
     }
