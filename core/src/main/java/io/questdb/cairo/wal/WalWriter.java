@@ -506,6 +506,10 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                     refreshIntervals,
                     refreshIntervalsBaseTxn
             );
+            // ADAPTIVE: events must be durable before the sequencer pointer (data→events→seq ordering).
+            if (configuration.getCommitMode() == CommitMode.ADAPTIVE) {
+                events.sync();
+            }
             getSequencerTxn();
         } catch (Throwable th) {
             rollback0();
@@ -618,6 +622,10 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     public void truncateSoft() {
         try {
             lastSegmentTxn = events.truncate();
+            // ADAPTIVE: events must be durable before the sequencer pointer (data→events→seq ordering).
+            if (configuration.getCommitMode() == CommitMode.ADAPTIVE) {
+                events.sync();
+            }
             getSequencerTxn();
         } catch (Throwable th) {
             rollback0();
@@ -1960,7 +1968,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             if (commitMode == CommitMode.ADAPTIVE) {
                 for (int i = 0, n = columns.size(); i < n; i++) {
                     MemoryMA column = columns.getQuick(i);
-                    if (column != null && column.isOpen()) {
+                    if (column != null && !(column instanceof NullMemory)) {
                         ff.fdatasync(column.getFd());
                     }
                 }

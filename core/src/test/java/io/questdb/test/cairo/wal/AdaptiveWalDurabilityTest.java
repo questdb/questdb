@@ -137,11 +137,16 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
 
     /**
      * (b) NOSYNC: zero fdatasync calls must be issued on WAL commit.
+     * Sets CAIRO_DEFAULT_SEQ_PART_TXN_COUNT > 0 so the V2 sequencer {@code sync0} NOSYNC branch
+     * is also exercised (regression guard for the V2 path, not just V1).
      */
     @Test
     public void testNosyncIssuesZeroFdatasync() throws Exception {
         // NOSYNC is the default — no need to set the property, but we set it explicitly for clarity.
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        // Use a small part size so the V2 sequencer code path (TableTransactionLogV2.sync0) is
+        // exercised during this insert. Without this the sequencer defaults to V1.
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 16);
 
         final FdatasyncOrderFacade trackFf = new FdatasyncOrderFacade();
         assertMemoryLeak(trackFf, () -> {
@@ -161,7 +166,7 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
                             || p.endsWith(WalUtils.TXNLOG_FILE_NAME + ".")
             ).count();
             Assert.assertEquals(
-                    "NOSYNC must issue zero fdatasync on WAL commit paths, but got: " + order,
+                    "NOSYNC must issue zero fdatasync on WAL commit paths (V1 + V2 sequencer), but got: " + order,
                     0, walFdatasyncs
             );
         });
@@ -191,6 +196,54 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
     }
     // Note: testAdaptiveRoundTrip uses the plain assertMemoryLeak() (no custom ff) so that
     // the BlockFileWriter and other engine components operate normally.
+
+    /**
+     * (d) Regression guard: ADAPTIVE commit must NOT crash on a WAL table that has had a column
+     * dropped. Dropped-column slots are stored as {@code NullMemory.INSTANCE} (not {@code null}),
+     * and {@code NullMemory.getFd()} throws {@link UnsupportedOperationException}.
+     *
+     * <p>The fix in {@code WalWriter.syncIfRequired()} guards with
+     * {@code !(column instanceof NullMemory)} instead of {@code column.isOpen()}.
+     *
+     * <p>Before Fix 1 this test throws {@code UnsupportedOperationException} from
+     * {@code NullMemory.getFd()} during the post-drop insert commit.
+     * After Fix 1 it succeeds and the surviving data round-trips correctly.
+     */
+    @Test
+    public void testAdaptiveDropColumnNoNullMemoryCrash() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 16);
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+
+        assertMemoryLeak(() -> {
+            // Create a WAL table with 3 columns (+ designated timestamp).
+            execute("create table dc_test (ts timestamp, a long, b long, c long)" +
+                    " timestamp(ts) partition by day wal");
+            execute("insert into dc_test values ('2024-05-01T00:00:00.000000Z', 1, 2, 3)");
+            drainWalQueue();
+
+            // Drop column 'b' — its slot becomes NullMemory.INSTANCE inside WalWriter.
+            execute("alter table dc_test drop column b");
+            drainWalQueue();
+
+            // Force the WalWriter to be closed and reopened so it is initialised fresh
+            // with NullMemory in the dropped slot (mirrors a server restart scenario).
+            engine.releaseInactive();
+            engine.releaseInactiveTableSequencers();
+
+            // Insert after drop: WalWriter.syncIfRequired() must not call NullMemory.getFd().
+            // Before Fix 1 this throws UnsupportedOperationException.
+            execute("insert into dc_test (ts, a, c) values ('2024-05-01T01:00:00.000000Z', 10, 30)");
+            drainWalQueue();
+
+            // Data round-trip: only surviving columns (ts, a, c) should be present.
+            assertQuery("select * from dc_test order by ts")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\ta\tc\n" +
+                            "2024-05-01T00:00:00.000000Z\t1\t3\n" +
+                            "2024-05-01T01:00:00.000000Z\t10\t30\n");
+        });
+    }
 
     // ---------- helpers ----------
 
