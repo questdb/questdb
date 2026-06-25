@@ -1418,7 +1418,13 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     if (intConst == Numbers.INT_NULL || intConst == longConst) {
                         return IntConstant.newInstance(intConst);
                     } else {
-                        return new LongConstant(longConst);
+                        // INT arithmetic overflowed: getInt() wrapped mod 2^32, getLong()
+                        // holds the full-width product. Folding to LONG would change the
+                        // static type INT->LONG and diverge from the column/bind path,
+                        // which keeps INT and wraps. Leave it unfolded so getInt() wraps
+                        // like the runtime path while getLong()/getTimestamp() still widen
+                        // for the wider numeric/temporal casts that read them.
+                        return function;
                     }
                 }
             case ColumnType.BOOLEAN:
