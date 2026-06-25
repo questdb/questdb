@@ -332,6 +332,68 @@ run_one() {
 }
 
 # ============================================================
+# prove_cut_drops_unsynced — deterministic, QuestDB-independent proof that the
+#   power-cut model actually drops un-fsync'd data. Without this, a SYNC "survived"
+#   result is meaningless (maybe the cut dropped nothing). A sync'd file MUST
+#   survive; an un-sync'd file written immediately before the cut MUST vanish.
+# ============================================================
+prove_cut_drops_unsynced() {
+    echo "======================================================"
+    echo "  PREFLIGHT: proving the power cut actually DROPS un-fsync'd data"
+    echo "  (control: sync'd file must survive; un-sync'd file must vanish)"
+    echo "======================================================"
+    rm -f "$IMG"
+    truncate -s 1G "$IMG"
+    LOOP=$(losetup -f --show "$IMG")
+    SECTORS=$(blockdev --getsz "$LOOP")
+    local UP_TABLE="0 $SECTORS flakey $LOOP 0 180 0"
+    local DROP_TABLE="0 $SECTORS flakey $LOOP 0 0 180 1 drop_writes"
+    dmsetup create "$DM_NAME" --table "$UP_TABLE"
+    mkfs.ext4 -F -q "$DM_DEV"
+    mkdir -p "$MNT"
+    mount "$DM_DEV" "$MNT"
+
+    # Durable file: write then sync the WHOLE fs so data + dir entry are on the device.
+    echo "DURABLE_MARKER_KEEPME" > "$MNT/durable.txt"
+    sync
+
+    # Un-sync'd data written immediately before the cut (no time for background writeback).
+    echo "EPHEMERAL_MARKER_DROPME" > "$MNT/ephemeral.txt"
+    dd if=/dev/zero of="$MNT/ephemeral.bin" bs=1M count=20 status=none 2>/dev/null || true
+
+    # THE CUT (no sleep): drop_writes, umount (page-cache writeback DROPPED), restore, remount.
+    dmsetup suspend "$DM_NAME"
+    dmsetup load "$DM_NAME" --table "$DROP_TABLE"
+    dmsetup resume "$DM_NAME"
+    umount "$MNT"
+    dmsetup suspend "$DM_NAME"
+    dmsetup load "$DM_NAME" --table "$UP_TABLE"
+    dmsetup resume "$DM_NAME"
+    mount "$DM_DEV" "$MNT"
+
+    local durable_ok=0 ephemeral_dropped=0
+    if [ -f "$MNT/durable.txt" ] && grep -q DURABLE_MARKER_KEEPME "$MNT/durable.txt" 2>/dev/null; then durable_ok=1; fi
+    if [ ! -f "$MNT/ephemeral.txt" ] || ! grep -q EPHEMERAL_MARKER_DROPME "$MNT/ephemeral.txt" 2>/dev/null; then ephemeral_dropped=1; fi
+
+    echo "  sync'd durable.txt survived the cut: $([ $durable_ok = 1 ] && echo YES || echo 'NO  <-- PROBLEM')"
+    echo "  un-sync'd ephemeral data dropped:    $([ $ephemeral_dropped = 1 ] && echo YES || echo 'NO  <-- PROBLEM')"
+    if [ $durable_ok = 1 ] && [ $ephemeral_dropped = 1 ]; then
+        echo "  ==> CUT VERIFIED: model keeps fsync'd data, drops un-fsync'd data."
+        echo "      A SYNC 'DURABLE' result below is therefore CONCLUSIVE."
+    else
+        echo "  ==> CUT INEFFECTIVE on this stack: the cut is NOT dropping un-fsync'd data,"
+        echo "      so any SYNC 'survival' below is INCONCLUSIVE. Investigate the dm-flakey setup."
+    fi
+
+    umount "$MNT" 2>/dev/null || true
+    dmsetup remove "$DM_NAME" 2>/dev/null || true
+    losetup -d "$LOOP" 2>/dev/null || true
+    LOOP=""
+    rm -f "$IMG"
+    echo ""
+}
+
+# ============================================================
 # MAIN
 # ============================================================
 echo "======================================================"
@@ -361,6 +423,9 @@ if [ ! -f "$JAR" ]; then
 fi
 
 ensure_dmflakey
+
+# PREFLIGHT: prove the cut drops un-fsync'd data before trusting any durability result.
+prove_cut_drops_unsynced
 
 # Run SYNC first (the durability claim we are proving), then NOSYNC (the contrast)
 run_one SYNC
