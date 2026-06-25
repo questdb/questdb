@@ -347,6 +347,7 @@ public class WalEventCursor {
         reset();
         if (offset > 0) {
             this.offset = offset;
+            // Must precede verifyRecordChecksum(): it reads memSize to bound the record before hashing.
             this.memSize = eventMem.size();
             int size = readInt();
             this.nextOffset = offset + size;
