@@ -53,7 +53,6 @@ import org.junit.Test;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
-import java.lang.reflect.Proxy;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.TreeMap;
@@ -262,7 +261,8 @@ public class WriteFenceEntryPointMatrixTest extends AbstractCairoTest {
                 OperationDispatcher.class.getDeclaredMethod(
                         "applyFenced",
                         AbstractOperation.class,
-                        TableWriterAPI.class
+                        TableWriterAPI.class,
+                        boolean.class
                 )
         );
         Assert.assertNotNull(
@@ -340,6 +340,7 @@ public class WriteFenceEntryPointMatrixTest extends AbstractCairoTest {
         // REFRESH MAT VIEW enqueues an async refresh (no synchronous WAL txn mint); the eager getWalWriter
         // gate plus the demote's mat-view quiesce and the async job's own read-only re-check cover it.
         http.put("REFRESH_MAT_VIEW", ACQUIRE_GATED);
+        http.put("TABLE_REBASE", ACQUIRE_GATED);
         // Read / bookkeeping / transaction-control / ACL types: EXEMPT.
         http.put("SELECT", EXEMPT);
         http.put("EXPLAIN", EXEMPT);
@@ -362,7 +363,7 @@ public class WriteFenceEntryPointMatrixTest extends AbstractCairoTest {
         http.put("COMPILE_VIEW", EXEMPT);
         http.put("COPY_REMOTE", EXEMPT);
         http.put("BACKUP_DATABASE", EXEMPT);
-        assertEveryTypeClassified("HTTP /exec", http);
+        assertEveryTypeClassified("HTTP /exec", http, "TABLE_REBASE");
     }
 
     /**
@@ -494,6 +495,7 @@ public class WriteFenceEntryPointMatrixTest extends AbstractCairoTest {
         // fence is its authoritative refusal, so it is asserted separately below, not via the gate
         // cross-check.
         put(pg, "COMMIT", ACQUIRE_GATED);
+        put(pg, "TABLE_REBASE", ACQUIRE_GATED);
         // Read / bookkeeping / transaction-control / ACL types: EXEMPT.
         put(pg, "SELECT", EXEMPT);
         put(pg, "EXPLAIN", EXEMPT);
@@ -515,10 +517,10 @@ public class WriteFenceEntryPointMatrixTest extends AbstractCairoTest {
         put(pg, "COMPILE_VIEW", EXEMPT);
         put(pg, "COPY_REMOTE", EXEMPT);
         put(pg, "BACKUP_DATABASE", EXEMPT);
-        // COMMIT is fenced inside commit() but is not in the gate refusal set, so exclude it from the
-        // gate cross-check (which expects FENCED/ACQUIRE_GATED == refused). All other types follow the
-        // cross-check.
-        assertEveryTypeClassified("pg-wire", pg, "COMMIT");
+        // COMMIT is fenced inside commit() and TABLE_REBASE is fenced at its engine writer-acquire, but
+        // neither is in the gate refusal set, so exclude both from the gate cross-check (which expects
+        // FENCED/ACQUIRE_GATED == refused). All other types follow the cross-check.
+        assertEveryTypeClassified("pg-wire", pg, "COMMIT", "TABLE_REBASE");
     }
 
     /**

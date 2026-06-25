@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -106,6 +107,7 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
+            cursor.circuitBreaker = executionContext.getCircuitBreaker();
             cursor.toTop();
             return cursor;
         }
@@ -153,6 +155,7 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
         private final LongSequenceRecord recordA = new LongSequenceRecord();
         private final LongSequenceRecord recordB = new LongSequenceRecord();
         private final long recordCount;
+        private SqlExecutionCircuitBreaker circuitBreaker = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
 
         public LongSequenceRecordCursor(long recordCount) {
             this.recordCount = recordCount;
@@ -175,6 +178,7 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean hasNext() {
+            circuitBreaker.statefulThrowExceptionIfTripped();
             if (recordA.getValue() < recordCount) {
                 recordA.next();
                 return true;
@@ -219,6 +223,7 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
             rnd.reset(this.seedLo, this.seedHi);
             executionContext.setRandom(rnd);
+            cursor.circuitBreaker = executionContext.getCircuitBreaker();
             cursor.toTop();
             return cursor;
         }
