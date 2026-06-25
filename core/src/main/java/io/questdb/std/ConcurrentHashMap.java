@@ -954,6 +954,8 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
         for (Node<V>[] tab = table; ; ) {
             Node<V> f;
             int n, i, fh;
+            CharSequence fk;
+            V fv;
             if (tab == null || (n = tab.length) == 0)
                 tab = initTable();
             else if ((f = tabAt(tab, i = (n - 1) & h)) == null) {
@@ -974,6 +976,10 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                     break;
             } else if ((fh = f.hash) == MOVED)
                 tab = helpTransfer(tab, f);
+            else if (fh == h    // check first node without acquiring lock
+                    && ((fk = f.key) == key || (fk != null && keyEquals(key, fk)))
+                    && (fv = f.val) != null)
+                return fv;
             else {
                 boolean added = false;
                 synchronized (f) {
@@ -1055,6 +1061,8 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
         for (Node<V>[] tab = table; ; ) {
             Node<V> f;
             int n, i, fh;
+            CharSequence fk;
+            V fv;
             if (tab == null || (n = tab.length) == 0)
                 tab = initTable();
             else if ((f = tabAt(tab, i = (n - 1) & h)) == null) {
@@ -1075,6 +1083,10 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                     break;
             } else if ((fh = f.hash) == MOVED)
                 tab = helpTransfer(tab, f);
+            else if (fh == h    // check first node without acquiring lock
+                    && ((fk = f.key) == key || (fk != null && keyEquals(key, fk)))
+                    && (fv = f.val) != null)
+                return fv;
             else {
                 boolean added = false;
                 synchronized (f) {

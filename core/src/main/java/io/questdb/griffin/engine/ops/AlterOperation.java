@@ -317,6 +317,13 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     }
 
     @Override
+    public boolean isForceableWhenSuspended() {
+        // Any non-structural change may be force-applied directly to a hard-suspended table,
+        // mirroring FORCE DROP PARTITION. Structural changes must stay versioned through the WAL.
+        return !isStructural();
+    }
+
+    @Override
     public boolean isStructural() {
         return switch (command) {
             case ADD_COLUMN, RENAME_COLUMN, DROP_COLUMN, RENAME_TABLE, SET_DEDUP_DISABLE, SET_DEDUP_ENABLE,

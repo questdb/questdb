@@ -170,6 +170,10 @@ public final class TableUtils {
     public static final int TABLE_TYPE_VIEW = 3;
     public static final int TABLE_TYPE_WAL = 1;
     public static final String TAB_INDEX_FILE_NAME = "_tab_index.d";
+    // Dot-prefixed db-root staging dir for ALTER TABLE ... REBASE WAL (mirrors ".download"/".checkpoint").
+    // The startup table-dir scans only consider immediate db-root children that are complete tables and
+    // never recurse, so the in-progress clone built inside here is invisible until renamed into place.
+    public static final String REBASE_TMP_DIR = ".rebase";
     public static final String TODO_FILE_NAME = "_todo_";
     /**
      * TXN file structure
