@@ -13586,7 +13586,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         }
         if (commitMode != CommitMode.NOSYNC) {
-            if (commitMode == CommitMode.SYNC && Os.isLinux()) {
+            if (commitMode == CommitMode.SYNC && Os.isLinux() && configuration.isBatchedColumnSyncEnabled()) {
                 // Linux SYNC: BATCH the per-file device flushes into ~one. Instead of N blocking
                 // msync(MS_SYNC) (each carrying a device flush), every dirty column/symbol mem is
                 // msync(MS_ASYNC)'d then sync_file_range'd (WAIT_AFTER) so its content lands in the
@@ -13598,8 +13598,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // crash model (CrashFaultFilesFacade) + BatchedFlushDurabilityCrashTest.
                 syncColumnsBatchedSync();
             } else {
-                // ASYNC, or non-Linux SYNC (sync_file_range unavailable -> Files.syncFileRange is a
-                // no-op): fall back to the original per-file sync(async). Byte-identical to before.
+                // Fall back to the original per-file sync(async) — byte-identical to before — for:
+                //   - ASYNC commits;
+                //   - non-Linux SYNC (sync_file_range unavailable -> Files.syncFileRange is a no-op);
+                //   - SYNC where the batched path is disabled (configuration.isBatchedColumnSyncEnabled()
+                //     == false), i.e. the DB-root fs has ext4 fast_commit (per-inode journaling, where the
+                //     batched within-page durability is not guaranteed) or an operator force-disabled it.
+                // For SYNC this is the proven-durable per-file msync(MS_SYNC) baseline. See FastCommitCheck.
                 final boolean async = commitMode == CommitMode.ASYNC;
                 syncColumns0(async);
                 for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {

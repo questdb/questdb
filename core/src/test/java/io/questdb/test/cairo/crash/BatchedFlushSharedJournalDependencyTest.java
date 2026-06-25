@@ -76,11 +76,19 @@ public class BatchedFlushSharedJournalDependencyTest extends AbstractCrashConsis
     public void testWithinPageBatchedSyncLosesDataUnderPerInodeJournal() throws Exception {
         Assume.assumeTrue("batched SYNC flush is Linux-only", Os.isLinux());
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
+        // FORCE the batched path on. This test PROVES the batched path's dependency on shared-journal
+        // semantics, so it must actually run the batched path: if CI ran on an ext4 fast_commit mount the
+        // production config would auto-disable batching (falling back to per-file fsync) and this test would
+        // no longer characterise the optimization. The test harness builds its config with detection OFF, so
+        // this property is the raw, deterministic enable.
+        setProperty(PropertyKey.CAIRO_COMMIT_SYNC_COLUMN_BATCHED, "true");
         // LARGE append page: force the within-page (no-extend) regime after the initial allocation.
         setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, String.valueOf(BIG_PAGE));
         try {
             Assert.assertEquals("test requires SYNC commit mode",
                     CommitMode.SYNC, engine.getConfiguration().getCommitMode());
+            Assert.assertTrue("test must exercise the BATCHED SYNC path",
+                    engine.getConfiguration().isBatchedColumnSyncEnabled());
             runWithCrashFacade(() -> {
                 // Per-inode journaling world (ext4 fast_commit): fsync of _cv does NOT journal the columns.
                 crashFf.modelSharedJournal = false;
@@ -139,6 +147,7 @@ public class BatchedFlushSharedJournalDependencyTest extends AbstractCrashConsis
             });
         } finally {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+            setProperty(PropertyKey.CAIRO_COMMIT_SYNC_COLUMN_BATCHED, "true");
             setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, String.valueOf(2097152L));
         }
     }

@@ -27,6 +27,7 @@ package io.questdb;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.FastCommitCheck;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.WriteBarrierCheck;
@@ -576,6 +577,7 @@ public class Bootstrap {
                 verifyFileSystem(path, cairoConfig.getSqlCopyInputWorkRoot(), "sql copy input worker", true, false);
                 verifyFileOpts(path, cairoConfig);
                 verifyWriteBarriers(cairoConfig);
+                verifyFastCommit(cairoConfig);
                 cairoConfig.getVolumeDefinitions().forEach((alias, volumePath) -> verifyFileSystem(path, volumePath, "create table allowed volume [" + alias + ']', true, false));
             }
             if (JitUtil.isJitSupported()) {
@@ -642,6 +644,29 @@ public class Bootstrap {
         if (insufficientLimits) {
             log.advisoryW().$("make sure to increase fs.file-max and vm.max_map_count limits:\n" +
                     "https://questdb.io/docs/deployment/capacity-planning/#os-configuration").$();
+        }
+    }
+
+    private void verifyFastCommit(CairoConfiguration cairoConfig) {
+        if (cairoConfig.getCommitMode() != CommitMode.SYNC) {
+            return;
+        }
+        final CharSequence dbRoot = cairoConfig.getDbRoot();
+        if (dbRoot == null) {
+            return;
+        }
+        try {
+            final int result = FastCommitCheck.classifyDbRoot(cairoConfig.getFilesFacade(), dbRoot);
+            if (result == FastCommitCheck.FAST_COMMIT_ENABLED) {
+                log.advisoryW().$("WARNING: db root filesystem has ext4 fast_commit enabled")
+                        .$(": under per-inode journaling the batched SYNC flush optimization's within-page durability is NOT guaranteed")
+                        .$(" -- the batched column flush has been DISABLED and cairo.commit.mode=sync falls back to per-file fsync")
+                        .$(" (slower, but durable everywhere)")
+                        .$(" [dbRoot=").$(dbRoot).$(']').$();
+            }
+        } catch (Throwable t) {
+            // Detection must never break startup.
+            log.debug().$("fast_commit verify failed [reason=").$(t.getMessage()).$(']').$();
         }
     }
 

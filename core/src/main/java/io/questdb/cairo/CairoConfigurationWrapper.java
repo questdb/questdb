@@ -1558,6 +1558,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isBatchedColumnSyncEnabled() {
+        return getDelegate().isBatchedColumnSyncEnabled();
+    }
+
+    @Override
     public boolean isCairoMetadataCacheSnapshotOrdered() {
         return getDelegate().isCairoMetadataCacheSnapshotOrdered();
     }

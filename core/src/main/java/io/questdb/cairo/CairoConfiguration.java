@@ -978,6 +978,26 @@ public interface CairoConfiguration {
 
     int getWriterTickRowsCountMod();
 
+    /**
+     * Whether the Linux SYNC-mode <em>batched</em> column-flush optimization is active. When
+     * {@code true} (the default), a {@code cairo.commit.mode=sync} commit on Linux batches the
+     * per-column device flushes into ~one (msync-async + sync_file_range + a single {@code _cv}
+     * fsync). When {@code false}, SYNC falls back to the proven per-file {@code msync(MS_SYNC)}
+     * baseline — slower, but durable on every filesystem.
+     *
+     * <p>This is the operator override / safety valve, controlled by
+     * {@code cairo.commit.sync.column.batched} (default {@code true}). The production
+     * configuration ANDs this property with a fast_commit check (see {@link FastCommitCheck}):
+     * the batched path is disabled when the DB-root ext4 filesystem has {@code fast_commit}
+     * enabled, where the batched path's within-page durability is not guaranteed. The property
+     * remains the reliable control when detection is {@link FastCommitCheck#UNKNOWN}.
+     *
+     * @return {@code true} if the batched SYNC column flush should be used
+     */
+    default boolean isBatchedColumnSyncEnabled() {
+        return true;
+    }
+
     boolean isCairoMetadataCacheSnapshotOrdered();
 
     /**
