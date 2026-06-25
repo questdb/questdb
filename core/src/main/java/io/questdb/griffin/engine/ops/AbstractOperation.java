@@ -120,6 +120,15 @@ public abstract class AbstractOperation implements AsyncWriterCommand, QuietClos
         return false;
     }
 
+    /**
+     * Whether this operation may bypass the WAL and apply directly to the table (like
+     * {@code FORCE DROP PARTITION}) when the table is hard-suspended. Lets maintenance run on a
+     * frozen table that otherwise denies WAL writes. Data writes (e.g. UPDATE) return false.
+     */
+    public boolean isForceableWhenSuspended() {
+        return false;
+    }
+
     @Override
     public void serialize(TableWriterTask task) {
         task.of(cmdType, tableId, tableToken);
