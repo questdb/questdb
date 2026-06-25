@@ -26,6 +26,7 @@ package io.questdb.cairo.wal;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.BorrowedArray;
@@ -136,6 +137,7 @@ public class WalEventCursor {
 
     public boolean hasNext() {
         offset = nextOffset;
+        final long recordStart = offset;
         int length = readInt();
         if (length < 1) {
             // EOF
@@ -147,12 +149,37 @@ public class WalEventCursor {
             eventMem.extend(nextOffset + Integer.BYTES);
             memSize = eventMem.size();
         }
+        verifyRecordChecksum(recordStart, length);
         txn = readLong();
         if (txn == END_OF_EVENTS) {
             return false;
         }
         readRecord();
         return true;
+    }
+
+    // Verify the per-record checksum trailer if present. Magic-gated: a record without the trailer
+    // (written by an older QuestDB) is read unverified. A present-but-mismatched trailer means the
+    // record body was torn/partially written -> throw loudly so apply suspends the table.
+    private void verifyRecordChecksum(long recordStart, int length) {
+        final long bodyLen = (long) length - WALE_CHECKSUM_TRAILER_SIZE;
+        if (bodyLen <= 0 || memSize < recordStart + length) {
+            return; // too short to carry a trailer
+        }
+        final long trailerOffset = recordStart + bodyLen;
+        if (eventMem.getLong(trailerOffset) != WALE_CHECKSUM_MAGIC) {
+            return; // legacy record without a checksum trailer
+        }
+        final long stored = eventMem.getLong(trailerOffset + Long.BYTES);
+        final long actual = TableUtils.calculateCvAreaChecksum(eventMem.addressOf(recordStart), bodyLen);
+        if (actual != stored) {
+            throw CairoException.critical(0)
+                    .put("torn WAL event record [offset=").put(recordStart)
+                    .put(", len=").put(length)
+                    .put(", expected=").put(stored)
+                    .put(", actual=").put(actual)
+                    .put(']');
+        }
     }
 
     public void reset() {
@@ -307,10 +334,11 @@ public class WalEventCursor {
         reset();
         if (offset > 0) {
             this.offset = offset;
+            this.memSize = eventMem.size();
             int size = readInt();
             this.nextOffset = offset + size;
+            verifyRecordChecksum(offset, size);
             this.txn = readLong();
-            this.memSize = eventMem.size();
 
             readRecord();
         }
@@ -406,20 +434,28 @@ public class WalEventCursor {
             replaceRangeTsLow = 0;
             replaceRangeTsHi = 0;
 
-            if (nextOffset - offset >= Integer.BYTES + DEDUP_FOOTER_SIZE) {
+            // The body ends at nextOffset, but if a checksum trailer is present the trailer
+            // bytes sit between the actual body and nextOffset.  Strip them before looking for
+            // the optional dedup footer so both new-format and legacy records are handled correctly.
+            final long bodyEndOffset = nextOffset >= WALE_CHECKSUM_TRAILER_SIZE
+                    && eventMem.getLong(nextOffset - WALE_CHECKSUM_TRAILER_SIZE) == WALE_CHECKSUM_MAGIC
+                    ? nextOffset - WALE_CHECKSUM_TRAILER_SIZE
+                    : nextOffset;
+
+            if (bodyEndOffset - offset >= Integer.BYTES + DEDUP_FOOTER_SIZE) {
                 // This is big enough to contain the footer.
                 // But it can be still populated with symbol map values instead of the footer.
                 // Check that the last symbol map diff entry contains the END of symbol diffs marker.
 
                 // Read column index before the footer.
-                int symbolColIndex = eventMem.getInt(nextOffset - (Integer.BYTES + DEDUP_FOOTER_SIZE));
+                int symbolColIndex = eventMem.getInt(bodyEndOffset - (Integer.BYTES + DEDUP_FOOTER_SIZE));
 
                 if (symbolColIndex == SymbolMapDiffImpl.END_OF_SYMBOL_DIFFS) {
-                    dedupMode = eventMem.getByte(nextOffset - DEDUP_MODE_OFFSET);
+                    dedupMode = eventMem.getByte(bodyEndOffset - DEDUP_MODE_OFFSET);
                     if (dedupMode >= 0 && dedupMode <= WAL_DEDUP_MODE_MAX) {
-                        replaceRangeExtra = eventMem.getLong(nextOffset - REPLACE_RANGE_EXTRA_OFFSET);
-                        replaceRangeTsLow = eventMem.getLong(nextOffset - REPLACE_RANGE_LO_OFFSET);
-                        replaceRangeTsHi = eventMem.getLong(nextOffset - REPLACE_RANGE_HI_OFFSET);
+                        replaceRangeExtra = eventMem.getLong(bodyEndOffset - REPLACE_RANGE_EXTRA_OFFSET);
+                        replaceRangeTsLow = eventMem.getLong(bodyEndOffset - REPLACE_RANGE_LO_OFFSET);
+                        replaceRangeTsHi = eventMem.getLong(bodyEndOffset - REPLACE_RANGE_HI_OFFSET);
                     } else {
                         // This WAL record does not have dedup mode recognised, clean unrecognised mode value
                         dedupMode = WAL_DEDUP_MODE_DEFAULT;
@@ -499,14 +535,22 @@ public class WalEventCursor {
             error.clear();
             error.put(readStr());
 
-            if (nextOffset - offset >= Long.BYTES) {
+            // Strip the checksum trailer (if present) before using nextOffset as a guard for
+            // optional fields, so that legacy-format records (without lastPeriodHi / refreshIntervals)
+            // are not misread as containing those fields.
+            final long bodyEndOffset = nextOffset >= WALE_CHECKSUM_TRAILER_SIZE
+                    && eventMem.getLong(nextOffset - WALE_CHECKSUM_TRAILER_SIZE) == WALE_CHECKSUM_MAGIC
+                    ? nextOffset - WALE_CHECKSUM_TRAILER_SIZE
+                    : nextOffset;
+
+            if (bodyEndOffset - offset >= Long.BYTES) {
                 lastPeriodHi = readLong();
             } else {
                 lastPeriodHi = Numbers.LONG_NULL;
             }
 
             refreshIntervals.clear();
-            if (nextOffset - offset >= Long.BYTES + Integer.BYTES) {
+            if (bodyEndOffset - offset >= Long.BYTES + Integer.BYTES) {
                 refreshIntervalsBaseTxn = readLong();
                 final int intervalsLen = readInt();
                 for (int i = 0; i < intervalsLen; i++) {

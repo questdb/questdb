@@ -62,6 +62,46 @@ public class WalEventChecksumTest extends AbstractCairoTest {
         }
     }
 
+    @Test
+    public void testTornEventRecordSuspendsTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
+            execute("insert into x values ('2024-01-01T00:00:00.000000Z', 1)");
+            TableToken tt = engine.verifyTableName("x");
+            java.nio.file.Path event = findEventFile(tt.getDirName());
+            byte[] bytes = Files.readAllBytes(event);
+            // Corrupt the first byte of the stored xxh3 checksum (the 8 bytes immediately after
+            // WALE_CHECKSUM_MAGIC). The magic is still intact, so the record is recognised as
+            // "new-format with trailer", but the stored hash no longer matches the body.
+            // This is the only change: no other validator fires on a mismatched hash value.
+            corruptFirstChecksumByte(bytes, WalUtils.WALE_CHECKSUM_MAGIC);
+            Files.write(event, bytes);
+            drainWalQueue();
+            // torn record must be detected on apply and suspend the table, not silently mis-apply.
+            Assert.assertTrue("expected table to be suspended after torn record", engine.getTableSequencerAPI().isSuspended(tt));
+        });
+    }
+
+    @Test
+    public void testLegacyRecordWithoutTrailerStillReads() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
+            execute("insert into x values ('2024-01-01T00:00:00.000000Z', 1)");
+            TableToken tt = engine.verifyTableName("x");
+            java.nio.file.Path event = findEventFile(tt.getDirName());
+            byte[] bytes = Files.readAllBytes(event);
+            zeroFirstMagic(bytes, WalUtils.WALE_CHECKSUM_MAGIC); // simulate a pre-checksum (legacy) record
+            Files.write(event, bytes);
+            drainWalQueue();
+            Assert.assertFalse("table should not be suspended for legacy (no-trailer) record", engine.getTableSequencerAPI().isSuspended(tt));
+            assertQuery("select count() from x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n1\n");
+        });
+    }
+
     static int countMagic(byte[] bytes, long magic) {
         int count = 0;
         for (int i = 0; i + 8 <= bytes.length; i++) {
@@ -74,5 +114,41 @@ public class WalEventChecksumTest extends AbstractCairoTest {
             }
         }
         return count;
+    }
+
+    static void zeroFirstMagic(byte[] bytes, long magic) {
+        for (int i = 0; i + 8 <= bytes.length; i++) {
+            long v = 0;
+            for (int b = 0; b < 8; b++) {
+                v |= (bytes[i + b] & 0xFFL) << (8 * b);
+            }
+            if (v == magic) {
+                for (int b = 0; b < 8; b++) {
+                    bytes[i + b] = 0;
+                }
+                return;
+            }
+        }
+        throw new AssertionError("magic not found");
+    }
+
+    // Flip one bit in the stored xxh3 checksum immediately after the first occurrence of magic.
+    // The magic itself is left intact so the reader still sees a "new-format" trailer; the stored
+    // hash value no longer matches the body, but no other validator touches it.
+    static void corruptFirstChecksumByte(byte[] bytes, long magic) {
+        for (int i = 0; i + 8 <= bytes.length; i++) {
+            long v = 0;
+            for (int b = 0; b < 8; b++) {
+                v |= (bytes[i + b] & 0xFFL) << (8 * b);
+            }
+            if (v == magic) {
+                // The stored checksum starts at i + 8 (right after the 8-byte magic).
+                if (i + 9 <= bytes.length) {
+                    bytes[i + 8] ^= 0xFF;
+                    return;
+                }
+            }
+        }
+        throw new AssertionError("magic not found");
     }
 }
