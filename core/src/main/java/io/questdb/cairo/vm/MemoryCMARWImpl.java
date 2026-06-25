@@ -403,14 +403,15 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
 
     @Override
     public void syncFlushFinishIfExtended() {
-        // Batched SYNC stage 3: persist an EXTEND only. Content durability for non-extending files is
-        // provided by the batch's _cv device flush (so we do NOT msync here). If the file grew since the
-        // last sync, fdatasync journals the new i_size (and, being a device flush, also makes the
-        // already-drained device-cache content durable) and we advance BOTH watermarks so a subsequent
-        // sync()/finish correctly sees no further extend. Keeping lastSyncedAppendOffset in lock-step with
-        // the (now-durable) append offset matches sync()'s post-msync bookkeeping for the append-only path.
+        // Batched SYNC stage 3: WATERMARK BOOKKEEPING ONLY — no per-file flush. By the time this runs the
+        // caller (TableWriter.syncColumnsBatchedSync) has already issued ONE syncfs(fd) over this table's
+        // filesystem, which wrote back this column's drained data AND journaled the new i_size + any ext4
+        // unwritten->written extent conversions in a single device flush. A per-file fdatasync here would be
+        // a redundant second flush, so we only advance the watermarks to the now-durable size (so a
+        // subsequent sync()/finish correctly sees no further extend). Keeping lastSyncedAppendOffset in
+        // lock-step with the (now-durable) append offset matches sync()'s post-msync bookkeeping for the
+        // append-only path.
         if (size > lastSyncedSize) {
-            ff.fdatasync(fd);
             lastSyncedSize = size;
             if (appendOnly) {
                 lastSyncedAppendOffset = getAppendOffset();

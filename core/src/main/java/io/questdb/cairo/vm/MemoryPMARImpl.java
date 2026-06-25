@@ -219,14 +219,16 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
 
     @Override
     public void syncFlushFinishIfExtended() {
-        // Batched SYNC stage 3: persist an EXTEND only (no msync; content durability comes from the batch's
-        // _cv device flush). The on-disk size after mapping page `mappedPage` is (mappedPage+1)*segment
-        // (mapPage posix_fallocates that length). fdatasync journals the new i_size when the file grew, and
-        // advances lastSyncedSize. Matches sync()'s extend handling.
+        // Batched SYNC stage 3: WATERMARK BOOKKEEPING ONLY — no per-file flush. The caller
+        // (TableWriter.syncColumnsBatchedSync) has already issued ONE syncfs(fd) over this table's
+        // filesystem, journaling the new i_size + extent conversions and flushing the device once; a
+        // per-file fdatasync here would be a redundant second flush. The on-disk size after mapping page
+        // `mappedPage` is (mappedPage+1)*segment (mapPage posix_fallocates that length); we only advance
+        // lastSyncedSize to it so a subsequent sync()/finish sees no further extend. Matches sync()'s extend
+        // bookkeeping.
         if (pageAddress != 0) {
             final long currentFileSize = (long) (mappedPage + 1) * getExtendSegmentSize();
             if (currentFileSize > lastSyncedSize) {
-                ff.fdatasync(fd);
                 lastSyncedSize = currentFileSize;
             }
         }

@@ -181,6 +181,15 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public void syncfs(long fd) {
+        int res = Files.syncfs(fd);
+        if (res == 0) {
+            return;
+        }
+        throw CairoException.critical(errno()).put("could not syncfs [fd=").put(fd).put(']');
+    }
+
+    @Override
     public void fsync(long fd) {
         int res = Files.fsync(fd);
         if (res == 0) {

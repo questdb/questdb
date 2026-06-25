@@ -13590,12 +13590,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // Linux SYNC: BATCH the per-file device flushes into ~one. Instead of N blocking
                 // msync(MS_SYNC) (each carrying a device flush), every dirty column/symbol mem is
                 // msync(MS_ASYNC)'d then sync_file_range'd (WAIT_AFTER) so its content lands in the
-                // DEVICE CACHE without a flush; the immediately-following columnVersionWriter.commit()
-                // (_cv) does a single msync(MS_SYNC) whose ONE device flush makes ALL of that
-                // device-cache content durable (and _cv durable). Files that EXTENDED still get their
-                // own fdatasync (journals i_size). _txn is written + flushed strictly after _cv, so the
-                // visibility pointer becomes durable only after everything it exposes. See the batched
-                // crash model (CrashFaultFilesFacade) + BatchedFlushDurabilityCrashTest.
+                // DEVICE CACHE without a flush; then ONE syncfs(fd) over the table's filesystem makes all
+                // that content durable AND journals every column's ext4 extent conversions + i_size in a
+                // single device flush. (This syncfs replaces an earlier BROKEN reliance on _cv's later
+                // msync(MS_SYNC): that flushed the column DATA but did NOT journal the columns' extent
+                // conversions, so a power cut could read committed columns back as zeros.) _cv then does its
+                // own msync(MS_SYNC), and _txn is written + flushed strictly after _cv, so the visibility
+                // pointer becomes durable only after everything it exposes. See the batched crash model
+                // (CrashFaultFilesFacade) + BatchedFlushDurabilityCrashTest.
                 syncColumnsBatchedSync();
             } else {
                 // Fall back to the original per-file sync(async) — byte-identical to before — for:
@@ -13649,18 +13651,36 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      *       cache (so the following sync_file_range can see them). No device flush, no watermark advance.</li>
      *   <li>DRAIN: sync_file_range(WRITE | WAIT_AFTER) every mem -> writes the page-cache-dirty range back to
      *       the device cache and WAITS. No device flush, no watermark advance. The WAIT is what guarantees the
-     *       content is in the device cache before _cv's flush promotes it.</li>
-     *   <li>FINISH-IF-EXTENDED: for any mem whose file grew, fdatasync it (journals i_size + advances the
-     *       watermark). Non-extending files get NO flush here; their content is made durable by _cv's flush.</li>
+     *       content is in the device cache before the syncfs below flushes it.</li>
+     *   <li>SYNCFS: ONE syncfs(fd) over the table's filesystem. This is the single device flush that makes
+     *       ALL drained columns durable AND — crucially — journals every column inode's pending ext4
+     *       unwritten->written extent conversions (and i_size) in that same journal commit. This replaces the
+     *       earlier, BROKEN reliance on _cv's later msync(MS_SYNC) to flush the columns: that device flush
+     *       persisted the column DATA blocks but did NOT journal the column files' extent conversions, so a
+     *       power cut could read just-committed columns back as zeros (proven by power-cut-dmflakey.sh). A
+     *       micro-test proved syncfs DOES journal those conversions durably across the same cut.</li>
+     *   <li>FINISH-IF-EXTENDED: watermark bookkeeping ONLY. syncfs already journaled i_size + extents for
+     *       every column, so the per-column fdatasync that used to live here is now REDUNDANT and is dropped;
+     *       each mem merely advances its lastSynced* watermark to the now-durable size.</li>
      * </ol>
-     * Splitting into three passes (rather than kick+drain+finish per file) lets the kernel writeback proceed
-     * in parallel across files between the kicks and the waits. The intra-mem data-before-aux ordering is only
-     * load-bearing for the FINISH fdatasyncs (the durability points); the kicks/drains are order-free.
+     * Splitting into passes lets the kernel writeback proceed in parallel across files between the kicks and
+     * the waits. The kicks/drains are order-free; the data-before-aux traversal is preserved for clarity. The
+     * durability order of the overall commit is: columns durable HERE (syncfs) -> _cv durable
+     * (columnVersionWriter.commit's own msync(MS_SYNC)) -> _txn durable LAST (txWriter.commit's own
+     * msync(MS_SYNC)), so the visibility pointer becomes durable only after everything it exposes.
      */
     private void syncColumnsBatchedSync() {
         // Pass 1: KICK all columns (data before aux) then all symbol writers.
+        long syncfsFd = -1;
         for (int i = 0; i < columnCount; i++) {
-            columns.getQuick(i * 2).syncFlushKick();
+            final MemoryMA m1 = columns.getQuick(i * 2);
+            m1.syncFlushKick();
+            if (syncfsFd == -1) {
+                final long fd = m1.getFd();
+                if (fd != -1) {
+                    syncfsFd = fd;
+                }
+            }
             final MemoryMA m2 = columns.getQuick(i * 2 + 1);
             if (m2 != null) {
                 m2.syncFlushKick();
@@ -13680,8 +13700,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
             denseSymbolMapWriters.getQuick(i).syncFlushDrain();
         }
-        // Pass 3: FINISH-IF-EXTENDED (fdatasync only grown files; advance watermarks). Data before aux so
-        // an extend fdatasync of the aux never precedes its data's.
+        // Pass 2.5: SYNCFS once over the table's filesystem AFTER all columns+symbols are drained. This is the
+        // single device flush that makes every drained column durable AND journals all their ext4 extent
+        // conversions + i_size in one journal commit (replacing the broken reliance on _cv's flush, which did
+        // not journal the column files' extent conversions). Any open column fd identifies the filesystem.
+        if (syncfsFd != -1) {
+            ff.syncfs(syncfsFd);
+        }
+        // Pass 3: FINISH-IF-EXTENDED (watermark bookkeeping ONLY; the per-file fdatasync is now redundant —
+        // the syncfs above already journaled i_size + extents for every column). Data before aux preserved.
         for (int i = 0; i < columnCount; i++) {
             columns.getQuick(i * 2).syncFlushFinishIfExtended();
             final MemoryMA m2 = columns.getQuick(i * 2 + 1);

@@ -207,6 +207,20 @@ public final class Files {
         return syncFileRange0(toOsFd(fd), offset, nbytes, flags);
     }
 
+    /**
+     * Linux syncfs(2): write back ALL dirty data of the WHOLE filesystem containing {@code fd}, journal
+     * every pending metadata change on that filesystem (crucially the ext4 unwritten-&gt;written extent
+     * conversions of every inode — what makes just-committed column extents truly durable, not just their
+     * data blocks), and issue ONE device cache flush. A single call thus replaces N per-file
+     * {@link #fdatasync(long)} device flushes for a batched SYNC commit. Like {@link #syncFileRange}, it
+     * only writes back pages the kernel already tracks as dirty, so mmap-dirtied pages must first be made
+     * known-dirty via {@link #msync(long, long, boolean)}. On non-Linux platforms this falls back to an
+     * fsync of {@code fd}.
+     */
+    public static int syncfs(long fd) {
+        return syncfs0(toOsFd(fd));
+    }
+
     public static long getDirSize(Path path) {
         long pFind = findFirst(path.$().ptr());
         if (pFind > 0L) {
@@ -670,6 +684,8 @@ public final class Files {
     private static native int fsync(int fd);
 
     private static native int syncFileRange0(int fd, long offset, long nbytes, int flags);
+
+    private static native int syncfs0(int fd);
 
     private static native long getDiskSize(long lpszPath);
 

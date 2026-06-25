@@ -379,6 +379,16 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_fdatasync0(JNIEnv *e, jclass cl
     return -1;
 }
 
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_syncfs0(JNIEnv *e, jclass cl, jint fd) {
+    /* Windows has no syncfs (whole-filesystem flush bound to an fd); FlushFileBuffers on this fd is the
+     * closest single-file equivalent, same as fsync. The batched SYNC path is Linux-only anyway. */
+    if (FlushFileBuffers(FD_TO_HANDLE(fd))) {
+        return 0;
+    }
+    SaveLastError();
+    return -1;
+}
+
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_syncFileRange0(JNIEnv *e, jclass cl, jint fd, jlong offset, jlong nbytes, jint flags) {
     /* Windows has no sync_file_range; return 0 (no-op). Java callers MUST fall back to a full
      * fsync/fdatasync for durability rather than relying on this. */

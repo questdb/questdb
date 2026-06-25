@@ -24,6 +24,7 @@
 
 package io.questdb.std;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.log.Log;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.MutableUtf8Sink;
@@ -85,6 +86,25 @@ public interface FilesFacade {
      */
     default int syncFileRange(long fd, long offset, long nbytes, int flags) {
         return Files.syncFileRange(fd, offset, nbytes, flags);
+    }
+
+    /**
+     * Linux syncfs(2): make the WHOLE filesystem containing {@code fd} durable in one device flush —
+     * writes back all dirty data and journals every pending metadata change (including ext4
+     * unwritten-&gt;written extent conversions for every inode), then flushes the device cache. Used by the
+     * batched SYNC commit to make all just-drained column extents truly durable with a single flush
+     * instead of one {@link #fdatasync(long)} per column. Falls back to an fsync of {@code fd} on
+     * non-Linux platforms. See {@link Files#syncfs(long)}.
+     * <p>
+     * Provided as a {@code default} so existing implementors keep compiling; fault-injection facades
+     * (e.g. the crash model) override it to model the whole-filesystem journal-commit + flush.
+     */
+    default void syncfs(long fd) {
+        int res = Files.syncfs(fd);
+        if (res == 0) {
+            return;
+        }
+        throw CairoException.critical(Os.errno()).put("could not syncfs [fd=").put(fd).put(']');
     }
 
     long getDirSize(Path path);

@@ -101,6 +101,14 @@ import java.util.stream.Stream;
  * file's OWN journal commit (see {@code CrashModelSelfCheckTest} ST7 and
  * {@code BatchedFlushSharedJournalDependencyTest}).
  *
+ * <p><b>syncfs is journal-policy-INDEPENDENT.</b> {@link #syncfs(long)} models {@code syncfs(2)}: it writes
+ * back ALL dirty data of the whole filesystem and performs ONE journal commit covering EVERY inode's pending
+ * extent conversions, then a single device flush. Unlike {@code fdatasync}, this is NOT gated on
+ * {@code modelSharedJournal} — syncfs ALWAYS journals every tracked file, even under per-inode
+ * ({@code fast_commit}) journaling. This is the salvage property the batched SYNC commit relies on: one
+ * {@code syncfs(anyColumnFd)} makes every just-drained column's data AND extent conversions durable in a
+ * single flush (see {@code CrashModelSelfCheckTest} ST9).
+ *
  * <p>{@code readCurrent(path)} reads the real file's CURRENT bytes via a plain {@code read()}; because
  * MAP_SHARED mmap writes and {@code read()} share the kernel page cache, a {@code read()} sees the bytes a
  * test wrote into an mmap'd region (even before any msync). msync is what moves those page-cache bytes on
@@ -289,6 +297,31 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
             journalCommit(p);
             doFlush();
         }
+        recordDurable(fd);
+        bumpDurabilityOp();
+    }
+
+    @Override
+    public void syncfs(long fd) {
+        super.syncfs(fd);
+        String p = fdToPath.get(fd);
+        if (p != null) {
+            syncOrder.add(p);
+        }
+        // syncfs(2) is a WHOLE-FILESYSTEM operation: it writes back ALL dirty data of the filesystem AND
+        // performs ONE journal commit that journals EVERY inode's pending extent conversions (independent of
+        // modelSharedJournal -- syncfs ALWAYS journals everyone, that is the salvage property), then issues a
+        // single device flush. So for EVERY tracked file F: snapshot its current bytes into the device cache
+        // (syncfs writes back all dirty page-cache data even WITHOUT a prior sync_file_range), advance its
+        // at-device end to its written-data end, journal F's extent metadata, then one doFlush() promotes
+        // every file's journaled extent to durable. Net: all tracked files become fully durable (data +
+        // metadata) regardless of which fd was passed or whether the journal is shared.
+        for (String f : trackedFiles) {
+            deviceCacheContent.put(f, readCurrent(f));
+            advanceSyncedDataEnd(f, writtenDataEnd.getOrDefault(f, 0L));
+            journaledDataEnd.put(f, syncedDataEnd.getOrDefault(f, 0L));
+        }
+        doFlush();
         recordDurable(fd);
         bumpDurabilityOp();
     }

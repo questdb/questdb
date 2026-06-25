@@ -91,16 +91,19 @@ public interface MemoryMA extends MemoryM, MemoryA {
     }
 
     /**
-     * Phase 3 of the batched SYNC-mode flush. Persists a file EXTEND only: if the file grew since the last
-     * sync it issues {@code fdatasync(fd)} (which journals the new inode size — and, as a device flush, also
-     * makes already-written-back device-cache content durable) and advances the {@code lastSynced*}
-     * watermark. Non-extending files get NO flush here: their content is made durable by the batch's
-     * {@code _cv} device flush, and their size is unchanged (already durable).
+     * Phase 3 of the batched SYNC-mode flush, run AFTER the caller's single {@code syncfs(fd)} (see
+     * {@code TableWriter.syncColumnsBatchedSync}). For memories that participated in
+     * {@link #syncFlushKick()}/{@link #syncFlushDrain()}, that {@code syncfs} has already written back their
+     * data and journaled the whole filesystem's metadata — including this inode's new size and any ext4
+     * unwritten-&gt;written extent conversions — in one device flush. So those implementations issue NO
+     * per-file {@code fdatasync} here (it would be a redundant second device flush); they only ADVANCE their
+     * {@code lastSynced*} watermark to match the now-durable size, so a subsequent {@link #sync(boolean)}
+     * correctly sees no further extend.
      * <p>
-     * Default keeps current behavior: a full {@link #sync(boolean) sync(false)} ({@code msync(MS_SYNC)} +
-     * fdatasync-on-extend). This is the conservative fallback for memories that did not push their content to
-     * the device cache via {@link #syncFlushKick()}/{@link #syncFlushDrain()} (both no-ops by default) and
-     * for the non-Linux path, where {@code sync_file_range} is unavailable.
+     * Default keeps the conservative behavior: a full {@link #sync(boolean) sync(false)} ({@code msync(MS_SYNC)}
+     * + fdatasync-on-extend). This is the fallback for memories that did NOT push their content to the page
+     * cache via {@link #syncFlushKick()}/{@link #syncFlushDrain()} (both no-ops by default) and are therefore
+     * NOT covered by the batch's {@code syncfs} — they must still self-flush to be durable.
      */
     default void syncFlushFinishIfExtended() {
         sync(false);

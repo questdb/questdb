@@ -16,20 +16,23 @@ import org.junit.Test;
  * End-to-end durability proof for the Linux SYNC-mode batched column flush
  * ({@link io.questdb.cairo.TableWriter#syncColumns()} -> syncColumnsBatchedSync()): per-file
  * {@code msync(MS_SYNC)} device flushes are replaced by {@code msync(MS_ASYNC)} +
- * {@code sync_file_range(WAIT_AFTER)} per file plus a SINGLE batched device flush from the {@code _cv}
- * commit. This test exercises the scheme on a REALISTIC WIDTH (30+ columns spanning fixed-width,
- * string, varchar, and indexed symbol) under repeated commits that force file extends, then simulates
- * power loss mid-stream and asserts EVERY committed row (and indexed-symbol lookups) survives.
+ * {@code sync_file_range(WAIT_AFTER)} per file plus ONE {@code syncfs(columnFd)} over the table's
+ * filesystem (the single device flush that ALSO journals every column's ext4 extent conversions + i_size,
+ * replacing the broken reliance on the {@code _cv} commit's flush to journal the columns). This test
+ * exercises the scheme on a REALISTIC WIDTH (30+ columns spanning fixed-width, string, varchar, and
+ * indexed symbol) under repeated commits that force file extends, then simulates power loss mid-stream and
+ * asserts EVERY committed row (and indexed-symbol lookups) survives.
  *
  * <p>It runs against the same crash model ({@link CrashFaultFilesFacade}) that the Stage-1 self-tests
  * pin down: that model promotes device-cache content to durable on ONE device flush (the batching
- * semantic) and makes {@code sync_file_range} a NO-OP unless the file was first msync'd. So if the
- * batched path ever dropped the {@code sync_file_range} drain, or advanced a {@code lastSynced*}
- * watermark in kick/drain (wrongly skipping an extend fdatasync), committed rows would read back
- * MISSING here and the test would go RED. (Verified by hand: skipping the drain reddens this test.)
+ * semantic), makes {@code sync_file_range} a NO-OP unless the file was first msync'd, and makes
+ * {@code syncfs} journal+flush the whole filesystem. So if the batched path ever dropped the
+ * {@code sync_file_range} drain, or skipped the {@code syncfs}, committed rows would read back MISSING
+ * here and the test would go RED. (Verified by hand: skipping the drain reddens this test.)
  *
- * <p>A minimal mmap append-page size forces the wide columns to cross page boundaries during the run,
- * so the extend-fdatasync branch of {@code syncFlushFinishIfExtended()} is taken repeatedly.
+ * <p>A minimal mmap append-page size forces the wide columns to cross page boundaries during the run, so
+ * the file-extend path is exercised repeatedly (now journaled by the single {@code syncfs}, with
+ * {@code syncFlushFinishIfExtended()} reduced to watermark bookkeeping).
  *
  * <p>Linux-only: the batched path is guarded on {@link Os#isLinux()} (non-Linux falls back to the
  * per-file {@code sync(false)} which this test is not trying to characterise), so it is skipped
@@ -50,8 +53,8 @@ public class BatchedFlushDurabilityCrashTest extends AbstractCrashConsistencyTes
         // the batched path. The test harness builds its config with detection OFF, so this property is the
         // raw, deterministic enable.
         setProperty(PropertyKey.CAIRO_COMMIT_SYNC_COLUMN_BATCHED, "true");
-        // Tiny append page so the (many, wide) column files extend repeatedly during the run, exercising
-        // the per-file extend fdatasync in syncFlushFinishIfExtended() alongside the batched device flush.
+        // Tiny append page so the (many, wide) column files extend repeatedly during the run, exercising the
+        // extend path (now journaled by the single syncfs; syncFlushFinishIfExtended() only advances watermarks).
         setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, String.valueOf(MIN_PAGE));
         try {
             Assert.assertEquals("test requires SYNC commit mode",
@@ -81,8 +84,8 @@ public class BatchedFlushDurabilityCrashTest extends AbstractCrashConsistencyTes
 
                 crashAndReopen();
 
-                // 1) Row COUNT: every committed row (seed + COMMITS) is durable. A dropped drain or a
-                //    wrongly-skipped extend fdatasync would truncate the tail -> fewer rows -> RED.
+                // 1) Row COUNT: every committed row (seed + COMMITS) is durable. A dropped drain or a missing
+                //    syncfs would leave columns' extents unjournaled -> tail rows read as zeros/missing -> RED.
                 Assert.assertEquals("committed row count after crash", COMMITS + 1, rowCount("w"));
 
                 // 2) CONTENT: each surviving row matches what we wrote (no silent corruption), across a

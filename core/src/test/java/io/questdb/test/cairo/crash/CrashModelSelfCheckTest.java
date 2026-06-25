@@ -268,6 +268,45 @@ public class CrashModelSelfCheckTest extends AbstractTest {
         }
     }
 
+    /**
+     * Test 9 — syncfs journals EVERYONE even under PER-INODE journaling (the batched-flush SALVAGE property).
+     * Identical setup to ST7 ({@code modelSharedJournal=false}, i.e. ext4 fast_commit / per-inode journaling,
+     * under which a single inode's {@code fdatasync} does NOT journal another inode's extent conversions —
+     * ST7 proves B is LOST there). The ONLY change: replace {@code fdatasync(A)} with a single
+     * {@code syncfs(A)}. Outcome FLIPS — A AND B are BOTH durable, because {@code syncfs(2)} writes back the
+     * WHOLE filesystem and journals EVERY inode's pending extent conversions in one device flush, regardless
+     * of journal policy. This is EXACTLY the property the batched SYNC commit relies on to make all just-
+     * drained columns durable with one flush; the real ext4 power-cut harness proved the old
+     * {@code fdatasync}/foreign-{@code _cv}-flush reliance corrupted columns, and a micro-test proved
+     * {@code syncfs} survives the same cut. Contrast directly with ST7 (same world, {@code fdatasync} -> B
+     * lost) and ST8 (different world: shared journal needed to save B via {@code fdatasync}).
+     */
+    @Test
+    public void test9_syncfsJournalsEveryoneUnderPerInodeJournaling() throws Exception {
+        final CrashFaultFilesFacade ff = new CrashFaultFilesFacade();
+        ff.modelSharedJournal = false; // ext4 fast_commit: a per-inode fdatasync(A) would NOT journal B (ST7)
+        final String dir = temp.newFolder("model9").getAbsolutePath();
+        try (Path a = new Path().of(dir).concat("a.d"); Path b = new Path().of(dir).concat("b.d")) {
+            Mapped ma = mapAndFill(ff, a, NEW);
+            Mapped mb = mapAndFill(ff, b, NEW);
+            ff.msync(ma.addr, SIZE, true);  // MS_ASYNC both -> pteFlushed, pages visible to sync_file_range
+            ff.msync(mb.addr, SIZE, true);
+            final int flags = Files.SYNC_FILE_RANGE_WRITE | Files.SYNC_FILE_RANGE_WAIT_AFTER;
+            ff.syncFileRange(ma.fd, 0, SIZE, flags); // A -> device cache (NOT journaled)
+            ff.syncFileRange(mb.fd, 0, SIZE, flags); // B -> device cache (NOT journaled)
+            ff.syncfs(ma.fd); // WHOLE-FS journal commit + flush: journals BOTH A and B despite per-inode policy
+            // Mutation check: if syncfs only journaled its own fd (like fdatasync under per-inode journaling),
+            // B's journaled end would still be 0 here and the post-crash B-durable assertion below would fail.
+            Assert.assertEquals("syncfs must journal B too (whole-fs commit)", SIZE, ff.journaledDataEndOf(b.toString()));
+            Assert.assertEquals("syncfs journals A", SIZE, ff.journaledDataEndOf(a.toString()));
+            unmapAndClose(ff, ma);
+            unmapAndClose(ff, mb);
+            ff.crash(dir);
+            assertAllBytes("test9: A durable via syncfs", ff, a, NEW);
+            assertAllBytes("test9: B durable via syncfs's WHOLE-FILESYSTEM journal commit (even under per-inode journaling)", ff, b, NEW);
+        }
+    }
+
     // === helpers ===
 
     private static final class Mapped {
