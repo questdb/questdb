@@ -26,6 +26,7 @@ package io.questdb.test.griffin.fuzz;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -201,6 +202,103 @@ public class QueryFuzzTest extends AbstractCairoTest {
                     new GeneratedQuery("SELECT avg(d) OVER (PARTITION BY g ORDER BY ts) c FROM small", true));
             Assert.assertFalse(okResult.isSkipped());
             Assert.assertFalse(okResult.isFailed());
+        });
+    }
+
+    @Test
+    public void testHorizonJoinIndexedMasterToleratedByOracle() throws Exception {
+        // Bug from multi-table HORIZON JOIN fuzzing (storage diff): the
+        // single-threaded HORIZON JOIN path requires the master to support random
+        // access (it revisits master rows in sorted order). When the master filter
+        // is fully served by a POSTING covering index, the master access path is a
+        // bare CoveringIndex, which does not support random access, so the LHS is
+        // rejected at compile time with "left-hand side of HORIZON JOIN can only be
+        // a table with an optional filter". The non-indexed shadow sibling
+        // full-scans, supports random access, and compiles, returning rows. The two
+        // storage configs therefore diverge structurally (one compiles, one
+        // rejects), not in data. This is the same planner-sensitivity asymmetry the
+        // oracle already tolerates for the SPLICE/ASOF index-vs-scan rejections, so
+        // isPlannerSensitivityAsymmetry must classify it as a skip rather than a
+        // divergence. Drive the diverging pair straight through QueryRunner to
+        // exercise the real storage-axis classification path.
+        //
+        // Parallel HORIZON JOIN is disabled below so the planner takes the
+        // single-threaded path deterministically -- the same path the engine uses
+        // whenever it has no shared query workers -- regardless of how many workers
+        // the test pool happens to advertise. (With parallel HORIZON JOIN on, the
+        // covering index supplies a page-frame cursor and the parallel path
+        // accepts it; the rejection is specific to the single-threaded path.)
+        final String horizonJoin = "SELECT (h.offset / 1000000) AS e0, count(p.c5) AS a0 " +
+                "FROM master_%s t " +
+                "HORIZON JOIN slave_%s p LIST (-3m, -2m, -1m, 0m) AS h " +
+                "WHERE t.sym IS NULL " +
+                "GROUP BY e0 ORDER BY e0";
+        assertMemoryLeak(() -> {
+            // Primary master: sym not indexed -> page-frame full scan, random access.
+            execute("CREATE TABLE master_p (ts TIMESTAMP, sym SYMBOL, c2 FLOAT) TIMESTAMP(ts) PARTITION BY HOUR");
+            // Shadow master: identical rows, sym POSTING-EF indexed covering c2. The
+            // sym IS NULL filter is served entirely by the index, so the master
+            // access path is a bare CoveringIndex with no random access.
+            execute("CREATE TABLE master_s (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING EF INCLUDE (c2), c2 FLOAT) TIMESTAMP(ts) PARTITION BY HOUR");
+            execute("CREATE TABLE slave_p (ts TIMESTAMP, sym SYMBOL, c5 LONG) TIMESTAMP(ts) PARTITION BY HOUR");
+            execute("CREATE TABLE slave_s (ts TIMESTAMP, sym SYMBOL, c5 LONG) TIMESTAMP(ts) PARTITION BY HOUR");
+            // Some master rows carry a NULL sym so the WHERE keeps them.
+            final String masterRows = " VALUES ('2024-01-01T00:00:00.000000Z', NULL, 1.0), " +
+                    "('2024-01-01T00:30:00.000000Z', 'a', 2.0), " +
+                    "('2024-01-01T01:00:00.000000Z', NULL, 3.0)";
+            execute("INSERT INTO master_p" + masterRows);
+            execute("INSERT INTO master_s" + masterRows);
+            final String slaveRows = " VALUES ('2024-01-01T00:00:00.000000Z', 'a', 10), " +
+                    "('2024-01-01T00:30:00.000000Z', 'b', 20)";
+            execute("INSERT INTO slave_p" + slaveRows);
+            execute("INSERT INTO slave_s" + slaveRows);
+
+            final boolean savedParallelHorizonJoin = sqlExecutionContext.isParallelHorizonJoinEnabled();
+            sqlExecutionContext.setParallelHorizonJoinEnabled(false);
+            try {
+                // Sanity: the indexed (shadow) master rejects the HORIZON JOIN LHS
+                // at compile time...
+                try (RecordCursorFactory ignore = engine.select(String.format(horizonJoin, "s", "s"), sqlExecutionContext)) {
+                    Assert.fail("indexed master must reject the HORIZON JOIN LHS");
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(),
+                            "left-hand side of HORIZON JOIN can only be a table with an optional filter");
+                }
+                // ...while the non-indexed (primary) master compiles and returns rows.
+                try (RecordCursorFactory factory = engine.select(String.format(horizonJoin, "p", "p"), sqlExecutionContext)) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        int rows = 0;
+                        while (cursor.hasNext()) {
+                            rows++;
+                        }
+                        Assert.assertEquals(4, rows);
+                    }
+                }
+
+                // Wire the storage diff to rewrite master_p -> master_s, slave_p -> slave_s.
+                final FuzzTable masterShadow = new FuzzTable("master_s", new ObjList<>(), "ts");
+                final FuzzTable slaveShadow = new FuzzTable("slave_s", new ObjList<>(), "ts");
+                final FuzzTable master = new FuzzTable("master_p", new ObjList<>(), "ts", FuzzTableFactory.ParquetMode.NONE, null, masterShadow);
+                final FuzzTable slave = new FuzzTable("slave_p", new ObjList<>(), "ts", FuzzTableFactory.ParquetMode.NONE, null, slaveShadow);
+                final ObjList<FuzzTable> tables = new ObjList<>();
+                tables.add(master);
+                tables.add(slave);
+
+                // The storage-axis oracle tolerates the compile/reject asymmetry
+                // rather than reporting it as a divergence. run() swallows a
+                // tolerated per-axis skip into an overall ok result and only
+                // surfaces a failed axis, so the regression assertion is that the
+                // run is not failed; without isPlannerSensitivityAsymmetry the
+                // storage axis would report a divergence and the run would fail.
+                final QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, true, false, tables, null);
+                final QueryRunner.Result result = runner.run(new GeneratedQuery(String.format(horizonJoin, "p", "p"), true));
+                Assert.assertFalse(
+                        "storage divergence must be tolerated, not failed: "
+                                + (result.getFailure() != null ? result.getFailure().getMessage() : ""),
+                        result.isFailed());
+            } finally {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(savedParallelHorizonJoin);
+            }
         });
     }
 

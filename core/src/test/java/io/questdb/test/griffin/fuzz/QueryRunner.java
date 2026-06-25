@@ -662,6 +662,18 @@ public final class QueryRunner {
      *       time; the same logical query against a non-indexed sibling
      *       full-scans and compiles fine. Same planner-sensitivity shape as
      *       the ASC-timestamp check above.</li>
+     *   <li>"left/right-hand side of HORIZON JOIN can only be a table with an
+     *       optional filter" - HORIZON JOIN's single-threaded path (taken when
+     *       parallel HORIZON JOIN is off, or when the aggregate/key functions
+     *       are not parallelism-safe) needs the master to support random access
+     *       (to revisit rows in sorted order) and the slave to support time
+     *       frames. When the filtered SYMBOL column on the master carries a
+     *       POSTING index whose covering set serves the whole filter, the
+     *       planner routes it through a covering-index access path that does not
+     *       support random access, and the LHS is rejected at compile time; the
+     *       same query against a non-indexed sibling full-scans, supports random
+     *       access, and compiles. The RHS check is the slave-side analogue. Same
+     *       planner-sensitivity shape as the SPLICE check above.</li>
      *   <li>"right side column ... is of unsupported type" - ASOF JOIN
      *       falls back to {@code createFullFatJoin} when the slave factory
      *       does not support random access (e.g. shadow's slave becomes a
@@ -733,6 +745,7 @@ public final class QueryRunner {
         return o.exceptionMessage.contains("doesn't have ASC timestamp order")
                 || o.exceptionMessage.contains("RANGE is supported only for queries ordered by designated timestamp")
                 || o.exceptionMessage.contains("side of splice join doesn't support random access")
+                || o.exceptionMessage.contains("of HORIZON JOIN can only be a table with an optional filter")
                 || o.exceptionMessage.contains("column must appear in GROUP BY clause")
                 || o.exceptionMessage.contains("constant expected")
                 || o.exceptionMessage.contains("there is no matching function")
