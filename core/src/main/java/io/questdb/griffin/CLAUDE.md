@@ -6,7 +6,7 @@ identical results.
 
 ## Architecture
 
-```2
+```
 ALTER COLUMN TYPE
   ↓
 ConvertOperatorImpl.convertColumn0()
@@ -20,7 +20,7 @@ ConvertOperatorImpl.convertColumn0()
   │       ├── Var→Var:      Java loop, transcode (UTF-16↔UTF-8)
   │       ├── →Symbol:      Java loop, resolveSymbol() builds symbol map
   │       └── Symbol→:      Java loop, map ID→string, then convert
-  ├── For each PARQUET partition:2
+  ├── For each PARQUET partition:
   │   └── Skip (parquet decoder handles on-the-fly conversion later)
   │       Column top is propagated from old column index to new column index
   └── Update metadata: new column type, replacingIndex chain

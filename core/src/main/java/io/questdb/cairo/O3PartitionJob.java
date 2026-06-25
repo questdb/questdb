@@ -4191,12 +4191,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         }
     }
 
-    private static boolean isNoNullSentinelFixedType(int columnType) {
-        final int tag = ColumnType.tagOf(columnType);
-        return tag == ColumnType.BOOLEAN || tag == ColumnType.BYTE
-                || tag == ColumnType.SHORT || tag == ColumnType.CHAR;
-    }
-
     static void convertFixedColumnToString(
             int srcType,
             long srcDataPtr,
@@ -4223,7 +4217,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         // count; sentinel sources store the column top as their null sentinel, which the
         // converter already maps to NULL (and `columnTop` from the _pm path would otherwise
         // also count scattered real nulls).
-        final int leadingNulls = isNoNullSentinelFixedType(srcType) ? columnTop : 0;
+        final int leadingNulls = ColumnType.isNoNullSentinelFixedType(srcType) ? columnTop : 0;
 
         for (int i = 0; i < rowCount; i++) {
             sink.clear();
@@ -4267,7 +4261,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final int arg1 = ColumnType.isDecimal(srcType) ? ColumnType.getDecimalPrecision(srcType) : 0;
         final int arg2 = ColumnType.isDecimal(srcType) ? ColumnType.getDecimalScale(srcType) : 0;
         // See convertFixedColumnToString: only no-sentinel sources need the explicit count.
-        final int leadingNulls = isNoNullSentinelFixedType(srcType) ? columnTop : 0;
+        final int leadingNulls = ColumnType.isNoNullSentinelFixedType(srcType) ? columnTop : 0;
 
         for (int i = 0; i < rowCount; i++) {
             sink.clear();
