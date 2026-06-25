@@ -116,10 +116,10 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
                     state = BODY;
                     break;
                 case BODY_REPLAY_BOUNDARY_AFTER_CR:
-                    ptr = onChunkWithRetryHandle(processor, boundary.lo(), boundary.lo() + 1, BODY_BROKEN, ptr, ptr, true);
+                    ptr = onChunkWithRetryHandle(processor, boundary.lo(), boundary.lo() + 1, BODY_BROKEN, ptr, false);
                     break;
                 case BODY_REPLAY_BOUNDARY_AFTER_DASH:
-                    ptr = onChunkWithRetryHandle(processor, boundary.lo() + 2, boundary.lo() + 3, BODY_BROKEN, ptr, ptr, true);
+                    ptr = onChunkWithRetryHandle(processor, boundary.lo() + 2, boundary.lo() + 3, BODY_BROKEN, ptr, false);
                     break;
                 case START_PARSING:
                     boundaryPtr = 2;
@@ -153,7 +153,7 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
                             ptr++;
                             break;
                         default:
-                            ptr = onChunkWithRetryHandle(processor, boundary.lo(), boundary.hi(), BODY_BROKEN, ptr, ptr, true);
+                            ptr = onChunkWithRetryHandle(processor, boundary.lo(), boundary.hi(), BODY_BROKEN, ptr, false);
                             break;
                     }
                     break;
@@ -162,7 +162,7 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
                         state = HEADERS;
                         ptr++;
                     } else {
-                        ptr = onChunkWithRetryHandle(processor, boundary.lo(), boundary.hi(), BODY_REPLAY_BOUNDARY_AFTER_CR, ptr, ptr, true);
+                        ptr = onChunkWithRetryHandle(processor, boundary.lo(), boundary.hi(), BODY_REPLAY_BOUNDARY_AFTER_CR, ptr, false);
                     }
                     break;
                 case PRE_HEADERS_AFTER_DASH:
@@ -171,7 +171,7 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
                         state = DONE;
                         return true;
                     }
-                    ptr = onChunkWithRetryHandle(processor, boundary.lo(), boundary.hi(), BODY_REPLAY_BOUNDARY_AFTER_DASH, ptr, ptr, true);
+                    ptr = onChunkWithRetryHandle(processor, boundary.lo(), boundary.hi(), BODY_REPLAY_BOUNDARY_AFTER_DASH, ptr, false);
                     break;
                 case START_PRE_HEADERS:
                     byte startPreHeaderByte = Unsafe.getByte(ptr);
@@ -242,7 +242,7 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
                             break;
                         default:
                             // can only be BOUNDARY_NO_MATCH:
-                            onChunkWithRetryHandle(processor, boundary.lo(), boundary.lo() + p, BODY_BROKEN, ptr, ptr, true);
+                            onChunkWithRetryHandle(processor, boundary.lo(), boundary.lo() + p, BODY_BROKEN, ptr, false);
                             break;
                     }
                     break;
@@ -287,18 +287,6 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
             long resumePtr,
             boolean handleIncomplete
     ) throws PeerIsSlowToReadException, PeerDisconnectedException, ServerDisconnectException {
-        return onChunkWithRetryHandle(processor, lo, hi, state, resumePtr, lo, handleIncomplete);
-    }
-
-    private long onChunkWithRetryHandle(
-            HttpMultipartContentProcessor processor,
-            long lo,
-            long hi,
-            int state,
-            long resumePtr,
-            long tooFewBytesResumePtr,
-            boolean handleIncomplete
-    ) throws PeerIsSlowToReadException, PeerDisconnectedException, ServerDisconnectException {
         RetryOperationException needsRetry = null;
         try {
             processor.onChunk(lo, hi);
@@ -307,7 +295,7 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
             needsRetry = e;
         } catch (NotEnoughLinesException e) {
             if (handleIncomplete) {
-                this.resumePtr = tooFewBytesResumePtr;
+                this.resumePtr = lo;
                 throw TooFewBytesReceivedException.INSTANCE;
             } else {
                 throw e;

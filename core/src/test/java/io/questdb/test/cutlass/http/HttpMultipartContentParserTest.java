@@ -133,6 +133,39 @@ public class HttpMultipartContentParserTest {
     }
 
     @Test
+    public void testBodyChunkKeepsReceiveBufferResumePointerOnTooFewBytes() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (HttpMultipartContentParser multipartContentParser = new HttpMultipartContentParser(new HttpHeaderParser(1024, pool))) {
+                final String content = "--AaB03x\r\n" +
+                        "Content-Disposition: form-data; name=\"data\"\r\n" +
+                        "\r\n" +
+                        "value";
+
+                int len = content.length();
+                long p = TestUtils.toMemory(content);
+                try {
+                    String boundary = "\r\n--AaB03x";
+                    long pBoundary = TestUtils.toMemory(boundary);
+                    DirectUtf8String boundaryCs = new DirectUtf8String().of(pBoundary, pBoundary + boundary.length());
+                    try {
+                        multipartContentParser.of(boundaryCs);
+                        try {
+                            multipartContentParser.parse(p, p + len, new NotEnoughLinesOnChunkProcessor(1));
+                            Assert.fail();
+                        } catch (TooFewBytesReceivedException e) {
+                            Assert.assertEquals(p + content.indexOf("value"), multipartContentParser.getResumePtr());
+                        }
+                    } finally {
+                        Unsafe.free(pBoundary, boundary.length(), MemoryTag.NATIVE_DEFAULT);
+                    }
+                } finally {
+                    Unsafe.free(p, len, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testEmpty() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (HttpMultipartContentParser multipartContentParser = new HttpMultipartContentParser(new HttpHeaderParser(1024, pool))) {
@@ -168,7 +201,7 @@ public class HttpMultipartContentParserTest {
     }
 
     @Test
-    public void testFalseBoundaryReplayKeepsReceiveBufferResumePointerOnTooFewBytes() throws Exception {
+    public void testFalseBoundaryReplayRethrowsNotEnoughLines() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (HttpMultipartContentParser multipartContentParser = new HttpMultipartContentParser(new HttpHeaderParser(1024, pool))) {
                 final String content = "--AaB03x\r\n" +
@@ -178,12 +211,6 @@ public class HttpMultipartContentParserTest {
                         "--AaB03xZ\r\n" +
                         "next\r\n" +
                         "--AaB03x--";
-                final String expected = "Content-Disposition: form-data; name=\"data\"\r\n" +
-                        "\r\n" +
-                        "value\r\n" +
-                        "--AaB03xZ\r\n" +
-                        "next\r\n" +
-                        "-----------------------------\r\n";
 
                 int len = content.length();
                 long p = TestUtils.toMemory(content);
@@ -197,12 +224,9 @@ public class HttpMultipartContentParserTest {
                         try {
                             multipartContentParser.parse(p, p + len, listener);
                             Assert.fail();
-                        } catch (TooFewBytesReceivedException e) {
-                            Assert.assertEquals(p + content.indexOf('Z'), multipartContentParser.getResumePtr());
+                        } catch (NotEnoughLinesException e) {
+                            TestUtils.assertContains(e.getFlyweightMessage(), "not enough lines");
                         }
-
-                        Assert.assertTrue(multipartContentParser.parse(multipartContentParser.getResumePtr(), p + len, listener));
-                        TestUtils.assertEquals(expected, sink);
                     } finally {
                         Unsafe.free(pBoundary, boundary.length(), MemoryTag.NATIVE_DEFAULT);
                     }
@@ -214,7 +238,7 @@ public class HttpMultipartContentParserTest {
     }
 
     @Test
-    public void testFalseBoundaryReplayKeepsReceiveBufferResumePointerOnTooFewBytesAfterBoundarySplit() throws Exception {
+    public void testFalseBoundaryReplayRethrowsNotEnoughLinesAfterBoundarySplit() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (HttpMultipartContentParser multipartContentParser = new HttpMultipartContentParser(new HttpHeaderParser(1024, pool))) {
                 final String content = "--AaB03x\r\n" +
@@ -224,12 +248,6 @@ public class HttpMultipartContentParserTest {
                         "--AX03x\r\n" +
                         "next\r\n" +
                         "--AaB03x--";
-                final String expected = "Content-Disposition: form-data; name=\"data\"\r\n" +
-                        "\r\n" +
-                        "value\r\n" +
-                        "--AX03x\r\n" +
-                        "next\r\n" +
-                        "-----------------------------\r\n";
 
                 int len = content.length();
                 long p = TestUtils.toMemory(content);
@@ -247,12 +265,45 @@ public class HttpMultipartContentParserTest {
                         try {
                             multipartContentParser.parse(splitPtr, p + len, listener);
                             Assert.fail();
-                        } catch (TooFewBytesReceivedException e) {
-                            Assert.assertEquals(splitPtr, multipartContentParser.getResumePtr());
+                        } catch (NotEnoughLinesException e) {
+                            TestUtils.assertContains(e.getFlyweightMessage(), "not enough lines");
                         }
+                    } finally {
+                        Unsafe.free(pBoundary, boundary.length(), MemoryTag.NATIVE_DEFAULT);
+                    }
+                } finally {
+                    Unsafe.free(p, len, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
 
-                        Assert.assertTrue(multipartContentParser.parse(multipartContentParser.getResumePtr(), p + len, listener));
-                        TestUtils.assertEquals(expected, sink);
+    @Test
+    public void testFalseBoundaryReplayRethrowsRepeatedNotEnoughLines() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (HttpMultipartContentParser multipartContentParser = new HttpMultipartContentParser(new HttpHeaderParser(1024, pool))) {
+                final String content = "--AaB03x\r\n" +
+                        "Content-Disposition: form-data; name=\"data\"\r\n" +
+                        "\r\n" +
+                        "\r\n--AaB03xZ\n" +
+                        "a,b\n" +
+                        "1,2\n" +
+                        "--AaB03x--";
+
+                int len = content.length();
+                long p = TestUtils.toMemory(content);
+                try {
+                    String boundary = "\r\n--AaB03x";
+                    long pBoundary = TestUtils.toMemory(boundary);
+                    DirectUtf8String boundaryCs = new DirectUtf8String().of(pBoundary, pBoundary + boundary.length());
+                    try {
+                        multipartContentParser.of(boundaryCs);
+                        try {
+                            multipartContentParser.parse(p, p + len, new NotEnoughLinesOnShortChunkProcessor());
+                            Assert.fail();
+                        } catch (NotEnoughLinesException e) {
+                            TestUtils.assertContains(e.getFlyweightMessage(), "not enough lines");
+                        }
                     } finally {
                         Unsafe.free(pBoundary, boundary.length(), MemoryTag.NATIVE_DEFAULT);
                     }
@@ -784,6 +835,22 @@ public class HttpMultipartContentParserTest {
         public void onChunk(long lo, long hi) {
             if (lo == replayLo && !thrown) {
                 thrown = true;
+                throw NotEnoughLinesException.$("not enough lines");
+            }
+            super.onChunk(lo, hi);
+        }
+    }
+
+    private static class NotEnoughLinesOnShortChunkProcessor extends TestHttpMultipartContentProcessor {
+        @Override
+        public void onChunk(long lo, long hi) {
+            int lines = 0;
+            for (long p = lo; p < hi; p++) {
+                if (Unsafe.getByte(p) == '\n') {
+                    lines++;
+                }
+            }
+            if (hi > lo && lines < 2) {
                 throw NotEnoughLinesException.$("not enough lines");
             }
             super.onChunk(lo, hi);
