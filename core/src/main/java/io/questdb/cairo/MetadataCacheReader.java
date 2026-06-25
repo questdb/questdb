@@ -35,7 +35,7 @@ import org.jetbrains.annotations.Nullable;
 
 public interface MetadataCacheReader extends QuietCloseable, Sinkable {
     /**
-     * Appends {@code (token, predicate, cleanup-interval-micros)} for every non-view table that currently
+     * Appends {@code (token, predicate, cleanup-interval-micros)} for every materialized view that currently
      * carries an EXPIRE ROWS policy, in a single pass over the cache. Lets the row-expiry cleanup job
      * discover policied tables without snapshotting and re-looking-up the entire table registry each tick.
      */

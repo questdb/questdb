@@ -76,11 +76,12 @@ public class MatViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
 
     @Override
     public boolean isExpiryReadFilterEnabled() {
-        // A mat-view refresh reads the RAW base table and writes the view. The row-expiry read filter must
-        // NOT be injected into the base reference here: it would (a) hard-fail the refresh when the base
-        // has a now()-based EXPIRE policy (now() is rejected as non-deterministic in a mat view), and
-        // (b) silently fold the base's expiry into the aggregation. A base-table policy is independent of
-        // the view; the view's own policy (if any) is applied when the VIEW is read, not during refresh.
+        // A mat-view refresh reads the RAW base and writes the view; the read filter must NOT be injected
+        // into the base reference here — it would hard-fail a now()-based base policy (now() is rejected as
+        // non-deterministic in a mat view) and fold the base's expiry into the refresh. To keep this sound,
+        // a view cannot be created over a base that carries an EXPIRE ROWS policy (rejected at CREATE, and
+        // ALTER ... SET EXPIRE is rejected on a view that already has dependents), so the base reachable here
+        // never has a policy. The view's OWN policy (if any) is applied when the VIEW is read, not on refresh.
         return false;
     }
 

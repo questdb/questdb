@@ -86,6 +86,29 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
             int columnIndex
     );
 
+    /**
+     * Returns true when the EXPIRE ROWS policy {@code predicate} is <b>monotonic</b>, i.e. safe for the
+     * background cleanup job to physically reclaim: a row it classifies as expired now can never re-enter the
+     * keep-set. Monotonic by construction: the relative modes (KEEP LATEST / KEEP HIGHEST/LOWEST / KEEP N) and
+     * any scalar/window {@code WHEN} predicate that is either clock-free (mat-view rows are immutable, so a
+     * clock-free predicate's per-row value never changes) or reduces to a designated-timestamp threshold
+     * ({@code ts < now()} / {@code ts <= T}). NOT monotonic: a predicate that references a non-deterministic
+     * clock in a non-threshold position (e.g. {@code ts > now()}), which un-expires rows as time advances.
+     * <p>
+     * The check is conservative — any doubt (parse/bind issue, a non-deterministic function it cannot prove
+     * monotonic) returns false, so cleanup is SKIPPED and the authoritative read filter alone enforces
+     * retention. Disk is not reclaimed for such a policy, but query results stay correct. {@code source} is the
+     * FROM source used to validate a window predicate (a quoted table name, or a parenthesised defining SELECT
+     * for a not-yet-created view); {@code metadata} is used to bind scalar predicates.
+     */
+    boolean isExpiryCleanupMonotonic(
+            SqlExecutionContext executionContext,
+            RecordMetadata metadata,
+            CharSequence source,
+            CharSequence predicate,
+            CharSequence timestampColumn
+    );
+
     ExecutionModel generateExecutionModel(CharSequence sqlText, SqlExecutionContext executionContext) throws SqlException;
 
     RecordCursorFactory generateSelectWithRetries(

@@ -640,4 +640,82 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             );
         });
     }
+
+    @Test
+    public void testCreateExpireRowsUnbalancedOpenParenRejected() throws Exception {
+        // M4: an open paren that is never closed must be detected, not silently swallow the trailing
+        // CLEANUP clause into the predicate text (which would also drop the custom cleanup interval).
+        // The error is reported at the start of the predicate.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            assertExceptionNoLeakCheck(
+                    "create materialized view mv as (select * from base) EXPIRE ROWS WHEN (x > 1 CLEANUP EVERY 1h",
+                    69,
+                    "unbalanced parentheses in EXPIRE ROWS predicate"
+            );
+            org.junit.Assert.assertNull(engine.getTableTokenIfExists("mv"));
+        });
+    }
+
+    @Test
+    public void testCreateExpireRowsUnbalancedCloseParenRejected() throws Exception {
+        // M4: a ')' with no matching '(' (depth would go negative) must be flagged at the offending ')'.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            assertExceptionNoLeakCheck(
+                    "create materialized view mv as (select * from base) EXPIRE ROWS WHEN x > 1) AND y",
+                    74,
+                    "unbalanced parentheses in EXPIRE ROWS predicate"
+            );
+            org.junit.Assert.assertNull(engine.getTableTokenIfExists("mv"));
+        });
+    }
+
+    @Test
+    public void testCreateExpireRowsBalancedParensWithCleanupParses() throws Exception {
+        // M4 regression guard: a fully-balanced parenthesised predicate followed by CLEANUP EVERY must
+        // still parse, with CLEANUP terminating the predicate (not swallowed) and the custom interval kept.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create materialized view mv as (select * from base) EXPIRE ROWS WHEN (v < 2.0) CLEANUP EVERY 30m");
+            sink.clear();
+            printSql("SHOW CREATE MATERIALIZED VIEW mv", sink);
+            final String ddl = sink.toString();
+            org.junit.Assert.assertTrue("expected balanced predicate in: " + ddl, ddl.contains("EXPIRE ROWS WHEN (v < 2.0)") || ddl.contains("EXPIRE ROWS WHEN v < 2.0"));
+            org.junit.Assert.assertTrue("expected custom CLEANUP interval in: " + ddl, ddl.contains("CLEANUP EVERY 30m"));
+        });
+    }
+
+    @Test
+    public void testCreateExpireRowsColumnNamedCleanupParses() throws Exception {
+        // NIT: a column reference literally named "cleanup" must be treated as predicate content, not as
+        // the CLEANUP clause boundary. CLEANUP is a boundary only when immediately followed by EVERY.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, cleanup double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create materialized view mv as (select * from base) EXPIRE ROWS WHEN cleanup > 5");
+            final String predicate;
+            try (TableMetadata m = engine.getTableMetadata(engine.verifyTableName("mv"))) {
+                predicate = m.getExpiryPredicate();
+            }
+            org.junit.Assert.assertNotNull(predicate);
+            org.junit.Assert.assertTrue("predicate should reference the cleanup column: " + predicate, predicate.contains("cleanup"));
+        });
+    }
+
+    @Test
+    public void testCreateExpireRowsNonParenSelectRejected() throws Exception {
+        // #4 (decision: not supported): EXPIRE ROWS is only reachable when the SELECT is parenthesised.
+        // In the non-paren AS form the SELECT parser greedily consumes EXPIRE as a table alias for "base"
+        // and then reports the following token (ROWS) as unexpected. The statement is still rejected (the
+        // view is not created); supporting the bare form would require the DML parser to stop at EXPIRE.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            assertExceptionNoLeakCheck(
+                    "create materialized view mv as select * from base EXPIRE ROWS WHEN v < 2.0",
+                    57,
+                    "unexpected token [ROWS]"
+            );
+            org.junit.Assert.assertNull(engine.getTableTokenIfExists("mv"));
+        });
+    }
 }

@@ -44,16 +44,16 @@ public class ViewsFunctionTest extends AbstractViewTest {
             execute("create materialized view mv_no_policy as (select * from base)");
             drainWalAndMatViewQueues();
 
-            assertQuery("select expire_predicate, expire_cleanup_every from materialized_views() where view_name = 'mv'")
+            assertQuery("select expire_clause, expire_cleanup_every from materialized_views() where view_name = 'mv'")
                     .noLeakCheck()
                     .noRandomAccess()
-                    .returns("expire_predicate\texpire_cleanup_every\n" +
+                    .returns("expire_clause\texpire_cleanup_every\n" +
                             "v < 2.0\t30m\n");
 
-            assertQuery("select expire_predicate, expire_cleanup_every from materialized_views() where view_name = 'mv_no_policy'")
+            assertQuery("select expire_clause, expire_cleanup_every from materialized_views() where view_name = 'mv_no_policy'")
                     .noLeakCheck()
                     .noRandomAccess()
-                    .returns("expire_predicate\texpire_cleanup_every\n" +
+                    .returns("expire_clause\texpire_cleanup_every\n" +
                             "\t\n");
         });
     }

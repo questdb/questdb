@@ -145,6 +145,61 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKeepTopNIntegerNullSortsLastExpiredFirst() throws Exception {
+        // Type-dependent NULL placement under KEEP <N> HIGHEST. RowExpiryUtil's javadoc: QuestDB has no NULLS
+        // LAST and where a NULL sorts is TYPE-DEPENDENT -- an INTEGER NULL (a MIN sentinel) sorts LAST under
+        // DESC, so it takes a TRAILING rank and is EXPIRED first (unlike a DOUBLE NaN which sorts FIRST and is
+        // kept -- see testKeepTopNNullsSortFirstWithinN). N=2 over an INT column with one NULL: 9=rank1,
+        // 8=rank2, 7=rank3, NULL=rank4(last). Kept = {9, 8}; the NULL and 7 expire. Pinned with explicit rows.
+        assertMemoryLeak(() -> {
+            execute("create table base (k symbol, n int, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into base values " +
+                    "('A', 9, '2024-01-01T00:00:00.000000Z')," +
+                    "('A', 8, '2024-01-02T00:00:00.000000Z')," +
+                    "('A', 7, '2024-01-03T00:00:00.000000Z')," +
+                    "('A', null, '2024-01-04T00:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+            execute("create materialized view mv as (select * from base) expire rows keep 2 highest n partition by k");
+            drainWalAndMatViewQueues();
+            // ORDER BY n -- with NULLs sorting per QuestDB convention; only the two real top values survive.
+            assertSql(
+                    "k\tn\n" +
+                            "A\t8\n" +
+                            "A\t9\n",
+                    "select k, n from mv order by n"
+            );
+            // The NULL row is NOT visible -- integer NULL expired first under KEEP N (opposite of DOUBLE).
+            assertSql("c\n0\n", "select count() c from mv where n is null");
+        });
+    }
+
+    @Test
+    public void testKeepTopNTimestampNullSortsLastExpiredFirst() throws Exception {
+        // Same type-dependent NULL placement for a TIMESTAMP value column: a TIMESTAMP NULL (also a MIN
+        // sentinel) sorts LAST under DESC and is EXPIRED first under KEEP <N> HIGHEST. N=2 over a TIMESTAMP
+        // column 'w' with one NULL: the two largest non-null w survive, the NULL expires. Pinned explicitly.
+        assertMemoryLeak(() -> {
+            execute("create table base (k symbol, w timestamp, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into base values " +
+                    "('A', '2024-03-03T00:00:00.000000Z', '2024-01-01T00:00:00.000000Z')," +
+                    "('A', '2024-02-02T00:00:00.000000Z', '2024-01-02T00:00:00.000000Z')," +
+                    "('A', '2024-01-01T00:00:00.000000Z', '2024-01-03T00:00:00.000000Z')," +
+                    "('A', null, '2024-01-04T00:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+            execute("create materialized view mv as (select * from base) expire rows keep 2 highest w partition by k");
+            drainWalAndMatViewQueues();
+            assertSql(
+                    "k\tw\n" +
+                            "A\t2024-02-02T00:00:00.000000Z\n" +
+                            "A\t2024-03-03T00:00:00.000000Z\n",
+                    "select k, w from mv order by w"
+            );
+            // The NULL-w row is NOT visible -- timestamp NULL expired first under KEEP N.
+            assertSql("c\n0\n", "select count() c from mv where w is null");
+        });
+    }
+
+    @Test
     public void testKeepHighestNoPartition() throws Exception {
         assertMemoryLeak(() -> {
             createViewWith("expire rows keep highest v");
@@ -246,9 +301,9 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
             execute("create materialized view mv as (select * from base) expire rows keep highest v partition by k cleanup every 30m");
             drainWalAndMatViewQueues();
             assertSql(
-                    "expire_predicate\texpire_cleanup_every\n" +
+                    "expire_clause\texpire_cleanup_every\n" +
                             "KEEP HIGHEST v PARTITION BY k\t30m\n",
-                    "select expire_predicate, expire_cleanup_every from tables() where table_name = 'mv'"
+                    "select expire_clause, expire_cleanup_every from tables() where table_name = 'mv'"
             );
         });
     }
@@ -497,6 +552,87 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testCleanupAllSurvivorsNonActivePartitionNotReclaimed() throws Exception {
+        // CLEANUP classification edge: a NON-ACTIVE partition in which EVERY row survives (survivors ==
+        // rowCount) must NOT be reclaimed -- cleanup must find no work and leave the partition byte-identical.
+        // Here every row is tied at the per-key extreme, so KEEP HIGHEST keeps them all; the only expired data
+        // lives elsewhere (the active partition is protected, so there is genuinely nothing to reclaim).
+        assertMemoryLeak(() -> {
+            execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into base values " +
+                    // 01-01 (non-active): A and B each tied at their per-key max -> ALL survive.
+                    "('A', 5.0, '2024-01-01T00:00:00.000000Z')," +
+                    "('A', 5.0, '2024-01-01T00:00:00.000000Z')," +
+                    "('B', 7.0, '2024-01-01T00:00:00.000000Z')," +
+                    // 01-02 active partition (protected).
+                    "('C', 1.0, '2024-01-02T00:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+            execute("create materialized view mv as (select * from base) expire rows keep highest v partition by k");
+            drainWalAndMatViewQueues();
+
+            assertSql("p\tr\n2\t4\n", "select count() p, sum(numRows) r from table_partitions('mv')");
+            // Every row is visible (all are per-key maxima or the lone active row).
+            assertSql("c\n4\n", "select count() c from mv");
+
+            // No expired rows anywhere reclaimable -> cleanup is a NO-OP; partitions unchanged.
+            Assert.assertFalse("all-survivors + protected-active partition => no work", runCleanupReturning());
+            assertSql("p\tr\n2\t4\n", "select count() p, sum(numRows) r from table_partitions('mv')");
+            assertSql("c\n4\n", "select count() c from mv");
+        });
+    }
+
+    @Test
+    public void testCleanupTopNNGreaterThanRowsNotReclaimed() throws Exception {
+        // KEEP <N> classification edge: when N >= the group's row count in a NON-ACTIVE partition, every row
+        // ranks within N and survives, so that partition must NOT be reclaimed. Here N=5 but key A has only 2
+        // rows in the non-active 01-01 partition -> both survive -> nothing to reclaim there; the active
+        // partition is protected. Cleanup must report no work and leave all partitions untouched.
+        assertMemoryLeak(() -> {
+            execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into base values " +
+                    "('A', 9.0, '2024-01-01T00:00:00.000000Z')," +   // non-active, within N=5
+                    "('A', 8.0, '2024-01-01T00:00:00.000000Z')," +   // non-active, within N=5
+                    "('A', 7.0, '2024-01-02T00:00:00.000000Z')");    // active partition
+            drainWalAndMatViewQueues();
+            execute("create materialized view mv as (select * from base) expire rows keep 5 highest v partition by k");
+            drainWalAndMatViewQueues();
+
+            assertSql("p\tr\n2\t3\n", "select count() p, sum(numRows) r from table_partitions('mv')");
+            assertSql("c\n3\n", "select count() c from mv"); // N >= rows -> all visible
+
+            Assert.assertFalse("N >= rows in every non-active partition => no work", runCleanupReturning());
+            assertSql("p\tr\n2\t3\n", "select count() p, sum(numRows) r from table_partitions('mv')");
+            assertSql("c\n3\n", "select count() c from mv");
+        });
+    }
+
+    @Test
+    public void testCleanupSingleActivePartitionIsNoOp() throws Exception {
+        // Edge partition handling: when ALL data lives in the single ACTIVE partition, cleanup never touches it
+        // (the active partition is always protected from reclamation), even though the read filter hides the
+        // superseded rows. Cleanup must be a no-op and the on-disk rows must remain.
+        assertMemoryLeak(() -> {
+            execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into base values " +
+                    "('A', 1.0, '2024-01-01T00:00:00.000000Z')," +   // superseded by A=9 (read-hidden)
+                    "('A', 9.0, '2024-01-01T06:00:00.000000Z')," +   // A max
+                    "('B', 4.0, '2024-01-01T12:00:00.000000Z')");    // B max -- all in ONE partition
+            drainWalAndMatViewQueues();
+            execute("create materialized view mv as (select * from base) expire rows keep highest v partition by k");
+            drainWalAndMatViewQueues();
+
+            // One physical partition, 3 rows; the read filter shows the two per-key maxima.
+            assertSql("p\tr\n1\t3\n", "select count() p, sum(numRows) r from table_partitions('mv')");
+            assertSql("c\n2\n", "select count() c from mv");
+
+            // The only partition is the active one -> protected -> cleanup is a no-op; 3 rows stay on disk.
+            Assert.assertFalse("the lone active partition must not be reclaimed", runCleanupReturning());
+            assertSql("p\tr\n1\t3\n", "select count() p, sum(numRows) r from table_partitions('mv')");
+            assertSql("c\n2\n", "select count() c from mv");
+        });
+    }
+
     private void assertCreateFails(String sql, String contains) throws Exception {
         try {
             execute(sql);
@@ -517,6 +653,21 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
             Assert.assertTrue("sweep should reclaim", job.cleanupTable(token, predicate));
         }
         drainWalAndMatViewQueues();
+    }
+
+    // Runs one cleanup sweep over "mv" and returns whether it reclaimed anything (no assertion).
+    private boolean runCleanupReturning() throws Exception {
+        final TableToken token = engine.verifyTableName("mv");
+        final String predicate;
+        try (TableMetadata m = engine.getTableMetadata(token)) {
+            predicate = m.getExpiryPredicate();
+        }
+        final boolean worked;
+        try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
+            worked = job.cleanupTable(token, predicate);
+        }
+        drainWalAndMatViewQueues();
+        return worked;
     }
 
     private void createBase() throws Exception {

@@ -52,7 +52,7 @@ HIGHEST/LOWEST` keeps the extreme rows per group; `KEEP <N> …` keeps a leaderb
 
 The policy is stored as a single encoded string in `_meta` (so storage/replication/backup are unchanged).
 `ALTER MATERIALIZED VIEW … SET EXPIRE ROWS …` / `… DROP EXPIRE` change or remove it, `SHOW CREATE` renders
-the clause, and `tables()` / `materialized_views()` expose it (`expire_predicate`, `expire_cleanup_every`).
+the clause, and `tables()` / `materialized_views()` expose it (`expire_clause`, `expire_cleanup_every`).
 
 ## Semantics notes
 
@@ -85,18 +85,33 @@ the clause, and `tables()` / `materialized_views()` expose it (`expire_predicate
   view on every read. `KEEP LATEST` on an indexed symbol key is cheap; the window modes (and non-indexed
   keep-latest) scan the whole view. Aggressive `CLEANUP EVERY` keeps the physical residue — and thus the read
   cost — small. (Performance work is tracked separately.)
-- **Cleanup defers under continuous refresh.** Reclamation gates on the sequencer transaction (it proceeds
-  only when the view is fully applied and unchanged by others through each commit), so a view being refreshed
-  continuously defers reclamation to a quiescent sweep. The read filter stays authoritative meanwhile.
+- **Cleanup is serialized with refresh (and defers under continuous refresh).** Cleanup and the materialized-
+  view refresh job are the only writers to a policied view, and both take the same per-view lock
+  (`MatViewState#tryLock()`) for the duration of their writes, so they are mutually exclusive — a refresh
+  back-fill can never land between cleanup's survivor scan and its `REPLACE_RANGE` commit. If a refresh holds
+  the lock, cleanup defers to a later sweep (it is idempotent and on its own `CLEANUP EVERY` cadence). As
+  defense-in-depth, each destructive commit also gates on the sequencer transaction (it proceeds only when the
+  view is fully applied and unchanged by others through the commit). A view being refreshed continuously thus
+  defers reclamation to a quiescent sweep; the read filter stays authoritative meanwhile.
 - **`KEEP LATEST [ON <ts>]`.** The optional `ON <ts>` is accepted for familiarity but the view's designated
   timestamp is always used (a table-input `LATEST ON` requires it).
-- **Non-monotonic `WHEN` predicates are unsupported for cleanup.** EXPIRE does not reject a non-monotonic
-  scalar predicate (detecting it in general would mean statically reasoning about arbitrary SQL, including
-  `now()` nested anywhere in the expression), but the cleanup job assumes monotonicity. With a predicate like
-  `WHEN ts > now()` the read filter stays correct — a future row reappears once `now()` passes its timestamp —
-  while physical cleanup may have already removed it (recoverable only by a full refresh). Treat `now()` as
-  "expire things in the past" (`ts < now()`); do not write predicates that expire rows the passage of time
-  will later keep.
+- **Non-monotonic policies skip cleanup automatically (reads stay correct).** Physical cleanup (disk
+  reclamation) only runs for policies that are provably **monotonic**: the relative modes (`KEEP LATEST` /
+  `KEEP HIGHEST/LOWEST` / `KEEP <N>`), and scalar/window `WHEN` predicates that are either clock-free or
+  reduce to a designated-timestamp threshold like `ts < now()`. A non-monotonic predicate — e.g. `WHEN ts >
+  now()`, or a clock-referencing predicate that does not reduce to a `ts`-threshold — stays **correct at read
+  time** (the read filter recomputes on every read and is authoritative), but its disk is **not** reclaimed by
+  the background job: cleanup is automatically skipped for that policy rather than risk physically deleting a
+  row a later read would show. So a non-monotonic predicate like `WHEN ts > now()` (which expires *future*
+  rows that un-expire as `now()` advances past them) is not rejected and remains query-correct, but accrues
+  physical residue indefinitely. Treat `now()` as "expire things in the past" (`ts < now()`) when you also
+  want disk reclaimed; do not write predicates that expire rows the passage of time will later keep.
+- **Compacting a Parquet partition rewrites it as native storage.** When the cleanup job compacts a
+  *partially*-expired partition (via `REPLACE_RANGE` to its survivors), a partition currently held in
+  Parquet-encoded storage is rewritten as native QuestDB storage. This is a known storage-format side effect:
+  the Parquet encoding is dropped on compaction, and the partition must be **re-converted** by the
+  `parquet-convert` job on its next pass (subject to the table's Parquet-conversion settings). Reclamation
+  correctness is unaffected — only the on-disk format temporarily reverts to native until re-conversion runs.
 - **Cleanup runs on the primary only — but reclamation still replicates.** The `REPLACE_RANGE` commits are
   ordinary WAL transactions shipped down the normal stream; a replica reclaims the identical rows by applying
   them. A read-only replica neither runs the job nor needs to.

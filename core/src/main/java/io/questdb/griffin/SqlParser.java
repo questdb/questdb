@@ -164,7 +164,9 @@ public class SqlParser {
     private int digit;
     // Track tables currently being wrapped by the row-expiry filter, so the synthetic inner
     // "SELECT * FROM t WHERE ..." resolves "t" as a plain table instead of recursing forever.
-    private final LowerCaseCharSequenceHashSet expiringTablesBeingExpanded = new LowerCaseCharSequenceHashSet();
+    // Case-sensitive: QuestDB table names are case-sensitive, so case-distinct sibling tables/views
+    // must each be guarded independently (a LowerCase set would wrongly conflate "T" and "t").
+    private final CharSequenceHashSet expiringTablesBeingExpanded = new CharSequenceHashSet();
     // Designated timestamp column of the table whose EXPIRE ROWS predicate was last looked up (set by
     // lookupExpiryPredicate), so the keep-filter rewrite can null-safely flip only timestamp comparisons.
     private CharSequence expiryTimestampColumnName;
@@ -527,15 +529,25 @@ public class SqlParser {
                 }
                 if (depth == 0) {
                     if (isCleanupKeyword(tok)) {
+                        // 'CLEANUP' is ambiguous: 'CLEANUP EVERY <dur>' ends the predicate, but a bare
+                        // column reference named "cleanup" (e.g. WHEN cleanup > 5) is predicate content.
+                        // Only treat CLEANUP as the boundary when it is followed by EVERY; otherwise keep
+                        // scanning (mirrors the IN -> VOLUME lookahead below).
+                        final int cleanupPos = lexer.lastTokenPosition();
+                        final CharSequence afterCleanup = optTok(lexer);
+                        if (afterCleanup != null && isEveryKeyword(afterCleanup)) {
+                            lexer.unparseLast(); // hand EVERY back so we parse CLEANUP EVERY below
+                            predicateEnd = cleanupPos;
+                            foundCleanup = true;
+                            break;
+                        }
+                        if (afterCleanup != null) {
+                            lexer.unparseLast();
+                        }
+                    } else if (inCreateTable && (isWithKeyword(tok) || isDedupKeyword(tok) || isDeduplicateKeyword(tok))) {
                         predicateEnd = lexer.lastTokenPosition();
-                        foundCleanup = true;
                         break;
-                    }
-                    if (inCreateTable && (isWithKeyword(tok) || isDedupKeyword(tok) || isDeduplicateKeyword(tok))) {
-                        predicateEnd = lexer.lastTokenPosition();
-                        break;
-                    }
-                    if (inCreateTable && isInKeyword(tok)) {
+                    } else if (inCreateTable && isInKeyword(tok)) {
                         // 'IN' is ambiguous: 'IN VOLUME' ends the predicate, but '<col> IN (...)' is part of
                         // it. Only treat IN as the boundary when it is followed by VOLUME; otherwise it is
                         // predicate content and we keep scanning (the following '(' bumps the paren depth).
@@ -555,7 +567,18 @@ public class SqlParser {
                     depth++;
                 } else if (Chars.equals(tok, ')')) {
                     depth--;
+                    if (depth < 0) {
+                        // An unexpected ')' at depth 0 closes a paren that was never opened: the predicate is
+                        // malformed. Report at the offending ')' rather than swallowing the rest of the clause.
+                        throw SqlException.$(lexer.lastTokenPosition(), "unbalanced parentheses in EXPIRE ROWS predicate");
+                    }
                 }
+            }
+            if (depth != 0) {
+                // Reached the clause boundary / EOF with open parens still pending (e.g. CLEANUP/EOF got
+                // swallowed into the predicate text). Report at the predicate start so the user sees where
+                // the unbalanced expression began.
+                throw SqlException.$(predicateStart, "unbalanced parentheses in EXPIRE ROWS predicate");
             }
 
             final String rawPredicate = Chars.toString(lexer.getContent(), predicateStart, predicateEnd).trim();
@@ -2167,7 +2190,11 @@ public class SqlParser {
             if (enclosedInParentheses) {
                 expectTok(lexer, ')');
             } else {
-                // We expect nothing more when there are no parentheses.
+                // We expect nothing more when there are no parentheses. Trailing clauses such as
+                // EXPIRE ROWS / TIMESTAMP / PARTITION BY / TTL are only recognised when the SELECT is
+                // wrapped in parentheses ("AS ( SELECT ... ) EXPIRE ROWS ..."); without them the SELECT
+                // parser greedily consumes the trailing EXPIRE keyword as a table alias and reports the
+                // following token (ROWS) as unexpected, which still signals the malformed statement.
                 tok = optTok(lexer);
                 if (tok != null && !Chars.equals(tok, ';')) {
                     throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);

@@ -34,6 +34,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
@@ -90,6 +91,87 @@ public class MatViewRowExpiryFuzzTest extends AbstractFuzzTest {
         assertMemoryLeak(() -> {
             final Rnd rnd = generateRandom(LOG);
             runExpiryFuzz(rnd, "expire rows keep latest partition by c2", false);
+        });
+    }
+
+    @Test
+    public void testDeterministicBackfillBetweenScanAndCommitSurvives() throws Exception {
+        // M3 DETERMINISTIC data-loss guard (non-fuzz). The core defense against cleanup deleting a row a
+        // concurrent writer back-filled into a NON-ACTIVE partition since the survivor scan is the SEQUENCER-TXN
+        // GATE: the job attempts reclamation only when the view is FULLY APPLIED at sweep start
+        // (racyOpsAllowed = writerTxn == seqTxn). There is no in-job hook to pause exactly between the survivor
+        // scan and the destructive commit, so instead of racing threads we reproduce the gate's trigger state
+        // DETERMINISTICALLY: we leave the view COMMITTED-BUT-NOT-APPLIED (refresh advances the view's sequencer
+        // txn, but we skip the WAL apply, so writerTxn < seqTxn). A back-filled KEPT row is thus invisible to a
+        // reader-based survivor recount -- exactly the window the gate must cover. Cleanup MUST defer (reclaim
+        // nothing); after we apply the view, the back-filled kept row must SURVIVE and be visible.
+        //
+        // What this CAN force deterministically: the writerTxn<seqTxn precondition that makes the survivor scan
+        // miss a committed back-fill, and the requirement that cleanup not reclaim while in that state.
+        // What it CANNOT force without a hook: the exact instruction-level interleave of scan vs commit on two
+        // threads (the concurrent fuzz test exercises that probabilistically; the M3 no-loss assertion there is
+        // the statistical counterpart).
+        assertMemoryLeak(() -> {
+            final String base = "m3_base";
+            final String view = "m3_mv";
+            execute("create table " + base + " (c2 symbol, c3 double, ts timestamp) timestamp(ts) partition by day wal");
+            // Superseded rows in non-active partitions -> genuinely reclaimable once caught up.
+            execute("insert into " + base + " values " +
+                    "('A', 1.0, '2024-01-01T00:00:00.000000Z')," +   // superseded by A@01-03
+                    "('B', 2.0, '2024-01-02T00:00:00.000000Z')," +   // B latest (non-active)
+                    "('A', 3.0, '2024-01-03T00:00:00.000000Z')");    // A latest (active partition)
+            drainWalAndMatViewQueues();
+            execute("create materialized view " + view + " as (select * from " + base + ") expire rows keep latest partition by c2");
+            drainWalAndMatViewQueues();
+
+            final TableToken viewToken = engine.verifyTableName(view);
+            final String predicate;
+            try (TableMetadata m = engine.getTableMetadata(viewToken)) {
+                predicate = m.getExpiryPredicate();
+            }
+
+            // Sanity: fully applied, and the keep-set (latest per key) is visible.
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(viewToken);
+            Assert.assertEquals("precondition: view fully applied", tracker.getSeqTxn(), tracker.getWriterTxn());
+            assertSql("c2\tc3\nA\t3.0\nB\t2.0\n", "select c2, c3 from " + view + " order by c2");
+
+            // Back-fill a row that becomes a KEPT (latest) row for a NEW key C in a NON-ACTIVE partition
+            // (01-02), then commit it to the VIEW's WAL via refresh but DO NOT apply -> writerTxn < seqTxn.
+            execute("insert into " + base + " values ('C', 9.0, '2024-01-02T12:00:00.000000Z')");
+            drainWalQueue();                 // apply the base insert (base caught up)
+            drainMatViewQueue(engine);       // refresh: commits the back-fill into the VIEW's WAL sequencer...
+            // ...but intentionally NO drainWalQueue() for the view -> the view is committed-but-not-applied.
+
+            Assert.assertTrue(
+                    "back-fill must be committed-but-not-applied on the view (writerTxn < seqTxn)",
+                    tracker.getWriterTxn() < tracker.getSeqTxn()
+            );
+
+            // Run cleanup in this state. The gate must DEFER (racyOpsAllowed=false): no reclamation, so the
+            // committed-but-unapplied kept C row cannot be physically deleted.
+            final boolean reclaimed;
+            try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
+                reclaimed = job.cleanupTable(viewToken, predicate);
+            }
+            Assert.assertFalse("cleanup must defer while the view is not fully applied (M3 gate)", reclaimed);
+
+            // Now apply the view fully and assert the back-filled KEPT row SURVIVED (it was never reclaimed).
+            drainWalAndMatViewQueues();
+            Assert.assertEquals("view now fully applied", tracker.getSeqTxn(), tracker.getWriterTxn());
+            assertSql(
+                    "c2\tc3\nA\t3.0\nB\t2.0\nC\t9.0\n",
+                    "select c2, c3 from " + view + " order by c2"
+            );
+
+            // A subsequent caught-up sweep may now reclaim the genuinely superseded A@01-01 -- but C must remain.
+            try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
+                job.cleanupTable(viewToken, predicate);
+            }
+            drainWalAndMatViewQueues();
+            assertSql(
+                    "c2\tc3\nA\t3.0\nB\t2.0\nC\t9.0\n",
+                    "select c2, c3 from " + view + " order by c2"
+            );
         });
     }
 
@@ -217,19 +299,20 @@ public class MatViewRowExpiryFuzzTest extends AbstractFuzzTest {
         drainWalAndMatViewQueues();
 
         if (concurrentCleanup) {
-            // Robustness only (a concurrent cleanup/back-fill race may have dropped a row, recoverable by a
-            // full refresh): keep-latest must still show ONLY the latest (max-ts) row per key of whatever
-            // physically survived -- no visible row is older than its key's max. This is M1-tolerant (it does
-            // not assume an exact set) and null-key safe, and a read-filter regression would surface stale
-            // rows here. Also confirms the view is queryable post-fuzz.
+            // Fast targeted read-filter probe before the exact comparison below: keep-latest must show ONLY
+            // the latest (max-ts) row per key — no visible row is older than its key's max. Null-key safe.
             assertSql(
                     "stale\n0\n",
                     "select count() stale from (select ts, max(ts) over (partition by c2) mx from " + view + ") where ts < mx"
             );
-            return;
         }
-        // Full correctness: the read-filtered view == the keep-set (latest per c2) of the final base, and the
-        // view answers a battery of query shapes identically to that keep-set.
+        // Full correctness for BOTH paths: the read-filtered view == the keep-set (latest per c2) of the final
+        // base, and the view answers a battery of query shapes identically. The CONCURRENT path holds to the
+        // SAME exact equality (no best-effort relaxation): cleanup and the refresh job are mutually exclusive
+        // per view (both take MatViewState#tryLock(), see RowExpiryCleanupJob#cleanupTable), so a back-fill can
+        // never be dropped between cleanup's survivor scan and its REPLACE_RANGE commit — the otherwise
+        // best-effort commit-window race is closed. The deterministic counterpart is
+        // testDeterministicBackfillBetweenScanAndCommitSurvives (cleanup DEFERS while a write is in flight).
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             TestUtils.assertSqlCursors(
                     compiler,

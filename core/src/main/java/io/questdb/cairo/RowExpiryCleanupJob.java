@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -85,14 +86,15 @@ import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
  * explicitly — a CASE keep-filter for a WHEN predicate, or {@code LATEST ON} for KEEP LATEST — without being
  * re-wrapped.
  * <p>
- * <b>Concurrency (reclamation never deletes a row a concurrent writer back-filled):</b> survivors are computed
- * on a separate handle, so a non-expired row could be back-filled into a non-active partition between the
- * survivor scan and the commit. On a WAL table a recount cannot detect this — the reader sees only APPLIED
- * state, while the back-fill may be committed-but-not-yet-applied. The job therefore gates on the SEQUENCER
- * TRANSACTION: it attempts reclamation only when the table is fully applied at the start (so the survivor scan
- * is complete) and the sequencer txn has not advanced beyond the cleanup's own commits by the moment of each
- * commit; otherwise it DEFERS to the next sweep. The trade-off is that a concurrently-written view defers
- * reclamation until a quiescent sweep. The read filter stays authoritative for VISIBILITY, so an expired row
+ * <b>Concurrency (reclamation never deletes a row a concurrent writer back-filled):</b> the only writers to a
+ * policied view are this job and the materialized-view refresh job, and BOTH guard every view write with the
+ * per-view {@link MatViewState#tryLock()}. {@link #cleanupTable} takes that same lock for the whole sweep, so
+ * cleanup and refresh are mutually exclusive — no back-fill can land between the survivor scan and the
+ * REPLACE_RANGE commit. If a refresh holds the lock, cleanup DEFERS to a later sweep (it is idempotent and on
+ * its own CLEANUP EVERY cadence). As defense-in-depth (and for the degenerate case where no view state exists,
+ * e.g. materialized views disabled), each destructive commit ALSO gates on the SEQUENCER TRANSACTION: it
+ * commits only when the table was fully applied at sweep start and the sequencer txn has not advanced beyond
+ * the cleanup's own commits. The read filter stays authoritative for VISIBILITY regardless, so an expired row
  * is never shown even when reclamation is deferred.
  * <p>
  * A <i>bounds</i> wipe of a logical partition lying wholly below a designated-timestamp threshold ({@code ts <
@@ -149,14 +151,43 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
      * Snapshots non-active LOGICAL partition totals from a reader, classifies each as DROP/REPLACE/SKIP
      * via the keep-filter, then compacts via REPLACE_RANGE and batch-drops fully expired partitions.
      * <p>
-     * Assumes <b>monotonic</b> expiry: a row classified as expired now must stay expired. This holds by
-     * construction for the relative/window modes and for a designated-timestamp predicate (e.g. {@code ts <
-     * now()}). A non-monotonic scalar {@code WHEN} predicate (e.g. {@code ts > now()}, which un-expires future
-     * rows as time advances) is NOT rejected at definition time, but cleanup may then physically delete a row a
-     * later read would show — the read filter stays correct, the deleted row is recoverable only by a full
-     * refresh. See docs/row-expiry.md ("Monotonicity = cleanup safety").
+     * Reclamation requires <b>monotonic</b> expiry: a row classified as expired now must stay expired. This
+     * holds by construction for the relative modes and for a designated-timestamp predicate (e.g. {@code ts <
+     * now()}). A non-monotonic policy (e.g. a scalar {@code WHEN ts > now()}, which un-expires future rows as
+     * time advances) is detected up front via {@link SqlCompiler#isExpiryCleanupMonotonic} and this method
+     * returns early WITHOUT reclaiming — the read filter stays authoritative for visibility, so such a policy
+     * is query-correct but accrues physical residue until a full refresh. See docs/row-expiry.md
+     * ("Monotonicity = cleanup safety").
      */
     public boolean cleanupTable(TableToken tableToken, String predicate) {
+        // Serialize with the materialized-view refresh job. Both this job and refresh write the view through
+        // its WAL writer, and a refresh O3 back-fill into a non-active partition landing between our survivor
+        // scan and our REPLACE_RANGE commit could otherwise be deleted. Refresh guards EVERY view write with
+        // MatViewState#tryLock(); we take the SAME per-view lock for the whole sweep, so cleanup and refresh
+        // are mutually exclusive — no two writers sequence the view concurrently, which closes the otherwise
+        // best-effort commit-window race entirely. If a refresh holds the lock we DEFER to a later sweep
+        // (cleanup is idempotent and on its own CLEANUP EVERY cadence).
+        final MatViewState viewState = engine.getMatViewStateStore().getViewState(tableToken);
+        if (viewState != null) {
+            if (viewState.isDropped() || viewState.isPendingInvalidation() || viewState.isInvalid()) {
+                return false; // view being torn down / not in a refreshable state; skip
+            }
+            if (!viewState.tryLock()) {
+                LOG.debug().$("deferred row-expiry cleanup; view busy [table=").$safe(tableToken.getTableName()).I$();
+                return false;
+            }
+            try {
+                return cleanupTable0(tableToken, predicate);
+            } finally {
+                viewState.unlock();
+            }
+        }
+        // No view state (materialized views disabled, so no policied views exist in practice): fall back to
+        // the per-commit sequencer-txn gate inside cleanupTable0 (still correct, best-effort).
+        return cleanupTable0(tableToken, predicate);
+    }
+
+    private boolean cleanupTable0(TableToken tableToken, String predicate) {
         final String tableName = tableToken.getTableName();
         // KEEP LATEST (relative) policies reclaim via a different survivor query (the global latest-per-key
         // set, intersected with each partition) and have no "<ts> < T" bounds fast-path; a plain WHEN
@@ -181,6 +212,10 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         // Fast-path threshold for a "<ts> < T"/"<ts> <= T" predicate: lets each partition be classified by
         // its [floor, nextFloor) bounds with no survivor scan (LONG_NULL = not applicable -> scan instead).
         long timestampThreshold = Numbers.LONG_NULL;
+        // Whether this policy is monotonic, i.e. physically safe to reclaim (a row expired now stays expired).
+        // A non-monotonic policy (e.g. "ts > now()") would have cleanup delete a row a later read must show;
+        // for such a policy we skip reclamation entirely and let the read filter enforce retention.
+        boolean cleanupMonotonic = false;
 
         // Snapshot non-active LOGICAL partitions. Totals come from the tx file (no column mapping, so
         // parquet partitions are fine), and physical O3 splits of the same logical day are collapsed
@@ -227,15 +262,30 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                 }
             }
 
-            // Resolve the fast-path timestamp threshold once per table (now() was already frozen above).
-            // Only a scalar "<ts> < T" WHEN predicate has a bounds threshold; KEEP LATEST / window modes
-            // always fall to the survivor-count scan.
-            if (!keepLatest && !window && partitionFloors.size() > 0) {
+            // Resolve the cleanup-safety (monotonicity) gate and the fast-path timestamp threshold once per
+            // table (now() was already frozen above). The gate authoritatively decides whether physical
+            // reclamation is safe; only a scalar "<ts> < T" WHEN predicate additionally has a bounds threshold
+            // (KEEP LATEST / window modes always fall to the survivor-count scan).
+            if (partitionFloors.size() > 0) {
+                final String source = "\"" + tableName + "\"";
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                    timestampThreshold = compiler.expiryTimestampThresholdMicros(
-                            sqlExecutionContext, metadata, predicate, timestampColumnName);
+                    cleanupMonotonic = compiler.isExpiryCleanupMonotonic(
+                            sqlExecutionContext, metadata, source, predicate, timestampColumnName);
+                    if (!keepLatest && !window) {
+                        timestampThreshold = compiler.expiryTimestampThresholdMicros(
+                                sqlExecutionContext, metadata, predicate, timestampColumnName);
+                    }
                 }
             }
+        }
+
+        // Non-monotonic policy (e.g. a now()-referencing predicate that does not reduce to a "<ts> < T"
+        // threshold, like "ts > now()"): the background job must NOT physically delete rows it might have to
+        // show again as time advances. The read filter stays authoritative for correctness; here we simply
+        // skip disk reclamation for this policy. (Monotonic policies — relative modes, clock-free predicates,
+        // and "ts < now()"-style thresholds — proceed normally.)
+        if (!cleanupMonotonic) {
+            return false;
         }
 
         boolean workDone = false;

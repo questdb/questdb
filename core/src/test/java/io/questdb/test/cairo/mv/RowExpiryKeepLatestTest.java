@@ -67,9 +67,9 @@ public class RowExpiryKeepLatestTest extends AbstractCairoTest {
             drainWalAndMatViewQueues();
             // The encoded policy is rendered back to a readable clause (no sentinel) in the catalogue.
             assertSql(
-                    "expire_predicate\texpire_cleanup_every\n" +
+                    "expire_clause\texpire_cleanup_every\n" +
                             "KEEP LATEST PARTITION BY k\t30m\n",
-                    "select expire_predicate, expire_cleanup_every from tables() where table_name = 'mv'"
+                    "select expire_clause, expire_cleanup_every from tables() where table_name = 'mv'"
             );
         });
     }
@@ -294,6 +294,60 @@ public class RowExpiryKeepLatestTest extends AbstractCairoTest {
             sink.clear();
             printSql("show create materialized view mv", sink);
             TestUtils.assertContains(sink.toString(), "EXPIRE ROWS KEEP LATEST ON ts PARTITION BY k");
+        });
+    }
+
+    @Test
+    public void testKeepLatestTiedMaxTimestampReadAndCleanupAgree() throws Exception {
+        // TIED max timestamps: key A has TWO rows sharing the SAME max ts, both in NON-active partitions.
+        // The read filter rewrites to LATEST ON ts PARTITION BY k, so it keeps exactly ONE of the tied rows
+        // (LATEST ON breaks the ts tie deterministically). Physical cleanup must use that SAME LATEST ON
+        // survivor query, so the visible set MUST be identical before and after cleanup — they cannot diverge
+        // on which tied row survives. (If cleanup picked the other tied row, the post-cleanup read would show
+        // a different v, or two rows, which this pins.)
+        assertMemoryLeak(() -> {
+            execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into base values " +
+                    // key A: two rows tied at the SAME max ts (01-02), both non-active; plus an older A.
+                    "('A', 1.0, '2024-01-01T00:00:00.000000Z')," +   // older A (superseded)
+                    "('A', 2.0, '2024-01-02T00:00:00.000000Z')," +   // tied-max A (non-active)
+                    "('A', 3.0, '2024-01-02T00:00:00.000000Z')," +   // tied-max A (non-active, same ts)
+                    // key B: single latest in the active partition so cleanup leaves a protected partition.
+                    "('B', 9.0, '2024-01-03T00:00:00.000000Z')");    // latest B (active partition)
+            drainWalAndMatViewQueues();
+            execute("create materialized view mv as (select * from base) expire rows keep latest partition by k");
+            drainWalAndMatViewQueues();
+
+            // Capture the read-filtered visible set BEFORE cleanup. LATEST ON keeps exactly one of the two
+            // tied A rows (one row per key total).
+            sink.clear();
+            printSql("select k, v, ts from mv order by k", sink);
+            final String visibleBefore = sink.toString();
+
+            // Exactly two visible rows (one per key), and exactly one A row despite the tie.
+            assertSql("c\n2\n", "select count() c from mv");
+            assertSql("c\n1\n", "select count() c from mv where k = 'A'");
+
+            // 4 physical rows across 3 partitions before cleanup.
+            assertSql("p\tr\n3\t4\n", "select count() p, sum(numRows) r from table_partitions('mv')");
+
+            final TableToken token = engine.verifyTableName("mv");
+            final String predicate;
+            try (TableMetadata m = engine.getTableMetadata(token)) {
+                predicate = m.getExpiryPredicate();
+            }
+            try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
+                job.cleanupTable(token, predicate);
+            }
+            drainWalAndMatViewQueues();
+
+            // The 01-02 partition is partially expired (one tied A kept, one expired, one older A expired) so it
+            // compacts; the read-filtered set must be byte-identical to the pre-cleanup set — read and cleanup
+            // agree on WHICH tied row survives.
+            sink.clear();
+            printSql("select k, v, ts from mv order by k", sink);
+            Assert.assertEquals("read filter and cleanup must agree on the tied survivor", visibleBefore, sink.toString());
+            assertSql("c\n1\n", "select count() c from mv where k = 'A'");
         });
     }
 

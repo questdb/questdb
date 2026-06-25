@@ -142,9 +142,42 @@ public class RowExpiryFuzzTest extends AbstractCairoTest {
 
     /** Independent oracle: the ids the policy keeps, sorted, formatted as an {@code assertSql} block. */
     private static String expectedIds(Mode mode, int[] id, String[] k, double[] v, boolean[] vNull, long[] ts) {
+        // INDEPENDENT formulation for the keep-max/min/window modes: compute each group's extreme in a
+        // SEPARATE precomputation pass (a plain max/min reduction over the non-null values per group), then
+        // keep a row iff (value IS NULL OR value == extreme). This deliberately does NOT reuse the SUT's
+        // "v < max(v) over (...)" predicate shape -- a shared spec bug (e.g. NULL handling) would not be
+        // hidden by the oracle mirroring the implementation. For the global mode the group is the empty key.
+        final java.util.Map<String, Double> extreme;
+        switch (mode) {
+            case KEEP_MAX:
+            case WINDOW_WHEN:
+                extreme = groupExtreme(k, v, vNull, true, true);
+                break;
+            case KEEP_MAX_GLOBAL:
+                extreme = groupExtreme(k, v, vNull, true, false);
+                break;
+            case KEEP_MIN:
+                extreme = groupExtreme(k, v, vNull, false, true);
+                break;
+            default:
+                extreme = null;
+        }
+
         final List<Integer> kept = new ArrayList<>();
         for (int i = 0; i < id.length; i++) {
-            if (keeps(mode, i, k, v, vNull, ts)) {
+            final boolean keep;
+            if (extreme != null) {
+                // value IS NULL OR value == the independently-computed per-group extreme.
+                if (vNull[i]) {
+                    keep = true;
+                } else {
+                    final Double e = extreme.get(keyForExtreme(mode, k[i]));
+                    keep = e != null && v[i] == e;
+                }
+            } else {
+                keep = keeps(mode, i, k, v, vNull, ts);
+            }
+            if (keep) {
                 kept.add(id[i]);
             }
         }
@@ -154,6 +187,29 @@ public class RowExpiryFuzzTest extends AbstractCairoTest {
             sb.append(x).append('\n');
         }
         return sb.toString();
+    }
+
+    // The grouping key for the extreme lookup: the row's key for partitioned modes, a single shared bucket
+    // ("") for the global mode.
+    private static String keyForExtreme(Mode mode, String key) {
+        return mode == Mode.KEEP_MAX_GLOBAL ? "" : key;
+    }
+
+    // Independent per-group extreme: a straight max (or min) reduction over the NON-NULL values, bucketed by
+    // key (or a single "" bucket when {@code partitioned} is false). No reference to the SUT predicate.
+    private static java.util.Map<String, Double> groupExtreme(String[] k, double[] v, boolean[] vNull, boolean max, boolean partitioned) {
+        final java.util.Map<String, Double> m = new java.util.HashMap<>();
+        for (int i = 0; i < v.length; i++) {
+            if (vNull[i]) {
+                continue;
+            }
+            final String key = partitioned ? k[i] : "";
+            final Double cur = m.get(key);
+            if (cur == null || (max ? v[i] > cur : v[i] < cur)) {
+                m.put(key, v[i]);
+            }
+        }
+        return m;
     }
 
     private static boolean keeps(Mode mode, int i, String[] k, double[] v, boolean[] vNull, long[] ts) {
@@ -166,41 +222,9 @@ public class RowExpiryFuzzTest extends AbstractCairoTest {
                     }
                 }
                 return true;
-            case KEEP_MAX:
-            case WINDOW_WHEN: {
-                // keep where v IS NULL OR v == max(non-null v in the key) (CASE/3VL: NULLs always kept).
-                if (vNull[i]) {
-                    return true;
-                }
-                for (int j = 0; j < v.length; j++) {
-                    if (k[j].equals(k[i]) && !vNull[j] && v[j] > v[i]) {
-                        return false;
-                    }
-                }
-                return true;
-            }
-            case KEEP_MAX_GLOBAL: {
-                if (vNull[i]) {
-                    return true;
-                }
-                for (int j = 0; j < v.length; j++) {
-                    if (!vNull[j] && v[j] > v[i]) {
-                        return false;
-                    }
-                }
-                return true;
-            }
-            case KEEP_MIN: {
-                if (vNull[i]) {
-                    return true;
-                }
-                for (int j = 0; j < v.length; j++) {
-                    if (k[j].equals(k[i]) && !vNull[j] && v[j] < v[i]) {
-                        return false;
-                    }
-                }
-                return true;
-            }
+            // KEEP_MAX / WINDOW_WHEN / KEEP_MAX_GLOBAL / KEEP_MIN are handled by the INDEPENDENT
+            // precomputed-extreme path in expectedIds (value IS NULL OR value == separately-computed extreme),
+            // deliberately NOT by a "no greater j" predicate that would mirror the SUT's v < max(v) rule.
             case TOP_N: {
                 // keep the top 2 per key by (v desc, ts desc); NULL-free in this mode.
                 int better = 0;

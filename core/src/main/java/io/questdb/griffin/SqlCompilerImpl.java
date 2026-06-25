@@ -4261,6 +4261,18 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         final RecordMetadata metadata = newFactory.getMetadata();
                         try (TableReader baseReader = engine.getReader(createMatViewOp.getBaseTableName())) {
                             createMatViewOp.validateAndUpdateMetadataFromSelect(metadata, baseReader.getMetadata(), newFactory.getScanDirection());
+                            // A materialized view must not derive from a base that itself carries an EXPIRE ROWS
+                            // policy. Refresh reads the RAW base (the read filter is disabled during refresh to
+                            // avoid folding the base's expiry / hitting now() non-determinism), so the base's
+                            // expired-but-not-yet-reclaimed rows would be copied into this view. Forbid it
+                            // rather than silently leak expired rows across the view chain.
+                            final CharSequence basePredicate = baseReader.getMetadata().getExpiryPredicate();
+                            if (basePredicate != null && basePredicate.length() > 0) {
+                                throw SqlException.$(createMatViewOp.getTableNamePosition(),
+                                                "cannot create a materialized view over '")
+                                        .put(createMatViewOp.getBaseTableName())
+                                        .put("': the base carries an EXPIRE ROWS policy (a view over a policied view would copy expired rows on refresh)");
+                            }
                         }
                         // Reject a bad EXPIRE ROWS policy before the view exists.
                         validateCreateMatViewExpiryPolicy(executionContext, createMatViewOp, createTableOp, metadata);
@@ -5246,7 +5258,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     protected void alterTableDropExpire(TableToken tableToken, int tableNamePosition, TableRecordMetadata tableMetadata) throws SqlException {
-        final CharSequence tok = SqlUtil.fetchNext(lexer);
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+        // Accept an optional ROWS keyword so DROP EXPIRE and DROP EXPIRE ROWS are both valid, symmetric with
+        // SET EXPIRE ROWS.
+        if (tok != null && isRowsKeyword(tok)) {
+            tok = SqlUtil.fetchNext(lexer);
+        }
         if (tok != null && !isSemicolon(tok)) {
             throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("] while trying to drop row-expiry policy");
         }
@@ -5289,11 +5306,25 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         if (def == null || !def.isPassthrough()) {
             throw SqlException.$(tableNamePosition, "EXPIRE ROWS is only supported on passthrough (non-aggregating) materialized views");
         }
+        // A view that other materialized views derive from must not gain an EXPIRE policy: those dependents
+        // read this view's RAW rows on refresh (the read filter is disabled then), so they would copy rows
+        // this policy expires. Reject rather than leak expired rows downstream. (The forward direction —
+        // CREATE a view over an already-policied base — is rejected at create time.)
+        final ObjList<TableToken> dependents = new ObjList<>();
+        engine.getMatViewGraph().getDependentViews(tableToken, dependents);
+        if (dependents.size() > 0) {
+            throw SqlException.$(tableNamePosition, "cannot set an EXPIRE ROWS policy on '")
+                    .put(tableToken.getTableName())
+                    .put("': it is the base of ").put(dependents.size())
+                    .put(" materialized view(s), which would copy expired rows on refresh");
+        }
         if (RowExpiryUtil.isKeepLatest(clause.predicate) || RowExpiryUtil.isKeepBy(clause.predicate) || RowExpiryUtil.isWindow(clause.predicate)) {
             validateAlterRelativePolicy(executionContext, tableToken, tableMetadata, clause.predicate, clause.predicatePos);
         } else {
             validateExpiryPredicate(executionContext, tableToken, clause.predicate, clause.predicatePos);
         }
+        warnIfNonMonotonicExpiry(executionContext, tableMetadata, "\"" + tableToken.getTableName() + "\"",
+                clause.predicate, tsName(tableMetadata), tableToken.getTableName());
         final AlterOperationBuilder setExpire = alterOperationBuilder.ofSetExpire(
                 tableNamePosition,
                 tableToken,
@@ -5392,9 +5423,37 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             // Validate by compiling the projection-CASE keep query against the view's defining SELECT (the
             // view does not exist yet); this validates the window predicate, its columns and types.
             validateWindowPolicy(executionContext, "(" + createTableOp.getSelectText() + ")", tsName(selectMetadata), predicate, pos);
+            warnIfNonMonotonicExpiry(executionContext, selectMetadata, "(" + createTableOp.getSelectText() + ")", predicate, tsName(selectMetadata), createTableOp.getTableName());
             return;
         }
         validateCreateExpiryPredicate(executionContext, createTableOp, selectMetadata);
+        warnIfNonMonotonicExpiry(executionContext, selectMetadata, "(" + createTableOp.getSelectText() + ")", predicate, tsName(selectMetadata), createTableOp.getTableName());
+    }
+
+    /**
+     * Logs an advisory when an EXPIRE ROWS policy is non-monotonic — query-correct (the read filter is
+     * authoritative) but its disk will NOT be reclaimed by the background cleanup job (cleanup is skipped to
+     * avoid deleting a row a later read would show; see {@link #isExpiryCleanupMonotonic}). Runs on a
+     * separately-borrowed compiler so it cannot disturb the in-flight CREATE/ALTER lexer/parser state.
+     */
+    private void warnIfNonMonotonicExpiry(
+            SqlExecutionContext executionContext,
+            RecordMetadata metadata,
+            CharSequence source,
+            CharSequence predicate,
+            CharSequence timestampColumn,
+            CharSequence objectName
+    ) {
+        final boolean monotonic;
+        try (SqlCompiler vc = engine.getSqlCompiler()) {
+            monotonic = vc.isExpiryCleanupMonotonic(executionContext, metadata, source, predicate, timestampColumn);
+        } catch (Throwable th) {
+            return; // advisory only; never fail the DDL because the monotonicity probe could not run
+        }
+        if (!monotonic) {
+            LOG.advisory().$("EXPIRE ROWS policy is non-monotonic; reads stay correct but physical cleanup is skipped (disk is not reclaimed) [view=")
+                    .$safe(objectName).I$();
+        }
     }
 
     /**
@@ -5612,6 +5671,72 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
         }
         return false;
+    }
+
+    @Override
+    public boolean isExpiryCleanupMonotonic(
+            SqlExecutionContext executionContext,
+            RecordMetadata metadata,
+            CharSequence source,
+            CharSequence predicate,
+            CharSequence timestampColumn
+    ) {
+        if (predicate == null) {
+            return false;
+        }
+        // KEEP LATEST / KEEP [N] HIGHEST/LOWEST are structural: their keep-set is determined by other
+        // (immutable) rows in the same group, and rows only ever arrive (append-only), so a row that drops
+        // out of the keep-set never re-enters it. Monotonic by construction; no clock involved.
+        if (RowExpiryUtil.isKeepLatest(predicate) || RowExpiryUtil.isKeepBy(predicate)) {
+            return true;
+        }
+        final boolean windowMode = RowExpiryUtil.isWindow(predicate);
+        if (!windowMode) {
+            // A recognised "<ts> < T" / "<ts> <= T" threshold (T column-free, possibly now()-based) is
+            // monotonic: T is non-decreasing as now() advances, so the expired set only grows.
+            if (expiryTimestampThresholdMicros(executionContext, metadata, predicate, timestampColumn) != Numbers.LONG_NULL) {
+                return true;
+            }
+        }
+        // Otherwise safe iff the effective predicate is CLOCK-FREE (deterministic). Mat-view rows are
+        // immutable, so a deterministic predicate's value for a given row never changes -> a row classified
+        // expired stays expired. We prove "clock-free" by binding with non-deterministic functions DISABLED:
+        // a reference to now()/systimestamp()/etc. (or any non-deterministic function) makes the bind throw,
+        // which we treat as non-monotonic. Any other failure also returns false (conservative -> skip cleanup).
+        final CharSequence effective = windowMode ? RowExpiryUtil.windowPredicate(predicate, timestampColumn) : predicate;
+        if (effective == null) {
+            return false;
+        }
+        final boolean ogAllowNonDeterministic = executionContext.allowNonDeterministicFunctions();
+        executionContext.setAllowNonDeterministicFunction(false);
+        try {
+            if (windowMode) {
+                // A window predicate must be compiled as a SELECT (window functions need a query context).
+                final String sql = "SELECT * FROM (SELECT *, CASE WHEN (" + effective + ") THEN false ELSE true END "
+                        + RowExpiryUtil.KEEP_COLUMN + " FROM " + source + ") WHERE " + RowExpiryUtil.KEEP_COLUMN + " LIMIT 0";
+                try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                    try (RecordCursorFactory factory = compiler.compile(sql, executionContext).getRecordCursorFactory()) {
+                        try (RecordCursor cursor = factory.getCursor(executionContext)) {
+                            cursor.hasNext();
+                        }
+                    }
+                }
+            } else {
+                Function f = null;
+                try {
+                    clear();
+                    lexer.of(effective);
+                    f = functionParser.parseFunction(parser.expr(lexer, (QueryModel) null, this), metadata, executionContext);
+                } finally {
+                    Misc.free(f);
+                }
+            }
+            return true;
+        } catch (Exception e) {
+            return false;
+        } finally {
+            executionContext.setAllowNonDeterministicFunction(ogAllowNonDeterministic);
+        }
     }
 
     @Override
