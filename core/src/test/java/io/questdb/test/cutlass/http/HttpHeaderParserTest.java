@@ -279,6 +279,19 @@ public class HttpHeaderParserTest {
     }
 
     @Test
+    public void testContentTypeReuseClearsCharset() {
+        try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
+            parse(hp, "Content-Type: text/html; charset=utf-8\r\n\r\n", false, false);
+            TestUtils.assertEquals("utf-8", hp.getCharset());
+
+            hp.clear();
+            parse(hp, "Content-Type: text/plain\r\n\r\n", false, false);
+            TestUtils.assertEquals("text/plain", hp.getContentType());
+            Assert.assertNull(hp.getCharset());
+        }
+    }
+
+    @Test
     public void testCookieError() {
         assertMalformedCookieIgnored(
                 "Set-Cookie: =123; Domain=hello.com; Path=/; Secure; Partitioned; HttpOnly; Max-Age=1234545; SameSite=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n"
@@ -533,6 +546,27 @@ public class HttpHeaderParserTest {
 
         } finally {
             Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testCookiesReuseClearsMappedCookies() {
+        final Utf8String cookieName = new Utf8String("id");
+
+        try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
+            parse(
+                    hp,
+                    "GET /ok HTTP/1.1\r\n" +
+                            "Set-Cookie: id=123; Path=/\r\n" +
+                            "\r\n",
+                    true,
+                    false
+            );
+            Assert.assertNotNull(hp.getCookie(cookieName));
+
+            hp.clear();
+            parse(hp, "GET /ok HTTP/1.1\r\n\r\n", true, false);
+            Assert.assertNull(hp.getCookie(cookieName));
         }
     }
 
@@ -1015,6 +1049,15 @@ public class HttpHeaderParserTest {
 
         } finally {
             Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    private static void parse(HttpHeaderParser hp, String headers, boolean request, boolean protocol) {
+        long p = TestUtils.toMemory(headers);
+        try {
+            hp.parse(p, p + headers.length(), request, protocol);
+        } finally {
+            Unsafe.free(p, headers.length(), MemoryTag.NATIVE_DEFAULT);
         }
     }
 

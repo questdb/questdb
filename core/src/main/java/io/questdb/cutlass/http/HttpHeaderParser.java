@@ -120,6 +120,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
         this.query = null;
         this.headerName = null;
         this.contentType = null;
+        this.charset = null;
         this.boundary = null;
         this.contentDisposition = null;
         this.contentDispositionName = null;
@@ -139,7 +140,9 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
         this.contentLength = -1;
         this.cookieList.clear();
         this.cookiePool.clear();
+        this.cookies.clear();
         this.ignoredCookieCount = 0;
+        this.sink.clear();
         // do not clear the pool
         // this.pool.clear();
     }
@@ -347,6 +350,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
             this.hi = headerPtr + bufferSize;
         }
         boundaryAugmenter.reopen();
+        sink.reopen();
     }
 
     public int size() {
