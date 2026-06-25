@@ -324,17 +324,13 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
     }
 
     /**
-     * Computes the upper timestamp bound (in master timestamp units) for building
-     * the per-symbol slave index. {@link #INDEX_LOOKAHEAD} prefetches slave rows
-     * past the current master row's window so later master rows can reuse the
-     * in-memory index without a rebuild. The prefetch must never pull this bound
-     * below the window's own upper bound ({@code masterTimestamp + windowHi}):
-     * that happens when {@code windowHi} is negative -- the whole window lies in
-     * the master row's past, e.g. {@code RANGE BETWEEN 4 HOURS PRECEDING AND 2
-     * HOURS PRECEDING} -- and would leave the window's most recent slave rows out
-     * of the index, undercounting the aggregate. Clamping to {@code windowHi}
-     * keeps the index covering at least the full window, at the cost of a per-row
-     * index rebuild for such past-only windows (which are rare).
+     * Upper timestamp bound for building the per-symbol slave index.
+     * {@link #INDEX_LOOKAHEAD} prefetches rows past the window so later master rows
+     * can reuse the index, but must not fall below the window's own upper bound
+     * ({@code masterTimestamp + windowHi}). A negative {@code windowHi} -- a
+     * past-only window, e.g. {@code 4 HOURS PRECEDING AND 2 HOURS PRECEDING} --
+     * would do exactly that and drop the window's most recent rows, so clamp to
+     * {@code windowHi}.
      */
     private static long indexLookaheadHi(long masterTimestamp, long windowHi) {
         return masterTimestamp + Math.max(windowHi * INDEX_LOOKAHEAD, windowHi);
