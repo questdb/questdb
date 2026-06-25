@@ -206,6 +206,10 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         int commitMode = configuration.getCommitMode();
         if (commitMode != CommitMode.NOSYNC) {
             txnMem.sync(commitMode == CommitMode.ASYNC);
+            // ADAPTIVE: make the V1 sequencer header durable.
+            if (commitMode == CommitMode.ADAPTIVE) {
+                ff.fdatasync(txnMem.getFd());
+            }
         }
     }
 
