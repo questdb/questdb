@@ -903,7 +903,7 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
                 serverMain.awaitTable("cs");
 
                 LongList rows = new LongList();
-                String conf = "ws::addr=127.0.0.1:" + HTTP_PORT + ";path=/read/v1;client_id=conf-test/1.0;buffer_pool_size=2;";
+                String conf = "ws::addr=127.0.0.1:" + HTTP_PORT + ";client_id=conf-test/1.0;buffer_pool_size=2;";
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(conf)) {
                     client.connect();
                     client.execute("SELECT x FROM cs ORDER BY x", new QwpColumnBatchHandler() {

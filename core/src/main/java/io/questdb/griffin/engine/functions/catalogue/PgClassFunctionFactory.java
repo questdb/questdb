@@ -38,6 +38,7 @@ import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cutlass.pgwire.PGOids;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
@@ -147,7 +148,7 @@ public class PgClassFunctionFactory implements FunctionFactory {
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
-            cursor.of(executionContext.getCairoEngine());
+            cursor.of(executionContext.getCairoEngine(), executionContext.getCircuitBreaker());
             cursor.toTop();
             return cursor;
         }
@@ -175,6 +176,7 @@ public class PgClassFunctionFactory implements FunctionFactory {
         private final DelegatingRecord record = new DelegatingRecord();
         private final PgClassRecordCursor.StaticReadingRecord staticReadingRecord = new PgClassRecordCursor.StaticReadingRecord();
         private final ObjHashSet<TableToken> tableBucket = new ObjHashSet<>();
+        private SqlExecutionCircuitBreaker circuitBreaker;
         private CairoEngine engine;
         private int fixedRelPos = -1;
         private int tableIndex = -1;
@@ -218,6 +220,7 @@ public class PgClassFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean hasNext() {
+            circuitBreaker.statefulThrowExceptionIfTripped();
             if (++fixedRelPos < fixedClassLen) {
                 return true;
             }
@@ -237,8 +240,9 @@ public class PgClassFunctionFactory implements FunctionFactory {
             return true;
         }
 
-        public void of(CairoEngine engine) {
+        public void of(CairoEngine engine, SqlExecutionCircuitBreaker circuitBreaker) {
             this.engine = engine;
+            this.circuitBreaker = circuitBreaker;
         }
 
         @Override

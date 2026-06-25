@@ -40,6 +40,7 @@ import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.griffin.FunctionFactory;
@@ -175,11 +176,12 @@ public class TablesFunctionFactory implements FunctionFactory {
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
+            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
             final CairoEngine engine = executionContext.getCairoEngine();
             // Reconciles against the table registry before snapshotting, so the
             // catalogue is complete even mid startup hydration.
             tableCacheVersion = engine.getMetadataCache().snapshot(tableCache, tableCacheVersion);
-            cursor.of(engine.getRecentWriteTracker(), engine.getTableSequencerAPI());
+            cursor.of(engine.getRecentWriteTracker(), engine.getTableSequencerAPI(), executionContext.getCircuitBreaker());
             cursor.toTop();
             return cursor;
         }
@@ -202,6 +204,7 @@ public class TablesFunctionFactory implements FunctionFactory {
         private static class TablesRecordCursor implements NoRandomAccessRecordCursor {
             private final TableListRecord record = new TableListRecord();
             private final CharSequenceObjMap<CairoTable> tableCache;
+            private SqlExecutionCircuitBreaker circuitBreaker;
             private int iteratorIdx = -1;
             private int iteratorLim;
             private RecentWriteTracker recentWriteTracker;
@@ -223,6 +226,7 @@ public class TablesFunctionFactory implements FunctionFactory {
 
             @Override
             public boolean hasNext() {
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 if (iteratorIdx < iteratorLim) {
                     record.of(tableCache.getAt(++iteratorIdx), recentWriteTracker, tableSequencerAPI);
                     return true;
@@ -230,9 +234,10 @@ public class TablesFunctionFactory implements FunctionFactory {
                 return false;
             }
 
-            public void of(RecentWriteTracker recentWriteTracker, TableSequencerAPI tableSequencerAPI) {
+            public void of(RecentWriteTracker recentWriteTracker, TableSequencerAPI tableSequencerAPI, SqlExecutionCircuitBreaker circuitBreaker) {
                 this.recentWriteTracker = recentWriteTracker;
                 this.tableSequencerAPI = tableSequencerAPI;
+                this.circuitBreaker = circuitBreaker;
                 // can is refreshed every time cursor is refreshed
                 this.iteratorLim = tableCache.size() - 1;
             }

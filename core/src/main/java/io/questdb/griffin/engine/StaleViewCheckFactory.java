@@ -94,6 +94,9 @@ public class StaleViewCheckFactory implements RecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        // Consult the breaker once at open, so a view read whose base cursor is served from a cached
+        // result (and therefore performs no per-frame checks) still observes cancellation.
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
         for (int i = 0, n = viewTokens.length; i < n; i++) {
             var token = viewTokens[i];
             long txn = viewTxns[i];
