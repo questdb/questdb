@@ -224,7 +224,7 @@ public class LiveViewInMemReadTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testModeBDisabledForSymbolColumn() throws Exception {
+    public void testModeBEnabledForSymbolColumn() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
@@ -241,23 +241,116 @@ public class LiveViewInMemReadTest extends AbstractCairoTest {
 
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
-            // The tier is allocated (SYMBOL stores as INT), but the read path must
-            // route disk-only: the tier holds WAL-segment-local symbol ids that the
-            // disk reader's symbol table cannot resolve.
-            Assert.assertNotNull("tier is still allocated for SYMBOL schemas", instance.getInMemoryTier());
-            try (
-                    RecordCursorFactory factory = select("SELECT * FROM lv");
-                    LiveViewRecordCursor cursor = openLvCursor(factory)
-            ) {
-                Assert.assertFalse("SYMBOL output must not be routing-eligible", cursor.isRoutingEligible());
-            }
-            // The disk-only path resolves symbols correctly.
+            Assert.assertNotNull("tier allocated for SYMBOL schemas", instance.getInMemoryTier());
+
+            // The refresh worker rewrote the tier's segment-local symbol ids with
+            // LV-table-space ids after apply, so Mode B engages and the in-mem
+            // branch resolves the SYMBOL against the disk reader's symbol table.
+            InnerRead modeB = readInner("SELECT * FROM lv");
+            Assert.assertTrue("SYMBOL output must be routing-eligible", modeB.routingEligible);
+            Assert.assertEquals("every row served from the in-mem tier", 2, modeB.inMemRowsServed);
+
+            assertModeBMatchesDiskOnly("SELECT * FROM lv");
             assertQuery("SELECT * FROM lv")
                     .timestamp("ts")
                     .expectSize()
                     .returns("ts\tg\trn\n" +
                             "2026-05-12T00:00:00.000001Z\taa\t1\n" +
                             "2026-05-12T00:00:00.000002Z\tbb\t2\n");
+        });
+    }
+
+    @Test
+    public void testModeBSymbolIdsAreLvSpaceNotSegmentLocal() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, g SYMBOL, keep INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            // The WHERE drops the first 'aa' row, so the LV first sees 'bb' then
+            // 'aa'. LV-table symbol ids (bb=0, aa=1) are therefore the reverse of
+            // the base segment's first-appearance ids (aa=0, bb=1). A tier that
+            // stored the base segment-local id would resolve both symbols to the
+            // wrong string; storing LV-space ids is what makes Mode B == disk-only.
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m AS " +
+                    "SELECT ts, g, row_number() OVER () AS rn FROM base WHERE keep > 0");
+            execute("INSERT INTO base (ts, g, keep) VALUES " +
+                    "('2026-05-12T00:00:00.000001Z', 'aa', 0), " +
+                    "('2026-05-12T00:00:00.000002Z', 'bb', 1), " +
+                    "('2026-05-12T00:00:00.000003Z', 'aa', 1)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            InnerRead modeB = readInner("SELECT * FROM lv");
+            Assert.assertTrue("SYMBOL output must be routing-eligible", modeB.routingEligible);
+            Assert.assertEquals("both surviving rows served from the tier", 2, modeB.inMemRowsServed);
+
+            // With segment-local ids the two symbols would print swapped; the
+            // oracle and the explicit expectation both pin the correct strings.
+            assertModeBMatchesDiskOnly("SELECT * FROM lv");
+            assertQuery("SELECT * FROM lv")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tg\trn\n" +
+                            "2026-05-12T00:00:00.000002Z\tbb\t1\n" +
+                            "2026-05-12T00:00:00.000003Z\taa\t2\n");
+        });
+    }
+
+    @Test
+    public void testModeBSymbolSurvivesO3Rebuild() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, g SYMBOL, keep INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // Pin the CREATE clock below the data so the non-backfill floor admits
+            // the back-dated O3 row.
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 30m AS " +
+                    "SELECT ts, g, row_number() OVER () AS rn FROM base WHERE keep > 0");
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Cycle 1: the dropped 'aa' row again reverses base vs LV symbol
+                // order, so the normal-cycle translation is under test, not just
+                // an identity mapping.
+                execute("INSERT INTO base (ts, g, keep) VALUES " +
+                        "('2026-05-12T00:00:01.000000Z', 'aa', 0), " +
+                        "('2026-05-12T00:00:02.000000Z', 'bb', 1), " +
+                        "('2026-05-12T00:00:03.000000Z', 'aa', 1)");
+                drainWalQueue();
+                setCurrentMicros(250_000L);
+                drainJob(job);
+                drainWalQueue();
+
+                // O3: a back-dated row carrying a fresh symbol forces a head-miss
+                // replay (REPLACE_RANGE) that rewrites the LV table and rebuilds
+                // the in-mem tier from disk (LV-space ids by construction).
+                instance.setLastFlushTimeUs(Numbers.LONG_NULL);
+                execute("INSERT INTO base (ts, g, keep) VALUES ('2026-05-12T00:00:00.000000Z', 'cc', 1)");
+                drainWalQueue();
+                setCurrentMicros(500_000L);
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            // The rebuilt tier serves Mode B and resolves every symbol correctly.
+            // The rebuild reads LV-space ids straight from the rewritten LV table,
+            // so this is end-to-end O3 + SYMBOL + Mode B regression coverage (the
+            // normal-cycle translation is pinned separately by
+            // testModeBSymbolIdsAreLvSpaceNotSegmentLocal).
+            InnerRead modeB = readInner("SELECT * FROM lv");
+            Assert.assertTrue("post-O3 cursor must regain Mode B", modeB.routingEligible);
+            Assert.assertTrue("rebuilt tier serves in-mem rows", modeB.inMemRowsServed > 0);
+
+            assertModeBMatchesDiskOnly("SELECT * FROM lv");
+            assertQuery("SELECT ts, g, rn FROM lv ORDER BY ts")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tg\trn\n" +
+                            "2026-05-12T00:00:00.000000Z\tcc\t1\n" +
+                            "2026-05-12T00:00:02.000000Z\tbb\t2\n" +
+                            "2026-05-12T00:00:03.000000Z\taa\t3\n");
         });
     }
 

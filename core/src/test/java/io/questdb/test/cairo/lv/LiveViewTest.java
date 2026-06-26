@@ -550,20 +550,21 @@ public class LiveViewTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (sym SYMBOL, price DOUBLE, ts TIMESTAMP) " +
                     "TIMESTAMP(ts) PARTITION BY HOUR WAL");
-            // A SYMBOL output column routes disk-only (the tier holds
-            // WAL-segment-local symbol ids), so inMemory is false here.
+            // A SYMBOL output column is routable: the refresh worker stores
+            // LV-table-space symbol ids the disk reader resolves on read, and the
+            // rest of the schema is fixed-width on a forward, ts-bearing scan, so
+            // inMemory is true here.
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
                     "SELECT sym, price, ts, row_number() OVER w AS rn FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')");
             assertQuery("SELECT * FROM lv").noLeakCheck().assertsPlan("LiveView\n" +
                     "  view: lv\n" +
-                    "  inMemory: false\n" +
+                    "  inMemory: true\n" +
                     "    PageFrame\n" +
                     "        Row forward scan\n" +
                     "        Frame forward scan on: lv\n");
-            // The same view projected without the SYMBOL column is all
-            // fixed-width and timestamp-bearing on a forward scan, so the read's
-            // shape permits Mode B routing: inMemory is true.
+            // A fixed-width, timestamp-bearing view on a forward scan also
+            // permits Mode B routing: inMemory is true.
             execute("CREATE LIVE VIEW lv_fixed FLUSH EVERY 1s AS " +
                     "SELECT price, ts, row_number() OVER w AS rn FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')");

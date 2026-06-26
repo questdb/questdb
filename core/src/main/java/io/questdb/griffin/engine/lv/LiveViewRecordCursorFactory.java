@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.lv;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.lv.LiveViewInMemoryBuffer;
 import io.questdb.cairo.lv.LiveViewInstance;
@@ -171,10 +170,10 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
      *   disk-only;</li>
      *   <li>the projection keeps the timestamp ({@code timestampColumnIndex >= 0})
      *   - a timestamp-pruned read (e.g. an aggregate over the LV) cannot seam;</li>
-     *   <li>every projected column is a fixed-width, non-SYMBOL type the tier can
-     *   both store and resolve on read - a var-length column means no tier, and a
-     *   SYMBOL column holds WAL-segment-local ids unresolvable against the disk
-     *   reader, so either routes disk-only.</li>
+     *   <li>every projected column is a fixed-width type the tier can store - a
+     *   var-length column means no tier, so it routes disk-only. SYMBOL columns
+     *   are fine: the refresh worker stores LV-table-space ids the disk reader
+     *   resolves on read.</li>
      * </ul>
      * A {@code true} result is a capability flag, not a guarantee: a static plan
      * cannot see the runtime seqTxn fence, the tier's population state, a
@@ -190,9 +189,7 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
         }
         final RecordMetadata metadata = base.getMetadata();
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            final int columnType = metadata.getColumnType(i);
-            if (ColumnType.tagOf(columnType) == ColumnType.SYMBOL
-                    || !LiveViewInMemoryBuffer.isColumnTypeSupported(columnType)) {
+            if (!LiveViewInMemoryBuffer.isColumnTypeSupported(metadata.getColumnType(i))) {
                 return false;
             }
         }

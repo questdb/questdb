@@ -169,6 +169,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // Memory-tagged NATIVE_LIVE_VIEW_IN_MEM via LiveViewInMemoryBuffer.
     private LiveViewInMemoryBuffer stagingBuffer;
     private final IntList stagingColumnTypes = new IntList();
+    // True when the current LV's output schema carries at least one SYMBOL
+    // column. The in-loop staging population stores the base WAL-segment-local
+    // symbol id (record.getInt), which the disk reader's symbol table cannot
+    // resolve; when this is set, the normal cycle rewrites those columns with
+    // LV-table-space ids read back from disk after apply (see
+    // translateStagingSymbolsToLvSpace). Recomputed each cycle in
+    // ensureStagingAndTier.
+    private boolean stagingHasSymbol;
     private int stagingTimestampColumnIndex = -1;
     private final LiveViewStateStore stateStore;
     // Reusable shape buffer for ensureStagingAndTier — alpha-ordered alongside
@@ -802,6 +810,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 persistState(instance);
             }
             if (lvConsumedPersisted && populateTier && appendedRows > 0) {
+                if (stagingHasSymbol) {
+                    // The staging buffer holds base WAL-segment-local symbol ids
+                    // (record.getInt during the row loop); rewrite the SYMBOL
+                    // columns with LV-table-space ids read back from the
+                    // just-applied disk rows so Mode B can resolve them against
+                    // the disk reader's symbol table. Done before publish so both
+                    // the fast-path append and the slow-path swap copy LV-space
+                    // ids into the slot.
+                    translateStagingSymbolsToLvSpace(instance, appendedRows);
+                }
                 // Slow-path swap: copy retained rows from the published
                 // slot, append staging on top, publishSwap. Failure to acquire
                 // the write slot is a non-fatal stall — the on-disk tier still
@@ -2304,6 +2322,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         if (instance.getInMemoryTier() == null) {
             instance.setInMemoryTier(new LiveViewInMemoryTier(tierColumnTypes, tsColIdx, pageSize));
         }
+        // Note whether the schema carries a SYMBOL column. If so the normal
+        // cycle must translate the staging buffer's segment-local symbol ids to
+        // LV-table-space ids (read back from disk after apply) before publishing.
+        boolean hasSymbol = false;
+        for (int i = 0, n = tierColumnTypes.size(); i < n; i++) {
+            if (ColumnType.tagOf(tierColumnTypes.getQuick(i)) == ColumnType.SYMBOL) {
+                hasSymbol = true;
+                break;
+            }
+        }
+        stagingHasSymbol = hasSymbol;
         return true;
     }
 
@@ -2713,6 +2742,72 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     throw new UnsupportedOperationException(
                             "live view in-memory tier does not support column type: "
                                     + ColumnType.nameOf(stagingColumnTypes.getQuick(c)));
+            }
+        }
+    }
+
+    /**
+     * Rewrites the staging buffer's SYMBOL columns with LV-table-space symbol
+     * ids, read back from the just-applied disk rows.
+     * <p>
+     * The in-loop staging population stores {@code record.getInt(symCol)}, which
+     * is a <b>base WAL-segment-local</b> symbol id (the staging record reads the
+     * base table's WAL segment). The disk write path re-interns the value into
+     * the LV table's own symbol space, possibly assigning a different id (see
+     * {@code TableWriter.createWalSymbolMapping}). A query resolves SYMBOL ids
+     * against the disk reader's (LV-table) symbol table, so the segment-local id
+     * would be unresolvable. This translation makes the tier store LV-space ids,
+     * so Mode B can resolve them and the differential oracle holds byte-for-byte.
+     * <p>
+     * The normal cycle is a pure append (O3 was diverted to {@code o3Replay},
+     * whose rebuild already stages LV-space ids from disk), and LV tables never
+     * dedup, so the {@code appendedRows} just-applied rows are exactly the last
+     * {@code appendedRows} rows of the LV table, in the same ts-ascending order
+     * the staging buffer holds them. Walks partitions, locates that global row
+     * range, and overwrites only the SYMBOL columns - the other staging columns
+     * already carry correct values.
+     */
+    private void translateStagingSymbolsToLvSpace(LiveViewInstance instance, long appendedRows) {
+        try (TableReader reader = engine.getReader(instance.getLiveViewToken())) {
+            final long total = reader.size();
+            final long firstApplied = total - appendedRows;
+            if (firstApplied < 0) {
+                // Defensive: the LV table holds fewer rows than this cycle
+                // staged. Cannot happen on the pure-append normal cycle, but if
+                // it ever did, leaving the segment-local ids in place is safe -
+                // the fence keeps the slot from routing until a clean cycle
+                // republishes with matching coordinates.
+                return;
+            }
+            final int pc = reader.getPartitionCount();
+            long globalBase = 0;
+            for (int p = 0; p < pc; p++) {
+                // Use the committed metadata row count so partitions entirely
+                // below the applied tail are skipped without mapping them; only
+                // the tail partition(s) that overlap the range get opened.
+                final long partSize = reader.getPartitionRowCountFromMetadata(p);
+                if (partSize <= 0) {
+                    continue;
+                }
+                final long partStart = globalBase;
+                globalBase += partSize;
+                if (globalBase <= firstApplied) {
+                    // Partition entirely below the just-applied range.
+                    continue;
+                }
+                reader.openPartition(p);
+                final long r0 = Math.max(0, firstApplied - partStart);
+                final int columnBase = reader.getColumnBase(p);
+                for (int c = 0, n = stagingColumnTypes.size(); c < n; c++) {
+                    if (ColumnType.tagOf(stagingColumnTypes.getQuick(c)) != ColumnType.SYMBOL) {
+                        continue;
+                    }
+                    final MemoryCR col = reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, c));
+                    for (long r = r0; r < partSize; r++) {
+                        final long stagingRow = (partStart + r) - firstApplied;
+                        stagingBuffer.putInt(stagingRow, c, col.getInt(r << 2));
+                    }
+                }
             }
         }
     }

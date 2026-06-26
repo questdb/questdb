@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.lv;
 
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.lv.LiveViewInMemoryBuffer;
 import io.questdb.cairo.lv.LiveViewInMemoryTier;
@@ -75,9 +74,10 @@ import org.jetbrains.annotations.TestOnly;
  * {@link #isFullSchemaProjection}). Pruned or reordered projections - e.g.
  * {@code SELECT max(rn)}, where column pruning drops the timestamp and leaves
  * {@code timestampColumnIndex < 0} - serve from disk alone, which is correct
- * given the steady-state in-mem-as-subset-of-disk property. A SYMBOL output
- * column also routes disk-only: the tier holds WAL-segment-local symbol ids that
- * the disk reader's symbol table cannot resolve (see
+ * given the steady-state in-mem-as-subset-of-disk property. SYMBOL output
+ * columns route through the tier: the refresh worker stores LV-table-space symbol
+ * ids (see {@code LiveViewRefreshJob.translateStagingSymbolsToLvSpace}), which
+ * the disk reader's symbol table resolves like any disk row (see
  * {@link #isFullSchemaProjection}).
  * <p>
  * In-mem rows synthesize a tagged rowId (the sign bit set over the buffer row
@@ -308,12 +308,11 @@ public class LiveViewRecordCursor implements RecordCursor {
      * an identity projection (every output column, in declared order) may route
      * through the tier; the type-by-type match below establishes that.
      * <p>
-     * SYMBOL columns also force disk-only: the tier stores the staging record's
-     * raw int, which is a WAL-segment-local symbol id (the disk write path
-     * re-interns the value into the LV table's own symbol space, so the same
-     * string can carry a different id per segment). That id is not resolvable
-     * against the disk reader's symbol table at read time, so any SYMBOL output
-     * column disqualifies the tier read until the tier stores LV-space ids.
+     * SYMBOL columns are routable: the refresh worker rewrites the tier's SYMBOL
+     * ids with LV-table-space ids after apply (see
+     * {@code LiveViewRefreshJob.translateStagingSymbolsToLvSpace}), so the
+     * in-mem branch in {@link MergedRecord#getSymA}/{@link MergedRecord#getSymB}
+     * resolves them against the disk reader's symbol table just like a disk row.
      */
     private static boolean isFullSchemaProjection(
             RecordMetadata baseMetadata,
@@ -329,9 +328,6 @@ public class LiveViewRecordCursor implements RecordCursor {
         }
         for (int i = 0; i < columnCount; i++) {
             if (baseMetadata.getColumnType(i) != buffer.columnType(i)) {
-                return false;
-            }
-            if (ColumnType.tagOf(buffer.columnType(i)) == ColumnType.SYMBOL) {
                 return false;
             }
         }
@@ -355,12 +351,12 @@ public class LiveViewRecordCursor implements RecordCursor {
      * In in-mem mode the supported fixed-width accessors read directly from
      * the pinned buffer.
      * <p>
-     * {@link #getSymA}/{@link #getSymB} keep an in-mem branch that resolves the
-     * buffer's stored int via the cursor's
-     * {@link RecordCursor#getSymbolTable(int)}, but a SYMBOL output column routes
-     * disk-only (see {@link #isFullSchemaProjection}) because the tier stores
-     * WAL-segment-local ids, so that branch is currently unreachable; it stays as
-     * the shape a future LV-space symbol id would use.
+     * {@link #getSymA}/{@link #getSymB} resolve the buffer's stored int via the
+     * cursor's {@link RecordCursor#getSymbolTable(int)}. The refresh worker stores
+     * LV-table-space symbol ids in the tier (see
+     * {@code LiveViewRefreshJob.translateStagingSymbolsToLvSpace}), so that id
+     * resolves against the disk reader's (LV-table) symbol table exactly like a
+     * disk row's id.
      * <p>
      * Var-length accessors (STRING / VARCHAR / BINARY / ARRAY) inherit the
      * disk-only delegation. Those columns prevent the in-mem tier from being

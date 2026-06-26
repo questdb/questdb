@@ -132,14 +132,14 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testFuzzInMemReadBack() throws Exception {
-        // Mode B read-back: a SYMBOL-free row_number() view (so SELECT * FROM lv
-        // routes through the in-mem tier) fuzzed under O3 + optional restart +
-        // optional backfill. After quiescence the read-back is cross-checked three
-        // ways: it equals the from-scratch recompute (the standard oracle), Mode B
-        // is confirmed actually engaged, and the Mode B result is byte-identical to
-        // the forced disk-only path. Every other variant carries a SYMBOL
-        // passthrough and reads disk-only, so this is the path that drives Mode B
-        // through the fuzz's O3 / restart / backfill patterns.
+        // Mode B read-back: a row_number() view (so SELECT * FROM lv routes through
+        // the in-mem tier), with or without a SYMBOL passthrough (chosen per run),
+        // fuzzed under O3 + optional restart + optional backfill. After quiescence
+        // the read-back is cross-checked three ways: it equals the from-scratch
+        // recompute (the standard oracle), Mode B is confirmed actually engaged,
+        // and the Mode B result is byte-identical to the forced disk-only path. The
+        // SYMBOL passthrough form exercises the LV-space symbol-id translation
+        // (segment-local churn across commits) through Mode B.
         final Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1 + rnd.nextInt(4));
         assertMemoryLeak(() -> {
@@ -523,9 +523,14 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
         final int baseStepMax = stepMode == 0 ? 5_000_000 : stepMode == 1 ? 60_000_000 : 900_000_000;
         final int dayJumpEvery = stepMode == 0 ? 20 : 12;
         final boolean withWhere = rnd.nextInt(3) == 0;
-        // inMemReadBack forces a SYMBOL-free row_number() output so SELECT * FROM lv
-        // routes through the in-mem tier (Mode B). The decimal family always carries
-        // a SYMBOL passthrough, so it never combines with the read-back path.
+        // inMemReadBack forces a row_number() output so SELECT * FROM lv routes
+        // through the in-mem tier (Mode B). Half the read-back runs add a SYMBOL
+        // passthrough: the refresh worker stores LV-table-space symbol ids, so
+        // the random per-commit symbol churn (segment-local ids diverge from
+        // LV-space ids) is exercised through Mode B under O3 / restart / backfill.
+        // The decimal family always carries a SYMBOL passthrough, so it never
+        // combines with the read-back path.
+        final boolean symbolReadBack = inMemReadBack && rnd.nextBoolean();
         final boolean isDecimal = !inMemReadBack && variant == DECIMAL_VARIANT;
         final boolean inMem = inMemory || inMemReadBack;
         final int decimalWidth = isDecimal ? rnd.nextInt(DECIMAL_PRECISION.length) : -1;
@@ -538,10 +543,14 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
         final int rescaleTargetScale = isDecimal ? decimalScale + rnd.nextInt(4) : 0;
         final String projection;
         if (inMemReadBack) {
-            // SYMBOL-free identity output: SELECT * FROM lv is then a full-schema
-            // projection over fixed-width non-SYMBOL columns, so the read routes
-            // through Mode B instead of disk-only.
-            projection = "ts, i, row_number() OVER () AS rn";
+            // Fixed-width identity output: SELECT * FROM lv is then a full-schema
+            // projection the in-mem tier can serve, so the read routes through
+            // Mode B instead of disk-only. The optional SYMBOL passthrough is
+            // resolved against the disk reader's symbol table via the LV-space
+            // ids the refresh worker stored.
+            projection = symbolReadBack
+                    ? "ts, sym, i, row_number() OVER () AS rn"
+                    : "ts, i, row_number() OVER () AS rn";
         } else if (isDecimal) {
             projection = decimalProjection(decimalFunc, n, rescaleTargetScale);
         } else {
@@ -563,7 +572,7 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
                 .$(", n=").$(n).$(", symCount=").$(symCount).$(", stepMode=").$(stepMode)
                 .$(", o3=").$(o3).$(", restart=").$(restart)
                 .$(", backfill=").$(backfill).$(", inMem=").$(inMem)
-                .$(", inMemReadBack=").$(inMemReadBack)
+                .$(", inMemReadBack=").$(inMemReadBack).$(", symbolReadBack=").$(symbolReadBack)
                 .$(", where=").$(withWhere).$(", decimalType=").$(decimalType)
                 .$(", sql=").$(viewSql).$();
 

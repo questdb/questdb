@@ -13221,9 +13221,9 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
         // refresh worker rebuilds the in-mem tier atomically from the rewritten LV
         // table, stamped with the post-O3 LV-table seqTxn, so a post-O3 cursor
         // regains Mode B immediately rather than falling through to disk until the
-        // next normal cycle. (This LV has a SYMBOL output column, so reads still
-        // route disk-only - the tier is populated for accounting but the read path
-        // routes around the WAL-segment-local symbol ids.) The seqTxn fence keeps
+        // next normal cycle. (This LV has a SYMBOL output column; the rebuild and
+        // the normal cycle both store LV-table-space symbol ids, so reads route
+        // through the tier and resolve symbols correctly.) The seqTxn fence keeps
         // the read correct regardless of whether the rebuild populated the tier.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");

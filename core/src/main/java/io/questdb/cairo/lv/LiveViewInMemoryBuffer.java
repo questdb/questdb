@@ -141,10 +141,10 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
     /**
      * Returns true iff a single column of {@code columnType} is supported by the
      * in-memory tier (fixed-width). Tags the type before the width probe, so
-     * callers may pass a full column type. The read path additionally rejects
-     * SYMBOL (the tier holds WAL-segment-local ids the disk reader cannot
-     * resolve), so a SYMBOL-bearing projection routes disk-only even though this
-     * method reports SYMBOL as a supported storage type.
+     * callers may pass a full column type. SYMBOL is supported (stored as INT);
+     * the refresh worker rewrites the stored ids with LV-table-space ids after
+     * apply so the read path resolves them against the disk reader's symbol
+     * table.
      */
     public static boolean isColumnTypeSupported(int columnType) {
         return isFixedWidthSupported(ColumnType.tagOf(columnType));
@@ -235,9 +235,11 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
      * this buffer. The {@code metadata} must match {@link #columnTypes} the
      * buffer was constructed with — the caller is responsible for ensuring
      * shape compatibility (this is the staging-buffer path in
-     * {@code LiveViewRefreshJob}). SYMBOL columns store the record's int value
-     * directly without translation; the in-mem tier consumer cursor
-     * handles symbol-id resolution.
+     * {@code LiveViewRefreshJob}). SYMBOL columns store the record's raw int (a
+     * base WAL-segment-local id) here; the refresh worker rewrites those columns
+     * with LV-table-space ids after apply via
+     * {@code LiveViewRefreshJob.translateStagingSymbolsToLvSpace} before the slot
+     * is published, so the read path can resolve them.
      */
     public void copyRowFromRecord(Record record, long dstRow) {
         for (int c = 0, n = columnTypes.size(); c < n; c++) {
