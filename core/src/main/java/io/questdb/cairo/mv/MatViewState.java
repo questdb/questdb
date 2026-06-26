@@ -46,8 +46,11 @@ import static io.questdb.TelemetryEvent.*;
  * Mat view refresh state serves the purpose of synchronizing and coordinating
  * {@link MatViewRefreshJob}s.
  * <p>
- * Unlike {@link MatViewStateReader}, it doesn't include invalidation reason
- * string as that field is not needed for refresh jobs.
+ * Unlike {@link MatViewStateReader}, it does not carry a persisted invalidation
+ * reason string. The only reason it holds, {@link #pendingInvalidationReason}, is a
+ * transient in-memory marker for an invalidation that deferred behind the view lock;
+ * it is distinct from the reader's durable invalidationReason and is cleared once the
+ * lock-holding refresh finalizes the deferral.
  */
 public class MatViewState implements QuietCloseable {
     // Cold-start gap-width threshold used when no scan/commit samples have
@@ -320,6 +323,19 @@ public class MatViewState implements QuietCloseable {
         RecordCursorFactory factory = cursorFactory;
         cursorFactory = null;
         return factory;
+    }
+
+    /**
+     * Clears the pending-invalidation marker (and its reason) without touching the
+     * {@link #invalid} flag. {@code finalizeDeferredInvalidation} uses this to release a
+     * deferred invalidation it is about to re-enqueue: only the marker must drop so the
+     * re-delivered INVALIDATE is no longer swallowed by the pending guard, while a
+     * genuinely invalid view (a separate flag) stays invalid. Unlike {@link #markAsValid()},
+     * it never resurrects an invalid view.
+     */
+    public void clearPendingInvalidation() {
+        this.pendingInvalidation = false;
+        this.pendingInvalidationReason = null;
     }
 
     @Override
