@@ -8644,6 +8644,62 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWalTxnRangeLoaderDetectsMatViewInvalidate() throws Exception {
+        // Direct unit coverage for the type-4 detection the chained-view backstop rests on: a range holding a
+        // MAT_VIEW_INVALIDATE (invalid=true) reports hasMatViewInvalidate()==true; a data-only range and a
+        // range whose only type-4 is a reset-to-valid (invalid=false) both report false; and a clean reload
+        // resets the flag (no stale carry-over on a reused loader).
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, val double, ts timestamp) timestamp(ts) partition by DAY WAL");
+            createMatView("mv_a", "select ts, count() cnt from base sample by 1h");
+            execute("insert into base values ('a', 1.0, '2024-09-10T12:00')");
+            drainQueues();
+
+            final TableToken viewA = engine.verifyTableName("mv_a");
+            final MatViewStateStoreImpl store = (MatViewStateStoreImpl) engine.getMatViewStateStore();
+            final long txnAfterRefresh = engine.getTableSequencerAPI().getTxnTracker(viewA).getWriterTxn();
+
+            // Durably invalidate A: writes a MAT_VIEW_INVALIDATE (invalid=true) txn into A's own WAL.
+            store.enqueueInvalidate(viewA, "forced for test");
+            drainWalAndMatViewQueues();
+            Assert.assertTrue("precondition: A invalidated", store.getViewState(viewA).isInvalid());
+            final long txnAfterInvalidate = engine.getTableSequencerAPI().getTxnTracker(viewA).getWriterTxn();
+
+            // Re-validate A with a full refresh: resetInvalidState writes a MAT_VIEW_INVALIDATE (invalid=false).
+            execute("refresh materialized view mv_a full");
+            drainQueues();
+            Assert.assertFalse("precondition: A re-validated", store.getViewState(viewA).isInvalid());
+            final long txnAfterRevalidate = engine.getTableSequencerAPI().getTxnTracker(viewA).getWriterTxn();
+
+            try (
+                    WalTxnRangeLoader loader = new WalTxnRangeLoader(engine.getConfiguration());
+                    Path path = new Path()
+            ) {
+                final LongList intervals = new LongList();
+
+                // Data-only range (the initial refresh): no type-4 invalidation.
+                loader.load(engine, path, viewA, intervals, 0, txnAfterRefresh);
+                Assert.assertFalse("a data-only range must not report a mat-view invalidate", loader.hasMatViewInvalidate());
+
+                // Range spanning the invalidate: detected.
+                intervals.clear();
+                loader.load(engine, path, viewA, intervals, txnAfterRefresh, txnAfterInvalidate);
+                Assert.assertTrue("a range containing a MAT_VIEW_INVALIDATE (invalid=true) must report it", loader.hasMatViewInvalidate());
+
+                // Range whose only type-4 is the reset-to-valid (invalid=false): must NOT trip the flag.
+                intervals.clear();
+                loader.load(engine, path, viewA, intervals, txnAfterInvalidate, txnAfterRevalidate);
+                Assert.assertFalse("a reset-to-valid (invalid=false) must not report a mat-view invalidate", loader.hasMatViewInvalidate());
+
+                // A second clean (data-only) load must reset the flag, proving no stale carry-over.
+                intervals.clear();
+                loader.load(engine, path, viewA, intervals, 0, txnAfterRefresh);
+                Assert.assertFalse("a clean reload must reset the mat-view invalidate flag to false", loader.hasMatViewInvalidate());
+            }
+        });
+    }
+
+    @Test
     public void testWalTxnRangeLoaderDetectsTruncate() throws Exception {
         // Direct unit coverage for the detection primitive the whole truncate barrier rests on:
         // a range with a TRUNCATE reports hasTruncate()==true; a data-only range reports false; and a
