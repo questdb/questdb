@@ -136,6 +136,7 @@ import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.MemoryTrackerProvider;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
@@ -408,6 +409,14 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public static RecordCursorFactory select(SqlCompiler compiler, CharSequence selectSql, SqlExecutionContext sqlExecutionContext) throws SqlException {
         return compiler.compile(selectSql, sqlExecutionContext).getRecordCursorFactory();
+    }
+
+    /**
+     * Adds a table to the runtime hard-suspend set, excluding it from WAL apply until removed.
+     * Called by {@code ALTER TABLE ... SUSPEND WAL}.
+     */
+    public void addWalApplySuspended(TableToken tableToken) {
+        tableSequencerAPI.setHardSuspended(tableToken, true);
     }
 
     public void applyTableRename(TableToken token, TableToken updatedTableToken) {
@@ -1316,6 +1325,9 @@ public class CairoEngine implements Closeable, WriterSource {
         if (!tableToken.isWal()) {
             return writerPool.get(tableToken, lockReason);
         }
+        if (configuration.isWalApplySuspendedWriteDenied() && isWalApplySuspended(tableToken)) {
+            throw CairoException.tableSuspended(tableToken);
+        }
         return walWriterPool.get(tableToken);
     }
 
@@ -1326,6 +1338,9 @@ public class CairoEngine implements Closeable, WriterSource {
         // it will do unnecessary token verification
         if (!tableToken.isWal()) {
             return writerPool.get(tableToken, lockReason);
+        }
+        if (configuration.isWalApplySuspendedWriteDenied() && isWalApplySuspended(tableToken)) {
+            throw CairoException.tableSuspended(tableToken);
         }
         return walWriterPool.get(tableToken);
     }
@@ -1427,7 +1442,23 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public @NotNull WalWriter getWalWriter(TableToken tableToken) {
+        return getWalWriterUnsafe(tableToken);
+    }
+
+    /**
+     * Acquires a WAL writer WITHOUT the read-only client gate {@link #getWalWriter} carries
+     * (the twin of {@link #getWriterUnsafe} for the WAL writer pool). The enterprise override of
+     * {@link #getWalWriter} refuses on {@code isReadOnlyMode()} to block client writes on a read-only
+     * replica / demoting node; this method is intentionally NOT overridden there, so engine-internal
+     * paths that legitimately mint on a read-only node -- replica WAL apply and the read-only replica's
+     * own {@code REBASE WAL INTO} reconstruction -- acquire through here. Callers are responsible for the
+     * read-only/role gating themselves (e.g. rebaseWalTable0's assertRebaseRole + variant check).
+     */
+    public @NotNull WalWriter getWalWriterUnsafe(TableToken tableToken) {
         verifyTableToken(tableToken);
+        if (configuration.isWalApplySuspendedWriteDenied() && isWalApplySuspended(tableToken)) {
+            throw CairoException.tableSuspended(tableToken);
+        }
         try {
             return walWriterPool.get(tableToken);
         } catch (EntryLockedException e) {
@@ -1542,6 +1573,25 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     /**
+     * Reports whether the node still permits a force/WAL-bypass break-glass alter (e.g. FORCE DROP
+     * PARTITION on a hard-suspended table) while it otherwise refuses ordinary writes via
+     * {@link #isReadOnlyMode()}. Such an alter applies directly through the exclusive writer and
+     * mints no replicated sequencer txn, so it carries none of the demote/replica acked-loss risk
+     * the read-only fence guards against. Only consulted while {@link #isReadOnlyMode()} is true; on
+     * a writable node the fence never engages.
+     * <p>
+     * The base engine never permits it: the sole read-only state OSS knows is the instance-level
+     * {@code cairo.read.only} lockdown ({@link #isReadOnlyMode()} answers purely from
+     * {@code isReadOnlyInstance()}), a hard operator refusal of every write. Enterprise overrides
+     * this to permit it while the node is a read-only replica (the authorized maintenance path for a
+     * frozen replica table), still refusing under the {@code cairo.read.only} lockdown -- the exact
+     * mirror of how the enterprise engine widens {@link #isReadOnlyMode()} with the replica leg.
+     */
+    public boolean isForceAlterAllowed() {
+        return false;
+    }
+
+    /**
      * Whether materialized-view refresh task execution is temporarily suspended (e.g. a role promote
      * has built and hydrated the real store but has not yet opened writes). Default: never suspended.
      * Enterprise overrides this for the promote window so a hydrate-enqueued task is not consumed and
@@ -1565,6 +1615,21 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public boolean isTableDropped(TableToken tableToken) {
         return tableNameRegistry.isTableDropped(tableToken);
+    }
+
+    /**
+     * Whether the table is hard-suspended from WAL apply, either by the reloadable
+     * {@code cairo.wal.apply.suspended.tables} config list or by a runtime
+     * {@code ALTER TABLE ... SUSPEND WAL}. The ApplyWal2Table job skips such tables. Resuming
+     * requires removing the table from the config list (and reloading) and running
+     * {@code ALTER TABLE ... RESUME WAL}.
+     */
+    public boolean isWalApplySuspended(TableToken tableToken) {
+        if (tableSequencerAPI.getTxnTracker(tableToken).isHardSuspended()) {
+            return true;
+        }
+        final ObjHashSet<String> configured = configuration.getWalApplySuspendedTables();
+        return configured != null && configured.contains(tableToken.getDirName());
     }
 
     @TestOnly
@@ -1678,11 +1743,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public boolean notifyDropped(TableToken tableToken) {
         if (tableNameRegistry.dropTable(tableToken)) {
-            readerPool.notifyDropped(tableToken, false);
-            walWriterPool.notifyDropped(tableToken, false);
-            viewWalWriterPool.notifyDropped(tableToken, false);
-            tableMetadataPool.notifyDropped(tableToken, false);
-            sequencerMetadataPool.notifyDropped(tableToken, false);
+            notifyPoolsTableDropped(tableToken, false);
             final MatViewRefreshTask matViewRefreshTask = tlMatViewRefreshTask.get();
             matViewRefreshTask.clear();
             matViewRefreshTask.baseTableToken = tableToken;
@@ -1753,6 +1814,42 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    /**
+     * Rebases a hard-suspended WAL table ({@code ALTER TABLE ... REBASE WAL}): clones the applied data
+     * into a new dir with a new tableId and a brand-new sequencer (seqTxn reset to 0), discarding all
+     * non-applied WAL (including pending structural changes), marks the new table rebased and seeds two
+     * empty transactions (so real data starts at seqTxn 3), then repoints the logical name to the
+     * new dir and drops the old one. On the replica, the rebased new table is recorded in the replication
+     * index so it stalls (keeps no empty data) until a physical copy of the table arrives.
+     * <p>
+     * Preconditions: WAL table (not a view) and hard-suspended (ALTER TABLE ... SUSPEND WAL).
+     * <p>
+     * Note: crash-recovery startup reconcile of {@code _rebase.state} markers and mat-view dependent
+     * migration are tracked as follow-ups; the happy path leaves no marker behind.
+     *
+     * @return the new table token
+     */
+    public TableToken rebaseWalTable(TableToken oldToken) {
+        return rebaseWalTable0(oldToken, null, false);
+    }
+
+    /**
+     * Replica-side variant of {@link #rebaseWalTable(TableToken)}
+     * ({@code ALTER TABLE ... REBASE WAL INTO '<dirName>'}). Instead of minting a fresh tableId/dir it
+     * reconstructs the table into {@code targetDirName} - the dir the primary already chose for its rebase
+     * - so the replica follows the primary's rebase (e.g. past a poison-pill WAL transaction that stalls
+     * apply at the same seqTxn on both nodes) without a full physical copy. It does NOT mark the new table
+     * rebased, so the replica keeps following replication into this dir; the empty seeds it commits are
+     * local-only (never uploaded) and only advance the new sequencer to seqTxn 2 so the downloader
+     * resumes from the primary's seqTxn 3 instead of stalling. Valid only on a read-only replica
+     * (enforced by {@link #assertRebaseRole(boolean)}).
+     *
+     * @return the new table token
+     */
+    public TableToken rebaseWalTableInto(TableToken oldToken, String targetDirName) {
+        return rebaseWalTable0(oldToken, targetDirName, true);
+    }
+
     public void reconcileTableNameRegistryState() {
         tableNameRegistry.reconcile();
     }
@@ -1809,11 +1906,7 @@ public class CairoEngine implements Closeable, WriterSource {
     public void removeTableToken(TableToken tableToken) {
         tableNameRegistry.purgeToken(tableToken);
         tableSequencerAPI.purgeTxnTracker(tableToken.getDirName());
-        readerPool.notifyDropped(tableToken, true);
-        walWriterPool.notifyDropped(tableToken, true);
-        viewWalWriterPool.notifyDropped(tableToken, true);
-        tableMetadataPool.notifyDropped(tableToken, true);
-        sequencerMetadataPool.notifyDropped(tableToken, true);
+        notifyPoolsTableDropped(tableToken, true);
         PoolListener listener = getPoolListener();
         if (listener != null) {
             listener.onEvent(
@@ -1826,6 +1919,15 @@ public class CairoEngine implements Closeable, WriterSource {
             );
         }
         walLocker.clearTable(tableToken);
+    }
+
+    /**
+     * Removes a table from the runtime hard-suspend set. Called by
+     * {@code ALTER TABLE ... RESUME WAL}. A table configured via
+     * {@code cairo.wal.apply.suspended.tables} stays suspended until also removed from the config.
+     */
+    public void removeWalApplySuspended(TableToken tableToken) {
+        tableSequencerAPI.setHardSuspended(tableToken, false);
     }
 
     public TableToken rename(
@@ -2554,6 +2656,14 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    private void notifyPoolsTableDropped(TableToken tableToken, boolean fullDropped) {
+        readerPool.notifyDropped(tableToken, fullDropped);
+        walWriterPool.notifyDropped(tableToken, fullDropped);
+        viewWalWriterPool.notifyDropped(tableToken, fullDropped);
+        tableMetadataPool.notifyDropped(tableToken, fullDropped);
+        sequencerMetadataPool.notifyDropped(tableToken, fullDropped);
+    }
+
     private void notifyViewStoresAboutDrop(TableToken droppedToken) {
         viewGraph.removeView(droppedToken);
         viewStateStore.removeViewState(droppedToken);
@@ -2580,6 +2690,248 @@ public class CairoEngine implements Closeable, WriterSource {
             }
             throw th;
         }
+    }
+
+    private TableToken rebaseWalTable0(TableToken oldToken, String suppliedDir, boolean replicaVariant) {
+        assertRebaseRole(replicaVariant);
+        if (!oldToken.isWal() || oldToken.isView()) {
+            throw CairoException.nonCritical().put("REBASE WAL is supported only for WAL tables [table=").put(oldToken.getTableName()).put(']');
+        }
+        if (!tableSequencerAPI.getTxnTracker(oldToken).isHardSuspended()) {
+            throw CairoException.nonCritical().put("REBASE WAL requires the table to be suspended first [table=").put(oldToken.getTableName()).put(']');
+        }
+        // Require suspension to actually stop writes, so the table is quiescent without extra locking:
+        // with write-denial on, getWalWriter rejects ingestion for a hard-suspended table.
+        if (!configuration.isWalApplySuspendedWriteDenied()) {
+            throw CairoException.nonCritical().put("REBASE WAL requires cairo.wal.apply.suspended.write.denied=true so that suspension blocks writes [table=").put(oldToken.getTableName()).put(']');
+        }
+        // The rebase repoints the name registry (dropTable/registerName), which a read-only instance
+        // (cairo.read.only=true) refuses. Fail early with a clear message instead of deep in the registry.
+        if (configuration.isReadOnlyInstance()) {
+            throw CairoException.nonCritical().put("REBASE WAL is not supported on a read-only instance [table=").put(oldToken.getTableName()).put(']');
+        }
+
+        final FilesFacade ff = configuration.getFilesFacade();
+        final int mkDirMode = configuration.getMkDirMode();
+        final CharSequence root = configuration.getDbRoot();
+        final String tableName = oldToken.getTableName();
+        final int newTableId;
+        final String newDirName;
+        if (suppliedDir != null) {
+            // Replica variant: adopt the primary's dir (and the tableId encoded in it) verbatim so both
+            // nodes converge on the same identity. The id generator is not consulted - replicated tables
+            // always take their id from the primary, never from the local generator.
+            try {
+                newTableId = TableUtils.getTableIdFromTableDir(suppliedDir);
+            } catch (NumericException e) {
+                throw CairoException.nonCritical().put("invalid rebase target directory [dir=").put(suppliedDir).put(']');
+            }
+            newDirName = suppliedDir;
+            // The supplied dir must be free. The swap below registers newDirName as the live table
+            // (registerName unconditionally repoints the reverse-map entry), and ff.rename only refuses a
+            // NON-empty destination - so an empty victim dir (a freshly-created, partition-less table) could
+            // be hijacked and its registry entry clobbered. Reject if the dir is already present on disk.
+            try (Path p = new Path()) {
+                if (ff.exists(p.of(root).concat(newDirName).$())) {
+                    throw CairoException.nonCritical().put("rebase target directory already exists [dir=").put(newDirName).put(']');
+                }
+            }
+        } else {
+            newTableId = (int) tableIdGenerator.getNextId();
+            newDirName = TableUtils.getTableDir(configuration.mangleTableDirNames(), tableName, newTableId, true);
+        }
+        TableToken newToken = new TableToken(
+                tableName, newDirName, configuration.getDbLogName(), newTableId,
+                oldToken.isView(), oldToken.isMatView(), true,
+                oldToken.isSystem(), oldToken.isProtected(), oldToken.isPublic()
+        );
+
+        // Serialize against concurrent create/drop/rename/rebase of this name. No write-quiescence lock is
+        // needed: the gate above guarantees the table is hard-suspended with write-denial on, so getWalWriter
+        // already rejects ingestion and the apply job skips it.
+        while (!lockTableCreate(oldToken)) {
+            Os.pause();
+        }
+        boolean staged = false;
+        boolean renamed = false;
+        boolean oldTableDropped = false;
+        TableWriter oldWriter = null;
+        try {
+            // Fence any in-flight apply and snapshot a consistent applied state (the table is suspended,
+            // so the writer is free). The replica REBASE WAL INTO variant is the read-only replica's own
+            // follow-the-primary reconstruction (gated to a read-only replica by assertRebaseRole), so it
+            // acquires through getWriterUnsafe -- the enterprise getWriter override would otherwise refuse
+            // it on isReadOnlyMode(). The plain variant keeps the read-only-refusing getWriter acquire so a
+            // client REBASE WAL on a demoting primary is refused (the demote write-fence).
+            oldWriter = replicaVariant ? getWriterUnsafe(oldToken, "rebase") : getWriter(oldToken, "rebase");
+
+            try (Path src = new Path(); Path dst = new Path()) {
+                // Build the clone in a hidden ".rebase/" staging dir (mirrors ".download"/".checkpoint").
+                // Startup table-dir scans only consider immediate db-root children that are complete tables
+                // and never recurse into dot-prefixed dirs, so the in-progress clone is invisible; a crash
+                // mid-build leaves only an ignored ".rebase/<dir>" orphan. The sequencer is created only
+                // AFTER the rename, in the final dir, so the sequencer registry never binds the staging path.
+                dst.of(root).concat(TableUtils.REBASE_TMP_DIR).concat(newToken);
+                if (ff.mkdirs(dst.slash(), mkDirMode) != 0) {
+                    throw CairoException.critical(ff.errno()).put("could not create rebase staging dir [path=").put(dst).put(']');
+                }
+                staged = true;
+
+                // Build the rebased table in the staging dir: clone data (hard-link partitions, copy
+                // table-root files, exclude txn_seq/wal*), reset _txn/_meta for a fresh table, create the
+                // sequencer files, and (primary only) write the _rebase_new marker. The atomic rename below
+                // then carries the complete table into place.
+                WalUtils.cloneTableDirForRebase(
+                        configuration,
+                        getWalDirectoryPolicy(),
+                        src.of(root).concat(oldToken),
+                        dst.of(root).concat(TableUtils.REBASE_TMP_DIR).concat(newDirName),
+                        newToken, newTableId,
+                        !replicaVariant,
+                        Misc.getThreadLocalSink()
+                );
+
+                // Atomically move the completed clone into its final location.
+                if (ff.rename(src.of(root).concat(TableUtils.REBASE_TMP_DIR).concat(newToken).$(), dst.of(root).concat(newToken).$()) != Files.FILES_RENAME_OK) {
+                    throw CairoException.critical(ff.errno()).put("could not move rebased table into place [from=").put(src).put(", to=").put(dst).put(']');
+                }
+                renamed = true;
+
+                // Commit the swap in the registry: drop the old table (logs DROP to tables.d, marks the old
+                // dir dropped, evicts its metadata-cache entry), then register the rebuilt dir as the live
+                // table (logs ADD to tables.d, repoints the name, marks the new dir live, hydrates the cache).
+                // lockTableName reserves the now-free name so registerName can commit it. The drop and the
+                // register are NOT atomic: a crash between them leaves the new dir on disk but absent from
+                // tables.d, so startup's reloadFromRootDirectory adopts it (without the empty seeds below).
+                // Acceptable for this rare admin op - the table comes back, just unseeded.
+                if (!tableNameRegistry.dropTable(oldToken)) {
+                    throw CairoException.nonCritical()
+                            .put("could not drop old table from registry [table=").put(oldToken.getTableName()).put(']');
+                }
+                oldTableDropped = true;
+                final TableToken lockedToken = tableNameRegistry.lockTableName(
+                        tableName,
+                        newDirName,
+                        newTableId,
+                        oldToken.isView(),
+                        oldToken.isMatView(),
+                        true
+                );
+                if (lockedToken == null) {
+                    throw CairoException.nonCritical()
+                            .put("rebase target name was taken concurrently [table=").put(tableName).put(']');
+                }
+                newToken = lockedToken;
+                try {
+                    tableNameRegistry.registerName(newToken);
+                } finally {
+                    tableNameRegistry.unlockTableName(newToken);
+                }
+
+                // Seed two empty transactions so real data starts at seqTxn 3 (the uploader skips seqTxn 1
+                // and records seqTxn 2 as first_txn=2). The second seed is what stops an idle rebased table
+                // busy-spinning the uploader: it ensures max_txn >= 2 so the uploader has a seqTxn 2 to
+                // settle on even when no data follows (see WalWriter.commitRebaseSeed). On a replica these
+                // seeds are local-only (never uploaded): they advance the new sequencer to seqTxn 2 so the
+                // downloader resumes from the primary's seqTxn 3 rather than stalling on the missing
+                // baseline below first_txn.
+                // The replica variant seeds on a read-only replica, so it acquires through
+                // getWalWriterUnsafe (the enterprise getWalWriter override refuses on isReadOnlyMode());
+                // the plain variant keeps the gated getWalWriter, consistent with the old-table acquire above.
+                try (WalWriter walWriter = replicaVariant ? getWalWriterUnsafe(newToken) : getWalWriter(newToken)) {
+                    walWriter.commitRebaseSeed();
+                }
+
+                getWalListener().tableCreated(newToken, configuration.getMicrosecondClock().getTicks());
+            } catch (Throwable th) {
+                try {
+                    // Discard the half-built new dir ONLY while the old table is still intact. Once the swap
+                    // has oldTableDropped (old dropped), the new dir IS the table - its hard links are the only
+                    // surviving copy of the data - so leave it on disk for startup to adopt; deleting it here
+                    // would destroy the table.
+                    if (!oldTableDropped) {
+                        try (Path p = new Path()) {
+                            if (renamed) {
+                                p.of(root).concat(newToken).$();
+                            } else if (staged) {
+                                p.of(root).concat(TableUtils.REBASE_TMP_DIR).concat(newToken).$();
+                            }
+                            if (renamed || staged) {
+                                ff.rmdir(p, true);
+                            }
+                        }
+                    }
+                } catch (Throwable cleanupEx) {
+                    th.addSuppressed(cleanupEx);
+                }
+                throw th;
+            }
+
+            // If the rebased object is a materialized view, register the new dir as a fresh mat view
+            // (its _mv/_mv.s files were cloned). The refresh watermark is intentionally NOT carried over
+            // (see plan): createViewState installs default state, so the view does one full refresh.
+            // Best-effort: a registration failure must not undo the already-oldTableDropped rebase.
+            if (newToken.isMatView()) {
+                try (
+                        Path p = new Path();
+                        BlockFileReader blockReader = new BlockFileReader(configuration)
+                ) {
+                    final int mvRootLen = p.of(root).size();
+                    final MatViewDefinition def = new MatViewDefinition();
+                    MatViewDefinition.readFrom(this, def, blockReader, p, mvRootLen, newToken);
+                    if (matViewGraph.addView(def)) {
+                        matViewStateStore.createViewState(def);
+                    }
+                } catch (Throwable mvEx) {
+                    LOG.error().$("could not register rebased materialized view, it may need manual recreation [view=")
+                            .$(newToken).$(", e=").$(mvEx).I$();
+                }
+            }
+
+            // Dependent mat views were refreshed against the old base sequencer; the rebase reset it to 0,
+            // so their watermarks no longer map onto the new base. Force a full refresh of any dependents
+            // (covers a rebased base table, and a rebased mat view that is itself a base of another).
+            matViewStateStore.enqueueInvalidateDependentViews(newToken, "base table rebase");
+
+            // Committed. Tear down the old table (data survives via new dir hard links). Mark the dir as
+            // the rebase SOURCE first: the uploader stats this marker as the dir winds down and records
+            // the table in the replication index with the rebase-source flag (the high bit of last_txn)
+            // instead of a drop, so the object-store baseline is kept for the rebased table and replicas
+            // keep the dir they already have. Remove _txn/_meta to tombstone the dir for WalPurgeJob, but
+            // do NOT rmdir here and do NOT remove the upload.pending marker: that raced the uploader's
+            // in-flight read of txn_seq and lost the record. The purge job reclaims the dir later, once
+            // the uploader has recorded the flag and cleared the sequencer upload.pending marker itself.
+            oldWriter.close();
+            oldWriter = null;
+            try (Path p = new Path()) {
+                p.of(root).concat(oldToken);
+                WalUtils.writeRebaseSourceMarker(ff, p);
+                final int len = p.size();
+                ff.removeQuiet(p.concat(TableUtils.TXN_FILE_NAME).$());
+                ff.removeQuiet(p.trimTo(len).concat(TableUtils.META_FILE_NAME).$());
+            }
+            tableSequencerAPI.dropTable(oldToken, false);
+            // Keep the old dir's reverse-map entry in the dropped state dropTable already set, and only
+            // evict its pooled resources (exactly what a normal WAL drop does). Calling removeTableToken
+            // here would purgeToken the entry, but WalPurgeJob enumerates tables solely via the reverse
+            // map (forAllWalTables); with the entry gone it would never visit the dir and never reclaim
+            // it, leaking the dir - txn_seq, _rebase_source marker, symbol maps - forever. Leaving the
+            // dropped entry lets WalPurgeJob sweep the dir like any dropped table (and it is WalPurgeJob
+            // that calls removeTableToken once the dir is actually deleted).
+            notifyPoolsTableDropped(oldToken, false);
+            if (oldToken.isMatView()) {
+                // Drop the old mat view's graph/state entries (keyed by the old dir name).
+                matViewStateStore.removeViewState(oldToken);
+                matViewGraph.removeView(oldToken);
+            }
+        } finally {
+            if (oldWriter != null) {
+                oldWriter.close();
+            }
+            unlockTableCreate(oldToken);
+        }
+        enqueueCompileView(newToken);
+        return newToken;
     }
 
     private TableToken rename0(Path fromPath, TableToken fromTableToken, Path toPath, CharSequence toTableName) {
@@ -2691,6 +3043,17 @@ public class CairoEngine implements Closeable, WriterSource {
             throw CairoException.tableDoesNotExist(tableName);
         }
         return token;
+    }
+
+    /**
+     * Role gate for REBASE WAL. OSS has no replica concept, so the {@code INTO} (replica) variant is
+     * rejected here; the enterprise engine overrides this to require a read-only replica for the
+     * {@code INTO} variant and a non-replica for the plain variant.
+     */
+    protected void assertRebaseRole(boolean replicaVariant) {
+        if (replicaVariant) {
+            throw CairoException.nonCritical().put("REBASE WAL INTO is only supported on a read-only replica");
+        }
     }
 
     protected void clearDdlListener() {
