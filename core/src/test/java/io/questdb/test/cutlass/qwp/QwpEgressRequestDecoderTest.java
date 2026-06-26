@@ -593,7 +593,7 @@ public class QwpEgressRequestDecoderTest {
             p = QwpVarint.encode(p, QwpEgressMsgKind.QUERY_FLAG_RESET_DICT);
             decoder.decodeQueryRequest(buf, (int) (p - buf), bindVars);
             Assert.assertEquals(99, bindVars.getFunction(0).getInt(null));
-            Assert.assertEquals((long) QwpEgressMsgKind.QUERY_FLAG_RESET_DICT, decoder.queryFlags);
+            Assert.assertEquals(QwpEgressMsgKind.QUERY_FLAG_RESET_DICT, decoder.queryFlags);
         });
     }
 
@@ -667,7 +667,7 @@ public class QwpEgressRequestDecoderTest {
             long p = buf + len;
             p = QwpVarint.encode(p, QwpEgressMsgKind.QUERY_FLAG_RESET_DICT);
             decoder.decodeQueryRequest(buf, (int) (p - buf), bindVars);
-            Assert.assertEquals((long) QwpEgressMsgKind.QUERY_FLAG_RESET_DICT, decoder.queryFlags);
+            Assert.assertEquals(QwpEgressMsgKind.QUERY_FLAG_RESET_DICT, decoder.queryFlags);
             Assert.assertTrue("RESET_DICT bit must be set",
                     (decoder.queryFlags & QwpEgressMsgKind.QUERY_FLAG_RESET_DICT) != 0);
         });
@@ -754,7 +754,7 @@ public class QwpEgressRequestDecoderTest {
             long p = buf + len;
             p = QwpVarint.encode(p, QwpEgressMsgKind.QUERY_FLAG_RESET_DICT);
             decoder.decodeQueryRequest(buf, (int) (p - buf), bindVars);
-            Assert.assertEquals((long) QwpEgressMsgKind.QUERY_FLAG_RESET_DICT, decoder.queryFlags);
+            Assert.assertEquals(QwpEgressMsgKind.QUERY_FLAG_RESET_DICT, decoder.queryFlags);
 
             // Second request is a baseline frame with no trailer.
             int len2 = writeBindScaffold(buf, 0);
@@ -774,7 +774,7 @@ public class QwpEgressRequestDecoderTest {
             long p = buf + len;
             p = QwpVarint.encode(p, QwpEgressMsgKind.QUERY_FLAG_RESET_DICT);
             decoder.decodeQueryRequest(buf, (int) (p - buf), bindVars);
-            Assert.assertEquals((long) QwpEgressMsgKind.QUERY_FLAG_RESET_DICT, decoder.queryFlags);
+            Assert.assertEquals(QwpEgressMsgKind.QUERY_FLAG_RESET_DICT, decoder.queryFlags);
             decoder.reset();
             Assert.assertEquals(0L, decoder.queryFlags);
         });
