@@ -934,7 +934,7 @@ public final class QueryRunner {
      * order of summation, which legitimately differs between an indexed
      * scan and a full scan or between parquet and native partitions.
      */
-    private static boolean rowEqualsWithFpTolerance(String a, String b) {
+    static boolean rowEqualsWithFpTolerance(String a, String b) {
         if (a.equals(b)) {
             return true;
         }
@@ -967,14 +967,25 @@ public final class QueryRunner {
             if (Math.abs(da - db) <= doubleEps) {
                 continue;
             }
-            // Parallel SUM/AVG over FLOAT (or DOUBLE columns whose values
-            // were promoted from FLOAT) drifts at single-precision ulps
-            // when partial sums are merged across worker threads, which
-            // is several orders of magnitude looser than 1e-12 relative.
-            // Allow up to 32 FLOAT ulps -- still tight enough to flag a
-            // real arithmetic bug, which would shift the result by far
-            // more than ulp-scale noise.
-            double floatEps = Math.max(1e-15, Math.ulp((float) scale) * 32.0);
+            // Parallel/storage-partitioned SUM/AVG over FLOAT (or DOUBLE
+            // columns whose values were promoted from FLOAT) drifts at
+            // single-precision relative scale: per-frame partial sums merge
+            // in an order set by the worker/frame partition, which
+            // legitimately differs between an indexed scan and a full scan,
+            // between parquet and native partitions, and even run to run
+            // under work stealing. The drift is a small multiple of FLOAT
+            // epsilon relative to the magnitude -- a HORIZON JOIN sum over a
+            // FLOAT slave column drifted ~32x FLOAT epsilon between a native
+            // and a parquet shadow -- so allow 64x to cover the tail with
+            // margin. This stays far below the shift a real row-set error
+            // produces (dropping or adding even one FLOAT term moves the sum
+            // by thousands of FLOAT epsilons), and integer/exact columns are
+            // still compared bit for bit, so a genuine divergence is flagged.
+            //
+            // scale * Math.ulp(1f) is the relative ulp at the magnitude;
+            // unlike Math.ulp((float) scale) it does not quantize to the
+            // bottom of the binade, where the bare ulp runs up to 2x tight.
+            double floatEps = Math.max(1e-15, scale * (Math.ulp(1f) * 64.0));
             if (Math.abs(da - db) > floatEps) {
                 return false;
             }

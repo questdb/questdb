@@ -37,6 +37,7 @@ import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.fuzz.FailureFileFacade;
 import io.questdb.test.griffin.fuzz.expr.BindContext;
@@ -202,6 +203,76 @@ public class QueryFuzzTest extends AbstractCairoTest {
                     new GeneratedQuery("SELECT avg(d) OVER (PARTITION BY g ORDER BY ts) c FROM small", true));
             Assert.assertFalse(okResult.isSkipped());
             Assert.assertFalse(okResult.isFailed());
+        });
+    }
+
+    @Test
+    public void testHorizonJoinFloatSumStorageReductionOrderToleratedByOracle() throws Exception {
+        // Bug from multi-table HORIZON JOIN fuzzing (storage diff): a non-keyed
+        // HORIZON JOIN that sums a FLOAT slave column diverged between a native
+        // master/slave and a parquet shadow -- native returned 374.97897, parquet
+        // 374.98038 (one row each, ~32x FLOAT epsilon). The parallel non-keyed path
+        // accumulates a per-worker partial FLOAT sum per frame and merges the
+        // partials (SumFloatGroupByFunction.merge is FLOAT + FLOAT) in an order set
+        // by the worker/frame partition. Native page frames and parquet row groups
+        // have different boundaries, so the partials -- and the merge order -- differ,
+        // and FLOAT addition is not associative. The result is reduction-order noise,
+        // not a row-set difference: count(p.c6) and sum(p.c6::double) are bit-identical
+        // across the two storages, so every storage layout sums the same multiset of
+        // FLOAT values; only the single-precision accumulation order differs. The
+        // oracle's FLOAT tolerance was just under the drift on this path.
+        //
+        // Two regression guards below:
+        //  1. Engine row-set identity (deterministic): with parallel HORIZON JOIN off,
+        //     the single-threaded float sum is storage-independent (master-driven
+        //     accumulation order), so native and parquet agree bit for bit on count,
+        //     the FLOAT sum, and the DOUBLE sum. This confirms the frame row-set is
+        //     identical -- not an off-by-one frame boundary -- which is the premise
+        //     for tolerating the parallel divergence.
+        //  2. Oracle tolerance: the refined per-cell FLOAT tolerance accepts the
+        //     reported divergence and still rejects a real one.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE master_n (ts TIMESTAMP, sym SYMBOL) TIMESTAMP(ts) PARTITION BY HOUR");
+            execute("CREATE TABLE slave_n (ts TIMESTAMP, sym SYMBOL, c6 FLOAT) TIMESTAMP(ts) PARTITION BY HOUR");
+            execute("CREATE TABLE master_p (ts TIMESTAMP, sym SYMBOL) TIMESTAMP(ts) PARTITION BY HOUR");
+            execute("CREATE TABLE slave_p (ts TIMESTAMP, sym SYMBOL, c6 FLOAT) TIMESTAMP(ts) PARTITION BY HOUR");
+            // Master every 20s, slave every 3s, so each RANGE FROM -4m TO 6m STEP 2m
+            // offset finds an ASOF match and the sum runs over many FLOAT terms.
+            execute("INSERT INTO master_n SELECT generate_series, rnd_symbol('a','b','c') " +
+                    "FROM generate_series('2024-01-01', '2024-01-01T02', '20s')");
+            execute("INSERT INTO slave_n SELECT generate_series, rnd_symbol('a','b','c'), rnd_float(8) " +
+                    "FROM generate_series('2024-01-01', '2024-01-01T02', '3s')");
+            // Identical data into the parquet shadow, then convert.
+            execute("INSERT INTO master_p SELECT * FROM master_n");
+            execute("INSERT INTO slave_p SELECT * FROM slave_n");
+            execute("ALTER TABLE master_p CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+            execute("ALTER TABLE slave_p CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            final boolean savedParallelHorizonJoin = sqlExecutionContext.isParallelHorizonJoinEnabled();
+            sqlExecutionContext.setParallelHorizonJoinEnabled(false);
+            try {
+                final String q = "SELECT count(p.c6) AS n, sum(p.c6) AS a0, sum(p.c6::double) AS d " +
+                        "FROM %s t HORIZON JOIN %s p ON (t.sym = p.sym) RANGE FROM -4m TO 6m STEP 2m AS h";
+                final StringSink nSink = new StringSink();
+                final StringSink pSink = new StringSink();
+                printSql(String.format(q, "master_n", "slave_n"), nSink);
+                printSql(String.format(q, "master_p", "slave_p"), pSink);
+                TestUtils.assertEquals("native vs parquet row-set must be identical", nSink, pSink);
+            } finally {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(savedParallelHorizonJoin);
+            }
+
+            // The reported parallel storage divergence (~32x FLOAT epsilon, identical
+            // row set) is now tolerated; the pre-fix bottom-of-binade ulp * 32 bound
+            // rejected it (374.98 sits low in the [256, 512) binade, where the bare ulp
+            // runs ~1.5x tight), the relative FLOAT epsilon * 64 bound covers it.
+            Assert.assertTrue("reported FLOAT-sum reduction-order drift must be tolerated",
+                    QueryRunner.rowEqualsWithFpTolerance("374.97897", "374.98038"));
+            // A real row-set divergence -- e.g. one storage dropped a whole FLOAT term --
+            // shifts the sum by thousands of FLOAT epsilons, far beyond reduction noise,
+            // and must still be flagged.
+            Assert.assertFalse("a real FLOAT-sum divergence must still be flagged",
+                    QueryRunner.rowEqualsWithFpTolerance("374.97897", "375.51"));
         });
     }
 
