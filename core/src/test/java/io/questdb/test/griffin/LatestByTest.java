@@ -228,6 +228,76 @@ public class LatestByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLatestByIndexedSymbolFilterNotDropped() throws Exception {
+        // A WHERE predicate over an INDEXED SYMBOL combined with LATEST ON ... PARTITION BY
+        // a non-symbol key used to be silently dropped. WhereClauseParser extracted the
+        // indexed-symbol predicate into a key-column intrinsic (expecting an index scan to
+        // serve it), but the LatestByAllFiltered path -- chosen because the partition key is
+        // not a symbol -- ignores that intrinsic and applies only the residual filter, which
+        // was then empty. The indexed table enumerated rows the WHERE should have removed and
+        // diverged from its non-indexed sibling. Cross-check the two and pin the SQL-correct
+        // answer for several predicate shapes and both index families.
+        assertMemoryLeak(() -> {
+            for (String indexDdl : new String[]{"INDEX", "INDEX TYPE POSTING"}) {
+                execute("DROP TABLE IF EXISTS t_idx;");
+                execute("DROP TABLE IF EXISTS t_plain;");
+                for (String name : new String[]{"t_idx", "t_plain"}) {
+                    String symDecl = "t_idx".equals(name) ? "sym SYMBOL " + indexDdl : "sym SYMBOL";
+                    executeWithRewriteTimestamp(
+                            "CREATE TABLE " + name + " (ts #TIMESTAMP, " + symDecl + ", c1 DOUBLE)" +
+                                    " TIMESTAMP(ts) PARTITION BY DAY;",
+                            timestampType.getTypeName()
+                    );
+                    // partition 1.0 has both rows non-null (latest unaffected by filter),
+                    // partition 2.0 has a NULL latest row (filter must skip back one row),
+                    // partition 3.0 is entirely NULL (filter must drop the whole partition).
+                    executeWithRewriteTimestamp(
+                            "INSERT INTO " + name + " VALUES " +
+                                    "(1::#TIMESTAMP, 'a', 1.0)," +
+                                    "(2::#TIMESTAMP, 'b', 1.0)," +
+                                    "(3::#TIMESTAMP, 'c', 2.0)," +
+                                    "(4::#TIMESTAMP, null, 2.0)," +
+                                    "(5::#TIMESTAMP, null, 3.0)," +
+                                    "(6::#TIMESTAMP, null, 3.0);",
+                            timestampType.getTypeName()
+                    );
+                }
+
+                for (String pred : new String[]{
+                        "sym IS NOT NULL",
+                        "sym = 'c'",
+                        "sym IN ('a', 'b')",
+                        "sym != 'b'",
+                        "sym NOT IN ('a')",
+                }) {
+                    String suffix = " WHERE " + pred + " LATEST ON ts PARTITION BY c1 ORDER BY c1, sym";
+                    StringSink expected = new StringSink();
+                    StringSink actual = new StringSink();
+                    printSql("SELECT sym, c1 FROM t_plain" + suffix, expected);
+                    printSql("SELECT sym, c1 FROM t_idx" + suffix, actual);
+                    org.junit.Assert.assertEquals(
+                            "predicate=[" + pred + "] index=[" + indexDdl + "]",
+                            expected.toString(),
+                            actual.toString()
+                    );
+                }
+
+                // The indexed table must compute the same latest-by rows as the full scan does;
+                // pin the canonical answers (no timestamp in the projection, so format-independent).
+                assertQuery("SELECT sym, c1 FROM t_idx WHERE sym IS NOT NULL LATEST ON ts PARTITION BY c1 ORDER BY c1, sym")
+                        .expectSize()
+                        .returns("sym\tc1\nb\t1.0\nc\t2.0\n");
+                assertQuery("SELECT sym, c1 FROM t_idx WHERE sym = 'c' LATEST ON ts PARTITION BY c1 ORDER BY c1, sym")
+                        .expectSize()
+                        .returns("sym\tc1\nc\t2.0\n");
+                assertQuery("SELECT sym, c1 FROM t_idx WHERE sym IN ('a', 'b') LATEST ON ts PARTITION BY c1 ORDER BY c1, sym")
+                        .expectSize()
+                        .returns("sym\tc1\nb\t1.0\n");
+            }
+        });
+    }
+
+    @Test
     public void testLatestByConstantFalseWhere() throws Exception {
         // A LATEST ON whose WHERE the optimiser folds to a compile-time constant-false
         // predicate (a col<col / col>col / ts>ts self-comparison, or an AND of them)

@@ -10224,6 +10224,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                 }
 
+                // A LATEST ON query consumes an index key column only when that key is
+                // the single, symbol-typed latest-by column itself (preferredKeyColumn).
+                // With no such column -- a non-symbol or multi-column latest by -- no
+                // latest-by factory reads the key intrinsic, so suppress key extraction.
+                // Otherwise the parser pulls an unrelated indexed-symbol predicate (e.g.
+                // 'sym IS NOT NULL') out of the residual filter into the key intrinsic and
+                // the LatestByAllFiltered/LatestByAllSymbolsFiltered path, which ignores
+                // the key column, silently drops the predicate.
+                final boolean suppressKeyColumn = latestByColumnCount > 0 && preferredKeyColumn == null;
+
                 intrinsicModel = whereClauseParser.extract(
                         model,
                         expressionNodePool,
@@ -10234,7 +10244,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         functionParser,
                         queryMeta,
                         executionContext,
-                        latestByColumnCount > 1,
+                        suppressKeyColumn,
                         reader,
                         SqlHints.hasNoIndexHint(model)
                 );
