@@ -541,6 +541,71 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    /**
+     * Advances a live view's {@code _lv.s} and in-memory instance to {@code maxBaseSeqTxn}
+     * after the global {@link io.questdb.cairo.wal.ApplyWal2TableJob} applied a
+     * {@code LIVE_VIEW_DATA} block on a read-only replica. On a primary the refresh worker
+     * owns the inline apply and advances state via {@link #advanceLiveViewConsumedSeqTxn};
+     * on a replica that worker is quiesced (the live-view state store is NoOp,
+     * {@code isRefreshEnabled()} is false), so the apply job is the only thing touching the
+     * view and must mirror that state advance itself. Keeping {@code lastProcessedSeqTxn}
+     * consistent with the replicated rows lets a later promote resume refresh from the right
+     * base seqTxn without re-deriving already-applied output.
+     * <p>
+     * {@code maxBaseSeqTxn} is the single in-band watermark the primary fed to
+     * {@code WalWriter.commitLiveView} and to {@code lastProcessedSeqTxn} /
+     * {@code appliedWatermark} / {@code lvConsumedSeqTxn} in one refresh cycle, so all three
+     * coincide here. Persists {@code _lv.s} before publishing in-memory, matching the
+     * durability rule in {@link #advanceLiveViewConsumedSeqTxn}: the durable state never
+     * sits ahead of the applied LV WAL, so a crash between apply and persist leaves a
+     * trailing (never a leading) {@code _lv.s}, which a later cycle re-advances.
+     */
+    public void applyLiveViewData(
+            TableToken liveViewToken,
+            long maxBaseSeqTxn,
+            BlockFileWriter blockFileWriter,
+            Path path
+    ) {
+        if (maxBaseSeqTxn < 0) {
+            return;
+        }
+        LiveViewInstance instance = liveViewRegistry.getViewInstance(liveViewToken.getTableName());
+        if (instance == null) {
+            return;
+        }
+        synchronized (instance) {
+            LiveViewStateReader reader = instance.getStateReader();
+            if (maxBaseSeqTxn <= reader.getLastProcessedSeqTxn()) {
+                return;
+            }
+            try {
+                path.of(configuration.getDbRoot()).concat(liveViewToken).concat(LiveViewState.LIVE_VIEW_STATE_FILE_NAME);
+                blockFileWriter.of(path.$());
+                LiveViewState.append(
+                        reader.isInvalid(),
+                        reader.getInvalidationReason(),
+                        reader.getInvalidationTimestampUs(),
+                        reader.getSubscribeFromSeqTxn(),
+                        maxBaseSeqTxn, // lastProcessedSeqTxn
+                        maxBaseSeqTxn, // appliedWatermark
+                        maxBaseSeqTxn, // lvConsumedSeqTxn
+                        reader.getBackfillState(),
+                        reader.getBackfillTargetSeqTxn(),
+                        blockFileWriter
+                );
+            } catch (Throwable t) {
+                LOG.error().$("could not persist live view state on replica apply [view=").$(liveViewToken)
+                        .$(", maxBaseSeqTxn=").$(maxBaseSeqTxn)
+                        .$(", error=").$(t).I$();
+                throw CairoException.critical(0).put("could not persist live view state on replica apply [view=")
+                        .put(liveViewToken.getTableName()).put(", maxBaseSeqTxn=").put(maxBaseSeqTxn).put(']');
+            }
+            instance.setLastProcessedSeqTxn(maxBaseSeqTxn);
+            instance.setAppliedWatermark(maxBaseSeqTxn);
+            instance.setLvConsumedSeqTxn(maxBaseSeqTxn);
+        }
+    }
+
     public void applyTableRename(TableToken token, TableToken updatedTableToken) {
         if (updatedTableToken.isMatView() && dependentViewGraph.getViewDefinition(updatedTableToken) == null) {
             throw CairoException.nonCritical().put("materialized view has not been registered yet [name=").put(updatedTableToken.getTableName()).put(']');

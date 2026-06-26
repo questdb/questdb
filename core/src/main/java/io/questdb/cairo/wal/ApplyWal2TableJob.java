@@ -796,11 +796,38 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         }
                     }
                 }
-                // The lvConsumedSeqTxn advance for LV tokens lives in
-                // LiveViewRefreshJob, which runs immediately after applyWalDirect
-                // returns. That keeps the per-FLUSH-cycle BlockFileWriter + Path
-                // amortised on the refresh worker (no per-cycle allocations) and
-                // removes the only LV-specific branch from this method.
+                // On a primary the lvConsumedSeqTxn advance for LV tokens lives in
+                // LiveViewRefreshJob, which runs immediately after applyWalDirect returns and
+                // amortises a reusable BlockFileWriter + Path across FLUSH cycles; doRun skips
+                // LV tokens there, so this branch never fires. On a read-only replica the
+                // refresh worker is quiesced (isRefreshEnabled() false) and this global apply
+                // job owns the LV apply, so it must also advance the view's state -- mirror the
+                // mat-view branch above: find the latest applied LIVE_VIEW_DATA block and push
+                // its in-band maxBaseSeqTxn into _lv.s + the in-memory instance, so a later
+                // promote resumes refresh consistent with the replicated rows.
+                if (writer.getTableToken().isLiveView() && !engine.getLiveViewStateStore().isRefreshEnabled()) {
+                    for (long s = lastCommittedSeqTxn; s >= seqTxn; s--) {
+                        if (txnDetails.getWalTxnType(s) == LIVE_VIEW_DATA) {
+                            // The reused blockFileWriter is opened (and self-closed) by
+                            // of() inside applyLiveViewData and freed when the job closes,
+                            // matching advanceLiveViewConsumedSeqTxn's caller-reuse contract.
+                            try {
+                                engine.applyLiveViewData(
+                                        writer.getTableToken(),
+                                        txnDetails.getLiveViewMaxBaseSeqTxn(s),
+                                        blockFileWriter,
+                                        Path.PATH2.get()
+                                );
+                            } catch (CairoException e) {
+                                LOG.error().$("could not update state for live view [view=").$(writer.getTableToken())
+                                        .$(", msg=").$safe(e.getFlyweightMessage())
+                                        .$(", errno=").$(e.getErrno())
+                                        .I$();
+                            }
+                            break; // latest LV state found, earlier transactions are stale
+                        }
+                    }
+                }
 
                 return (int) (lastCommittedSeqTxn - seqTxn + 1);
             case SQL:
@@ -1122,11 +1149,13 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             subSeq.done(cursor);
         }
 
-        // Live views apply their own WAL inline on the refresh
-        // worker, so a global apply task on this token would race the LV's own
-        // TableWriter acquire. Notifications still land on the queue (WalWriter
-        // emits them unconditionally on commit) -- just drop them here.
-        if (tableToken.isLiveView()) {
+        // On a primary the LV refresh worker applies the view's own WAL inline (it owns the
+        // TableWriter), so a global apply task on this token would race that acquire -- drop
+        // the notification (WalWriter emits them unconditionally on commit). On a read-only
+        // replica the refresh worker is quiesced (the live-view state store is NoOp, so
+        // isRefreshEnabled() is false) and never applies anything, so the global apply job
+        // owns the LV's on-disk tier and its _lv.s advance instead -- fall through to applyWal.
+        if (tableToken.isLiveView() && engine.getLiveViewStateStore().isRefreshEnabled()) {
             return true;
         }
 
