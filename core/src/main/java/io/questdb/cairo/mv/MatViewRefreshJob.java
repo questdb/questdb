@@ -1595,6 +1595,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 seam.run();
             }
 
+            // True once the auth-rollback branch below defers this invalidate itself (see the finally).
+            boolean selfDeferred = false;
             try {
                 // Mark the view invalid only if the operation is forced or the view was never refreshed.
                 if (force || viewState.getLastRefreshBaseTxn() != -1) {
@@ -1638,6 +1640,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                 assert invalidationReason != null : "a deferred invalidation must carry a reason (null is the full-refresh marker)";
                                 viewState.markAsPendingInvalidation(invalidationReason);
                                 stateStore.enqueueInvalidate(viewToken, invalidationReason);
+                                selfDeferred = true;
                                 return;
                             }
                             if (!handleErrorRetryRefresh(ex, viewToken, null, null)) {
@@ -1647,12 +1650,18 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     }
                 }
             } finally {
-                // Finalize the decline path's own lock-hold (see the method-top comment). No-op on the mint
-                // path (isInvalid short-circuits) and on the auth-rollback defer above while still read-only
-                // (finalize's isReadOnlyMode check); if the role flipped back to writable in between, finalize
-                // just re-delivers the invalidation the rollback already queued -- the first mints, the
-                // duplicate then no-ops on isInvalid.
-                finalizeAndUnlock(viewToken, viewState, false);
+                // Skip finalize for the auth-rollback path's own deferral: finalizeDeferredInvalidation would
+                // clear the marker it just set and re-enqueue. With the writer refusal sticky until a
+                // re-promote, clearing the marker lets the retry back past the top guard every pass -- a busy
+                // spin. The else branch still finalizes a deferral a concurrent invalidate left while this one
+                // held the lock.
+                if (selfDeferred) {
+                    viewState.unlock();
+                    viewState.tryCloseIfDropped();
+                    viewState.tryCloseIfClosed();
+                } else {
+                    finalizeAndUnlock(viewToken, viewState, false);
+                }
             }
             // Invalidate dependent views recursively.
             enqueueInvalidateDependentViews(viewToken, "base materialized view is invalidated");
