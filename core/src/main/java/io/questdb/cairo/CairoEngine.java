@@ -2623,6 +2623,13 @@ public class CairoEngine implements Closeable, WriterSource {
 
                 state.initFromReader(matViewStateReader);
                 if (state.isInvalid()) {
+                    // A parent that loads invalid must re-cascade to its dependents: a chained child that
+                    // resumed off this now-invalid parent would otherwise reload valid and serve stale rows.
+                    // Enqueue as a base-table invalidate so the refresh job enumerates dependents from the
+                    // fully-built graph at processing time (independent of view load order) and cascades
+                    // transitively. Invalidating an already-invalid child is a no-op, so this is safe even
+                    // when the load-time backstop already invalidated the child.
+                    matViewStateStore.enqueueInvalidateDependentViews(tableToken, "base materialized view is invalidated");
                     return;
                 }
                 long baseTableLastTxn = getTableSequencerAPI().lastTxn(baseTableToken);

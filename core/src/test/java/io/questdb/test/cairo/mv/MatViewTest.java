@@ -45,6 +45,7 @@ import io.questdb.cairo.mv.WalTxnRangeLoader;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlCompiler;
@@ -2607,6 +2608,54 @@ public class MatViewTest extends AbstractCairoTest {
 
             Assert.assertTrue(
                     "a chained mat-view must reload INVALID when its base mat-view is durably invalid",
+                    store.getViewState(viewB).isInvalid()
+            );
+        });
+    }
+
+    @Test
+    public void testChainedMatViewReCascadesWhenParentGapPurged() throws Exception {
+        // Isolates the hydrate re-cascade fallback (a). After the sever, engine.clear() drops the
+        // matViewStateStore so the purge job no longer sees B's lastRefreshBaseTxn and removes
+        // A's wal1 (the data segment containing txn 1). The backstop (b) scans A's WAL from txn 1
+        // but wal1 is gone; the scan throws CairoException and reports no invalidating barrier.
+        // With DEBUG_MAT_VIEW_REFRESH_MISSING_WAL_FILES_FATAL=false the subsequent refresh falls
+        // back to a full table read instead of failing, so B reloads VALID without the re-cascade
+        // fix. Only fix (a) -- re-cascade on invalid parent load -- can invalidate B here.
+        setProperty(PropertyKey.DEBUG_MAT_VIEW_REFRESH_MISSING_WAL_FILES_FATAL, "false");
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, val double, ts timestamp) timestamp(ts) partition by DAY WAL");
+            createMatView("mv_a", "select ts, count() cnt from base sample by 1h");
+            createMatView("mv_b", "select ts, sum(cnt) cnt from mv_a sample by 1d");
+            execute("insert into base values ('a', 1.0, '2024-09-10T12:00'), ('a', 2.0, '2024-09-10T12:30')");
+            drainQueues();
+
+            final TableToken viewA = engine.verifyTableName("mv_a");
+            final TableToken viewB = engine.verifyTableName("mv_b");
+            final MatViewStateStoreImpl store = (MatViewStateStoreImpl) engine.getMatViewStateStore();
+            severCascadeLeavingParentInvalidChildValid(store, viewA, store.getViewState(viewB));
+            Assert.assertTrue("precondition: parent durably invalid", store.getViewState(viewA).isInvalid());
+            Assert.assertFalse("precondition: child still valid on disk", store.getViewState(viewB).isInvalid());
+
+            // engine.clear() drops the in-memory state store so WalPurgeJob no longer sees
+            // B's lastRefreshBaseTxn=1 that would otherwise cap safeToPurgeTxn and keep wal1.
+            engine.clear();
+            try (WalPurgeJob purgeJob = new WalPurgeJob(engine)) {
+                purgeJob.drain(0);
+            }
+            // Confirm wal1 (A's data segment for txn 1) is gone so the backstop (b) scan from
+            // txn 1 throws and returns null. If this assertion fires the test setup has changed
+            // and the RED step may pass spuriously because fix (b) can still see the type-4.
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(viewA).concat(WAL_NAME_BASE).put(1);
+                Assert.assertFalse("A's wal1 must be purged to blind fix (b)", Files.exists(path.$()));
+            }
+
+            engine.hydrateMatViewStateStore();
+            drainWalAndMatViewQueues();
+
+            Assert.assertTrue(
+                    "the hydrate re-cascade must invalidate a chained mat-view even when the parent WAL gap is unreadable",
                     store.getViewState(viewB).isInvalid()
             );
         });
