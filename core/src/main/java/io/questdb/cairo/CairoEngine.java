@@ -1125,7 +1125,28 @@ public class CairoEngine implements Closeable, WriterSource {
                 ? backfillTargetSeqTxn - 1
                 : subscribeFromSeqTxn - 1;
 
-        LiveViewTableStructure struct = new LiveViewTableStructure(configuration, op.getViewName(), partitionBy, metadata);
+        // Build the definition up front so it can ride into the sequencer
+        // directory as part of table creation (SequencerMetadata.create writes
+        // _lv next to _meta.0, mirroring _mv). That seq-dir copy is what
+        // replicates; the table-dir _lv below is the primary's own commit marker.
+        LiveViewDefinition definition = new LiveViewDefinition(
+                op.getViewName(),
+                op.getSelectSql(),
+                op.getBaseTableName(),
+                baseTableToken,
+                baseTimestampType,
+                op.getFlushEveryInterval(),
+                op.getFlushEveryIntervalUnit(),
+                op.getInMemoryInterval(),
+                op.getInMemoryIntervalUnit(),
+                partitionBy,
+                viewLowerBoundTimestamp,
+                backfillRequested,
+                op.getAnchorSpec(),
+                dependencyColumnNames,
+                metadata
+        );
+        LiveViewTableStructure struct = new LiveViewTableStructure(configuration, op.getViewName(), partitionBy, metadata, definition);
         try (
                 MemoryMARW mem = Vm.getCMARWInstance();
                 BlockFileWriter blockFileWriter = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode());
@@ -1159,30 +1180,15 @@ public class CairoEngine implements Closeable, WriterSource {
             // From here on, any failure must roll back the table to avoid orphan
             // LV-typed directories the startup loader skips and never reclaims.
             try {
-                // _lv is the atomic CREATE commit marker, so it must be written
-                // last. Order: _lv.s (state) first, then _lv (definition). A crash
-                // between the two leaves _lv missing and the partial CREATE looks
-                // like an orphan LV directory to the loader. Rolling that back is
-                // safe; loading a half-created LV is not (without _lv.s, lastProcessed
-                // would default to -1 and the next refresh would re-replay the
-                // entire base table).
-                LiveViewDefinition definition = new LiveViewDefinition(
-                        op.getViewName(),
-                        op.getSelectSql(),
-                        op.getBaseTableName(),
-                        baseTableToken,
-                        baseTimestampType,
-                        op.getFlushEveryInterval(),
-                        op.getFlushEveryIntervalUnit(),
-                        op.getInMemoryInterval(),
-                        op.getInMemoryIntervalUnit(),
-                        partitionBy,
-                        viewLowerBoundTimestamp,
-                        backfillRequested,
-                        op.getAnchorSpec(),
-                        dependencyColumnNames,
-                        metadata
-                );
+                // _lv is the atomic CREATE commit marker for the table dir, so it
+                // must be written last. Order: _lv.s (state) first, then _lv
+                // (definition). A crash between the two leaves _lv missing and the
+                // partial CREATE looks like an orphan LV directory to the loader.
+                // Rolling that back is safe; loading a half-created LV is not
+                // (without _lv.s, lastProcessed would default to -1 and the next
+                // refresh would re-replay the entire base table). The seq-dir _lv
+                // (written above by SequencerMetadata.create) is a separate copy
+                // for replication and is rolled back with the table on failure.
 
                 // _checkpoints/ subdirectory holds the rolling head checkpoint.
                 // Created before _lv.s so the rollback

@@ -26,13 +26,19 @@ package io.questdb.test.cairo.lv;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.file.BlockFileReader;
+import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.WindowSPI;
+import io.questdb.cairo.wal.WalUtils;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.window.BaseWindowFunction;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.mp.Job;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Before;
@@ -117,6 +123,45 @@ public class LiveViewTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noCircuitBreakerCheck() // catalogue function over the in-memory registry; no per-row checks
                     .returns("view_sql\nSELECT val, ts, row_number() OVER () AS rn FROM base\n");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testCreateWritesLiveViewDefinitionToSequencerDir() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT val, ts, row_number() OVER () AS rn FROM base");
+
+            final TableToken token = engine.verifyTableName("lv");
+            final FilesFacade ff = configuration.getFilesFacade();
+            try (Path seqPath = new Path(); Path tablePath = new Path()) {
+                // SequencerMetadata.create writes _lv into the sequencer dir so it
+                // replicates with the sequencer metadata (the LV table dir is
+                // rebuilt from WAL on a replica and never ships its own _lv).
+                seqPath.of(configuration.getDbRoot()).concat(token).concat(WalUtils.SEQ_DIR)
+                        .concat(LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME);
+                // createLiveView still writes _lv into the table dir as the
+                // primary's own atomic CREATE commit marker.
+                tablePath.of(configuration.getDbRoot()).concat(token)
+                        .concat(LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME);
+
+                Assert.assertTrue("seq-dir _lv must exist for replication", ff.exists(seqPath.$()));
+                Assert.assertTrue("table-dir _lv must still exist", ff.exists(tablePath.$()));
+
+                // Both copies come from the same LiveViewDefinition.append, so the
+                // replication copy is a byte-complete twin of the commit marker.
+                final long seqLen = ff.length(seqPath.$());
+                Assert.assertTrue("seq-dir _lv must be non-empty", seqLen > 0);
+                Assert.assertEquals("seq-dir _lv must match table-dir _lv", ff.length(tablePath.$()), seqLen);
+            }
+
+            // The persisted definition round-trips: the base table name reads back.
+            try (Path p = new Path(); BlockFileReader reader = new BlockFileReader(configuration)) {
+                p.of(configuration.getDbRoot());
+                Assert.assertEquals("base", LiveViewDefinition.readBaseTableName(reader, p, p.size(), token));
+            }
             execute("DROP LIVE VIEW lv");
         });
     }

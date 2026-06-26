@@ -35,6 +35,7 @@ import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.file.BlockFileWriter;
+import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.view.ViewDefinition;
@@ -191,6 +192,19 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
             try (BlockFileWriter writer = new BlockFileWriter(ff, commitMode)) {
                 writer.of(path.trimTo(pathLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
                 MatViewDefinition.append(tableStruct.getMatViewDefinition(), writer);
+            }
+            path.trimTo(pathLen);
+        }
+
+        // Persist the live view definition into the sequencer directory so it
+        // replicates with the sequencer metadata (the LV table dir is rebuilt
+        // from WAL on a replica and never ships its own _lv). reconstructLiveViewFiles
+        // copies it back into the LV table dir on the replica. Mirrors _mv above.
+        if (writeInitialMetadata && tableStruct.isLiveView()) {
+            assert tableStruct.getLiveViewDefinition() != null;
+            try (BlockFileWriter writer = new BlockFileWriter(ff, commitMode)) {
+                writer.of(path.trimTo(pathLen).concat(LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME).$());
+                LiveViewDefinition.append(tableStruct.getLiveViewDefinition(), writer);
             }
             path.trimTo(pathLen);
         }

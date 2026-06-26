@@ -42,6 +42,7 @@ import io.questdb.std.Numbers;
  */
 public class LiveViewTableStructure implements TableStructure {
     private final CairoConfiguration configuration;
+    private final LiveViewDefinition definition;
     private final GenericRecordMetadata metadata;
     private final int partitionBy;
     private final String viewName;
@@ -50,12 +51,14 @@ public class LiveViewTableStructure implements TableStructure {
             CairoConfiguration configuration,
             String viewName,
             int partitionBy,
-            GenericRecordMetadata metadata
+            GenericRecordMetadata metadata,
+            LiveViewDefinition definition
     ) {
         this.configuration = configuration;
         this.viewName = viewName;
         this.partitionBy = partitionBy;
         this.metadata = metadata;
+        this.definition = definition;
     }
 
     @Override
@@ -81,6 +84,11 @@ public class LiveViewTableStructure implements TableStructure {
     @Override
     public byte getIndexType(int columnIndex) {
         return IndexType.NONE;
+    }
+
+    @Override
+    public LiveViewDefinition getLiveViewDefinition() {
+        return definition;
     }
 
     @Override

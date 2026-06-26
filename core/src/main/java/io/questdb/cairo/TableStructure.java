@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.std.IntList;
 import io.questdb.cairo.view.ViewDefinition;
@@ -41,6 +42,10 @@ public interface TableStructure {
 
     default int getParquetEncodingConfig(int columnIndex) {
         return 0;
+    }
+
+    default LiveViewDefinition getLiveViewDefinition() {
+        return null;
     }
 
     default MatViewDefinition getMatViewDefinition() {
