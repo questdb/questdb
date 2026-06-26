@@ -3569,5 +3569,143 @@ public class EarliestByTest extends AbstractCairoTest {
             );
         });
     }
+
+    // Regression: indexed EARLIEST ON PARTITION BY <symbol> with a residual filter on a second column
+    // routes through the index-backed filtered cursor. The bitmap index cursor already returns
+    // frame-relative row ids, so the cursor must NOT subtract partitionLo again. The target symbols are
+    // placed deep (only for ordinals > 150) and page frames are forced small, so the EARLIEST match
+    // falls in a page frame with partitionLo > 0 and the double subtraction returned a neighbouring row.
+    @Test
+    public void testEarliestByValueIndexedFilteredAcrossPageFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.changePageFrameSizes(1, 8);
+            try {
+                executeWithRewriteTimestamp(
+                        "create table tk (sym symbol index, venue symbol index, px double, ts #TIMESTAMP) timestamp(ts)",
+                        timestampType.getTypeName()
+                );
+                execute(
+                        "insert into tk select\n" +
+                                "  case when x <= 150 then 'g0' else 'g' || (x % 4) end,\n" +
+                                "  case when x % 5 = 0 then 'v2' else 'v1' end,\n" +
+                                "  x::double,\n" +
+                                "  (x * 1000000)::" + timestampType.getTypeName() + "\n" +
+                                "from long_sequence(200);"
+                );
+                // Earliest 'g2'/'v1' is the deep ordinal x=154 (px=154), in a frame with partitionLo>0.
+                assertSql("""
+                        sym\tpx
+                        g2\t154.0
+                        """, "select sym, px from tk " +
+                        "where sym = 'g2' and venue = 'v1' earliest on ts partition by sym");
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
+            }
+        });
+    }
+
+    @Test
+    public void testEarliestByValuesIndexedFilteredAcrossPageFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.changePageFrameSizes(1, 8);
+            try {
+                executeWithRewriteTimestamp(
+                        "create table tk (sym symbol index, venue symbol index, px double, ts #TIMESTAMP) timestamp(ts)",
+                        timestampType.getTypeName()
+                );
+                execute(
+                        "insert into tk select\n" +
+                                "  case when x <= 150 then 'g0' else 'g' || (x % 4) end,\n" +
+                                "  case when x % 5 = 0 then 'v2' else 'v1' end,\n" +
+                                "  x::double,\n" +
+                                "  (x * 1000000)::" + timestampType.getTypeName() + "\n" +
+                                "from long_sequence(200);"
+                );
+                // IN-list drives the multi-value filtered index cursor. Earliest per key on venue 'v1':
+                // g1 -> x=153 (px=153), g2 -> x=154 (px=154); both deep, so partitionLo>0.
+                assertSql("""
+                        sym\tpx
+                        g1\t153.0
+                        g2\t154.0
+                        """, "select sym, px from tk " +
+                        "where sym in ('g1', 'g2') and venue = 'v1' earliest on ts partition by sym order by sym");
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
+            }
+        });
+    }
+
+    // Deferred path: a bind-variable key value is a runtime constant, so the query routes through
+    // EarliestByValueDeferredIndexedFilteredRecordCursorFactory, which delegates to the same cursor.
+    @Test
+    public void testEarliestByValueDeferredIndexedFilteredAcrossPageFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.changePageFrameSizes(1, 8);
+            try {
+                executeWithRewriteTimestamp(
+                        "create table tk (sym symbol index, venue symbol index, px double, ts #TIMESTAMP) timestamp(ts)",
+                        timestampType.getTypeName()
+                );
+                execute(
+                        "insert into tk select\n" +
+                                "  case when x <= 150 then 'g0' else 'g' || (x % 4) end,\n" +
+                                "  case when x % 5 = 0 then 'v2' else 'v1' end,\n" +
+                                "  x::double,\n" +
+                                "  (x * 1000000)::" + timestampType.getTypeName() + "\n" +
+                                "from long_sequence(200);"
+                );
+                bindVariableService.clear();
+                bindVariableService.setStr("targetSym", "g2");
+                assertSql("""
+                        sym\tpx
+                        g2\t154.0
+                        """, "select sym, px from tk " +
+                        "where sym = :targetSym and venue = 'v1' earliest on ts partition by sym");
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
+            }
+        });
+    }
+
+    // Same fix with a column top: 'px' is added after the first batch, so it has columnTop > 0. The
+    // earliest match sits in a deep page frame (partitionLo > 0) in the post-ALTER region.
+    @Test
+    public void testEarliestByValueIndexedFilteredColumnTopAcrossPageFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.changePageFrameSizes(1, 8);
+            try {
+                executeWithRewriteTimestamp(
+                        "create table tk (sym symbol index, venue symbol index, ts #TIMESTAMP) timestamp(ts)",
+                        timestampType.getTypeName()
+                );
+                // First batch (ordinals 1..100), all 'g0', no px column yet.
+                execute(
+                        "insert into tk select\n" +
+                                "  'g0',\n" +
+                                "  case when x % 5 = 0 then 'v2' else 'v1' end,\n" +
+                                "  (x * 1000000)::" + timestampType.getTypeName() + "\n" +
+                                "from long_sequence(100);"
+                );
+                execute("alter table tk add column px double");
+                // Second batch (ordinals 101..200) introduces g1/g2/g3 and sets px.
+                execute(
+                        "insert into tk select\n" +
+                                "  'g' || ((x + 100) % 4),\n" +
+                                "  case when (x + 100) % 5 = 0 then 'v2' else 'v1' end,\n" +
+                                "  ((x + 100) * 1000000)::" + timestampType.getTypeName() + ",\n" +
+                                "  (x + 100)::double\n" +
+                                "from long_sequence(100);"
+                );
+                // Earliest 'g2'/'v1' is ordinal 102 (post-ALTER, px=102), deep => partitionLo>0, px columnTop=100.
+                assertSql("""
+                        sym\tpx
+                        g2\t102.0
+                        """, "select sym, px from tk " +
+                        "where sym = 'g2' and venue = 'v1' earliest on ts partition by sym");
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
+            }
+        });
+    }
 }
 

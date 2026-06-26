@@ -129,10 +129,13 @@ class EarliestByValuesIndexedFilteredRecordCursor extends AbstractPageFrameRecor
         if (index > -1) {
             RowCursor cursor = indexReader.getCursor(false, symbolKey, partitionLo, partitionHi);
             while (cursor.hasNext()) {
+                // cursor.next() is already frame-relative (BitmapIndex*Reader subtracts
+                // minValue == partitionLo). Do not subtract partitionLo again, or the record
+                // is positioned partitionLo rows too early when partitionLo > 0.
                 final long row = cursor.next();
-                recordA.setRowIndex(row - partitionLo);
+                recordA.setRowIndex(row);
                 if (filter.getBool(recordA)) {
-                    rows.add(Rows.toRowID(frameIndex, row - partitionLo));
+                    rows.add(Rows.toRowID(frameIndex, row));
                     found.addAt(index, symbolKey);
                     break;
                 }

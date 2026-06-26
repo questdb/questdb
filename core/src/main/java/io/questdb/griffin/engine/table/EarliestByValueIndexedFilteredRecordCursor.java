@@ -120,7 +120,11 @@ class EarliestByValueIndexedFilteredRecordCursor extends AbstractLatestByValueRe
 
             RowCursor cursor = indexReader.getCursor(false, symbolKey, partitionLo, partitionHi);
             while (cursor.hasNext()) {
-                recordA.setRowIndex(cursor.next() - partitionLo);
+                // cursor.next() already returns a frame-relative row index (BitmapIndex*Reader
+                // subtracts minValue == partitionLo). Subtracting partitionLo again positions the
+                // record partitionLo rows too early when the match falls in a page frame with
+                // partitionLo > 0, returning a neighbouring row (often a different symbol).
+                recordA.setRowIndex(cursor.next());
                 if (filter.getBool(recordA)) {
                     isRecordFound = true;
                     return;
