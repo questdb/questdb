@@ -62,6 +62,9 @@ class OffsetTimestampFunction extends TimestampFunction implements UnaryFunction
     public int invertTimestampInterval(Interval io) {
         long lo = io.getLo();
         long hi = io.getHi();
+        if (MonotonicTimestampFunction.shiftWrapsIntoRange(offset, lo, hi)) {
+            return NONE;
+        }
         if (lo != Numbers.LONG_NULL) {
             if ((offset > 0 && lo < Long.MIN_VALUE + offset) || (offset < 0 && lo > Long.MAX_VALUE + offset)) {
                 return NONE;

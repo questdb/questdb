@@ -68,10 +68,12 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
     public void testAddLongConstant() throws Exception {
         assertMemoryLeak(() -> {
             createTrades();
+            // the lower bound prunes via the interval scan; the upper bound (open below) could be
+            // matched by a forward-overflow wrap, so it stays a residual filter
             assertQuery("SELECT * FROM trades WHERE timestamp + 86_400_000_000 >= '2022-01-03' AND timestamp + 86_400_000_000 < '2022-01-05'")
                     .timestamp("timestamp")
                     .withPlanContaining("Interval forward scan on: trades")
-                    .withPlanNotContaining("filter:")
+                    .withPlanContaining("filter:")
                     .returns("""
                             price\ttimestamp
                             150.0\t2022-01-02T12:00:00.000000Z
@@ -1388,12 +1390,12 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
     public void testTimestampCeilNearMaxBound() throws Exception {
         assertMemoryLeak(() -> {
             createTrades();
-            // a bound a hair below the type maximum exercises the ceil inverse's div/overflow guards
-            // and stays EXACT (every row matches), so the scan prunes with the filter dropped
+            // ceil rounds the top partial bucket past the domain max, wrapping to a low value that an
+            // open lower bound would match, so the predicate cannot prune and stays a row filter
             assertQuery("SELECT * FROM trades WHERE timestamp_ceil('d', timestamp) <= 9223372036854775806")
                     .timestamp("timestamp")
-                    .withPlanContaining("Interval forward scan on: trades")
-                    .withPlanNotContaining("filter:")
+                    .withPlanContaining("Frame forward scan on: trades")
+                    .withPlanContaining("filter:")
                     .returns("""
                             price\ttimestamp
                             100.0\t2022-01-01T12:00:00.000000Z

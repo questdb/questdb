@@ -1092,7 +1092,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 PageFrame
                                     Row forward scan
                                     Interval forward scan on: x
-                                      intervals: [("2019-12-31T00:01:00.000000Z","MAX")]
+                                      intervals: [("2019-12-31T00:01:00.000000Z","294247-01-09T04:00:54.775807Z")]
                             """);
             assertQuery("select * from x where dateadd('d', 1, ts2) >= '2020-01-01T00:01' and id < 42")
                     .noLeakCheck()

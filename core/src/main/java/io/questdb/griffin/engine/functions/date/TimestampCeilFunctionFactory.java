@@ -111,23 +111,28 @@ public class TimestampCeilFunctionFactory implements FunctionFactory {
             long lo = io.getLo();
             long hi = io.getHi();
             if (lo != Numbers.LONG_NULL) {
-                final long q = ceilDiv(lo, fixedSize) - 1;
-                if (mulOverflows(q, fixedSize)) {
+                final long ql = ceilDiv(lo, fixedSize) - 1;
+                if (mulOverflows(ql, fixedSize)) {
                     return NONE;
                 }
-                lo = q * fixedSize;
+                lo = ql * fixedSize;
+            } else if (hi != Long.MAX_VALUE) {
+                // ceil rounds the top partial bucket past the domain max, wrapping to a low value;
+                // with an open lower but finite upper bound that wrapped value matches and splits
+                // the preimage into two disjoint ranges
+                return NONE;
             }
-            if (hi != Long.MAX_VALUE) {
-                final long q = Math.floorDiv(hi, fixedSize);
-                if (mulOverflows(q, fixedSize)) {
-                    return NONE;
-                }
-                final long prod = q * fixedSize;
-                if (prod == Long.MIN_VALUE) {
-                    return NONE;
-                }
-                hi = prod - 1;
+            // an open upper end is capped at the largest timestamp whose ceil stays in-domain,
+            // excluding the wrapping top bucket
+            final long qh = Math.floorDiv(hi, fixedSize);
+            if (mulOverflows(qh, fixedSize)) {
+                return NONE;
             }
+            final long prod = qh * fixedSize;
+            if (prod == Long.MIN_VALUE) {
+                return NONE;
+            }
+            hi = prod - 1;
             io.of(lo, hi);
             return EXACT;
         }

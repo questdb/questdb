@@ -1251,24 +1251,18 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @Test
     public void testDateaddLessThan() throws Exception {
-        // dateadd('d', 1, timestamp) < '2015-05-10T00:00:00.000Z'
-        // transforms to: timestamp < dateadd('d', -1, '2015-05-10T00:00:00.000Z')
-        // which is: timestamp < '2015-05-09T00:00:00.000Z'
+        // a positive dateadd near the domain max overflows to a low value that an open lower bound
+        // would match, so the predicate cannot prune and stays a row filter
         IntrinsicModel m = modelOf("dateadd('d', 1, timestamp) < '2015-05-10T00:00:00.000Z'");
-        Assert.assertTrue(m.hasIntervalFilters());
-        TestUtils.assertEquals(replaceTimestampSuffix("[{lo=, hi=2015-05-08T23:59:59.999999Z}]"), intervalToString(m));
-        assertFilter(m, null);
+        Assert.assertFalse(m.hasIntervalFilters());
+        assertFilter(m, "'2015-05-10T00:00:00.000Z' timestamp 1 'd' dateadd <");
     }
 
     @Test
     public void testDateaddLessThanOrEqual() throws Exception {
-        // dateadd('h', 2, timestamp) <= '2015-05-10T12:00:00.000Z'
-        // transforms to: timestamp <= dateadd('h', -2, '2015-05-10T12:00:00.000Z')
-        // which is: timestamp <= '2015-05-10T10:00:00.000Z'
         IntrinsicModel m = modelOf("dateadd('h', 2, timestamp) <= '2015-05-10T12:00:00.000Z'");
-        Assert.assertTrue(m.hasIntervalFilters());
-        TestUtils.assertEquals(replaceTimestampSuffix("[{lo=, hi=2015-05-10T10:00:00.000000Z}]"), intervalToString(m));
-        assertFilter(m, null);
+        Assert.assertFalse(m.hasIntervalFilters());
+        assertFilter(m, "'2015-05-10T12:00:00.000Z' timestamp 2 'h' dateadd <=");
     }
 
     @Test

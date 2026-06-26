@@ -92,6 +92,19 @@ public interface MonotonicTimestampFunction {
         return SUPERSET;
     }
 
+    /**
+     * Returns true when the forward function {@code arg + shift} can overflow the {@code long}
+     * boundary into {@code [lo, hi]} in a way that splits the preimage. The designated timestamp is
+     * non-negative, so only a positive shift can overflow (a negative one stays well above
+     * {@code Long.MIN_VALUE}); the overflow wraps to a low value. The wrapped value only splits the
+     * preimage when the upper bound is finite -- with an open upper bound the wrap merges
+     * contiguously with the non-wrapping range. A split cannot be captured by a single interval, so
+     * the inverse must decline ({@link #NONE}) and leave the predicate a row filter.
+     */
+    static boolean shiftWrapsIntoRange(long shift, long lo, long hi) {
+        return shift > 0 && hi != Long.MAX_VALUE && lo <= Long.MIN_VALUE + (shift - 1);
+    }
+
     private static boolean tryZoneOffsetExact(
             Interval io,
             TimeZoneRules tzRules,

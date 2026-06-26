@@ -170,6 +170,13 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory 
             if (stride == Numbers.INT_NULL) {
                 return NONE;
             }
+            // a positive local add near the domain max overflows the long boundary and wraps to a
+            // low value; with an open lower but finite upper bound that wrapped value matches and
+            // splits the preimage. The designated timestamp is non-negative, so a negative add
+            // cannot underflow.
+            if (stride > 0 && io.getLo() == Numbers.LONG_NULL && io.getHi() != Long.MAX_VALUE) {
+                return NONE;
+            }
             // 48h bounds any zone offset difference (e.g. Samoa's 2011 date-line shift);
             // calendar units add a further +/-1 unit of day-clamping slack.
             final long margin = timestampDriver.fromDays(2);

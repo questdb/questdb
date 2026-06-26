@@ -145,6 +145,13 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
             if (period == 'M' || period == 'y') {
                 // Calendar add clamps day-of-month, so it is non-monotonic by up to
                 // one unit; widen the naive inverse and keep the residual filter.
+                // A positive calendar add near the domain max overflows the long boundary and wraps
+                // to a low value; with an open lower but finite upper bound that wrapped value
+                // matches and splits the preimage into two disjoint ranges. The designated timestamp
+                // is non-negative, so a negative add cannot underflow.
+                if (stride > 0 && lo == Numbers.LONG_NULL && hi != Long.MAX_VALUE) {
+                    return NONE;
+                }
                 if (lo != Numbers.LONG_NULL) {
                     final long m = periodAddFunction.add(lo, -stride);
                     final long w = periodAddFunction.add(m, -1);
@@ -168,6 +175,9 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
                 // a fixed unit adds the same constant to every timestamp, so the inverse
                 // subtracts it back, bailing out when that would overflow
                 final long shift = periodAddFunction.add(0, stride);
+                if (MonotonicTimestampFunction.shiftWrapsIntoRange(shift, lo, hi)) {
+                    return NONE;
+                }
                 if (lo != Numbers.LONG_NULL) {
                     if ((shift > 0 && lo < Long.MIN_VALUE + shift) || (shift < 0 && lo > Long.MAX_VALUE + shift)) {
                         return NONE;

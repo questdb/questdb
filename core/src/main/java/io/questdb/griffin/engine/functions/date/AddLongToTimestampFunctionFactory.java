@@ -101,6 +101,9 @@ public class AddLongToTimestampFunctionFactory implements FunctionFactory {
             }
             long lo = io.getLo();
             long hi = io.getHi();
+            if (MonotonicTimestampFunction.shiftWrapsIntoRange(k, lo, hi)) {
+                return NONE;
+            }
             if (lo != Numbers.LONG_NULL) {
                 if ((k > 0 && lo < Long.MIN_VALUE + k) || (k < 0 && lo > Long.MAX_VALUE + k)) {
                     return NONE;
