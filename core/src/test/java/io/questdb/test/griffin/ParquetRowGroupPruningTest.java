@@ -4369,6 +4369,53 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testOverflowingIntConstantPushdownWrapsToInt() throws Exception {
+        // An overflowing INT constant compared against a narrow column (BYTE/SHORT/INT)
+        // must wrap mod 2^32 in the parquet pushdown like the native INT-precision scan.
+        // Before the fix the pushdown read the un-wrapped LONG and wrongly pruned a
+        // parquet partition, so a partial-parquet table disagreed with its native sibling.
+        //   (-2649 * 965823) wraps to INT +1_736_502_169 (> any row): const>col matches all.
+        //   ( 2649 * 965823) wraps to INT -1_736_502_169 (< any row): col>const matches all.
+        assertMemoryLeak(() -> {
+            for (String type : new String[]{"BYTE", "SHORT", "INT"}) {
+                createNativeAndPartialParquetNarrowColumn(type);
+
+                // Positive wrap: every row passes; wrongly pruned on HEAD.
+                assertNativeMatchesPartialParquet("(-2649::SHORT * (965823)::INT) > c6", "c6\n1\n2\n");
+                assertNativeMatchesPartialParquet("c6 < (-2649::SHORT * (965823)::INT)", "c6\n1\n2\n");
+                // Negative wrap: every row passes; wrongly pruned on HEAD from the other side.
+                assertNativeMatchesPartialParquet("c6 > (2649::SHORT * (965823)::INT)", "c6\n1\n2\n");
+
+                // Controls: the wrapped constant excludes every row (pass on HEAD too).
+                assertNativeMatchesPartialParquet("c6 > (-2649::SHORT * (965823)::INT)", "c6\n");
+                assertNativeMatchesPartialParquet("c6 < (2649::SHORT * (965823)::INT)", "c6\n");
+
+                execute("DROP TABLE tn");
+                execute("DROP TABLE tp");
+            }
+        });
+    }
+
+    // All-native tn and a partial-parquet sibling tp with identical data: two single-row
+    // daily partitions, the first parquet so the row-group pushdown decides to scan it.
+    private void createNativeAndPartialParquetNarrowColumn(String columnType) throws Exception {
+        execute("CREATE TABLE tn (c6 " + columnType + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE tp (c6 " + columnType + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("INSERT INTO tn VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-02T00:00:00.000000Z')");
+        execute("INSERT INTO tp VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-02T00:00:00.000000Z')");
+        execute("ALTER TABLE tp CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
+    }
+
+    private void assertNativeMatchesPartialParquet(String whereClause, String expected) throws Exception {
+        assertQuery("SELECT c6 FROM tn WHERE " + whereClause + " ORDER BY ts")
+                .noLeakCheck()
+                .returns(expected);
+        assertQuery("SELECT c6 FROM tp WHERE " + whereClause + " ORDER BY ts")
+                .noLeakCheck()
+                .returns(expected);
+    }
+
     private void assertHasParquetPartitions(String tableName, boolean expected) {
         TableToken tableToken = engine.verifyTableName(tableName);
         try (MetadataCacheReader reader = engine.getMetadataCache().readLock()) {
