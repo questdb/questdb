@@ -12347,10 +12347,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (indexer == null) {
                     continue;
                 }
-                // columnTop == -1 means the column does not exist on this partition at
-                // all (no .pk file), so skip those.
+                // Absent (columnTop == -1) or row-less (columnTop >= partition size) columns
+                // have no .pk file here, so there is no index to restore. Same guard as
+                // sealPostingIndexForPartition.
+                long partitionSize = txWriter.getPartitionRowCountByTimestamp(lastOpenPartitionTs);
                 long columnTop = columnVersionWriter.getColumnTopQuick(lastOpenPartitionTs, colIdx);
-                if (columnTop < 0) {
+                if (columnTop < 0 || columnTop >= partitionSize) {
                     continue;
                 }
                 CharSequence colName = metadata.getColumnName(colIdx);

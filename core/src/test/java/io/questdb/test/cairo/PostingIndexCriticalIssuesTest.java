@@ -760,6 +760,54 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testO3SealRestoreSkipsRowlessPostingColumnWithoutKeyFile() throws Exception {
+        // A POSTING-indexed column with no rows in a partition (columnTop >= partition
+        // size) has no .pk key file there: the O3 seal sweep skips row-less columns
+        // (sealPostingIndexForPartition), so it never builds one. The seal-sweep tail
+        // restorePostingIndexersToLastPartition used to open that column's index anyway
+        // and threw "index does not exist", which suspends a WAL table mid-apply (here,
+        // BYPASS WAL, it surfaces as the INSERT throwing).
+        //
+        // A last-partition split shrinks 2024-01-01 while `extra` stays row-less there
+        // (columnTop above the shrunk row count). The FilesFacade reports `extra`'s key
+        // file as absent on the day partition the seal-sweep restores to -- the exact
+        // production state -- but only once ADD COLUMN has built it (so the legitimate
+        // openNewColumnFiles path during ADD COLUMN is unaffected), and only for the
+        // day partition (not the split tail, whose dir carries a "...T..." suffix).
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 20);
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 20);
+        final AtomicBoolean keyFileHidden = new AtomicBoolean(false);
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean exists(LPSZ path) {
+                if (keyFileHidden.get()
+                        && Utf8s.containsAscii(path, "extra.pk")
+                        && !Utf8s.containsAscii(path, "2024-01-01T")) {
+                    return false;
+                }
+                return super.exists(path);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE t_rowless (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING, v LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t_rowless(ts, sym, v) SELECT ('2024-01-01T00:00:00.000000Z'::timestamp + x * 3600000000L)::timestamp, 'a', x FROM long_sequence(20)");
+            // extra has no rows on 2024-01-01 (columnTop == partition size).
+            execute("ALTER TABLE t_rowless ADD COLUMN extra SYMBOL INDEX TYPE POSTING");
+
+            keyFileHidden.set(true);
+            // O3 insert forces a last-partition split; the seal sweep then restores the
+            // posting indexers to the shrunk 2024-01-01, where `extra` is row-less.
+            execute("INSERT INTO t_rowless(ts, sym, v) VALUES ('2024-01-01T18:30:00.000000Z', 'a', 999)");
+            keyFileHidden.set(false);
+
+            // The table survived: all rows present, and the `sym` posting index serves reads.
+            Assert.assertEquals(21, selectLong("SELECT count() FROM t_rowless"));
+            Assert.assertEquals(21, selectLong("SELECT count() FROM t_rowless WHERE sym = 'a'"));
+        });
+    }
+
     /**
      * Rollback reencode publishes a bumped sealTxn for the compacted
      * {@code .pv.N}; it must also stage a sealed {@code .pc0.N} sidecar so a
