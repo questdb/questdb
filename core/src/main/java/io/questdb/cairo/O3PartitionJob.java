@@ -209,7 +209,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // updated target schema.
                 final boolean hasExtraColumns = mappedParquetColumns < parquetColumnCount;
                 final boolean hasSchemaChange = hasMissingColumns || hasExtraColumns || hasTypeConvertedColumns;
-                // Legacy files (written before BYTE/SHORT/CHAR/SYMBOL became Optional) store these
+                // Legacy files (written before BOOLEAN/BYTE/SHORT/CHAR/SYMBOL became Optional) store these
                 // no-null-sentinel columns as Required (parquet max def level 0, pages carry no
                 // definition-level stream). A rewrite migrates the footer to Optional but raw-copies
                 // non-overlapping row groups verbatim, leaving Required pages under an Optional footer,
@@ -2159,7 +2159,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         return false;
     }
 
-    // Detects a legacy parquet file that stores BYTE/SHORT/CHAR/SYMBOL as Required (max def
+    // Detects a legacy parquet file that stores BOOLEAN/BYTE/SHORT/CHAR/SYMBOL as Required (max def
     // level 0, no definition-level stream). Such a file predates the convention that these
     // no-null-sentinel columns are Optional. Rewriting it migrates the footer to Optional while
     // raw-copying untouched row groups, leaving Required pages under an Optional footer (corrupt
@@ -2169,7 +2169,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         for (int i = 0; i < parquetColumnCount; i++) {
             if (meta.getColumnMaxDefLevel(i) == 0) {
                 final int srcTag = ColumnType.tagOf(meta.getColumnType(i));
-                if (srcTag == ColumnType.BYTE
+                if (srcTag == ColumnType.BOOLEAN
+                        || srcTag == ColumnType.BYTE
                         || srcTag == ColumnType.SHORT
                         || srcTag == ColumnType.CHAR
                         || srcTag == ColumnType.SYMBOL) {

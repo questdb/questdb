@@ -1215,15 +1215,15 @@ impl ParquetUpdater {
     ///    convention was established that symbols are always Optional). If the
     ///    current data contains nulls (`!col.not_null_hint`), the schema must be
     ///    downgraded to Optional so the rewritten pages include definition levels.
-    /// 2. Byte/Short/Char columns marked Required in files written before
-    ///    commit 247cb447cd ("fix: known-bad null-sentinel behaviour"). Modern
-    ///    files always write these as Optional so column-top rows can be
+    /// 2. Boolean/Byte/Short/Char columns marked Required in files written
+    ///    before commit 247cb447cd ("fix: known-bad null-sentinel behaviour").
+    ///    Modern files always write these as Optional so column-top rows can be
     ///    materialised as NULL via def-level=0. The repetition-aware dispatch
     ///    in encode.rs preserves the Required path for these tags in update
     ///    mode, but during a rewrite the file is fully re-encoded, so the
     ///    schema is migrated to Optional unconditionally.
     ///
-    /// New files always write Symbol and Byte/Short/Char as Optional
+    /// New files always write Symbol and Boolean/Byte/Short/Char as Optional
     /// (see `column_type_to_parquet_type` in schema.rs). The `Column::not_null_hint`
     /// flag is only a write-time hint for the encoder to emit a fast all-ones
     /// RLE run for definition levels.
@@ -1247,7 +1247,10 @@ impl ParquetUpdater {
             }
             match col.data_type.tag() {
                 ColumnTypeTag::Symbol => !col.not_null_hint,
-                ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Char => true,
+                ColumnTypeTag::Boolean
+                | ColumnTypeTag::Byte
+                | ColumnTypeTag::Short
+                | ColumnTypeTag::Char => true,
                 _ => false,
             }
         };
