@@ -623,6 +623,24 @@ public class QwpEgressRequestDecoderTest {
     }
 
     /**
+     * A malformed {@code query_flags} trailer (a lone continuation byte) must
+     * surface as a clean {@link QwpParseException}, not read past the frame.
+     */
+    @Test
+    public void testDecodeQueryFlagsMalformedTrailerThrows() throws Exception {
+        runWithBuf(64, (buf, bindVars, decoder) -> {
+            int len = writeBindScaffold(buf, 0);
+            long p = buf + len;
+            Unsafe.putByte(p++, (byte) 0x80);
+            try {
+                decoder.decodeQueryRequest(buf, (int) (p - buf), bindVars);
+                Assert.fail("malformed query_flags trailer must throw");
+            } catch (QwpParseException expected) {
+            }
+        });
+    }
+
+    /**
      * A multi-byte varint trailer (value &gt; 127) must be consumed in full so
      * the decoded flags carry every bit. Guards against reading only the first
      * continuation byte.

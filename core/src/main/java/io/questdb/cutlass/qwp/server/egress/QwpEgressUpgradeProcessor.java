@@ -1045,6 +1045,11 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         RecordCursor cursor = null;
         PageFrameCursor pageFrameCursor = null;
         try {
+            // Seed requestId before decoding so a decode failure (e.g. a malformed
+            // query_flags trailer) still reports the right id instead of 0.
+            if (length >= 9) {
+                requestId = Unsafe.getLong(payload + 1);
+            }
             decoder.decodeQueryRequest(payload, length, state.getBindVariableService());
             requestId = decoder.requestId;
             boolean forceDictReset = (decoder.queryFlags & QwpEgressMsgKind.QUERY_FLAG_RESET_DICT) != 0;

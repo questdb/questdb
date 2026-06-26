@@ -359,7 +359,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      * the server's.
      * <p>
      * The dict bit also clears every per-column scratch's native-key to
-     * conn-id cache via {@link QwpResultBatchBuffer#resetForNewQuery()} --
+     * conn-id cache via {@link QwpResultBatchBuffer#clearConnKeyMaps()} --
      * without that, a cached key would resolve to an id the reset dict has
      * already dropped, and the next batch's row payload would reference an id
      * the client was never taught.
@@ -367,7 +367,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     public void applyCacheReset(byte resetMask) {
         if ((resetMask & QwpEgressMsgKind.RESET_MASK_DICT) != 0) {
             connSymbolDict.clear();
-            batchBuffer.resetForNewQuery();
+            batchBuffer.clearConnKeyMaps();
         }
     }
 

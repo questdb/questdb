@@ -868,6 +868,10 @@ final class QwpColumnScratch implements QuietCloseable {
         }
     }
 
+    void clearConnKeyMap() {
+        connKeyToConnId.clear();
+    }
+
     void ensureArrayHeapCapacity(int required) {
         if (arrayHeapCapacity >= required) return;
         int newCap = Math.max(arrayHeapCapacity * 2, Math.max(INITIAL_BYTES, required));
@@ -921,7 +925,7 @@ final class QwpColumnScratch implements QuietCloseable {
      * drops -- a DoS surface for slow clients or bursty workloads.
      */
     void resetForNewQuery() {
-        connKeyToConnId.clear();
+        clearConnKeyMap();
         // Roll the final batch of the previous query into the peak counters
         // before we use them to decide whether to shrink.
         updatePeakUsage();

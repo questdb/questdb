@@ -154,8 +154,8 @@ public class QwpEgressRequestDecoder {
      * Decodes a QUERY_REQUEST payload starting at {@code payload}, of length
      * {@code payloadLen}. The first byte (msg_kind) must already be QUERY_REQUEST.
      * <p>
-     * Populates {@link #requestId}, {@link #sql}, {@link #initialCredit}, and
-     * pushes bind parameters into {@code bindVars}.
+     * Populates {@link #requestId}, {@link #sql}, {@link #initialCredit},
+     * {@link #queryFlags}, and pushes bind parameters into {@code bindVars}.
      */
     public void decodeQueryRequest(long payload, int payloadLen, BindVariableService bindVars)
             throws QwpParseException, SqlException {
