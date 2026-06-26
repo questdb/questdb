@@ -1647,4 +1647,81 @@ public class LatestByTest extends AbstractCairoTest {
             }
         });
     }
+
+    // Same fix via the deferred path: a bind-variable key value is a runtime constant, so the query
+    // routes through LatestByValueDeferredIndexedFilteredRecordCursorFactory, which delegates to the
+    // same LatestByValueIndexedFilteredRecordCursor.
+    @Test
+    public void testLatestByValueDeferredIndexedFilteredAcrossPageFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.changePageFrameSizes(1, 8);
+            try {
+                executeWithRewriteTimestamp(
+                        "create table tk (sym symbol index, venue symbol index, px double, ts #TIMESTAMP) timestamp(ts)",
+                        timestampType.getTypeName()
+                );
+                execute(
+                        "insert into tk select\n" +
+                                "  'g' || (x % 4),\n" +
+                                "  case when x % 5 = 0 then 'v2' else 'v1' end,\n" +
+                                "  x::double,\n" +
+                                "  (x * 1000000)::" + timestampType.getTypeName() + "\n" +
+                                "from long_sequence(200);"
+                );
+                bindVariableService.clear();
+                bindVariableService.setStr("targetSym", "g2");
+                assertQuery("select sym, px from tk " +
+                        "where sym = :targetSym and venue = 'v1' latest on ts partition by sym")
+                        .returns("""
+                                sym\tpx
+                                g2\t198.0
+                                """);
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
+            }
+        });
+    }
+
+    // Same fix with a column top: 'px' is added after the first batch, so it has columnTop > 0. The
+    // matched row sits in a deep page frame (partitionLo > 0) in the post-ALTER region, exercising the
+    // interaction between the (fixed) frame-relative positioning and columnTop handling.
+    @Test
+    public void testLatestByValueIndexedFilteredColumnTopAcrossPageFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.changePageFrameSizes(1, 8);
+            try {
+                executeWithRewriteTimestamp(
+                        "create table tk (sym symbol index, venue symbol index, ts #TIMESTAMP) timestamp(ts)",
+                        timestampType.getTypeName()
+                );
+                // First batch (ordinals 1..100), no px column yet.
+                execute(
+                        "insert into tk select\n" +
+                                "  'g' || (x % 4),\n" +
+                                "  case when x % 5 = 0 then 'v2' else 'v1' end,\n" +
+                                "  (x * 1000000)::" + timestampType.getTypeName() + "\n" +
+                                "from long_sequence(100);"
+                );
+                execute("alter table tk add column px double");
+                // Second batch (ordinals 101..200) with px set; 100 % 4 == 0 and 100 % 5 == 0 keep the cycles aligned.
+                execute(
+                        "insert into tk select\n" +
+                                "  'g' || ((x + 100) % 4),\n" +
+                                "  case when (x + 100) % 5 = 0 then 'v2' else 'v1' end,\n" +
+                                "  ((x + 100) * 1000000)::" + timestampType.getTypeName() + ",\n" +
+                                "  (x + 100)::double\n" +
+                                "from long_sequence(100);"
+                );
+                // Latest 'g2'/'v1' overall is ordinal 198 (post-ALTER, px=198), deep => partitionLo>0, px columnTop=100.
+                assertQuery("select sym, px from tk " +
+                        "where sym = 'g2' and venue = 'v1' latest on ts partition by sym")
+                        .returns("""
+                                sym\tpx
+                                g2\t198.0
+                                """);
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
+            }
+        });
+    }
 }
