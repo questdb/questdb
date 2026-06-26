@@ -69,13 +69,24 @@ import java.util.concurrent.TimeUnit;
  * unmaps the table readers ({@link CairoEngine#releaseAllReaders()}) and evicts the db files from
  * the OS page cache ({@code posix_fadvise(DONTNEED)}), so the query reads from disk. This is the
  * realistic first-query / data-doesn't-fit-in-RAM scenario, and it is where a covering index pays
- * off most: a full scan must read every row's columns off disk, while the covered plan reads only
- * the matching rows' columns — so the cold gap is far larger than the warm one.
+ * off most: a full scan reads every row's columns off disk, while the covered plan reads only the
+ * matching rows' columns, packed per symbol.
+ * <p>
+ * The metric that matters is the {@code disk_MB} secondary counter, not the wall-clock score. On a
+ * fast NVMe the covered path's fixed CPU (reopen every partition's readers + traverse the posting
+ * index + decode) dwarfs the I/O it saves, so the wall-clock can show covered <em>slower</em> even
+ * though it reads far fewer bytes. {@code disk_MB} (bytes fetched from the block device, mmap faults
+ * included, via {@code /proc/self/io}) is hardware-independent: covered reads strictly fewer bytes,
+ * and a full scan reads a <em>constant</em> amount regardless of selectivity while covered scales
+ * with it. Once storage is bandwidth-bound (HDD/network), cold time → fixed_cpu + bytes/B and covered
+ * wins by ~the {@code disk_MB} ratio.
  * <p>
  * SingleShotTime (one query per measured iteration); {@code config} = PARALLEL_COV vs PARALLEL_REF
  * (covered vs a parallel non-indexed scan), swept over selectivity. Requires a real (non-tmpfs) db
  * root for the eviction to mean anything. Run exactly like {@link CoveredIndexDecodeBenchmark} (see
- * that class's javadoc); data is shared via the same root.
+ * that class's javadoc); data is shared via the same root. NOTE: invoke via {@code -jar} (so JMH's
+ * launcher applies the include regex); the data is built by {@link #main} on the first run and reused
+ * thereafter ({@code -Dcovered.bench.skipBuild=true} to force-skip a rebuild).
  */
 @State(Scope.Benchmark)
 @BenchmarkMode(Mode.SingleShotTime)
@@ -122,6 +133,10 @@ public class CoveredIndexDecodeColdBenchmark {
 
     public static void main(String[] args) throws Exception {
         java.nio.file.Files.createDirectories(java.nio.file.Paths.get(ROOT));
+        // Lets you build the data once on fast storage, then re-run the measurement phase against the
+        // same root exposed through a slow-storage emulation layer (e.g. a latency-injecting FUSE
+        // mirror) without rebuilding through that layer. -Dcovered.bench.skipBuild=true reuses existing data.
+        if (!Boolean.getBoolean("covered.bench.skipBuild"))
         try (CairoEngine e = new CairoEngine(configuration)) {
             final SqlExecutionContext c = newContext(e, 1);
             e.execute("DROP TABLE IF EXISTS cov", c);
@@ -156,7 +171,13 @@ public class CoveredIndexDecodeColdBenchmark {
     }
 
     @Benchmark
-    public void run(Blackhole bh) throws SqlException {
+    public void run(Blackhole bh, DiskCounters disk) throws SqlException {
+        // The wall-clock score is fixed-CPU-bound on fast NVMe (reader reopen + index traversal +
+        // decode dwarf the I/O saved), so it understates covered on cold/slow storage. The meaningful,
+        // hardware-independent signal is disk_MB below: bytes actually fetched from the block device
+        // (read_bytes counts mmap page faults). Covered reads strictly fewer bytes than a full scan,
+        // so on any bandwidth-bound device cold time -> fixed_cpu + bytes/B and covered wins by ~that ratio.
+        final long readBytes0 = readBytes();
         try (RecordCursor cursor = factory.getCursor(ctx)) {
             final RecordMetadata m = factory.getMetadata();
             final int n = m.getColumnCount();
@@ -188,6 +209,34 @@ public class CoveredIndexDecodeColdBenchmark {
                     }
                 }
             }
+        }
+        disk.disk_MB = (readBytes() - readBytes0) / 1_000_000;
+    }
+
+    // Bytes fetched from the block device by this process since boot (Linux /proc/self/io:read_bytes).
+    // Includes mmap page-fault reads, which is how QuestDB reads columns. Returns 0 if unavailable.
+    private static long readBytes() {
+        try {
+            for (String line : java.nio.file.Files.readAllLines(java.nio.file.Paths.get("/proc/self/io"))) {
+                if (line.startsWith("read_bytes:")) {
+                    return Long.parseLong(line.substring(line.indexOf(':') + 1).trim());
+                }
+            }
+        } catch (Exception ignore) {
+        }
+        return 0;
+    }
+
+    // JMH secondary counter: reports disk_MB (bytes read from storage during the query) alongside the
+    // wall-clock score. This is the cold metric that matters -- see run()'s comment.
+    @State(Scope.Thread)
+    @org.openjdk.jmh.annotations.AuxCounters(org.openjdk.jmh.annotations.AuxCounters.Type.OPERATIONS)
+    public static class DiskCounters {
+        public long disk_MB;
+
+        @Setup(Level.Invocation)
+        public void clean() {
+            disk_MB = 0;
         }
     }
 
