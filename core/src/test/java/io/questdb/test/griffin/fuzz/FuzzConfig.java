@@ -103,10 +103,9 @@ public final class FuzzConfig {
         this.isWindowJoinEnabled = Boolean.parseBoolean(System.getProperty(WINDOW_JOIN_PROP, "true"));
         // LATEST ON shapes (latest row per PARTITION BY key) carve a band out of
         // the SIMPLE range (see QueryGenerator). On by default, like window: it
-        // currently surfaces still-unfixed LATEST ON defects (a constant-false
-        // filter trips an assertion in generateLatestBy; an indexed-symbol vs
+        // still surfaces one unfixed LATEST ON defect (an indexed-symbol vs
         // full-scan storage shadow diverges on the row count), so the run goes
-        // red on the seeds that hit them until those are fixed. Pass
+        // red on the seeds that hit it until it is fixed. Pass
         // -Dquestdb.fuzz.lateston=false to drop them and give the band back to
         // SIMPLE.
         this.isLatestOnEnabled = Boolean.parseBoolean(System.getProperty(LATEST_ON_PROP, "true"));

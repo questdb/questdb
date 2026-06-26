@@ -124,11 +124,9 @@ import java.nio.file.Paths;
  *         back to SIMPLE. The result is a stable multiset (timestamps are
  *         unique), so the differential oracle compares result sets row for
  *         row across JIT and the indexed-symbol storage shadow. On by
- *         default like window; it currently surfaces still-unfixed LATEST ON
- *         defects (a constant-false filter such as {@code col < col} trips an
- *         assertion in {@code SqlCodeGenerator.generateLatestBy}; an
- *         indexed-symbol vs full-scan storage shadow diverges on the row
- *         count), so the run goes red on the seeds that hit them.</li>
+ *         default like window; it still surfaces one unfixed LATEST ON
+ *         defect (an indexed-symbol vs full-scan storage shadow diverges on
+ *         the row count), so the run goes red on the seeds that hit it.</li>
  *     <li>{@code -Dquestdb.fuzz.horizonjoin=true|false} and
  *         {@code -Dquestdb.fuzz.windowjoin=true|false} &mdash; generate
  *         HORIZON JOIN (a keyed GROUP BY over offset-shifted ASOF matches)

@@ -228,6 +228,71 @@ public class LatestByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLatestByConstantFalseWhere() throws Exception {
+        // A LATEST ON whose WHERE the optimiser folds to a compile-time constant-false
+        // predicate (a col<col / col>col / ts>ts self-comparison, or an AND of them)
+        // used to trip 'assert nested != null' in generateLatestBy (NPE in production).
+        // The SQL-correct answer is an empty result set, the same as any query over a
+        // constant-false filter. See also testLatestByConstantFalseWhereBindMatches below.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE t AS (\n" +
+                            "  SELECT\n" +
+                            "    timestamp_sequence(1, 1000)::#TIMESTAMP ts,\n" +
+                            "    rnd_double() c2,\n" +
+                            "    rnd_symbol('a','b','c') c3\n" +
+                            "  FROM long_sequence(100)\n" +
+                            ") TIMESTAMP(ts);\n",
+                    timestampType.getTypeName()
+            );
+
+            final String empty = "ts\tc2\tc3\n";
+            // self-comparison on a non-key column
+            assertQuery("SELECT * FROM t WHERE c2 < c2 LATEST ON ts PARTITION BY c3").timestamp("ts").returns(empty);
+            assertQuery("SELECT * FROM t WHERE c2 > c2 LATEST ON ts PARTITION BY c3").timestamp("ts").returns(empty);
+            // self-comparison on the designated timestamp
+            assertQuery("SELECT * FROM t WHERE ts > ts LATEST ON ts PARTITION BY c3").timestamp("ts").returns(empty);
+            // self-comparison on the partition key
+            assertQuery("SELECT * FROM t WHERE c3 != c3 LATEST ON ts PARTITION BY c3").timestamp("ts").returns(empty);
+            // AND of self-comparisons
+            assertQuery("SELECT * FROM t WHERE c2 < c2 AND ts > ts LATEST ON ts PARTITION BY c3").timestamp("ts").returns(empty);
+            // a folded literal-only constant-false term
+            assertQuery("SELECT * FROM t WHERE 1 > 2 LATEST ON ts PARTITION BY c3").timestamp("ts").returns(empty);
+            // with ORDER BY and LIMIT riding along (the fuzzer shapes)
+            assertQuery("SELECT * FROM t WHERE c2 < c2 LATEST ON ts PARTITION BY c3 ORDER BY ts ASC").timestamp("ts").returns(empty);
+            assertQuery("SELECT * FROM t WHERE c2 < c2 LATEST ON ts PARTITION BY c3 LIMIT 10").timestamp("ts").returns(empty);
+        });
+    }
+
+    @Test
+    public void testLatestByConstantFalseWhereBindMatches() throws Exception {
+        // The runtime-constant bind variant of the same predicate is a runtime no-op (it
+        // does not fold), so it always compiled; cross-check that the folded literal form
+        // now matches it, both empty.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE t AS (\n" +
+                            "  SELECT\n" +
+                            "    timestamp_sequence(1, 1000)::#TIMESTAMP ts,\n" +
+                            "    rnd_double() c2,\n" +
+                            "    rnd_symbol('a','b','c') c3\n" +
+                            "  FROM long_sequence(100)\n" +
+                            ") TIMESTAMP(ts);\n",
+                    timestampType.getTypeName()
+            );
+
+            bindVariableService.clear();
+            bindVariableService.setBoolean("b0", false);
+            // a boolean bind variable is a runtime constant; it does not fold, so it takes
+            // the generateLatestByTableQuery path (which already clears latestBy on a
+            // constant-false runtime filter). It must agree with the folded literal form.
+            assertQuery("SELECT * FROM t WHERE :b0 LATEST ON ts PARTITION BY c3")
+                    .timestamp("ts")
+                    .returns("ts\tc2\tc3\n");
+        });
+    }
+
+    @Test
     public void testLatestByDoesNotNeedFullScan() throws Exception {
         assertMemoryLeak(() -> {
             ff = new TestFilesFacadeImpl() {
