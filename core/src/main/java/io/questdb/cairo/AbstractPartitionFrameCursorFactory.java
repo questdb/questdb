@@ -136,11 +136,15 @@ abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCurs
 
             // columns not referenced by the view require explicit permission
             final LowerCaseCharSequenceHashSet depCols = viewDefinition.getDependencies().get(tableToken.getTableName());
-            if (!depCols.contains("*")) {
+            // A null depCols means the view's persisted dependency map has no entry for this base
+            // table - either a dependency-collector gap missed the reference, or the base table was
+            // renamed after the view was created. Fail safe: treat the table as not covered by the
+            // view, so every column read here requires explicit per-column SELECT on the base table.
+            if (depCols == null || !depCols.contains("*")) {
                 columnNames.clear();
                 for (int i = 0, n = columnIndexes.size(); i < n; i++) {
                     final String columnName = metadata.getColumnName(columnIndexes.getQuick(i));
-                    if (!depCols.contains(columnName)) {
+                    if (depCols == null || !depCols.contains(columnName)) {
                         columnNames.add(columnName);
                     }
                 }
