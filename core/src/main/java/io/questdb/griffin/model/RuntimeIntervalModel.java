@@ -47,6 +47,10 @@ import io.questdb.std.str.StringSink;
 import static io.questdb.griffin.model.IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL;
 
 public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
+    // Cap on the number of intervals rendered into an EXPLAIN plan; further intervals are
+    // collapsed into a trailing "... N more" marker so a query like
+    // `timestamp IN '...;70000'` does not overflow the response buffer (see #5661).
+    static final int PLAN_MAX_INTERVALS = 64;
     private static final Log LOG = LogFactory.getLog(RuntimeIntervalModel.class);
     private final ObjList<Function> dynamicRangeList;
     // These 2 are incoming model
@@ -130,15 +134,20 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
             sink.val('[');
             try {
                 LongList intervals = calculateIntervals(sink.getExecutionContext());
-                for (int i = 0, n = intervals.size(); i < n; i += 2) {
+                final int totalIntervals = intervals.size() / 2;
+                final int renderCount = Math.min(totalIntervals, PLAN_MAX_INTERVALS);
+                for (int i = 0; i < renderCount; i++) {
                     if (i > 0) {
                         sink.val(',');
                     }
                     sink.val("(\"");
-                    valTs(sink, timestampDriver, intervals.getQuick(i));
+                    valTs(sink, timestampDriver, intervals.getQuick(i * 2));
                     sink.val("\",\"");
-                    valTs(sink, timestampDriver, intervals.getQuick(i + 1));
+                    valTs(sink, timestampDriver, intervals.getQuick(i * 2 + 1));
                     sink.val("\")");
+                }
+                if (totalIntervals > renderCount) {
+                    sink.val(",...(").val(totalIntervals - renderCount).val(" more)");
                 }
             } catch (SqlException e) {
                 LOG.error().$("Can't calculate intervals: ").$safe(e.getFlyweightMessage()).$();
