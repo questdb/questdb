@@ -28,6 +28,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.test.griffin.fuzz.clauses.GroupByClause;
 import io.questdb.test.griffin.fuzz.clauses.HorizonJoinClause;
+import io.questdb.test.griffin.fuzz.clauses.LatestOnClause;
 import io.questdb.test.griffin.fuzz.clauses.PostingClause;
 import io.questdb.test.griffin.fuzz.clauses.SampleByClause;
 import io.questdb.test.griffin.fuzz.clauses.SimpleClause;
@@ -42,15 +43,18 @@ import io.questdb.test.griffin.fuzz.expr.BindContext;
  * Shape distribution is roughly: temporal JOIN 15% (when two or more
  * tables exist), posting-index read 15% (when the table has a
  * posting-indexed symbol), SAMPLE BY 20%, GROUP BY 20%, and the remaining
- * ~30% split between SIMPLE and WINDOW. The join and posting bands fall
- * through to the generic single-table shapes when their precondition is
- * not met; SAMPLE BY and WINDOW downgrade to SIMPLE on sources without a
- * designated timestamp.
+ * ~30% split between SIMPLE, LATEST ON and WINDOW. The join and posting
+ * bands fall through to the generic single-table shapes when their
+ * precondition is not met; SAMPLE BY, LATEST ON and WINDOW downgrade to
+ * SIMPLE on sources without a designated timestamp.
  * <p>
  * When window fuzzing is enabled ({@code windowEnabled}, on by default), a
- * WINDOW band is carved out of the upper half of the SIMPLE range; the
- * SAMPLE BY and GROUP BY bands are unchanged, so disabling window restores
- * the exact pre-window shape distribution (SIMPLE ~30%).
+ * WINDOW band is carved out of the top of the SIMPLE range ([85, 100)); when
+ * LATEST ON fuzzing is enabled ({@code latestOnEnabled}, on by default), a
+ * LATEST ON band is carved just below it ([78, 85)). Both carve from the
+ * SIMPLE range and leave the SAMPLE BY and GROUP BY bands untouched, so
+ * disabling either knob independently restores the exact prior shape
+ * distribution.
  * <p>
  * For non-join shapes the {@link FuzzSource} is usually a direct
  * reference to a real table, but occasionally wrapped in a subquery or
@@ -69,7 +73,7 @@ public final class QueryGenerator {
     private QueryGenerator() {
     }
 
-    public static GeneratedQuery generate(Rnd rnd, ObjList<FuzzTable> tables, BindContext ctx, boolean injectFaultFn, boolean windowEnabled, boolean horizonJoinEnabled, boolean windowJoinEnabled) {
+    public static GeneratedQuery generate(Rnd rnd, ObjList<FuzzTable> tables, BindContext ctx, boolean injectFaultFn, boolean windowEnabled, boolean latestOnEnabled, boolean horizonJoinEnabled, boolean windowJoinEnabled) {
         int pick = rnd.nextInt(100);
         FuzzTable t = tables.getQuick(rnd.nextInt(tables.size()));
 
@@ -112,12 +116,17 @@ public final class QueryGenerator {
             return GroupByClause.generate(rnd, source, ctx, injectFaultFn);
         }
         // pick in [70, 100) is SIMPLE. When window fuzzing is enabled, carve the
-        // upper half [85, 100) into a WINDOW band; this leaves the SAMPLE BY and
-        // GROUP BY bands untouched, so disabling window restores the exact
-        // pre-window distribution. Window functions order by the designated
-        // timestamp, so a source without one falls through to SIMPLE.
+        // upper band [85, 100) into WINDOW; when LATEST ON fuzzing is enabled,
+        // carve [78, 85) into LATEST ON. Both carve from the SIMPLE range and
+        // leave the SAMPLE BY and GROUP BY bands untouched, so disabling either
+        // knob independently restores the exact prior distribution. Window
+        // functions order by the designated timestamp and LATEST ON names it, so
+        // a source without one falls through to SIMPLE in both cases.
         if (windowEnabled && pick >= 85 && source.getTable().getTsColumnName() != null) {
             return WindowClause.generate(rnd, source, ctx, injectFaultFn);
+        }
+        if (latestOnEnabled && pick >= 78 && pick < 85 && source.getTable().getTsColumnName() != null) {
+            return LatestOnClause.generate(rnd, source, ctx, injectFaultFn);
         }
         return SimpleClause.generate(rnd, source, ctx, injectFaultFn);
     }

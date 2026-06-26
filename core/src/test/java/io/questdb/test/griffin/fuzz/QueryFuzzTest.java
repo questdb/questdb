@@ -54,7 +54,8 @@ import java.nio.file.Paths;
  * Seeded random query fuzzer. Generates 1..3 WAL tables with all supported
  * scalar types plus DECIMAL and DOUBLE arrays, inserts rows that span
  * multiple DAY partitions, then runs a budget of randomly generated
- * SELECT / GROUP BY / SAMPLE BY / ASOF-LT-SPLICE / HORIZON / WINDOW JOIN
+ * SELECT / GROUP BY / SAMPLE BY / LATEST ON / ASOF-LT-SPLICE / HORIZON /
+ * WINDOW JOIN
  * queries and
  * materializes every result row, additionally re-iterating each cursor
  * after {@code toTop()} and cross-checking {@code size()} /
@@ -114,6 +115,20 @@ import java.nio.file.Paths;
  *         SIMPLE range, so the other shapes' frequencies are unchanged;
  *         pass {@code false} to drop window shapes and exercise the
  *         rest.</li>
+ *     <li>{@code -Dquestdb.fuzz.lateston=true|false} &mdash; generate
+ *         LATEST ON shapes ({@code ... LATEST ON ts PARTITION BY col[, ...]},
+ *         the latest row per partition key) on a fraction of queries
+ *         (default true). The LATEST ON band is carved from the SIMPLE
+ *         range just below the WINDOW band, so the other shapes' frequencies
+ *         are unchanged; pass {@code false} to drop them and give the band
+ *         back to SIMPLE. The result is a stable multiset (timestamps are
+ *         unique), so the differential oracle compares result sets row for
+ *         row across JIT and the indexed-symbol storage shadow. On by
+ *         default like window; it currently surfaces still-unfixed LATEST ON
+ *         defects (a constant-false filter such as {@code col < col} trips an
+ *         assertion in {@code SqlCodeGenerator.generateLatestBy}; an
+ *         indexed-symbol vs full-scan storage shadow diverges on the row
+ *         count), so the run goes red on the seeds that hit them.</li>
  *     <li>{@code -Dquestdb.fuzz.horizonjoin=true|false} and
  *         {@code -Dquestdb.fuzz.windowjoin=true|false} &mdash; generate
  *         HORIZON JOIN (a keyed GROUP BY over offset-shifted ASOF matches)
@@ -561,6 +576,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 .$(", faultPct=").$(config.getFaultProbabilityPct())
                 .$(", parallelFaults=").$(config.isParallelFaultEnabled())
                 .$(", window=").$(config.isWindowEnabled())
+                .$(", latestOn=").$(config.isLatestOnEnabled())
                 .$(", horizonJoin=").$(config.isHorizonJoinEnabled())
                 .$(", windowJoin=").$(config.isWindowJoinEnabled())
                 .$();
@@ -612,7 +628,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 boolean injectFaultFn = faultType == FaultType.FUNCTION;
                 long preGenS0 = rnd.getSeed0();
                 long preGenS1 = rnd.getSeed1();
-                GeneratedQuery query = QueryGenerator.generate(rnd, tables, null, injectFaultFn, config.isWindowEnabled(), config.isHorizonJoinEnabled(), config.isWindowJoinEnabled());
+                GeneratedQuery query = QueryGenerator.generate(rnd, tables, null, injectFaultFn, config.isWindowEnabled(), config.isLatestOnEnabled(), config.isHorizonJoinEnabled(), config.isWindowJoinEnabled());
                 QueryRunner.Result result;
                 if (faultType != null) {
                     // Fault queries use a crash-and-recover oracle, not the
@@ -668,7 +684,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                         long bindS1 = rnd.nextLong();
                         rnd.reset(preGenS0, preGenS1);
                         BindContext ctx = new BindContext(new Rnd(bindS0, bindS1), CONSTANT_BIND_PROBABILITY_PCT);
-                        GeneratedQuery bindForm = QueryGenerator.generate(rnd, tables, ctx, injectFaultFn, config.isWindowEnabled(), config.isHorizonJoinEnabled(), config.isWindowJoinEnabled());
+                        GeneratedQuery bindForm = QueryGenerator.generate(rnd, tables, ctx, injectFaultFn, config.isWindowEnabled(), config.isLatestOnEnabled(), config.isHorizonJoinEnabled(), config.isWindowJoinEnabled());
                         if (ctx.getBindValues().size() > 0) {
                             query = query.withBind(bindForm.sql(), ctx.getBindNames(), ctx.getBindValues());
                             bindGen++;

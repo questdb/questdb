@@ -40,6 +40,7 @@ public final class FuzzConfig {
     public static final String FAULT_PARALLEL_PROP = "questdb.fuzz.fault.parallel";
     public static final String FAULT_PCT_PROP = "questdb.fuzz.fault.pct";
     public static final String HORIZON_JOIN_PROP = "questdb.fuzz.horizonjoin";
+    public static final String LATEST_ON_PROP = "questdb.fuzz.lateston";
     public static final String QUERIES_PROP = "questdb.fuzz.queries";
     public static final String VERIFY_CURSOR_PROP = "questdb.fuzz.verify.cursor";
     public static final String WINDOW_JOIN_PROP = "questdb.fuzz.windowjoin";
@@ -49,6 +50,7 @@ public final class FuzzConfig {
     private final boolean isDiffShadowEnabled;
     private final boolean isFaultInjectionEnabled;
     private final boolean isHorizonJoinEnabled;
+    private final boolean isLatestOnEnabled;
     private final boolean isParallelFaultEnabled;
     private final boolean isVerifyCursorEnabled;
     private final boolean isWindowEnabled;
@@ -99,6 +101,15 @@ public final class FuzzConfig {
         // drop either kind and give the band back to the remaining join shapes.
         this.isHorizonJoinEnabled = Boolean.parseBoolean(System.getProperty(HORIZON_JOIN_PROP, "true"));
         this.isWindowJoinEnabled = Boolean.parseBoolean(System.getProperty(WINDOW_JOIN_PROP, "true"));
+        // LATEST ON shapes (latest row per PARTITION BY key) carve a band out of
+        // the SIMPLE range (see QueryGenerator). On by default, like window: it
+        // currently surfaces still-unfixed LATEST ON defects (a constant-false
+        // filter trips an assertion in generateLatestBy; an indexed-symbol vs
+        // full-scan storage shadow diverges on the row count), so the run goes
+        // red on the seeds that hit them until those are fixed. Pass
+        // -Dquestdb.fuzz.lateston=false to drop them and give the band back to
+        // SIMPLE.
+        this.isLatestOnEnabled = Boolean.parseBoolean(System.getProperty(LATEST_ON_PROP, "true"));
     }
 
     public String getDumpPath() {
@@ -151,6 +162,10 @@ public final class FuzzConfig {
 
     public boolean isHorizonJoinEnabled() {
         return isHorizonJoinEnabled;
+    }
+
+    public boolean isLatestOnEnabled() {
+        return isLatestOnEnabled;
     }
 
     public boolean isParallelFaultEnabled() {
