@@ -57,9 +57,9 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
 
         while (i < hi) {
             char c = (char) utf8.byteAt(i++);
-            if (c > 0 && c < 32) {
+            if (c < 32) {
                 escapeJsonStrChar(c);
-            } else if (c > 0 && c < 128) {
+            } else if (c < 128) {
                 escapeAscii(c);
             } else {
                 put((byte) c);
@@ -104,9 +104,9 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
         final int hi = utf8.size();
         while (i < hi) {
             char c = (char) utf8.byteAt(i++);
-            if (c > 0 && c < 32) {
+            if (c < 32) {
                 escapeJsonStrChar(c);
-            } else if (c > 0 && c < 128) {
+            } else if (c < 128) {
                 switch (c) {
                     case '\"':
                     case '\\':
