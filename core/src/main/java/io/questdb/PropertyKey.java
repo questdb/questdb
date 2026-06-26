@@ -216,6 +216,12 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_MAT_VIEW_ENABLED("cairo.mat.view.enabled"),
     CAIRO_MAT_VIEW_MIN_REFRESH_INTERVAL("cairo.mat.view.min.refresh.interval"),
     CAIRO_MAT_VIEW_MAX_REFRESH_RETRIES("cairo.mat.view.max.refresh.retries"),
+    CAIRO_MAT_VIEW_REFRESH_BUSY_RETRY_TIMEOUT("cairo.mat.view.refresh.busy.retry.timeout"),
+    CAIRO_MAT_VIEW_REFRESH_BUSY_RETRY_LIMIT("cairo.mat.view.refresh.busy.retry.limit"),
+    CAIRO_MAT_VIEW_REFRESH_BLOCK_LIST("cairo.mat.view.refresh.block.list"),
+    // Deprecated no-op: superseded by cairo.mat.view.refresh.busy.retry.timeout. Retained so that an
+    // existing server.conf carrying this key still validates and starts, including under strict
+    // validation. See PropServerConfiguration.PropertyValidator.
     CAIRO_MAT_VIEW_REFRESH_OOM_RETRY_TIMEOUT("cairo.mat.view.refresh.oom.retry.timeout"),
     CAIRO_MAT_VIEW_INSERT_AS_SELECT_BATCH_SIZE("cairo.mat.view.insert.as.select.batch.size"),
     CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE("cairo.mat.view.rows.per.query.estimate"),
@@ -588,6 +594,8 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_WAL_WRITER_POOL_MAX_SEGMENTS("cairo.wal.writer.pool.max.segments"),
     CAIRO_VIEW_WAL_WRITER_POOL_MAX_SEGMENTS("cairo.view.wal.writer.pool.max.segments"),
     CAIRO_WAL_APPLY_PARALLEL_SQL_ENABLED("cairo.wal.apply.parallel.sql.enabled"),
+    CAIRO_WAL_APPLY_SUSPENDED_TABLES("cairo.wal.apply.suspended.tables"),
+    CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED("cairo.wal.apply.suspended.write.denied"),
     GRIFFIN_QUERY_CONTINUATION_WAKE_INTERVAL("griffin.query.continuation.wake.interval"),
     CAIRO_TIMER_SHARDS("cairo.timer.shards"),
     READ_ONLY_INSTANCE("readonly"),
@@ -696,7 +704,10 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_RESOURCE_POOL_TRACING_ENABLED("cairo.resource.pool.tracing.enabled"),
     CAIRO_TTL_USE_WALL_CLOCK("cairo.ttl.use.wall.clock"),
     DEBUG_CAIRO_POOL_SEGMENT_SIZE("debug.cairo.pool.segment.size", false, true),
-    DEBUG_MAT_VIEW_REFRESH_MISSING_WAL_FILES_FATAL("debug.mat.view.refresh.missing.wal.files.fatal", false, true);
+    DEBUG_MAT_VIEW_REFRESH_MISSING_WAL_FILES_FATAL("debug.mat.view.refresh.missing.wal.files.fatal", false, true),
+    CAIRO_QUERY_MEMORY_LIMIT_BYTES("cairo.query.memory.limit.bytes"),
+    CAIRO_MAT_VIEW_REFRESH_MEMORY_LIMIT_BYTES("cairo.mat.view.refresh.memory.limit.bytes"),
+    CAIRO_WAL_APPLY_MEMORY_LIMIT_BYTES("cairo.wal.apply.memory.limit.bytes");
 
     private static final Map<String, PropertyKey> nameMapping;
     private final boolean debug;

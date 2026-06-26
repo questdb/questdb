@@ -37,6 +37,7 @@ import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
@@ -94,7 +95,7 @@ public class AllTablesFunctionFactory implements FunctionFactory {
             // Reconciles against the table registry before snapshotting, so the
             // catalogue is complete even mid startup hydration.
             tableCacheVersion = engine.getMetadataCache().snapshot(tableCache, tableCacheVersion);
-            cursor.toTop();
+            cursor.of(executionContext.getCircuitBreaker());
             return cursor;
         }
 
@@ -116,10 +117,16 @@ public class AllTablesFunctionFactory implements FunctionFactory {
         private static class AllTablesRecordCursor implements NoRandomAccessRecordCursor {
             private final AllTablesRecord record = new AllTablesRecord();
             private final CharSequenceObjMap<CairoTable> tableCache;
+            private SqlExecutionCircuitBreaker circuitBreaker;
             private int iteratorIdx = -1;
 
             public AllTablesRecordCursor(CharSequenceObjMap<CairoTable> tableCache) {
                 this.tableCache = tableCache;
+            }
+
+            public void of(SqlExecutionCircuitBreaker circuitBreaker) {
+                this.circuitBreaker = circuitBreaker;
+                toTop();
             }
 
             @Override
@@ -133,6 +140,7 @@ public class AllTablesFunctionFactory implements FunctionFactory {
 
             @Override
             public boolean hasNext() {
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 if (iteratorIdx < tableCache.size() - 1) {
                     record.of(tableCache.getAt(++iteratorIdx));
                     return true;

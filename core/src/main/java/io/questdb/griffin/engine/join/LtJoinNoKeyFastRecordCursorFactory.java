@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -74,7 +75,7 @@ public class LtJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCursor
         try {
             slaveCursor = slaveFactory.getTimeFrameCursor(executionContext);
             slaveCursor.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
-            cursor.of(masterCursor, slaveCursor);
+            cursor.of(masterCursor, slaveCursor, executionContext.getCircuitBreaker());
             return cursor;
         } catch (Throwable e) {
             Misc.free(slaveCursor);
@@ -109,6 +110,7 @@ public class LtJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCursor
 
     private static class LtJoinFastRecordCursor extends AbstractAsOfJoinFastRecordCursor {
         private final long toleranceInterval;
+        private SqlExecutionCircuitBreaker circuitBreaker;
         private long slaveTimestamp = Numbers.LONG_NULL;
 
         public LtJoinFastRecordCursor(
@@ -127,6 +129,7 @@ public class LtJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCursor
 
         @Override
         public boolean hasNext() {
+            circuitBreaker.statefulThrowExceptionIfTripped();
             if (masterCursor.hasNext()) {
                 final long masterTimestamp = scaleTimestamp(masterRecord.getTimestamp(masterTimestampIndex), masterTimestampScale);
                 if (masterTimestamp <= lookaheadTimestamp) {
@@ -143,6 +146,11 @@ public class LtJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCursor
                 return true;
             }
             return false;
+        }
+
+        public void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
+            super.of(masterCursor, slaveCursor);
+            this.circuitBreaker = circuitBreaker;
         }
 
         @Override

@@ -14,7 +14,20 @@ variables:
   includeTests: "%regex[.*[^o].class]"
   MAVEN_CACHE_FOLDER: $(HOME)/.m2/repository
   MAVEN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx3g -XX:+UseParallelGC"
-  MAVEN_RUN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Dmaven.resolver.transport=wagon -Dmaven.wagon.httpconnectionManager.ttlSeconds=30 "
+  # Cache connect resilience. The self-hosted Reposilite cache is a single IP reached over
+  # the Hetzner vSwitch; under the fleet's cold-build connection bursts a fraction of TCP
+  # SYNs to it are dropped, and the failover-less mirror turns one black-holed connect into
+  # a dead build ("Connect to maven.internal:8081 ... Connection timed out").
+  #   * retryHandler.count=3 retries failed resolves, BUT wagon's default retry handler puts
+  #     ConnectException (and other connect-phase errors) on its non-retryable list, so a
+  #     connect-phase failure was NOT actually retried. nonRetryableClasses overrides that
+  #     default set with a single never-thrown class, which re-enables retry on connect
+  #     failures (the case we actually hit). connectionTimeout (in maven-settings-hetzner.xml)
+  #     bounds each connect attempt to ~10s instead of the ~127s OS SYN-retransmit budget, so
+  #     a retried connect re-attempts on a fresh source port instead of hanging out the build.
+  # The cache-box fix (nginx front-end + enlarged upstream keepalive pool) reduces the drop
+  # rate at the source; these client flags are the backstop for any residual lost SYN.
+  MAVEN_RUN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Dmaven.resolver.transport=wagon -Dmaven.wagon.httpconnectionManager.ttlSeconds=30 -Dmaven.wagon.http.retryHandler.count=3 -Dmaven.wagon.http.retryHandler.nonRetryableClasses=java.io.NotSerializableException "
   MAVEN_VERSION: "version"
   MAVEN_VERSION_OPTION: "Default"
   # Full-reactor defaults for the self-hosted Linux jobs. The hosted mac/windows
@@ -206,6 +219,23 @@ stages:
             displayName: "Install JDK and Maven"
             condition: eq(variables['SHOULD_RUN'], 'true')
           - template: templates/detect-local-client.yml
+          - bash: |
+              if curl -sf --connect-timeout 2 http://maven.internal:8081/ > /dev/null 2>&1; then
+                echo "Private Reposilite cache reachable, using hetzner maven settings"
+                echo "##vso[task.setvariable variable=MAVEN_SETTINGS_FILE]$(Build.SourcesDirectory)/ci/maven-settings-hetzner.xml"
+                # Allow HTTP keep-alive when routing through the private Reposilite cache.
+                # -Dhttp.keepAlive=false opens a new TCP connection per artifact; the single-IP cache
+                # reached over the Hetzner vSwitch can't absorb that connection churn under concurrent
+                # builds (intermittent "Connect to maven.internal:8081 ... Connection timed out", which
+                # the failover-less mirror turns into a build failure). Reusing connections avoids it.
+                echo "##vso[task.setvariable variable=MAVEN_KEEPALIVE_OPT]"
+              else
+                echo "Private Reposilite not reachable, using default maven settings"
+                echo "##vso[task.setvariable variable=MAVEN_SETTINGS_FILE]$(Build.SourcesDirectory)/ci/maven-settings.xml"
+                # Direct-to-Central path: keep historical behaviour (no connection reuse).
+                echo "##vso[task.setvariable variable=MAVEN_KEEPALIVE_OPT]-Dhttp.keepAlive=false"
+              fi
+            displayName: "Select Maven settings (local proxy vs default)"
           - download: current
             artifact: jacoco-coverage
             condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'))
@@ -226,7 +256,7 @@ stages:
               mavenPomFile: "pom.xml"
               mavenOptions: "$(MAVEN_OPTS)"
               goals: "compile"
-              options: "--batch-mode -pl core -am -DskipTests $(CLIENT_PROFILE) -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
+              options: "-s $(MAVEN_SETTINGS_FILE) --batch-mode -pl core -am -DskipTests $(CLIENT_PROFILE) -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) $(MAVEN_KEEPALIVE_OPT)"
               jdkVersionOption: $(jdk)
 
           - task: Maven@3
@@ -236,7 +266,7 @@ stages:
               mavenPomFile: "ci/jacoco-merge.xml"
               goals: "verify"
               options:
-                "--batch-mode -Dhttp.keepAlive=false -DincludeRoot=$(Pipeline.Workspace)
+                "-s $(MAVEN_SETTINGS_FILE) --batch-mode $(MAVEN_KEEPALIVE_OPT) -DincludeRoot=$(Pipeline.Workspace)
                 -DoutputDirectory=$(Pipeline.Workspace)/jacoco-aggregate
                 -DcoverDiff=$(COVERAGE_DIFF)
                 -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"

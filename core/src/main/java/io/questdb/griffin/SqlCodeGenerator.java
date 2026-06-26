@@ -9611,6 +9611,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // metadata instance
             intHashSet.clear();
             final IntList columnIndexes = new IntList();
+            // Cached window functions read from the record chain, which reorders columns
+            // (window outputs lead, base columns follow), so track where the designated
+            // timestamp lands in the chain for RANGE-framed functions to read.
+            int chainTimestampIndex = -1;
             for (int i = 0; i < columnCount; i++) {
                 final QueryColumn qc = columns.getQuick(i);
                 if (!qc.isWindowExpression()) {
@@ -9638,6 +9642,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                     if (baseMetadata.getTimestampIndex() != -1 && baseMetadata.getTimestampIndex() == columnIndex) {
                         factoryMetadata.setTimestampIndex(i);
+                        chainTimestampIndex = i;
                     }
                 }
             }
@@ -9658,6 +9663,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     listColumnFilterA.extendAndSet(addAt, addAt + 1);
                     listColumnFilterB.extendAndSet(addAt, i);
                     columnIndexes.extendAndSet(addAt, i);
+                    if (baseMetadata.getTimestampIndex() == i) {
+                        chainTimestampIndex = addAt;
+                    }
                     addAt++;
                 }
             }
@@ -9754,7 +9762,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             ac.getRowsHiKindPos(),
                             ac.getExclusionKind(),
                             ac.getExclusionKindPos(),
-                            baseMetadata.getTimestampIndex(),
+                            chainTimestampIndex,
                             baseMetadata.getTimestampType(),
                             ac.isIgnoreNulls(),
                             ac.getNullsDescPos()

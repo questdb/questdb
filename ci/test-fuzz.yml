@@ -17,7 +17,11 @@ variables:
   includeTests: "%regex[.*[^o].class]"
   MAVEN_CACHE_FOLDER: $(HOME)/.m2/repository
   MAVEN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx3072m -XX:+UseParallelGC"
-  MAVEN_RUN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Dmaven.resolver.transport=wagon -Dmaven.wagon.httpconnectionManager.ttlSeconds=30"
+  # Wagon retries a dropped connect to the single-IP cache (count + nonRetryableClasses,
+  # which re-enables retry on ConnectException) instead of failing the build; the connect
+  # timeout in maven-settings-hetzner.xml bounds each attempt. See test-pipeline.yml for the
+  # full rationale.
+  MAVEN_RUN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Dmaven.resolver.transport=wagon -Dmaven.wagon.httpconnectionManager.ttlSeconds=30 -Dmaven.wagon.http.retryHandler.count=3 -Dmaven.wagon.http.retryHandler.nonRetryableClasses=java.io.NotSerializableException"
   MAVEN_VERSION: "version"
   MAVEN_VERSION_OPTION: "Default"
   # Full reactor (the fuzz regex spans core and compat), but no fuzz test serves the

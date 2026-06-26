@@ -36,6 +36,7 @@ import io.questdb.griffin.engine.functions.groupby.TwapGroupByFunction;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -211,6 +212,7 @@ public class TwapUnsortedRunReproTest extends AbstractCairoTest {
                             } catch (Throwable th) {
                                 errors.put(threadId, th);
                             } finally {
+                                Path.clearThreadLocals();
                                 latch.countDown();
                             }
                         }, "twap-keyed-" + threadId).start();
@@ -417,6 +419,7 @@ public class TwapUnsortedRunReproTest extends AbstractCairoTest {
                                     threadsThatSawMismatches.incrementAndGet();
                                     mismatches.addAndGet(localMismatches);
                                 }
+                                Path.clearThreadLocals();
                                 latch.countDown();
                             }
                         }, "twap-repro-" + threadId).start();
@@ -518,6 +521,7 @@ public class TwapUnsortedRunReproTest extends AbstractCairoTest {
                             } catch (Throwable th) {
                                 errors.put(threadId, th);
                             } finally {
+                                Path.clearThreadLocals();
                                 latch.countDown();
                             }
                         }, "twap-dup-ts-" + threadId).start();

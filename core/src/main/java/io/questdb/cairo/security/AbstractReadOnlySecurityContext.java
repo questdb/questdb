@@ -210,6 +210,11 @@ public abstract class AbstractReadOnlySecurityContext implements SecurityContext
     }
 
     @Override
+    public void authorizeRebaseWal(TableToken tableToken) {
+        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
     public void authorizeResumeWal(TableToken tableToken) {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }

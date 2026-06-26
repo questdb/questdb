@@ -181,6 +181,10 @@ public abstract class AbstractAllowAllSecurityContext implements SecurityContext
     }
 
     @Override
+    public void authorizeRebaseWal(TableToken tableToken) {
+    }
+
+    @Override
     public void authorizeResumeWal(TableToken tableToken) {
     }
 
