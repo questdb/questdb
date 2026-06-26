@@ -2336,6 +2336,50 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    // Scans the base WAL gap (lastRefreshBaseTxn, baseTableLastTxn] for an invalidating barrier, using the
+    // same range and loader an incremental refresh would use (so there is no off-by-one vs interval
+    // planning). Returns the invalidation reason to record, or null when the gap holds no barrier. A base
+    // TRUNCATE and a base materialized view's own MAT_VIEW_INVALIDATE both carry no data interval, so a
+    // resumed incremental refresh would silently keep stale rows; either is a reason to invalidate the view
+    // instead. Runs only on the cold load/hydrate path, so a transient loader is fine.
+    private String baseGapInvalidationReason(TableToken baseTableToken, long lastRefreshBaseTxn, long baseTableLastTxn) {
+        if (lastRefreshBaseTxn >= baseTableLastTxn) {
+            return null;
+        }
+        // This load-time probe scans the same (lastRefreshBaseTxn, baseTableLastTxn] gap that the enqueued
+        // incremental refresh re-scans to build its intervals, so the no-barrier promote path reads the gap
+        // twice (and allocates a fresh loader per view). It is bounded to lagging views on the cold
+        // boot/promote path, so the redundant scan is a tracked optimization, not a steady-state cost.
+        try (
+                Path path = new Path();
+                WalTxnRangeLoader loader = new WalTxnRangeLoader(configuration)
+        ) {
+            final LongList intervals = new LongList();
+            loader.load(this, path, baseTableToken, intervals, lastRefreshBaseTxn, baseTableLastTxn);
+            if (loader.hasTruncate()) {
+                return "truncate operation";
+            }
+            if (loader.hasMatViewInvalidate()) {
+                return "base materialized view is invalidated";
+            }
+            return null;
+        } catch (CairoException e) {
+            // Missing or purged WAL files in the gap. Treat as "no barrier found" so the caller still
+            // schedules the normal incremental refresh. The refresh path's own interval planning hits the
+            // same read failure and falls back to a full refresh; note that fallback is a REPLACE_RANGE over
+            // the current range, so if the purged gap held a barrier, pre-barrier buckets outside the current
+            // range can survive (a stale-valid view). That purge-during-the-pending-window residual is a
+            // known, tracked deferral. Letting the exception escape would cause loadMatViewIntoStore's
+            // logging-only catch to swallow it, skipping enqueueIncrementalRefresh and leaving the view
+            // silently unscheduled after a promote-hydrate.
+            LOG.info().$("could not scan base WAL gap for invalidating barrier, scheduling refresh [baseTable=").$(baseTableToken)
+                    .$(", errno=").$(e.getErrno())
+                    .$(", msg=").$safe(e.getFlyweightMessage())
+                    .I$();
+            return null;
+        }
+    }
+
     // caller has to acquire the lock before this method is called and release the lock after the call
     private void createTableOrMatViewInVolumeUnsafe(MemoryMARW mem, @Nullable BlockFileWriter blockFileWriter, Path path, TableStructure struct, TableToken tableToken) {
         if (TableUtils.TABLE_DOES_NOT_EXIST != TableUtils.existsInVolume(configuration.getFilesFacade(), path, tableToken.getDirName())) {
@@ -2501,50 +2545,6 @@ public class CairoEngine implements Closeable, WriterSource {
             throw CairoException.viewDoesNotExist(tableToken.getTableName());
         }
         return state.getViewMetadata();
-    }
-
-    // Scans the base WAL gap (lastRefreshBaseTxn, baseTableLastTxn] for an invalidating barrier, using the
-    // same range and loader an incremental refresh would use (so there is no off-by-one vs interval
-    // planning). Returns the invalidation reason to record, or null when the gap holds no barrier. A base
-    // TRUNCATE and a base materialized view's own MAT_VIEW_INVALIDATE both carry no data interval, so a
-    // resumed incremental refresh would silently keep stale rows; either is a reason to invalidate the view
-    // instead. Runs only on the cold load/hydrate path, so a transient loader is fine.
-    private String baseGapInvalidationReason(TableToken baseTableToken, long lastRefreshBaseTxn, long baseTableLastTxn) {
-        if (lastRefreshBaseTxn >= baseTableLastTxn) {
-            return null;
-        }
-        // This load-time probe scans the same (lastRefreshBaseTxn, baseTableLastTxn] gap that the enqueued
-        // incremental refresh re-scans to build its intervals, so the no-barrier promote path reads the gap
-        // twice (and allocates a fresh loader per view). It is bounded to lagging views on the cold
-        // boot/promote path, so the redundant scan is a tracked optimization, not a steady-state cost.
-        try (
-                Path path = new Path();
-                WalTxnRangeLoader loader = new WalTxnRangeLoader(configuration)
-        ) {
-            final LongList intervals = new LongList();
-            loader.load(this, path, baseTableToken, intervals, lastRefreshBaseTxn, baseTableLastTxn);
-            if (loader.hasTruncate()) {
-                return "truncate operation";
-            }
-            if (loader.hasMatViewInvalidate()) {
-                return "base materialized view is invalidated";
-            }
-            return null;
-        } catch (CairoException e) {
-            // Missing or purged WAL files in the gap. Treat as "no barrier found" so the caller still
-            // schedules the normal incremental refresh. The refresh path's own interval planning hits the
-            // same read failure and falls back to a full refresh; note that fallback is a REPLACE_RANGE over
-            // the current range, so if the purged gap held a barrier, pre-barrier buckets outside the current
-            // range can survive (a stale-valid view). That purge-during-the-pending-window residual is a
-            // known, tracked deferral. Letting the exception escape would cause loadMatViewIntoStore's
-            // logging-only catch to swallow it, skipping enqueueIncrementalRefresh and leaving the view
-            // silently unscheduled after a promote-hydrate.
-            LOG.info().$("could not scan base WAL gap for invalidating barrier, scheduling refresh [baseTable=").$(baseTableToken)
-                    .$(", errno=").$(e.getErrno())
-                    .$(", msg=").$safe(e.getFlyweightMessage())
-                    .I$();
-            return null;
-        }
     }
 
     /**
