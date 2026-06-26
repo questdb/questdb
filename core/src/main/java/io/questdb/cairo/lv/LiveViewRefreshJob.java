@@ -2350,6 +2350,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         int publishedIdx = tier.getPublishedIdx();
         LiveViewInMemoryBuffer pubSlot = tier.getSlot(publishedIdx);
 
+        // A both-slots-pinned O3 rebuild skip left the published slot carrying
+        // pre-O3 rows the replay re-sequenced on disk. Drop those retained rows
+        // on this publish instead of carrying them forward, so Mode B never
+        // serves stale rows re-stamped with a matching seqTxn. In-mem is a subset
+        // of disk in V1, so dropping retained rows never loses data - disk still
+        // holds them; the slot just rebuilds from this cycle's staging rows.
+        boolean dropRetained = instance.isTierStale();
+
         // Fast-path: append in place when no reader pins the published slot
         // and the slot's footprint is still under the growth budget. Growth
         // backstop ensures the in-mem tier cannot accumulate indefinitely
@@ -2361,6 +2369,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             LiveViewInMemoryBuffer acquired = tier.tryAcquireWrite(publishedIdx);
             if (acquired != null) {
                 try {
+                    if (dropRetained) {
+                        // Reset under the writer sentinel (no reader can observe
+                        // it) so the published slot reflects only this cycle's
+                        // disk-consistent staging rows; seamTs re-initialises from
+                        // the first staged row in appendStagingInPlace.
+                        acquired.reset();
+                    }
                     appendStagingInPlace(acquired, stagingBuffer.seamTs());
                     acquired.setMaxSeqTxn(cycleSeqTxn);
                     acquired.setLvSeqTxn(lvSeqTxn);
@@ -2376,6 +2391,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 }
                 tier.releaseWriteWithoutPublish(publishedIdx);
                 instance.setWriterStallStartUs(Numbers.LONG_NULL);
+                instance.setTierStale(false);
                 return;
             }
         }
@@ -2398,47 +2414,54 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         try {
             writeSlot.reset();
             int tsCol = stagingTimestampColumnIndex;
-            // Compute the eviction threshold in the base table's timestamp
-            // units. IN MEMORY is stored in micros; scale to base units once.
-            TimestampDriver driver = ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType());
-            long inMemoryInBaseUnits = driver.fromMicros(instance.getDefinition().getInMemoryMicros());
-            long retainThreshold = stagingMaxTs - inMemoryInBaseUnits;
-
-            // Durability clamp: a row may
-            // only age out when both (a) ts < latest - IN_MEMORY and (b) its
-            // seqTxn is covered by applied_watermark — otherwise the gap-free
-            // invariant between tiers can break when the disk side is behind.
-            // This code is reached only after a successful apply, so
-            // every staging row is durable on disk; the clamp is vacuous
-            // today but protects a future hand-off-ring regime where the
-            // in-mem tier publishes ahead of apply.
-            //
-            // The slot does not carry per-row seqTxn metadata, so the clamp
-            // is enforced at slot granularity: when the published slot's
-            // maxSeqTxn outruns applied_watermark, retain every row (no
-            // age-out this cycle). Under stalled apply the in-mem footprint
-            // can temporarily exceed 2 x per_buffer_size, bounded by the
-            // retry budget.
-            long pubMaxSeqTxn = pubSlot.maxSeqTxn();
-            long appliedWatermark = instance.getStateReader().getAppliedWatermark();
-            boolean pubSlotDurable = pubMaxSeqTxn == Numbers.LONG_NULL || pubMaxSeqTxn <= appliedWatermark;
-
-            // Copy retained rows from the currently-published slot (those
-            // with ts >= retainThreshold). Rows in the slot are stored in
-            // ts-ascending order, so we can simply skip leading rows until
-            // the first retained one is found.
             long writeRow = 0;
             long writeSeamTs = Numbers.LONG_NULL;
-            for (long r = 0, rn = pubSlot.rowCount(); r < rn; r++) {
-                long srcTs = pubSlot.getLong(r, tsCol);
-                if (pubSlotDurable && srcTs < retainThreshold) {
-                    continue;
+            // Copy retained rows from the currently-published slot, unless the
+            // tier is stale (a prior both-pinned O3 rebuild skip): then those
+            // rows are pre-O3 and disk has re-sequenced them, so dropping them
+            // and rebuilding from staging is the fix - disk still holds every
+            // dropped row (in-mem is a subset of disk in V1).
+            if (!dropRetained) {
+                // Compute the eviction threshold in the base table's timestamp
+                // units. IN MEMORY is stored in micros; scale to base units once.
+                TimestampDriver driver = ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType());
+                long inMemoryInBaseUnits = driver.fromMicros(instance.getDefinition().getInMemoryMicros());
+                long retainThreshold = stagingMaxTs - inMemoryInBaseUnits;
+
+                // Durability clamp: a row may
+                // only age out when both (a) ts < latest - IN_MEMORY and (b) its
+                // seqTxn is covered by applied_watermark — otherwise the gap-free
+                // invariant between tiers can break when the disk side is behind.
+                // This code is reached only after a successful apply, so
+                // every staging row is durable on disk; the clamp is vacuous
+                // today but protects a future hand-off-ring regime where the
+                // in-mem tier publishes ahead of apply.
+                //
+                // The slot does not carry per-row seqTxn metadata, so the clamp
+                // is enforced at slot granularity: when the published slot's
+                // maxSeqTxn outruns applied_watermark, retain every row (no
+                // age-out this cycle). Under stalled apply the in-mem footprint
+                // can temporarily exceed 2 x per_buffer_size, bounded by the
+                // retry budget.
+                long pubMaxSeqTxn = pubSlot.maxSeqTxn();
+                long appliedWatermark = instance.getStateReader().getAppliedWatermark();
+                boolean pubSlotDurable = pubMaxSeqTxn == Numbers.LONG_NULL || pubMaxSeqTxn <= appliedWatermark;
+
+                // Copy retained rows from the currently-published slot (those
+                // with ts >= retainThreshold). Rows in the slot are stored in
+                // ts-ascending order, so we can simply skip leading rows until
+                // the first retained one is found.
+                for (long r = 0, rn = pubSlot.rowCount(); r < rn; r++) {
+                    long srcTs = pubSlot.getLong(r, tsCol);
+                    if (pubSlotDurable && srcTs < retainThreshold) {
+                        continue;
+                    }
+                    if (writeSeamTs == Numbers.LONG_NULL) {
+                        writeSeamTs = srcTs;
+                    }
+                    writeSlot.copyRowFrom(pubSlot, r, writeRow);
+                    writeRow++;
                 }
-                if (writeSeamTs == Numbers.LONG_NULL) {
-                    writeSeamTs = srcTs;
-                }
-                writeSlot.copyRowFrom(pubSlot, r, writeRow);
-                writeRow++;
             }
             // Append staging rows on top.
             for (long r = 0, rn = stagingBuffer.rowCount(); r < rn; r++) {
@@ -2456,6 +2479,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             tier.publishSwap(writeIdx);
             // Clear any prior stall streak — this cycle made progress.
             instance.setWriterStallStartUs(Numbers.LONG_NULL);
+            // The published slot now reflects this cycle's disk-consistent rows
+            // (retained rows dropped when stale); the stale marking is resolved.
+            instance.setTierStale(false);
         } catch (Throwable t) {
             // Release the writer sentinel without flipping publishedIdx so
             // readers continue to see the previously-published slot. Flipping
@@ -2554,6 +2580,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 throw t;
             }
             tier.releaseWriteWithoutPublish(publishedIdx);
+            // Published slot now mirrors the rewritten disk tail; any prior
+            // stale-row marking is resolved.
+            instance.setTierStale(false);
             return;
         }
         // Slow-path: a reader pins the published slot. Fill the non-published
@@ -2562,6 +2591,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         int writeIdx = 1 - publishedIdx;
         LiveViewInMemoryBuffer writeSlot = tier.tryAcquireWrite(writeIdx);
         if (writeSlot == null) {
+            // Both slots reader-pinned: the rebuild is skipped, so the published
+            // slot keeps its pre-O3 rows (the replay re-sequenced them on disk).
+            // Mark the tier stale so the next normal publish drops those retained
+            // rows instead of re-stamping them with a matching seqTxn - otherwise
+            // Mode B would serve the stale pre-O3 rows. The fence keeps reads
+            // correct until then (the stale slot's seqTxn no longer matches disk).
+            instance.setTierStale(true);
             LOG.info().$("live view in-mem tier rebuild skipped, both slots pinned [view=")
                     .$(instance.getDefinition().getViewName()).I$();
             return;
@@ -2573,6 +2609,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             tier.releaseWriteWithoutPublish(writeIdx);
             throw t;
         }
+        // Published a fresh disk-staged slot; the stale marking (if any) is resolved.
+        instance.setTierStale(false);
     }
 
     /**

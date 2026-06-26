@@ -410,14 +410,14 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
         this.rowCount = rowCount;
     }
 
-    // Records the in-mem/disk seam timestamp, but the read path does not consult
-    // it yet: today the cursor splits the disk and in-mem ranges on the max disk
-    // timestamp instead. Under the current inline-apply architecture the in-mem
-    // buffer is always a subset of what is already on disk, so a seam-based split
-    // would just iterate an empty range past the disk tail. The field is kept set
-    // for a future hand-off ring regime, where the in-mem buffer can outpace
-    // disk and the seam becomes the real splitter; wiring the read side to it is
-    // that phase's work.
+    // Records the in-mem/disk seam timestamp - the lowest timestamp retained in
+    // this slot. The Mode B read path consults it to split the scan: the disk
+    // cursor serves rows with ts < seamTs and stops at the seam, then the slot
+    // serves every row with ts >= seamTs (see LiveViewRecordCursor.hasNext). The
+    // slot holds the whole suffix from seamTs up, so the boundary has neither a
+    // duplicate nor a gap. In V1 inline-apply the slot is a subset of disk, so a
+    // cursor that cannot pass the seqTxn fence falls back to a disk-only scan that
+    // ignores the seam and is always correct.
     public void setSeamTs(long seamTs) {
         this.seamTs = seamTs;
     }

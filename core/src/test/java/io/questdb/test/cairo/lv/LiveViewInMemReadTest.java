@@ -313,6 +313,112 @@ public class LiveViewInMemReadTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testO3RebuildSkipThenForwardCycleDropsStaleRows() throws Exception {
+        // Reproduces the both-slots-pinned O3-rebuild-skip stale-restamp gap. When
+        // the O3 rebuild cannot acquire either slot (both reader-pinned), the
+        // published slot keeps its pre-O3 rows stamped with the pre-O3 seqTxn -
+        // correctly fenced disk-only while stale. The bug: a later forward cycle
+        // copies / appends onto those stale rows and re-stamps them with the new
+        // (matching) seqTxn, so Mode B would then serve pre-O3 rows the O3 replay
+        // re-sequenced on disk. The tierStale flag forces that next publish to drop
+        // the retained rows, so the slot reflects only disk-consistent rows again.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 30m AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Cycle 1: three in-order rows fast-path appended into slot 0,
+                // which stays published.
+                execute("INSERT INTO base (ts, x) VALUES " +
+                        "('2026-05-12T00:00:01.000000Z', 1), " +
+                        "('2026-05-12T00:00:02.000000Z', 2), " +
+                        "('2026-05-12T00:00:03.000000Z', 3)");
+                drainWalQueue();
+                setCurrentMicros(250_000L);
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInMemoryTier tier = instance.getInMemoryTier();
+                Assert.assertNotNull(tier);
+                Assert.assertEquals("cycle 1 publishes slot 0", 0, tier.getPublishedIdx());
+
+                // Pin the published slot 0, then drive a slow-path cycle so the
+                // worker swaps the publish to slot 1. Now pin slot 1 too: both
+                // slots are reader-pinned, exactly the state that makes the O3
+                // rebuild skip.
+                final int pinA = tier.acquireRead();
+                Assert.assertEquals(0, pinA);
+                instance.setLastFlushTimeUs(Numbers.LONG_NULL);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-05-12T00:00:04.000000Z', 4)");
+                drainWalQueue();
+                setCurrentMicros(500_000L);
+                drainJob(job); // slot 0 pinned -> slow-path swap to slot 1
+                drainWalQueue();
+                Assert.assertEquals("cycle 2 slow-path swaps to slot 1", 1, tier.getPublishedIdx());
+                final int pinB = tier.acquireRead();
+                Assert.assertEquals(1, pinB);
+
+                // O3 cycle: a back-dated row forces a head-miss replay that
+                // rewrites the LV table (re-sequencing rn) and tries to rebuild
+                // the in-mem tier. Both slots are pinned, so the rebuild is
+                // skipped - the published slot 1 keeps its stale pre-O3 rows.
+                instance.setLastFlushTimeUs(Numbers.LONG_NULL);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-05-12T00:00:00.000000Z', 99)");
+                drainWalQueue();
+                setCurrentMicros(750_000L);
+                drainJob(job);
+                drainWalQueue();
+                Assert.assertEquals("rebuild skipped, published slot unchanged", 1, tier.getPublishedIdx());
+
+                // While both slots are still pinned a fresh cursor must route
+                // disk-only: the stale slot's pre-O3 seqTxn no longer matches the
+                // rewritten disk, so the fence correctly refuses Mode B.
+                try (
+                        RecordCursorFactory factory = select("SELECT * FROM lv");
+                        LiveViewRecordCursor cursor = openLvCursor(factory)
+                ) {
+                    Assert.assertFalse("stale slot must fence disk-only", cursor.isRoutingEligible());
+                }
+
+                // Release both pins, then run a forward cycle. This is the publish
+                // that, before the fix, re-stamped the stale pre-O3 rows with the
+                // current seqTxn and exposed them to Mode B.
+                tier.releaseRead(pinA);
+                tier.releaseRead(pinB);
+                instance.setLastFlushTimeUs(Numbers.LONG_NULL);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-05-12T00:00:05.000000Z', 5)");
+                drainWalQueue();
+                setCurrentMicros(1_000_000L);
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            // Mode B is back (the forward cycle re-stamped a slot the disk reader
+            // agrees with) and serves only disk-consistent rows: equal to the
+            // disk-only path and to the O3 re-sequenced recompute. Before the fix
+            // the slot still held the stale pre-O3 rows, so Mode B diverged here.
+            InnerRead modeB = readInner("SELECT * FROM lv");
+            Assert.assertTrue("forward cycle must restore Mode B", modeB.routingEligible);
+            Assert.assertTrue("Mode B must serve in-mem rows", modeB.inMemRowsServed > 0);
+            assertModeBMatchesDiskOnly("SELECT * FROM lv");
+            assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tx\trn\n" +
+                            "2026-05-12T00:00:00.000000Z\t99\t1\n" +
+                            "2026-05-12T00:00:01.000000Z\t1\t2\n" +
+                            "2026-05-12T00:00:02.000000Z\t2\t3\n" +
+                            "2026-05-12T00:00:03.000000Z\t3\t4\n" +
+                            "2026-05-12T00:00:04.000000Z\t4\t5\n" +
+                            "2026-05-12T00:00:05.000000Z\t5\t6\n");
+        });
+    }
+
+    @Test
     public void testO3ReplayRebuildOracleSurvivesRestart() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");

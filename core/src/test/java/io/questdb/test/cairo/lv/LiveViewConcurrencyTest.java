@@ -36,6 +36,8 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.lv.LiveViewRecordCursor;
+import io.questdb.griffin.engine.lv.LiveViewRecordCursorFactory;
 import io.questdb.mp.Job;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -79,7 +81,13 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *   cursor over an {@code IN MEMORY} live view while a refresh-driver appends to the
  *   in-memory tier via the fast-path CAS and writers ingest - the lock-free
  *   read/publish hand-off the RFC risk callout flags. Readers must never see a torn
- *   read or crash, and the quiesced final state still matches the recompute.</li>
+ *   read or crash, and the quiesced final state still matches the recompute. The
+ *   {@code InMem} variant uses a SYMBOL-free {@code row_number()} view so the reads
+ *   route through Mode B (seam routing over the pinned slot), and each read asserts
+ *   the per-snapshot invariant - rows ts-ascending, rn a gapless 1..N sequence - so
+ *   a stale-restamped pre-O3 row or a seam duplicate/gap fails the read. The
+ *   cross-writer O3 drives the in-mem rebuild against the live Mode B readers (the
+ *   both-slots-pinned skip path).</li>
  * </ul>
  * <p>
  * <b>Why the oracle stays deterministic despite the concurrency.</b> The premise of
@@ -158,8 +166,23 @@ public class LiveViewConcurrencyTest extends AbstractCairoTest {
     public void testReaderChurnSoak() throws Exception {
         // Reader threads churn cursors over an IN MEMORY view while a refresh driver
         // appends via the fast-path CAS and writers ingest (the RFC risk callout).
+        // The sum() view carries a SYMBOL passthrough, so the reads route disk-only;
+        // this soak stresses the read/publish hand-off without Mode B in the loop.
         final Rnd rnd = TestUtils.generateRandom(LOG);
-        assertMemoryLeak(() -> runReaderChurnSoak(rnd, 4, 4, 800));
+        assertMemoryLeak(() -> runReaderChurnSoak(rnd, 4, 4, 800, false));
+    }
+
+    @Test
+    public void testReaderChurnSoakInMem() throws Exception {
+        // Same soak with a SYMBOL-free row_number() view so the reads genuinely
+        // route through Mode B (seam routing over the pinned in-mem slot). The
+        // readers assert a mid-flight invariant on every snapshot - ts strictly
+        // ascending and rn a gapless 1..N sequence - so a torn slot, a seam
+        // duplicate/gap, or a stale-restamped pre-O3 row surfaces as a value
+        // mismatch, not merely a crash. The cross-writer O3 drives the in-mem
+        // rebuild against the live Mode B readers (the both-slots-pinned race).
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        assertMemoryLeak(() -> runReaderChurnSoak(rnd, 4, 4, 800, true));
     }
 
     private static void appendRow(WalWriter walWriter, long ts, int symIdx, long iv, double xv) {
@@ -300,6 +323,42 @@ public class LiveViewConcurrencyTest extends AbstractCairoTest {
                 record.getLong(0); // ts
                 record.getLong(2); // i
                 record.getLong(3); // v (sum aggregate)
+            }
+        }
+    }
+
+    // Opens a fresh cursor over the SYMBOL-free row_number() view (columns
+    // ts, i, rn) and drains it, asserting the per-snapshot invariant that holds
+    // for every consistent LV-table version: rows come back ts-ascending (the
+    // designated-timestamp total order) and rn is a gapless 1..N sequence in that
+    // order. row_number() OVER () numbers rows in ts-ascending scan order and the
+    // O3 replay re-sequences the whole table, so any committed snapshot - whether
+    // served disk-only or through Mode B - must satisfy it. A torn read, a seam
+    // duplicate/gap, or a stale pre-O3 row re-stamped into the slot breaks it.
+    // The view is mid-flight, so the row count itself is not asserted here; the
+    // final single-threaded oracle validates the full contents after quiescence.
+    private void readRowNumberViewOnce() throws Exception {
+        try (
+                SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine);
+                SqlCompiler compiler = engine.getSqlCompiler();
+                RecordCursorFactory factory = compiler.compile("SELECT * FROM lv", ctx).getRecordCursorFactory();
+                RecordCursor cursor = factory.getCursor(ctx)
+        ) {
+            final Record record = cursor.getRecord();
+            long prevTs = Long.MIN_VALUE;
+            long expectedRn = 1;
+            while (cursor.hasNext()) {
+                long ts = record.getLong(0);
+                long rn = record.getLong(2);
+                if (ts <= prevTs) {
+                    throw new AssertionError("ts not strictly ascending: prevTs=" + prevTs + ", ts=" + ts);
+                }
+                if (rn != expectedRn) {
+                    throw new AssertionError("rn not a gapless 1..N sequence: expected=" + expectedRn
+                            + ", actual=" + rn + ", ts=" + ts);
+                }
+                prevTs = ts;
+                expectedRn++;
             }
         }
     }
@@ -597,13 +656,18 @@ public class LiveViewConcurrencyTest extends AbstractCairoTest {
     // appends via the fast-path CAS and writers ingest (the RFC reader-churn risk
     // callout). The readers detect torn reads / tier-slot corruption by crashing or
     // throwing; the quiesced final state still matches the recompute.
-    private void runReaderChurnSoak(Rnd rnd, int numWriters, int numReaders, int rowCount) throws Exception {
+    private void runReaderChurnSoak(Rnd rnd, int numWriters, int numReaders, int rowCount, boolean modeB) throws Exception {
         setCurrentMicros(MicrosTimestampDriver.floor(CLOCK_START));
 
         final int n = 1 + rnd.nextInt(8);
-        // sum() over a partitioned bounded frame: fixed-width LONG output, so the view
-        // is in-mem-tier eligible and the refresh driver exercises the fast-path CAS.
-        final String viewSql = "SELECT " + projection(0, n) + " FROM base";
+        // modeB: a SYMBOL-free row_number() view, so the read path routes through
+        // the in-mem tier (Mode B seam routing) and the readers can assert the
+        // gapless-rn invariant per snapshot. Otherwise: a sum() view with a SYMBOL
+        // passthrough, which routes disk-only (the tier holds segment-local symbol
+        // ids the reader cannot resolve) but still exercises the publish hand-off.
+        final String viewSql = modeB
+                ? "SELECT ts, i, row_number() OVER () AS rn FROM base"
+                : "SELECT " + projection(0, n) + " FROM base";
         final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s AS " + viewSql;
 
         execute("DROP LIVE VIEW IF EXISTS lv");
@@ -620,7 +684,7 @@ public class LiveViewConcurrencyTest extends AbstractCairoTest {
 
         LOG.info().$("LV concurrency reader-churn soak: writers=").$(numWriters)
                 .$(", readers=").$(numReaders).$(", rows=").$(rowCount).$(", n=").$(n)
-                .$(", sql=").$(viewSql).$();
+                .$(", modeB=").$(modeB).$(", sql=").$(viewSql).$();
 
         final TableToken baseToken = engine.verifyTableName("base");
         final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
@@ -655,7 +719,11 @@ public class LiveViewConcurrencyTest extends AbstractCairoTest {
                 readers[r] = new Thread(() -> {
                     try {
                         while (running.get()) {
-                            readViewOnce();
+                            if (modeB) {
+                                readRowNumberViewOnce();
+                            } else {
+                                readViewOnce();
+                            }
                         }
                     } catch (Throwable th) {
                         errors.add(th);
@@ -701,7 +769,36 @@ public class LiveViewConcurrencyTest extends AbstractCairoTest {
                 true
         );
 
+        if (modeB) {
+            // Guard against the soak silently passing on disk-only reads: confirm
+            // the quiesced production read path actually routes through Mode B.
+            assertModeBEngaged();
+        }
+
         execute("DROP LIVE VIEW lv");
         execute("DROP TABLE base");
+    }
+
+    // Confirms the SYMBOL-free row_number() view engages Mode B on the production
+    // read path. Run single-threaded after quiescence, so the published slot is
+    // stable and stamped with the latest applied seqTxn the fresh reader reports -
+    // the fence holds and the cursor routes through the in-mem slot rather than
+    // disk-only. Without this the reader-churn soak could pass even if every read
+    // had fallen back to disk-only, leaving Mode B untested.
+    private void assertModeBEngaged() throws Exception {
+        try (
+                SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine);
+                SqlCompiler compiler = engine.getSqlCompiler();
+                RecordCursorFactory factory = compiler.compile("SELECT * FROM lv", ctx).getRecordCursorFactory()
+        ) {
+            RecordCursorFactory f = factory;
+            while (f != null && !(f instanceof LiveViewRecordCursorFactory)) {
+                f = f.getBaseFactory();
+            }
+            Assert.assertNotNull("expected a LiveViewRecordCursorFactory in the plan", f);
+            try (LiveViewRecordCursor cursor = (LiveViewRecordCursor) f.getCursor(ctx)) {
+                Assert.assertTrue("quiesced row_number() read must route through Mode B", cursor.isRoutingEligible());
+            }
+        }
     }
 }

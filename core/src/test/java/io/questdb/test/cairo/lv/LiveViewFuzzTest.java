@@ -26,9 +26,14 @@ package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.lv.LiveViewInMemoryTier;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewState;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.lv.LiveViewRecordCursor;
+import io.questdb.griffin.engine.lv.LiveViewRecordCursorFactory;
 import io.questdb.mp.Job;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -36,6 +41,7 @@ import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 /**
@@ -125,6 +131,25 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFuzzInMemReadBack() throws Exception {
+        // Mode B read-back: a SYMBOL-free row_number() view (so SELECT * FROM lv
+        // routes through the in-mem tier) fuzzed under O3 + optional restart +
+        // optional backfill. After quiescence the read-back is cross-checked three
+        // ways: it equals the from-scratch recompute (the standard oracle), Mode B
+        // is confirmed actually engaged, and the Mode B result is byte-identical to
+        // the forced disk-only path. Every other variant carries a SYMBOL
+        // passthrough and reads disk-only, so this is the path that drives Mode B
+        // through the fuzz's O3 / restart / backfill patterns.
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1 + rnd.nextInt(4));
+        assertMemoryLeak(() -> {
+            final boolean restart = rnd.nextBoolean();
+            final boolean backfill = rnd.nextBoolean();
+            runFuzz(rnd, 0, 120 + rnd.nextInt(280), true, restart, backfill, true, true);
+        });
+    }
+
+    @Test
     public void testFuzzInOrder() throws Exception {
         // In-order ingestion: the happy incremental path, no head replay.
         final Rnd rnd = TestUtils.generateRandom(LOG);
@@ -190,6 +215,53 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
                 runFuzz(rnd, v, 300 + rnd.nextInt(400), true, true, true, true);
             }
         });
+    }
+
+    // Confirms SELECT * FROM lv actually routes through Mode B (the in-mem tier),
+    // not disk-only. Opens the inner LiveViewRecordCursor directly (unwrapping any
+    // QueryProgress wrapper), drains it, and asserts the fence engaged and the tier
+    // served rows. Run single-threaded after quiescence; the top-up cycle guarantees
+    // the slot is populated.
+    private static void assertModeBEngaged() throws SqlException {
+        try (RecordCursorFactory factory = select("SELECT * FROM lv")) {
+            RecordCursorFactory f = factory;
+            while (f != null && !(f instanceof LiveViewRecordCursorFactory)) {
+                f = f.getBaseFactory();
+            }
+            Assert.assertNotNull("expected a LiveViewRecordCursorFactory in the plan", f);
+            try (LiveViewRecordCursor cursor = (LiveViewRecordCursor) f.getCursor(sqlExecutionContext)) {
+                StringSink sink = new StringSink();
+                println(f.getMetadata(), cursor, sink);
+                Assert.assertTrue("read-back must route through Mode B", cursor.isRoutingEligible());
+                Assert.assertTrue("Mode B must serve in-mem rows", cursor.inMemRowsServed() > 0);
+            }
+        }
+    }
+
+    // Runs the SELECT with the tier on (Mode B) and then with the fence forced off
+    // (disk-only, achieved by mismatching both slots' stamps) and asserts the two
+    // outputs are byte-identical. Restores the stamps afterwards. Mirrors the
+    // differential oracle in LiveViewInMemReadTest; safe single-threaded only.
+    private static void assertModeBMatchesDiskOnly(String sql) throws SqlException {
+        StringSink modeB = new StringSink();
+        printSql(sql, modeB);
+
+        LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+        Assert.assertNotNull(instance);
+        LiveViewInMemoryTier tier = instance.getInMemoryTier();
+        Assert.assertNotNull(tier);
+        long s0 = tier.getSlot(0).lvSeqTxn();
+        long s1 = tier.getSlot(1).lvSeqTxn();
+        tier.getSlot(0).setLvSeqTxn(mismatch(s0));
+        tier.getSlot(1).setLvSeqTxn(mismatch(s1));
+        StringSink diskOnly = new StringSink();
+        try {
+            printSql(sql, diskOnly);
+        } finally {
+            tier.getSlot(0).setLvSeqTxn(s0);
+            tier.getSlot(1).setLvSeqTxn(s1);
+        }
+        Assert.assertEquals("Mode B vs disk-only mismatch for: " + sql, diskOnly.toString(), modeB.toString());
     }
 
     // Boundaries [0, ..., len] splitting a segment of length len into 1..~10
@@ -262,6 +334,12 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
             any = true;
         }
         return any;
+    }
+
+    // Maps a slot stamp to a value the disk reader can never report, forcing the
+    // fence off so the read serves disk-only. LONG_NULL slots map to 1.
+    private static long mismatch(long seqTxn) {
+        return seqTxn == Numbers.LONG_NULL ? 1 : seqTxn + 1_000_000;
     }
 
     // Returns the projection (SELECT list) for the given non-decimal window-query
@@ -407,6 +485,19 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
             boolean backfill,
             boolean inMemory
     ) throws Exception {
+        runFuzz(rnd, variant, rowCount, o3, restart, backfill, inMemory, false);
+    }
+
+    private void runFuzz(
+            Rnd rnd,
+            int variant,
+            int rowCount,
+            boolean o3,
+            boolean restart,
+            boolean backfill,
+            boolean inMemory,
+            boolean inMemReadBack
+    ) throws Exception {
         // Drive a controllable clock so FLUSH EVERY flush gating is deterministic.
         // Pin "now" a day BEFORE the data start (2026-01-01). A non-backfill
         // view's lower bound is the wall-clock CREATE moment, and O3 head-miss
@@ -432,7 +523,11 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
         final int baseStepMax = stepMode == 0 ? 5_000_000 : stepMode == 1 ? 60_000_000 : 900_000_000;
         final int dayJumpEvery = stepMode == 0 ? 20 : 12;
         final boolean withWhere = rnd.nextInt(3) == 0;
-        final boolean isDecimal = variant == DECIMAL_VARIANT;
+        // inMemReadBack forces a SYMBOL-free row_number() output so SELECT * FROM lv
+        // routes through the in-mem tier (Mode B). The decimal family always carries
+        // a SYMBOL passthrough, so it never combines with the read-back path.
+        final boolean isDecimal = !inMemReadBack && variant == DECIMAL_VARIANT;
+        final boolean inMem = inMemory || inMemReadBack;
         final int decimalWidth = isDecimal ? rnd.nextInt(DECIMAL_PRECISION.length) : -1;
         final int decimalPrecision = isDecimal ? DECIMAL_PRECISION[decimalWidth] : 0;
         final int decimalScale = isDecimal ? DECIMAL_SCALE[decimalWidth] : 0;
@@ -441,12 +536,20 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
         // Target scale for the rescale form avg(d, ts); >= input scale keeps the
         // rescaled precision (= precision - scale + targetScale) within bounds.
         final int rescaleTargetScale = isDecimal ? decimalScale + rnd.nextInt(4) : 0;
-        final String projection = isDecimal
-                ? decimalProjection(decimalFunc, n, rescaleTargetScale)
-                : projection(variant, n);
+        final String projection;
+        if (inMemReadBack) {
+            // SYMBOL-free identity output: SELECT * FROM lv is then a full-schema
+            // projection over fixed-width non-SYMBOL columns, so the read routes
+            // through Mode B instead of disk-only.
+            projection = "ts, i, row_number() OVER () AS rn";
+        } else if (isDecimal) {
+            projection = decimalProjection(decimalFunc, n, rescaleTargetScale);
+        } else {
+            projection = projection(variant, n);
+        }
         final String viewSql = "SELECT " + projection + " FROM base" + (withWhere ? " WHERE i > 0" : "");
         final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
-                + (inMemory ? "IN MEMORY 60s " : "")
+                + (inMem ? "IN MEMORY 60s " : "")
                 + (backfill ? "BACKFILL " : "")
                 + "AS " + viewSql;
 
@@ -459,7 +562,8 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
         LOG.info().$("LV fuzz: variant=").$(variant).$(", rows=").$(rowCount)
                 .$(", n=").$(n).$(", symCount=").$(symCount).$(", stepMode=").$(stepMode)
                 .$(", o3=").$(o3).$(", restart=").$(restart)
-                .$(", backfill=").$(backfill).$(", inMem=").$(inMemory)
+                .$(", backfill=").$(backfill).$(", inMem=").$(inMem)
+                .$(", inMemReadBack=").$(inMemReadBack)
                 .$(", where=").$(withWhere).$(", decimalType=").$(decimalType)
                 .$(", sql=").$(viewSql).$();
 
@@ -542,6 +646,21 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
             }
 
             driveRefreshToQuiescence(job);
+
+            if (inMemReadBack) {
+                // Top up with one clean forward row above the global max ts so the
+                // in-mem tier is guaranteed populated at the final read. A run that
+                // ended on a restart would otherwise leave the freshly-rebuilt tier
+                // empty (no post-restart ingestion to publish), routing the
+                // read-back disk-only and leaving Mode B unexercised. i>0 keeps the
+                // row past the optional WHERE; the recompute oracle below naturally
+                // includes it.
+                execute("INSERT INTO base (ts, sym, i, x) VALUES ("
+                        + (tsv[rowCount - 1] + 1) + "::timestamp, 'AA', 1, 1.0)");
+                drainWalQueue();
+                refreshCycle(job);
+                driveRefreshToQuiescence(job);
+            }
         } finally {
             Misc.free(job);
         }
@@ -557,6 +676,15 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
                 LOG,
                 true
         );
+
+        if (inMemReadBack) {
+            // Mode B read-back cross-checks, single-threaded now that the worker is
+            // freed and the view is quiesced: the tier actually serves the read,
+            // and the Mode B result is byte-identical to the forced disk-only path
+            // under whatever O3 / restart / backfill pattern this run produced.
+            assertModeBEngaged();
+            assertModeBMatchesDiskOnly("SELECT * FROM lv");
+        }
 
         execute("DROP LIVE VIEW lv");
         execute("DROP TABLE base");

@@ -233,6 +233,17 @@ public class LiveViewInstance implements QuietCloseable {
     // live_views().head_checkpoint_lv_seqtxn stays LONG_NULL for its lifetime.
     private volatile boolean snapshotCapability;
     private volatile boolean snapshotCapabilityComputed;
+    // Set true when an O3 in-mem tier rebuild is skipped because both slots were
+    // reader-pinned: the published slot then keeps its pre-O3 rows, which the O3
+    // replay has since re-sequenced on disk. The flag forces the next normal
+    // publish (LiveViewRefreshJob.publishToInMemoryTier) to drop the retained
+    // rows instead of copying / appending onto them, so Mode B never serves the
+    // stale pre-O3 rows re-stamped with a matching seqTxn. Cleared on any
+    // successful publish / rebuild. Touched only on the refresh-worker thread
+    // (rebuild + publish both run under the refresh latch), so a plain field
+    // suffices - the latch's acquire/release supplies the happens-before edge,
+    // same discipline as flushRetryCount.
+    private boolean tierStale;
     // True only for a minimal stub registered by the catalogue load path when the
     // on-disk _lv / _lv.s carry an unsupported newer format version. Such an
     // instance has a null definition and default runtime state; getLifecycleState
@@ -584,6 +595,16 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * @return {@code true} when the published in-mem slot may still hold pre-O3
+     * rows from a both-slots-pinned rebuild skip. While set, the next normal
+     * publish drops the retained rows rather than carrying them forward. See
+     * {@link #setTierStale(boolean)}.
+     */
+    public boolean isTierStale() {
+        return tierStale;
+    }
+
+    /**
      * @return {@code true} for a minimal stub registered when the on-disk files
      * carry an unsupported newer format version (see the stub constructor).
      */
@@ -829,6 +850,16 @@ public class LiveViewInstance implements QuietCloseable {
 
     public void setSubscribeFromSeqTxn(long subscribeFromSeqTxn) {
         stateReader.setSubscribeFromSeqTxn(subscribeFromSeqTxn);
+    }
+
+    /**
+     * Marks (or clears) the published in-mem slot as possibly carrying stale
+     * pre-O3 rows after a both-slots-pinned rebuild skip. The refresh worker
+     * sets it from {@code rebuildInMemoryTier} when the skip happens and clears
+     * it on the next successful publish / rebuild. See {@link #isTierStale()}.
+     */
+    public void setTierStale(boolean tierStale) {
+        this.tierStale = tierStale;
     }
 
     public void setWriterStallStartUs(long writerStallStartUs) {
