@@ -13765,38 +13765,48 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     /**
      * Persist a DURABLE EPOCH COPY of a commit-pointer file ({@code _txn} or {@code _cv}) into the
-     * table dir as {@code <name>.epoch} via {@code dumpTo} (the same canonical single-A/B-record dump
-     * {@link DatabaseCheckpointAgent} uses), then msync + fsync it. These immutable copies are the
-     * recovery anchor (Plan 3C): they capture the commit pointers AS OF the epoch, independent of the
-     * live files which keep advancing under lazy apply. {@code dumper} is the writer-side reader
-     * ({@link TxWriter}/{@link ColumnVersionWriter}) whose {@code dumpTo} emits the canonical bytes.
+     * table dir as {@code <name>.epoch}, then fsync it. These immutable copies are the recovery anchor
+     * (Plan 3): {@link RecoveryCoordinator} restores them over the live files to rewind the table to
+     * the epoch cut after a power cut.
+     * <p>
+     * The copy is taken by {@code ff.copy()} (creat O_TRUNC) of the LIVE committed file, which was just
+     * made durable by {@code txWriter.fsync()} / {@code columnVersionWriter.fsync()} a few lines up in
+     * {@link #fsyncMaterializedState()} (the writer is held throughout, so the live file is a stable
+     * cut and is not advancing). A direct file copy is byte-identical to the live file and therefore
+     * trivially READABLE + RESTORABLE by {@code TxReader}/{@code ColumnVersionReader}.
+     * <p>
+     * <b>Why not {@code dumpTo}:</b> an earlier version dumped from the live {@code TxWriter} via
+     * {@code dumpTo()}. That emits {@code version}/{@code txn} from out-of-sync writer fields, so the
+     * dumped record violated {@code TxReader}'s {@code version == body-txn} invariant
+     * ({@code unsafeLoadAreaFields}) and the copy was UNREADABLE — recovery could not restore it. The
+     * checkpoint path's {@code dumpTo} works only because it dumps from a loaded {@code TxReader} (where
+     * {@code version == txn}); copying the live file is the robust equivalent here.
      */
-    private void writeEpochCopy(String baseFileName, EpochDumper dumper) {
+    private void writeEpochCopy(String baseFileName) {
+        // Source: the live committed file (just fsync'd). Dest: the .epoch sibling.
         path.trimTo(pathSize).concat(baseFileName).put(TableUtils.EPOCH_COPY_SUFFIX);
-        // Remove any prior epoch copy first so each cut writes a FRESH file sized exactly by dumpTo
-        // (mirrors DatabaseCheckpointAgent, which always dumps into a fresh .checkpoint dir). This
-        // avoids a stale tail if a later dump were ever shorter than an earlier one. The dump is also
-        // self-describing via its A/B version word, but a fresh file keeps the copy unambiguous.
-        if (ff.exists(path.$())) {
-            ff.removeQuiet(path.$());
-        }
-        final MemoryMARW epochMem = Vm.getCMARWInstance();
-        try {
-            // smallFile opens the (now absent => 0-length) sibling; dumpTo's positional writes grow
-            // the mapping to the dumped extent, exactly as the checkpoint metadata dump does.
-            epochMem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
-            dumper.dumpTo(epochMem);
-            // Make the copy hard-durable: msync the mapping then fsync the fd. The copy is immutable
-            // once written, so a single durability barrier here is the recovery anchor.
-            epochMem.sync(false);
-            ff.fsync(epochMem.getFd());
-        } finally {
-            // close(false): no truncate-to-append-offset. dumpTo uses positional putLong (which does
-            // NOT advance the append offset), so a truncating close would wrongly shrink the file;
-            // the checkpoint path likewise closes its dumped _txn/_cv with close(false).
-            epochMem.close(false);
+        // ff.copy uses creat(O_TRUNC), so it both creates and fully replaces any prior copy; no explicit
+        // remove needed. Build the source path into `other` to avoid clobbering `path` (the dest).
+        other.trimTo(pathSize).concat(baseFileName);
+        if (ff.copy(other.$(), path.$()) < 0) {
+            other.trimTo(pathSize);
             path.trimTo(pathSize);
+            throw CairoException.critical(ff.errno())
+                    .put("could not write durable epoch copy [table=").put(tableToken.getTableName())
+                    .put(", file=").put(baseFileName).put(TableUtils.EPOCH_COPY_SUFFIX).put(']');
         }
+        other.trimTo(pathSize);
+        // Make the copy hard-durable: fsync the freshly-written .epoch file. The copy is immutable until
+        // the next epoch overwrites it, so a single fsync here is the recovery anchor's durability barrier.
+        final long fd = TableUtils.openRW(ff, path.$(), LOG, configuration.getWriterFileOpenOpts());
+        if (fd != -1) {
+            try {
+                ff.fsync(fd);
+            } finally {
+                ff.close(fd);
+            }
+        }
+        path.trimTo(pathSize);
     }
 
     /**
@@ -13857,18 +13867,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         columnVersionWriter.fsync();
         txWriter.fsync();
 
-        // Step 5: durable epoch copies (immutable recovery anchor) — _txn.epoch then _cv.epoch.
-        writeEpochCopy(TableUtils.TXN_FILE_NAME, txWriter::dumpTo);
-        writeEpochCopy(TableUtils.COLUMN_VERSION_FILE_NAME, columnVersionWriter::dumpTo);
+        // Step 5: durable epoch copies (immutable recovery anchor) — copy the just-fsync'd live _txn
+        // then _cv into _txn.epoch / _cv.epoch. Order mirrors the durability order (_cv before _txn is
+        // not required here since both live files are already durable; both copies are immutable).
+        writeEpochCopy(TableUtils.TXN_FILE_NAME);
+        writeEpochCopy(TableUtils.COLUMN_VERSION_FILE_NAME);
 
         // Mirror syncColumns(): forward indexer purge entries safe for the committed txn.
         publishPendingPostingSealPurges(txWriter.getTxn());
-    }
-
-    /** Functional adapter over the {@code dumpTo(MemoryW)} of TxWriter / ColumnVersionWriter. */
-    @FunctionalInterface
-    private interface EpochDumper {
-        void dumpTo(io.questdb.cairo.vm.api.MemoryW mem);
     }
 
     private void throwApplyBlockColumnShuffleFailed(int columnIndex, int columnType, long totalRows, long rowCount) {

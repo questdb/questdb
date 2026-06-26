@@ -702,6 +702,12 @@ public class CairoEngine implements Closeable, WriterSource {
         EngineMigration.migrateEngineTo(this, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
         tableNameRegistry = createTableNameRegistry(configuration, tableFlagResolver);
         tableNameRegistry.reload();
+        // Adaptive durable-epoch recovery roll-forward (Plan 3 Task C). Runs AFTER the table registry
+        // is loaded (so tables are enumerable) but BEFORE any WAL apply (CheckWalTransactionsJob ->
+        // ApplyWal2TableJob) or table open: for each adaptive WAL table with a durable epoch it rewinds
+        // _txn/_cv to the epoch cut so the boot path idempotently re-applies (epoch.seqTxn, frontier]
+        // from the durable WAL. No-op for non-adaptive engines and for tables without a _snapshot.
+        new RecoveryCoordinator(this).recover();
         this.sqlCompilerPool = new SqlCompilerPool(this);
         if (configuration.isPartitionO3OverwriteControlEnabled()) {
             enablePartitionOverwriteControl();
