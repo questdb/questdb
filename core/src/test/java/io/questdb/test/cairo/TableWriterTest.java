@@ -3280,6 +3280,82 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSwitchNativePartitionWithParquetSkipsRowlessPostingColumn() throws Exception {
+        // Regression: linkPartitionIndexFiles skipped only the absent case
+        // (columnTop == -1). A posting-indexed column that is row-less on the
+        // partition (columnTop >= partition size) also has no .pk / .pv files --
+        // the seal sweep never builds them -- yet the old guard did not skip it,
+        // so linkColumnIndexFiles threw "index files do not exist". The guard now
+        // mirrors copyOrRebuildColumnIndexes.
+        assertMemoryLeak(() -> {
+            final String tableName = "posting_switch_rowless";
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
+                    .col("sym", ColumnType.SYMBOL).symbolCapacity(16).indexed(true, 256, IndexType.POSTING)
+                    .timestamp("ts", timestampType);
+            AbstractCairoTest.create(model);
+
+            Rnd rnd = new Rnd();
+            long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
+            long interval = timestampDriver.fromMicros(60_000L * 1000L);
+
+            // Span two partitions so partition 0 is non-active when `extra` is added.
+            try (TableWriter writer = newOffPoolWriter(configuration, tableName)) {
+                for (int i = 0; i < 2_000; i++) {
+                    TableWriter.Row r = writer.newRow(ts += interval);
+                    r.putSym(0, rnd.nextString(4));
+                    r.append();
+                }
+                writer.commit();
+            }
+
+            long partitionTs;
+            try (TableWriter writer = newOffPoolWriter(configuration, tableName)) {
+                final TableToken token = writer.getTableToken();
+                TxWriter tx = writer.getTxWriter();
+
+                partitionTs = tx.getPartitionTimestampByIndex(0);
+                int partitionIndex = tx.getPartitionIndex(partitionTs);
+                long partitionNameTxn = tx.getPartitionNameTxn(partitionIndex);
+
+                // `extra` is added while partition 0 is historic, so it never gets
+                // a .pk on partition 0.
+                writer.addColumn("extra", ColumnType.SYMBOL, 16, false, IndexType.POSTING, 256, false, AllowAllSecurityContext.INSTANCE);
+
+                try (Path p = new Path()) {
+                    p.of(configuration.getDbRoot()).concat(token);
+                    TableUtils.setPathForParquetPartition(p, timestampType, PartitionBy.DAY, partitionTs, partitionNameTxn);
+                    Assert.assertTrue("failed to touch data.parquet", FF.touch(p.$()));
+
+                    p.of(configuration.getDbRoot()).concat(token);
+                    TableUtils.setPathForParquetPartitionMetadata(p, timestampType, PartitionBy.DAY, partitionTs, partitionNameTxn);
+                    Assert.assertTrue("failed to touch _pm", FF.touch(p.$()));
+                }
+
+                // Bump writer.txn past partition.nameTxn so the switch creates a
+                // distinct destination dir.
+                TableWriter.Row r = writer.newRow(tx.getMaxTimestamp() + interval);
+                r.putSym(0, rnd.nextString(4));
+                r.append();
+                writer.commit();
+
+                // Stamp `extra` row-less on partition 0 (columnTop == partition
+                // size): a column-version record with no .pk, the state an O3
+                // add-column race produces.
+                writer.upsertColumnVersion(partitionTs, writer.getColumnIndex("extra"), tx.getPartitionSize(partitionIndex));
+
+                tx.setPartitionParquetGenerated(partitionIndex, true);
+
+                int rc = writer.switchNativePartitionWithParquet(partitionTs, 0L);
+                Assert.assertEquals(TableWriter.SWITCH_OK, rc);
+                Assert.assertTrue(
+                        "partition must be parquet after the switch",
+                        writer.getTxWriter().isPartitionParquet(partitionIndex)
+                );
+            }
+        });
+    }
+
+    @Test
     public void testTableDoesNotExist() throws Exception {
         assertMemoryLeak(() -> {
             try {

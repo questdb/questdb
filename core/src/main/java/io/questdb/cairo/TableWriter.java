@@ -7485,12 +7485,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void linkPartitionIndexFiles(long partitionTimestamp, long partitionNameTxn, int partitionDirLen, int newPartitionDirLen) {
         try {
             final int columnCount = metadata.getColumnCount();
+            final long partitionSize = txWriter.getPartitionRowCountByTimestamp(partitionTimestamp);
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                 if (!ColumnType.isSymbol(metadata.getColumnType(columnIndex)) || !metadata.isIndexed(columnIndex)) {
                     continue;
                 }
-                // no data in partition for this column
-                if (columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex) == -1) {
+                // Absent (columnTop == -1) or row-less (columnTop >= partition size) columns
+                // have no index files in this partition. Same guard as copyOrRebuildColumnIndexes.
+                final long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
+                if (columnTop == -1 || columnTop >= partitionSize) {
                     continue;
                 }
                 linkColumnIndexFiles(
@@ -12349,10 +12352,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
                 // Absent (columnTop == -1) or row-less (columnTop >= partition size) columns
                 // have no .pk file here, so there is no index to restore. Same guard as
-                // sealPostingIndexForPartition.
+                // sealPostingIndexForPartition -- use getColumnTop (sentinel -1), not
+                // getColumnTopQuick (returns 0 for an absent column, so the -1 arm is dead).
                 long partitionSize = txWriter.getPartitionRowCountByTimestamp(lastOpenPartitionTs);
-                long columnTop = columnVersionWriter.getColumnTopQuick(lastOpenPartitionTs, colIdx);
-                if (columnTop < 0 || columnTop >= partitionSize) {
+                long columnTop = columnVersionWriter.getColumnTop(lastOpenPartitionTs, colIdx);
+                if (columnTop == -1 || columnTop >= partitionSize) {
                     continue;
                 }
                 CharSequence colName = metadata.getColumnName(colIdx);
