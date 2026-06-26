@@ -105,10 +105,8 @@ public final class CoveredColumnDecoder {
                 switch (tag) {
                     case ColumnType.VARCHAR ->
                             writeVarchar(addr, varData, q, count, crc.getCoveredVarcharA(includeIdx));
-                    case ColumnType.STRING ->
-                            writeString(addr, varData, q, count, crc.getCoveredStrA(includeIdx));
-                    case ColumnType.BINARY ->
-                            writeBinary(addr, varData, q, count, crc.getCoveredBin(includeIdx));
+                    case ColumnType.STRING -> writeString(addr, varData, q, count, crc.getCoveredStrA(includeIdx));
+                    case ColumnType.BINARY -> writeBinary(addr, varData, q, count, crc.getCoveredBin(includeIdx));
                     case ColumnType.ARRAY ->
                             writeArray(addr, varData, q, count, crc.getCoveredArray(includeIdx, columnTypes[q]));
                     default -> {

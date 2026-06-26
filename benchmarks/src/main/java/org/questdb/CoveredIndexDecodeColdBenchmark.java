@@ -137,32 +137,32 @@ public class CoveredIndexDecodeColdBenchmark {
         // same root exposed through a slow-storage emulation layer (e.g. a latency-injecting FUSE
         // mirror) without rebuilding through that layer. -Dcovered.bench.skipBuild=true reuses existing data.
         if (!Boolean.getBoolean("covered.bench.skipBuild"))
-        try (CairoEngine e = new CairoEngine(configuration)) {
-            final SqlExecutionContext c = newContext(e, 1);
-            e.execute("DROP TABLE IF EXISTS cov", c);
-            e.execute("DROP TABLE IF EXISTS ref", c);
-            e.execute("CREATE TABLE cov (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (px, qty, grp, tag)," +
-                    " px DOUBLE, qty LONG, grp SYMBOL, tag VARCHAR) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", c);
-            e.execute("CREATE TABLE ref (ts TIMESTAMP, sym SYMBOL, px DOUBLE, qty LONG, grp SYMBOL, tag VARCHAR)" +
-                    " TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", c);
-            final long spacingUs = Math.max(1L, 16L * 86_400_000_000L / ROWS);
-            final String gen =
-                    "SELECT ('2024-01-01'::TIMESTAMP + (x - 1) * " + spacingUs + "L)::timestamp," +
-                            " (CASE" +
-                            "   WHEN (x % 1000) = 0 THEN 'sel0_1'" +
-                            "   WHEN (x % 1000) BETWEEN 1 AND 10 THEN 'sel1'" +
-                            "   WHEN (x % 1000) BETWEEN 11 AND 60 THEN 'sel5'" +
-                            "   WHEN (x % 1000) BETWEEN 61 AND 160 THEN 'sel10'" +
-                            "   WHEN (x % 1000) BETWEEN 161 AND 410 THEN 'sel25'" +
-                            "   WHEN (x % 1000) BETWEEN 411 AND 910 THEN 'sel50'" +
-                            "   ELSE 'noise' || (x % 64) END)::symbol," +
-                            " (x % 997)::double, (x % 1000)::long, ('G' || (x % 8))::symbol, ('T' || (x % 8))::varchar" +
-                            " FROM long_sequence(" + ROWS + ")";
-            e.execute("INSERT INTO cov " + gen, c);
-            e.execute("INSERT INTO ref " + gen, c);
-            e.releaseAllWriters();
-            System.out.println("covered-bench data built: " + ROWS + " rows/table");
-        }
+            try (CairoEngine e = new CairoEngine(configuration)) {
+                final SqlExecutionContext c = newContext(e, 1);
+                e.execute("DROP TABLE IF EXISTS cov", c);
+                e.execute("DROP TABLE IF EXISTS ref", c);
+                e.execute("CREATE TABLE cov (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (px, qty, grp, tag)," +
+                        " px DOUBLE, qty LONG, grp SYMBOL, tag VARCHAR) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", c);
+                e.execute("CREATE TABLE ref (ts TIMESTAMP, sym SYMBOL, px DOUBLE, qty LONG, grp SYMBOL, tag VARCHAR)" +
+                        " TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", c);
+                final long spacingUs = Math.max(1L, 16L * 86_400_000_000L / ROWS);
+                final String gen =
+                        "SELECT ('2024-01-01'::TIMESTAMP + (x - 1) * " + spacingUs + "L)::timestamp," +
+                                " (CASE" +
+                                "   WHEN (x % 1000) = 0 THEN 'sel0_1'" +
+                                "   WHEN (x % 1000) BETWEEN 1 AND 10 THEN 'sel1'" +
+                                "   WHEN (x % 1000) BETWEEN 11 AND 60 THEN 'sel5'" +
+                                "   WHEN (x % 1000) BETWEEN 61 AND 160 THEN 'sel10'" +
+                                "   WHEN (x % 1000) BETWEEN 161 AND 410 THEN 'sel25'" +
+                                "   WHEN (x % 1000) BETWEEN 411 AND 910 THEN 'sel50'" +
+                                "   ELSE 'noise' || (x % 64) END)::symbol," +
+                                " (x % 997)::double, (x % 1000)::long, ('G' || (x % 8))::symbol, ('T' || (x % 8))::varchar" +
+                                " FROM long_sequence(" + ROWS + ")";
+                e.execute("INSERT INTO cov " + gen, c);
+                e.execute("INSERT INTO ref " + gen, c);
+                e.releaseAllWriters();
+                System.out.println("covered-bench data built: " + ROWS + " rows/table");
+            }
         final Options opt = args.length > 0
                 ? new org.openjdk.jmh.runner.options.CommandLineOptions(args)
                 : new OptionsBuilder().include(CoveredIndexDecodeColdBenchmark.class.getSimpleName()).build();
@@ -316,28 +316,44 @@ public class CoveredIndexDecodeColdBenchmark {
 
     private static String keyFor(String selectivity) {
         switch (selectivity) {
-            case "0.1": return "sel0_1";
-            case "1": return "sel1";
-            case "5": return "sel5";
-            case "10": return "sel10";
-            case "25": return "sel25";
-            case "50": return "sel50";
-            default: throw new IllegalArgumentException("unknown selectivity: " + selectivity);
+            case "0.1":
+                return "sel0_1";
+            case "1":
+                return "sel1";
+            case "5":
+                return "sel5";
+            case "10":
+                return "sel10";
+            case "25":
+                return "sel25";
+            case "50":
+                return "sel50";
+            default:
+                throw new IllegalArgumentException("unknown selectivity: " + selectivity);
         }
     }
 
     private static String query(String shape, String table, String key) {
         final String w = " WHERE sym = '" + key + "'";
         switch (shape) {
-            case "sum": return "SELECT sum(px) FROM " + table + w;
-            case "multi_agg": return "SELECT sum(px), count(), avg(px), min(px), max(px) FROM " + table + w;
-            case "first_last": return "SELECT first(px), last(px) FROM " + table + w;
-            case "count": return "SELECT count() FROM " + table + w;
-            case "residual": return "SELECT sum(px) FROM " + table + w + " AND px > 500";
-            case "groupby_symbol": return "SELECT grp, sum(px), count() FROM " + table + w + " GROUP BY grp ORDER BY grp";
-            case "groupby_varchar": return "SELECT tag, sum(px), count() FROM " + table + w + " GROUP BY tag ORDER BY tag";
-            case "filter_project": return "SELECT ts, px, qty, grp FROM " + table + w;
-            default: throw new IllegalArgumentException("unknown shape: " + shape);
+            case "sum":
+                return "SELECT sum(px) FROM " + table + w;
+            case "multi_agg":
+                return "SELECT sum(px), count(), avg(px), min(px), max(px) FROM " + table + w;
+            case "first_last":
+                return "SELECT first(px), last(px) FROM " + table + w;
+            case "count":
+                return "SELECT count() FROM " + table + w;
+            case "residual":
+                return "SELECT sum(px) FROM " + table + w + " AND px > 500";
+            case "groupby_symbol":
+                return "SELECT grp, sum(px), count() FROM " + table + w + " GROUP BY grp ORDER BY grp";
+            case "groupby_varchar":
+                return "SELECT tag, sum(px), count() FROM " + table + w + " GROUP BY tag ORDER BY tag";
+            case "filter_project":
+                return "SELECT ts, px, qty, grp FROM " + table + w;
+            default:
+                throw new IllegalArgumentException("unknown shape: " + shape);
         }
     }
 }

@@ -314,13 +314,20 @@ public class CoveredIndexDecodeBenchmark {
 
     private static String keyFor(String selectivity) {
         switch (selectivity) {
-            case "0.1": return "sel0_1";
-            case "1": return "sel1";
-            case "5": return "sel5";
-            case "10": return "sel10";
-            case "25": return "sel25";
-            case "50": return "sel50";
-            default: throw new IllegalArgumentException("unknown selectivity: " + selectivity);
+            case "0.1":
+                return "sel0_1";
+            case "1":
+                return "sel1";
+            case "5":
+                return "sel5";
+            case "10":
+                return "sel10";
+            case "25":
+                return "sel25";
+            case "50":
+                return "sel50";
+            default:
+                throw new IllegalArgumentException("unknown selectivity: " + selectivity);
         }
     }
 

@@ -79,9 +79,9 @@ public interface PageFrame {
      *
      * @param columnIndex index of the column
      * @return {@link DataSource#DIRECT} for a normally memory-mapped column, or
-     *         {@link DataSource#COVERED} for a column whose values are decoded
-     *         from the covering index sidecar by the worker-side decode arm.
-     *         Default {@link DataSource#DIRECT} keeps all existing frames unchanged.
+     * {@link DataSource#COVERED} for a column whose values are decoded
+     * from the covering index sidecar by the worker-side decode arm.
+     * Default {@link DataSource#DIRECT} keeps all existing frames unchanged.
      */
     default byte getColumnSource(int columnIndex) {
         return DataSource.DIRECT;
