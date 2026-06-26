@@ -124,7 +124,7 @@ public final class TimestampFloorOffsetFunction extends TimestampFunction implem
         sink.val(')');
     }
 
-    private static boolean isFixedUnit(char unit) {
+    private static boolean isFixedAlignedUnit(char unit) {
         return unit == 's' || unit == 'm' || unit == 'h' || unit == 'd'
                 || unit == 'T' || unit == 'U' || unit == 'n';
     }
@@ -132,7 +132,7 @@ public final class TimestampFloorOffsetFunction extends TimestampFunction implem
     // EXACT only when add() reproduces the floor's bucket boundaries; a sub-resolution
     // stride (e.g. nanoseconds on a micro column) does not, and must stay a row filter.
     private boolean isExactlyInvertible() {
-        if (!isFixedUnit(unit)) {
+        if (!isFixedAlignedUnit(unit)) {
             return false;
         }
         final long b0 = floor.floor(offset, stride, offset);

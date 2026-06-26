@@ -164,7 +164,7 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
                 io.of(lo, hi);
                 return SUPERSET;
             }
-            if (isFixedUnit(period)) {
+            if (isFixedDurationUnit(period)) {
                 // a fixed unit adds the same constant to every timestamp, so the inverse
                 // subtracts it back, bailing out when that would overflow
                 final long shift = periodAddFunction.add(0, stride);
@@ -199,7 +199,7 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
             return units > 0 ? result <= base : units < 0 && result >= base;
         }
 
-        private static boolean isFixedUnit(char period) {
+        private static boolean isFixedDurationUnit(char period) {
             return period == 's' || period == 'm' || period == 'h' || period == 'd' || period == 'w'
                     || period == 'T' || period == 'U' || period == 'n';
         }

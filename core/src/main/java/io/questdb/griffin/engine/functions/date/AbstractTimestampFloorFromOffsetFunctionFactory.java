@@ -224,8 +224,12 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
             }
         }
         if (hi != Long.MAX_VALUE) {
-            final long widen = 2 * bucket + margin;
-            hi = widen < 0 || hi > Long.MAX_VALUE - widen ? Long.MAX_VALUE : hi + widen;
+            if (bucket > (Long.MAX_VALUE - margin) / 2) {
+                hi = Long.MAX_VALUE;
+            } else {
+                final long widen = 2 * bucket + margin;
+                hi = hi > Long.MAX_VALUE - widen ? Long.MAX_VALUE : hi + widen;
+            }
         }
         io.of(lo, hi);
         return MonotonicTimestampFunction.SUPERSET;

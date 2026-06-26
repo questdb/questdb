@@ -1245,9 +1245,11 @@ public final class WhereClauseParser implements Mutable {
         if (head == null) {
             return false;
         }
-        // resolveScalarBound below compiles the bound, which may re-enter compileMonotonicChain
-        // for a nested subquery and overwrite tempMonotonicChain, so snapshot it now
-        final ObjList<MonotonicTimestampFunction> chain = new ObjList<>(tempMonotonicChain);
+        // A function bound is compiled by resolveScalarBound below and can re-enter
+        // compileMonotonicChain for a nested subquery, overwriting tempMonotonicChain; a
+        // constant/null bound cannot, so the shared list is only snapshotted for a function bound.
+        final boolean boundIsFunc = (loBoundNode != null && isFunc(loBoundNode)) || (hiBoundNode != null && isFunc(hiBoundNode));
+        final ObjList<MonotonicTimestampFunction> chain = boundIsFunc ? new ObjList<>(tempMonotonicChain) : tempMonotonicChain;
         Function loBound = null;
         Function hiBound = null;
         try {
@@ -2937,11 +2939,18 @@ public final class WhereClauseParser implements Mutable {
                 return BOUND_FALSE;
             }
             if (isTimestamp) {
+                final long b;
                 try {
-                    resolvedBoundConst = parseFullOrPartialDate(outDriver, equalsTo, boundNode, isLo);
+                    b = parseFullOrPartialDate(outDriver, true, boundNode, isLo);
                 } catch (NumericException e) {
                     throw SqlException.invalidDate(boundNode.token, boundNode.position);
                 }
+                final short adj = adjustComparison(equalsTo, isLo);
+                // a strict bound just past the type extreme (`x > MAX`, `x < MIN`) matches nothing
+                if ((adj > 0 && b == Long.MAX_VALUE) || (adj < 0 && b == Long.MIN_VALUE)) {
+                    return BOUND_EMPTY;
+                }
+                resolvedBoundConst = b + adj;
             } else {
                 final long b;
                 try {

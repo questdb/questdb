@@ -495,6 +495,21 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDateTruncDayBoundAtDomainMaxStrict() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tn (price DOUBLE, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY;");
+            execute("INSERT INTO tn VALUES " +
+                    "(1, '2024-06-15T12:00:00.000000000Z')," +
+                    "(2, '2262-04-10T08:00:00.000000000Z');");
+            // a strict bound at the exact nano domain max matches nothing; the strictness +1 must not
+            // wrap to the open-lower sentinel and turn the predicate into a full-range scan
+            assertQuery("SELECT * FROM tn WHERE date_trunc('day', ts) > 9223372036854775807")
+                    .timestamp("ts")
+                    .returns("price\tts\n");
+        });
+    }
+
+    @Test
     public void testDateTruncDayEquals() throws Exception {
         assertMemoryLeak(() -> {
             createTrades();
@@ -1373,10 +1388,12 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
     public void testTimestampCeilNearMaxBound() throws Exception {
         assertMemoryLeak(() -> {
             createTrades();
-            // a bound a hair below the type maximum exercises the ceil inverse's div/overflow guards;
-            // the predicate is true for every row, which a wrapped inverse must preserve
+            // a bound a hair below the type maximum exercises the ceil inverse's div/overflow guards
+            // and stays EXACT (every row matches), so the scan prunes with the filter dropped
             assertQuery("SELECT * FROM trades WHERE timestamp_ceil('d', timestamp) <= 9223372036854775806")
                     .timestamp("timestamp")
+                    .withPlanContaining("Interval forward scan on: trades")
+                    .withPlanNotContaining("filter:")
                     .returns("""
                             price\ttimestamp
                             100.0\t2022-01-01T12:00:00.000000Z
@@ -1434,6 +1451,26 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
             assertQuery("SELECT * FROM trades WHERE to_timezone(timestamp, '+02:00') >= '2022-01-03T14:00:00.000000Z'")
                     .timestamp("timestamp")
                     .withPlanContaining("Interval forward scan on: trades")
+                    .returns("""
+                            price\ttimestamp
+                            200.0\t2022-01-03T12:00:00.000000Z
+                            250.0\t2022-01-04T12:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testToTimezoneNamedZoneRuntime() throws Exception {
+        assertMemoryLeak(() -> {
+            createTrades();
+            bindVariableService.clear();
+            bindVariableService.setTimestamp(0, 1_641_211_200_000_000L); // 2022-01-03T12:00:00Z
+            // a runtime bound defers inversion to scan open and probes with an open interval, so it
+            // stays SUPERSET: the interval prunes while the row filter is kept
+            assertQuery("SELECT * FROM trades WHERE to_timezone(timestamp, 'Europe/London') >= $1")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Interval forward scan on: trades")
+                    .withPlanContaining("filter:")
                     .returns("""
                             price\ttimestamp
                             200.0\t2022-01-03T12:00:00.000000Z
