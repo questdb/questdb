@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Numbers;
 
 /**
  * Wraps a runtime-constant subtree of a fixed-width scalar type, evaluates it once per cursor in
@@ -45,7 +46,10 @@ import io.questdb.griffin.SqlExecutionContext;
  * subtree as a double, as numeric promotion does) are inherited from the base class and route
  * through the native getter, so every conversion - including NULL handling - matches what a real
  * function of that type would return. A flat hand-rolled getter table would have to reproduce all
- * of that by hand, which is exactly where a wrong-field read can sneak in.
+ * of that by hand, which is exactly where a wrong-field read can sneak in. The one exception is
+ * {@link IntRuntimeConstFunction#getLong}: an overflowing INT arithmetic arg wraps in getInt() but
+ * widens in getLong(), so that subclass caches the widened value separately rather than re-deriving
+ * it from the wrapped int (see its comments).
  * <p>
  * Transparent in plans ({@link #toPlan(PlanSink)} delegates to the argument).
  */
@@ -452,6 +456,7 @@ public interface RuntimeConstFunction extends UnaryFunction {
 
     final class IntRuntimeConstFunction extends IntFunction implements RuntimeConstFunction {
         private final Function arg;
+        private long longValue;
         private int value;
 
         IntRuntimeConstFunction(Function arg) {
@@ -469,9 +474,28 @@ public interface RuntimeConstFunction extends UnaryFunction {
         }
 
         @Override
+        public long getLong(Record rec) {
+            // INT is the one foldable type whose getLong() is not a pure function of getInt():
+            // an overflowing INT arithmetic arg (e.g. an INT*INT product) wraps mod 2^32 in
+            // getInt() but widens to the full-width product in getLong(), the dual behavior the
+            // constant folder preserves so a LONG-promoting context sees the un-wrapped value.
+            // The inherited IntFunction.getLong() would route through the cached getInt() and
+            // re-wrap, so cache and serve arg.getLong() directly.
+            return longValue;
+        }
+
+        @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             arg.init(symbolTableSource, executionContext);
-            value = arg.getInt(null);
+            // Read the arg exactly once via its widest getter and derive the wrapped INT from it,
+            // rather than reading getInt() and getLong() separately (which would evaluate the
+            // composite subtree twice). For a well-formed INT function (int) getLong() == getInt()
+            // for any non-NULL value -- both are the low 32 bits of the same product -- and the
+            // largest INT*INT magnitude (2^62) is far below LONG_NULL, so a real value never
+            // collides with it. NULL is the only case where the two getters diverge bit for bit
+            // ((int) LONG_NULL != INT_NULL), so map it back explicitly.
+            longValue = arg.getLong(null);
+            value = longValue == Numbers.LONG_NULL ? Numbers.INT_NULL : (int) longValue;
         }
     }
 

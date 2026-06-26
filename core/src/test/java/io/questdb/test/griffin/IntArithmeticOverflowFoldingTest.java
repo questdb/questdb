@@ -75,6 +75,41 @@ public class IntArithmeticOverflowFoldingTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRuntimeConstWidensLikeColumnAndLiteral() throws Exception {
+        // A runtime-constant (but not compile-time-constant) overflowing INT arithmetic subtree --
+        // here a string bind variable cast to INT -- gets memoized by IntRuntimeConstFunction. The
+        // wrapper must preserve the dual getInt()-wraps / getLong()-widens behavior of its arg, so
+        // that a LONG-promoting context over the memoized constant agrees with the literal and the
+        // column forms. Before the fix the wrapper cached only the INT (wrapped) value and re-widened
+        // it, so (:b0::INT * 17161::SHORT) * nL wrapped to +1438038338 first and the product diverged
+        // from the literal/column result by an exact multiple of 2^32. The query fuzzer's literal-vs-
+        // bind oracle surfaced this through an nth_value() window projection.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (nL LONG, a INT)");
+            execute("INSERT INTO x VALUES (6, -166478)");
+
+            // (-166478 * 17161) overflows INT: getInt() wraps to +1438038338, getLong() widens to
+            // -2856928958; the outer LONG multiply must see the widened value, so * 6 == -17141573748.
+            assertQuery("SELECT (-166478 * 17161::SHORT) * nL AS v FROM x").expectSize().returns("v\n-17141573748\n");
+            assertQuery("SELECT (a * 17161::SHORT) * nL AS v FROM x").expectSize().returns("v\n-17141573748\n");
+            bindVariableService.clear();
+            bindVariableService.setStr("b0", "-166478");
+            assertQuery("SELECT (:b0::INT * 17161::SHORT) * nL AS v FROM x").expectSize().returns("v\n-17141573748\n");
+
+            // A direct ::LONG cast of the memoized constant widens identically on both paths.
+            assertQuery("SELECT (a * 17161::SHORT)::LONG AS v FROM x").expectSize().returns("v\n-2856928958\n");
+            bindVariableService.clear();
+            bindVariableService.setStr("b0", "-166478");
+            assertQuery("SELECT (:b0::INT * 17161::SHORT)::LONG AS v FROM x").expectSize().returns("v\n-2856928958\n");
+
+            // NULL flows through the wrapper unchanged: a null operand yields a null product.
+            bindVariableService.clear();
+            bindVariableService.setStr("b0", null);
+            assertQuery("SELECT (:b0::INT * 17161::SHORT) * nL AS v FROM x").expectSize().returns("v\nnull\n");
+        });
+    }
+
+    @Test
     public void testTimezoneConversionWidensOnBothPaths() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE s (sec INT)");

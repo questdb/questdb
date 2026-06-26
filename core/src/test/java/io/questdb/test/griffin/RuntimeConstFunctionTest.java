@@ -157,6 +157,43 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
                 f.close();
             }
         }
+        // INT overflow widening: an overflowing INT arithmetic arg wraps mod 2^32 in getInt() but
+        // widens to the full-width product in getLong()/getTimestamp() (the dual behavior the
+        // constant folder preserves). The wrapper must serve the widened value, not re-wrap the
+        // cached int -- otherwise a LONG-promoting context (e.g. INT*LONG) over the memoized
+        // constant disagrees with the same expression over a column. -2_856_928_958 wraps to
+        // +1_438_038_338 as INT.
+        {
+            final RuntimeConstFunction f = RuntimeConstFunction.newInstance(new IntFunction() {
+                @Override
+                public int getInt(Record rec) {
+                    return (int) -2_856_928_958L; // +1_438_038_338
+                }
+
+                @Override
+                public long getLong(Record rec) {
+                    return -2_856_928_958L;
+                }
+
+                @Override
+                public long getTimestamp(Record rec) {
+                    return -2_856_928_958L;
+                }
+
+                @Override
+                public boolean isRuntimeConstant() {
+                    return true;
+                }
+            });
+            try {
+                f.init(null, sqlExecutionContext);
+                assertEquals(1_438_038_338, f.getInt(null));
+                assertEquals(-2_856_928_958L, f.getLong(null));
+                assertEquals(-2_856_928_958L, f.getTimestamp(null));
+            } finally {
+                f.close();
+            }
+        }
     }
 
     @Test
