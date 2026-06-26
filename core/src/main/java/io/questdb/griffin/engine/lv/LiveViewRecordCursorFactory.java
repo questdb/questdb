@@ -93,6 +93,16 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public int getScanDirection() {
+        // The cursor yields rows in the base scan's order: disk-only passes the
+        // base order straight through, and Mode B routing only engages for a
+        // forward (ascending) base, so it never reorders either. Delegating keeps
+        // the optimizer's order reasoning correct - e.g. ORDER BY ts DESC over an
+        // LV whose base is a backward scan no longer adds a redundant sort.
+        return base.getScanDirection();
+    }
+
+    @Override
     public TimeFrameCursor getTimeFrameCursor(SqlExecutionContext executionContext) throws SqlException {
         // Every in-mem row is also durable on disk after the
         // inline apply, so ASOF JOIN-as-RHS reading via the base factory's

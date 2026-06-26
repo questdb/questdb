@@ -496,10 +496,11 @@ public class LiveViewTest extends AbstractCairoTest {
     public void testExplainLiveViewQueryShowsLiveViewPlan() throws Exception {
         // Reading from a live view at SELECT time is a plain forward scan of the
         // LV's own materialized table, wrapped in a thin LiveView node - there is
-        // no in-memory-tier merge node in the plan. The V1 tier is read-inert and
-        // reads route by maxDiskTs at cursor iteration time, which EXPLAIN does not
-        // surface. The window function that defines the view runs only in the
-        // refresh job, never at read time, so it is absent from the read plan too.
+        // no in-memory-tier merge node in the plan. Mode B seam routing happens at
+        // cursor iteration time (disk below the seam, the in-mem slot above it),
+        // which EXPLAIN does not yet surface. The window function that defines the
+        // view runs only in the refresh job, never at read time, so it is absent
+        // from the read plan too.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (sym SYMBOL, price DOUBLE, ts TIMESTAMP) " +
                     "TIMESTAMP(ts) PARTITION BY HOUR WAL");
@@ -511,6 +512,27 @@ public class LiveViewTest extends AbstractCairoTest {
                     "    PageFrame\n" +
                     "        Row forward scan\n" +
                     "        Frame forward scan on: lv\n");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testOrderByTsDescElidesRedundantSort() throws Exception {
+        // The LV factory delegates getScanDirection() to its base. An LV whose
+        // base is a backward scan (ORDER BY ts DESC pushed down) therefore reports
+        // BACKWARD, so the optimizer recognizes the order is already satisfied and
+        // does not wrap the read in a redundant Sort node.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (sym SYMBOL, price DOUBLE, ts TIMESTAMP) " +
+                    "TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT sym, price, ts, row_number() OVER w AS rn FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')");
+            assertQuery("SELECT * FROM lv ORDER BY ts DESC").noLeakCheck().assertsPlan("LiveView\n" +
+                    "  view: lv\n" +
+                    "    PageFrame\n" +
+                    "        Row backward scan\n" +
+                    "        Frame backward scan on: lv\n");
             execute("DROP LIVE VIEW lv");
         });
     }
