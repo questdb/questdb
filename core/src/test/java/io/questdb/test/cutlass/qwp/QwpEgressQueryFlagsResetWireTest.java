@@ -196,6 +196,63 @@ public class QwpEgressQueryFlagsResetWireTest extends AbstractQwpBootstrapTest {
     }
 
     /**
+     * Deferred emit through the error path: a SELECT carrying the flag clears
+     * the dict and stages the reset BEFORE compilation, then fails to compile
+     * (missing table). The query returns via {@code QUERY_ERROR} without
+     * emitting, so the staged {@code CACHE_RESET} surfaces on the next
+     * successful SELECT. This is the sibling of
+     * {@link #testResetFlagOnNonSelectDefersToNextSelect} for the
+     * {@code catch(Throwable)} path rather than the EXEC_DONE path.
+     */
+    @Test
+    public void testResetFlagOnFailedSelectDefersToNextSelect() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startFragmented("QDB_METRICS_ENABLED", "true")) {
+                serverMain.execute("CREATE TABLE flag_fail(sym SYMBOL, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute("""
+                        INSERT INTO flag_fail VALUES
+                            ('a', 1::TIMESTAMP), ('b', 2::TIMESTAMP),
+                            ('c', 3::TIMESTAMP), ('d', 4::TIMESTAMP)
+                        """);
+                serverMain.awaitTable("flag_fail");
+                QwpEgressMetrics metrics = serverMain.getEngine().getMetrics().qwpEgressMetrics();
+                long resetsBefore = metrics.cacheResetDictCount();
+
+                try (QwpQueryClient client = QwpQueryClient.fromConfig(
+                        "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
+                    client.connect();
+
+                    // Query 1 (no flag): grows the dict to {a,b,c,d}.
+                    java.util.Set<String> q1 = new java.util.HashSet<>();
+                    client.execute("SELECT sym FROM flag_fail", collectInto(q1));
+                    Assert.assertEquals(java.util.Set.of("a", "b", "c", "d"), q1);
+
+                    // Query 2 (flag): the reset is applied before compilation, then
+                    // the SELECT fails to compile (missing table). The dict is
+                    // cleared and the reset staged, but no CACHE_RESET is emitted.
+                    boolean[] errored = {false};
+                    byte[] status = {0};
+                    client.execute("SELECT sym FROM flag_fail_missing", expectError(errored, status), true);
+                    Assert.assertTrue("the flagged query must fail to compile", errored[0]);
+                    Assert.assertEquals("a missing table is a SqlException => PARSE_ERROR",
+                            QwpConstants.STATUS_PARSE_ERROR, status[0]);
+                    Assert.assertEquals("the flag must clear the dict and count one reset even on error",
+                            resetsBefore + 1, metrics.cacheResetDictCount());
+
+                    // Query 3 (no flag): the deferred CACHE_RESET must land before
+                    // this query's first batch, so the client resolves everything.
+                    java.util.Set<String> q3 = new java.util.HashSet<>();
+                    client.execute("SELECT sym FROM flag_fail", collectInto(q3));
+                    Assert.assertEquals(java.util.Set.of("a", "b", "c", "d"), q3);
+                    Assert.assertEquals("query 3 must not fire its own reset",
+                            resetsBefore + 1, metrics.cacheResetDictCount());
+                }
+            }
+        });
+    }
+
+    /**
      * Deferred emit: a non-SELECT carrying the flag clears the server dict
      * immediately but returns via EXEC_DONE without streaming, so the staged
      * {@code CACHE_RESET} surfaces on the next result-producing query. The
@@ -262,6 +319,62 @@ public class QwpEgressQueryFlagsResetWireTest extends AbstractQwpBootstrapTest {
                     client.execute("SELECT sym FROM flag_defer", collectInto(q3));
                     Assert.assertEquals(java.util.Set.of("a", "b", "c", "d"), q3);
                     Assert.assertEquals("query 3 must not fire its own reset",
+                            resetsBefore + 1, metrics.cacheResetDictCount());
+                }
+            }
+        });
+    }
+
+    /**
+     * Two flagged non-SELECTs back to back: the first clears the (non-empty)
+     * dict and counts one reset; the second runs against the now-empty dict, so
+     * the empty-dict guard makes it a no-op that counts no further reset. A
+     * final SELECT confirms the single deferred {@code CACHE_RESET} still
+     * restored client/server lockstep.
+     */
+    @Test
+    public void testResetFlagOnRepeatedNonSelectsCountsOnce() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startFragmented("QDB_METRICS_ENABLED", "true")) {
+                serverMain.execute("CREATE TABLE flag_twice(sym SYMBOL, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute("INSERT INTO flag_twice VALUES ('a', 1::TIMESTAMP), ('b', 2::TIMESTAMP)");
+                serverMain.awaitTable("flag_twice");
+                QwpEgressMetrics metrics = serverMain.getEngine().getMetrics().qwpEgressMetrics();
+                long resetsBefore = metrics.cacheResetDictCount();
+
+                try (QwpQueryClient client = QwpQueryClient.fromConfig(
+                        "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
+                    client.connect();
+
+                    // Query 1 (no flag): grows the dict to {a,b}.
+                    java.util.Set<String> q1 = new java.util.HashSet<>();
+                    client.execute("SELECT sym FROM flag_twice", collectInto(q1));
+                    Assert.assertEquals(java.util.Set.of("a", "b"), q1);
+
+                    // Query 2 (non-SELECT, flag): clears the non-empty dict and
+                    // counts one reset. The duplicate symbol keeps the set unchanged.
+                    boolean[] done2 = {false};
+                    client.execute("INSERT INTO flag_twice VALUES ('a', 3::TIMESTAMP)", expectExecDone(done2), true);
+                    Assert.assertTrue("first non-SELECT must complete", done2[0]);
+                    Assert.assertEquals("first flagged non-SELECT clears the dict and counts one reset",
+                            resetsBefore + 1, metrics.cacheResetDictCount());
+
+                    // Query 3 (non-SELECT, flag): the dict is already empty (a
+                    // non-SELECT never repopulates it), so the empty-dict guard
+                    // makes the flag a no-op -- no second reset is counted.
+                    boolean[] done3 = {false};
+                    client.execute("INSERT INTO flag_twice VALUES ('b', 4::TIMESTAMP)", expectExecDone(done3), true);
+                    Assert.assertTrue("second non-SELECT must complete", done3[0]);
+                    Assert.assertEquals("the second back-to-back flagged non-SELECT must not double-count",
+                            resetsBefore + 1, metrics.cacheResetDictCount());
+
+                    // Query 4 (no flag): the single deferred CACHE_RESET staged by
+                    // query 2 surfaces here, so the client still resolves everything.
+                    java.util.Set<String> q4 = new java.util.HashSet<>();
+                    client.execute("SELECT sym FROM flag_twice", collectInto(q4));
+                    Assert.assertEquals(java.util.Set.of("a", "b"), q4);
+                    Assert.assertEquals("query 4 must not fire its own reset",
                             resetsBefore + 1, metrics.cacheResetDictCount());
                 }
             }
@@ -345,6 +458,64 @@ public class QwpEgressQueryFlagsResetWireTest extends AbstractQwpBootstrapTest {
             @Override
             public void onError(byte status, String message) {
                 Assert.fail("query must succeed: " + message);
+            }
+        };
+    }
+
+    /**
+     * A handler that expects the query to fail: it records that {@code onError}
+     * fired and the status byte, and fails the test if the query streams or
+     * completes instead.
+     */
+    private static QwpColumnBatchHandler expectError(boolean[] erroredSink, byte[] statusSink) {
+        return new QwpColumnBatchHandler() {
+            @Override
+            public void onBatch(QwpColumnBatch batch) {
+                Assert.fail("a failing query must not stream batches");
+            }
+
+            @Override
+            public void onEnd(long totalRows) {
+                Assert.fail("a failing query must not complete via onEnd");
+            }
+
+            @Override
+            public void onError(byte status, String message) {
+                erroredSink[0] = true;
+                statusSink[0] = status;
+            }
+
+            @Override
+            public void onExecDone(short opType, long rowsAffected) {
+                Assert.fail("a failing query must not complete via onExecDone");
+            }
+        };
+    }
+
+    /**
+     * A handler that expects a non-SELECT to complete via EXEC_DONE: it records
+     * the completion and fails the test if the statement streams or errors.
+     */
+    private static QwpColumnBatchHandler expectExecDone(boolean[] doneSink) {
+        return new QwpColumnBatchHandler() {
+            @Override
+            public void onBatch(QwpColumnBatch batch) {
+                Assert.fail("non-SELECT must not stream batches");
+            }
+
+            @Override
+            public void onEnd(long totalRows) {
+                Assert.fail("non-SELECT must complete via onExecDone");
+            }
+
+            @Override
+            public void onError(byte status, String message) {
+                Assert.fail("statement must succeed: " + message);
+            }
+
+            @Override
+            public void onExecDone(short opType, long rowsAffected) {
+                doneSink[0] = true;
             }
         };
     }
