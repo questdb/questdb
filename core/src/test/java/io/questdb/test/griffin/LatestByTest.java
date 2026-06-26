@@ -1577,4 +1577,74 @@ public class LatestByTest extends AbstractCairoTest {
                             """);
         });
     }
+
+    // Regression: indexed LATEST ON PARTITION BY <symbol> with a residual filter on a second column
+    // routes through the index-backed filtered cursor. The bitmap index cursor already returns
+    // frame-relative row ids, so the cursor must NOT subtract partitionLo again. When the matched
+    // row lands in a page frame with partitionLo > 0 (i.e. a partition large enough to span several
+    // page frames), the double subtraction positioned the record partitionLo rows too early and
+    // returned a neighbouring row, often belonging to a different partition-by key. Small page
+    // frames are forced here so the single partition splits and partitionLo becomes > 0.
+    @Test
+    public void testLatestByValueIndexedFilteredAcrossPageFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.changePageFrameSizes(1, 8);
+            try {
+                executeWithRewriteTimestamp(
+                        "create table tk (sym symbol index, venue symbol index, px double, ts #TIMESTAMP) timestamp(ts)",
+                        timestampType.getTypeName()
+                );
+                execute(
+                        "insert into tk select\n" +
+                                "  'g' || (x % 4),\n" +
+                                "  case when x % 5 = 0 then 'v2' else 'v1' end,\n" +
+                                "  x::double,\n" +
+                                "  (x * 1000000)::" + timestampType.getTypeName() + "\n" +
+                                "from long_sequence(200);"
+                );
+                // Latest 'g2' row on venue 'v1' is the deep ordinal x=198 (px=198), in a frame with partitionLo>0.
+                assertQuery("select sym, px from tk " +
+                        "where sym = 'g2' and venue = 'v1' latest on ts partition by sym")
+                        .returns("""
+                                sym\tpx
+                                g2\t198.0
+                                """);
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
+            }
+        });
+    }
+
+    @Test
+    public void testLatestByValuesIndexedFilteredAcrossPageFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.changePageFrameSizes(1, 8);
+            try {
+                executeWithRewriteTimestamp(
+                        "create table tk (sym symbol index, venue symbol index, px double, ts #TIMESTAMP) timestamp(ts)",
+                        timestampType.getTypeName()
+                );
+                execute(
+                        "insert into tk select\n" +
+                                "  'g' || (x % 4),\n" +
+                                "  case when x % 5 = 0 then 'v2' else 'v1' end,\n" +
+                                "  x::double,\n" +
+                                "  (x * 1000000)::" + timestampType.getTypeName() + "\n" +
+                                "from long_sequence(200);"
+                );
+                // IN-list drives the multi-value filtered index cursor. Latest per key on venue 'v1':
+                // g1 -> x=197 (px=197), g2 -> x=198 (px=198); both deep, so partitionLo>0.
+                assertQuery("select sym, px from tk " +
+                        "where sym in ('g1', 'g2') and venue = 'v1' latest on ts partition by sym order by sym")
+                        .expectSize()
+                        .returns("""
+                                sym\tpx
+                                g1\t197.0
+                                g2\t198.0
+                                """);
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
+            }
+        });
+    }
 }
