@@ -214,31 +214,49 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testWalCancelReactivatesEntryBeforeThrowing() throws Exception {
+    public void testRegisterRollbackRetiresEntryWhenListenerThrows() throws Exception {
         assertMemoryLeak(() -> {
             final QueryRegistry registry = engine.getQueryRegistry();
-            try (
-                    SqlExecutionContextImpl walContext = newWalContext("wal-owner");
-                    SqlExecutionContextImpl adminContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)
-            ) {
-                final long queryId = registry.register("SELECT wal", walContext);
-                final QueryRegistry.Entry entry = registry.getEntry(queryId);
-                Assert.assertNotNull(entry);
-                try {
-                    try {
-                        registry.cancel(queryId, adminContext);
-                        Assert.fail("expected WAL cancel failure");
-                    } catch (CairoException e) {
-                        TestUtils.assertContains(e.getFlyweightMessage(), "query applied in WAL job can't be cancelled [id=" + queryId + "]");
-                    }
-                    assertActive(queryId, entry);
+            try (SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)) {
+                final RuntimeException boom = new RuntimeException("listener boom");
+                final AtomicLong rolledBackId = new AtomicLong(-1);
+                final AtomicReference<QueryRegistry.Entry> rolledBackEntry = new AtomicReference<>();
 
+                Assert.assertNull(context.getMemoryTracker());
+                registry.setListener((query, queryId, executionContext) -> {
+                    // register() has already published the entry in the registry when
+                    // the listener runs, so capture it, then fail the registration.
+                    rolledBackId.set(queryId);
+                    rolledBackEntry.set(registry.getEntry(queryId));
+                    throw boom;
+                });
+                try {
+                    registry.register("SELECT rollback", context);
+                    Assert.fail("expected the listener failure to propagate");
+                } catch (RuntimeException e) {
+                    Assert.assertSame(boom, e);
                 } finally {
-                    if (registry.getEntry(queryId) != null) {
-                        registry.unregister(queryId, walContext);
-                    }
+                    registry.setListener(null);
                 }
-                Assert.assertNull(registry.getEntry(queryId));
+
+                final long oldId = rolledBackId.get();
+                final QueryRegistry.Entry entry = rolledBackEntry.get();
+                Assert.assertTrue(oldId >= 0);
+                Assert.assertNotNull(entry);
+                // rollback dropped the entry from the registry and released the
+                // per-query tracker it had bound on the context.
+                Assert.assertNull(registry.getEntry(oldId));
+                Assert.assertNull(context.getMemoryTracker());
+
+                // rollback retired the entry: the next register() pops the very same
+                // Entry back from the thread-local pool, now active for the new id only.
+                final long newId = registry.register("SELECT after rollback", context);
+                Assert.assertNotEquals(oldId, newId);
+                Assert.assertSame(entry, registry.getEntry(newId));
+                Assert.assertTrue(QueryRegistry.Entry.isActiveLifecycle(newId, entry.getLifecycle()));
+                Assert.assertFalse(QueryRegistry.Entry.isActiveLifecycle(oldId, entry.getLifecycle()));
+
+                registry.unregister(newId, context);
             }
         });
     }
@@ -299,30 +317,6 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
                     throw new AssertionError("worker thread failed", fault.get());
                 }
                 Assert.assertNull(registry.getEntry(queryId));
-            }
-        });
-    }
-
-    @Test
-    public void testSuccessfulCancelReadsCancellerPrincipalOnce() throws Exception {
-        assertMemoryLeak(() -> {
-            final QueryRegistry registry = engine.getQueryRegistry();
-            final AtomicInteger principalReads = new AtomicInteger();
-            try (
-                    SqlExecutionContextImpl ownerContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE);
-                    SqlExecutionContextImpl cancelContext = new SqlExecutionContextImpl(engine, 1).with(
-                            new SingleReadPrincipalSecurityContext("admin", principalReads)
-                    )
-            ) {
-                final long queryId = registry.register("SELECT one principal read", ownerContext);
-                try {
-                    Assert.assertTrue(registry.cancel(queryId, cancelContext));
-                    Assert.assertEquals(1, principalReads.get());
-                } finally {
-                    if (registry.getEntry(queryId) != null) {
-                        registry.unregister(queryId, ownerContext);
-                    }
-                }
             }
         });
     }
@@ -430,6 +424,60 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
                 throw new AssertionError("worker thread failed", fault.get());
             }
             Assert.assertTrue("cancellers never raced a live query", cancelAttempts.get() > 0);
+        });
+    }
+
+    @Test
+    public void testSuccessfulCancelReadsCancellerPrincipalOnce() throws Exception {
+        assertMemoryLeak(() -> {
+            final QueryRegistry registry = engine.getQueryRegistry();
+            final AtomicInteger principalReads = new AtomicInteger();
+            try (
+                    SqlExecutionContextImpl ownerContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE);
+                    SqlExecutionContextImpl cancelContext = new SqlExecutionContextImpl(engine, 1).with(
+                            new SingleReadPrincipalSecurityContext("admin", principalReads)
+                    )
+            ) {
+                final long queryId = registry.register("SELECT one principal read", ownerContext);
+                try {
+                    Assert.assertTrue(registry.cancel(queryId, cancelContext));
+                    Assert.assertEquals(1, principalReads.get());
+                } finally {
+                    if (registry.getEntry(queryId) != null) {
+                        registry.unregister(queryId, ownerContext);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testWalCancelReactivatesEntryBeforeThrowing() throws Exception {
+        assertMemoryLeak(() -> {
+            final QueryRegistry registry = engine.getQueryRegistry();
+            try (
+                    SqlExecutionContextImpl walContext = newWalContext("wal-owner");
+                    SqlExecutionContextImpl adminContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)
+            ) {
+                final long queryId = registry.register("SELECT wal", walContext);
+                final QueryRegistry.Entry entry = registry.getEntry(queryId);
+                Assert.assertNotNull(entry);
+                try {
+                    try {
+                        registry.cancel(queryId, adminContext);
+                        Assert.fail("expected WAL cancel failure");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "query applied in WAL job can't be cancelled [id=" + queryId + "]");
+                    }
+                    assertActive(queryId, entry);
+
+                } finally {
+                    if (registry.getEntry(queryId) != null) {
+                        registry.unregister(queryId, walContext);
+                    }
+                }
+                Assert.assertNull(registry.getEntry(queryId));
+            }
         });
     }
 
