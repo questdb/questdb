@@ -261,24 +261,23 @@ impl ParquetUpdater {
         let created_by = metadata.created_by.clone();
         let schema = metadata.schema_descr.clone();
 
-        // Append/update reuses the cached row groups' page index verbatim, so the
-        // newly encoded groups must make the same ColumnIndex choice or the file
-        // mixes indexed and unindexed row groups, which strict readers reject.
-        // QuestDB writes a ColumnIndex iff statistics were on, so the source's
-        // actual ColumnIndex presence recovers that setting; adopt it so the
-        // encoder emits matching page/row-group stats and the footer stays
-        // uniform. A rewrite (fresh output) keeps the runtime config here: it can
-        // still copy source row groups, but write_page_index gates the ColumnIndex
-        // all-or-nothing across copied and fresh groups, so the output stays
-        // uniform regardless. An empty source has nothing to match.
+        // Append/update matches the source's statistics setting so the file does
+        // not end up with footer min/max on some row groups but not others: encode
+        // them for the new groups iff the source carries any chunk statistics.
+        // Read that from the statistics, not the page index. ADD COLUMN raw-copies
+        // the data columns (keeping their stats) without a ColumnIndex and
+        // backfills a stats-less null column, so a file can legitimately carry
+        // statistics with no index; hence `any`, not `all` (the null column has
+        // none). ColumnIndex uniformity is a separate decision, gated by
+        // source_column_indexed in end(). A rewrite keeps the runtime config; an
+        // empty source has nothing to match.
         let write_statistics = if is_rewrite || metadata.row_groups.is_empty() {
             write_statistics
         } else {
-            metadata.row_groups.iter().all(|rg| {
-                rg.columns()
-                    .iter()
-                    .all(|c| c.column_index_offset().is_some())
-            })
+            metadata
+                .row_groups
+                .iter()
+                .any(|rg| rg.columns().iter().any(|c| c.statistics().is_some()))
         };
         let options = write::WriteOptions { write_statistics, version, bloom_filter_fpp };
 
@@ -1277,8 +1276,18 @@ fn build_copied_page_index(
             ));
         }
 
-        // Read and rebase the OffsetIndex.
-        let mut oi_bytes = vec![0u8; oi_length as usize];
+        // Read and rebase the OffsetIndex. Reserve fallibly: a corrupt footer can
+        // encode a huge positive length, and an infallible alloc would abort the JVM.
+        let mut oi_bytes = Vec::new();
+        oi_bytes
+            .try_reserve_exact(oi_length as usize)
+            .map_err(|_| {
+                fmt_err!(
+                    InvalidLayout,
+                    "offset index length {oi_length} exceeds available memory"
+                )
+            })?;
+        oi_bytes.resize(oi_length as usize, 0);
         reader.seek(SeekFrom::Start(oi_offset as u64))?;
         reader.read_exact(&mut oi_bytes)?;
         let mut offset_index = {
@@ -1310,7 +1319,16 @@ fn build_copied_page_index(
                         "negative column index location: offset={ci_offset}, length={ci_length}"
                     ));
                 }
-                let mut ci_bytes = vec![0u8; ci_length as usize];
+                let mut ci_bytes = Vec::new();
+                ci_bytes
+                    .try_reserve_exact(ci_length as usize)
+                    .map_err(|_| {
+                        fmt_err!(
+                            InvalidLayout,
+                            "column index length {ci_length} exceeds available memory"
+                        )
+                    })?;
+                ci_bytes.resize(ci_length as usize, 0);
                 reader.seek(SeekFrom::Start(ci_offset as u64))?;
                 reader.read_exact(&mut ci_bytes)?;
                 Some(ci_bytes)
@@ -3078,6 +3096,269 @@ mod tests {
                 Some(60),
                 Some(70)
             ],
+        );
+        Ok(())
+    }
+
+    /// Appending an opaque-Binary row group whose page carries an unbounded
+    /// (max-less) max to a fully ColumnIndexed source. The appended group cannot
+    /// supply a ColumnIndex, so the writer must strip the cached source group's
+    /// ColumnIndex too, leaving the file uniformly offset-only rather than
+    /// advertising a ColumnIndex on the cached group but not the appended one.
+    #[test]
+    fn append_unbounded_max_binary_strips_cached_column_index() -> Result<(), Box<dyn Error>> {
+        use crate::allocator::TestAllocatorState;
+        use parquet::arrow::arrow_reader::ArrowReaderOptions;
+        use std::io::Read as _;
+        use std::ptr::null;
+
+        // QuestDB opaque-Binary column layout: a [len i64][bytes] primary buffer and
+        // one i64 offset per value.
+        fn qdb_binary(values: &[&[u8]]) -> (Vec<u8>, Vec<i64>) {
+            let mut primary = Vec::new();
+            let mut offsets = Vec::with_capacity(values.len());
+            for &value in values {
+                offsets.push(primary.len() as i64);
+                primary.extend_from_slice(&(value.len() as i64).to_le_bytes());
+                primary.extend_from_slice(value);
+            }
+            (primary, offsets)
+        }
+
+        let binary_code = ColumnType::new(ColumnTypeTag::Binary, 0).code();
+
+        // Source: designated ts + a short-valued opaque-Binary column, statistics on,
+        // so every column carries a ColumnIndex (fully indexed).
+        let src_ts = [1i64, 2, 3];
+        let src_values: Vec<&[u8]> = vec![&[0x01], &[0x02], &[0x03]];
+        let (src_primary, src_offsets) = qdb_binary(&src_values);
+        let src_blob = Column::from_raw_data(
+            1,
+            "b",
+            binary_code,
+            0,
+            src_values.len(),
+            src_primary.as_ptr(),
+            src_primary.len(),
+            src_offsets.as_ptr() as *const u8,
+            std::mem::size_of_val(src_offsets.as_slice()),
+            null(),
+            0,
+            false,
+            false,
+            0,
+        )?;
+        let src_partition = Partition {
+            table: "t".to_string(),
+            columns: vec![make_designated_ts_with_id(0, "ts", &src_ts), src_blob],
+        };
+
+        let src = NamedTempFile::new()?;
+        ParquetWriter::new(src.reopen()?)
+            .with_statistics(true)
+            .finish(src_partition)?;
+        let src_len = src.as_file().metadata()?.len();
+
+        // Appended group: a value whose clamped 9-byte prefix is all 0xFF and exceeds
+        // 9 bytes has no short upper bound, so its page emits no max (unbounded) and the
+        // new group cannot carry a ColumnIndex.
+        let app_ts = [4i64, 5];
+        let unbounded = vec![0xFFu8; 12];
+        let app_values: Vec<&[u8]> = vec![&[0x04], &unbounded];
+        let (app_primary, app_offsets) = qdb_binary(&app_values);
+        let app_blob = Column::from_raw_data(
+            1,
+            "b",
+            binary_code,
+            0,
+            app_values.len(),
+            app_primary.as_ptr(),
+            app_primary.len(),
+            app_offsets.as_ptr() as *const u8,
+            std::mem::size_of_val(app_offsets.as_slice()),
+            null(),
+            0,
+            false,
+            false,
+            0,
+        )?;
+        let app_partition = Partition {
+            table: "t".to_string(),
+            columns: vec![make_designated_ts_with_id(0, "ts", &app_ts), app_blob],
+        };
+
+        let alloc = TestAllocatorState::new();
+        let mut updater = super::ParquetUpdater::new(
+            alloc.allocator(),
+            src.reopen()?,
+            src_len,
+            src.reopen()?,
+            src_len, // update (append) mode
+            None,
+            true, // runtime statistics on; the source is indexed regardless
+            false,
+            CompressionOptions::Uncompressed,
+            None,
+            None,
+            DEFAULT_BLOOM_FILTER_FPP,
+            0.0,
+            None,
+            0,  // parquet_meta_file_size
+            0,  // append_base
+            -1, // existing_parquet_file_size
+        )?;
+        updater.insert_row_group(&app_partition, 1)?;
+        updater.end(None)?;
+
+        let mut bytes = Vec::new();
+        src.reopen()?.read_to_end(&mut bytes)?;
+
+        let builder = ParquetRecordBatchReaderBuilder::try_new_with_options(
+            Bytes::from(bytes.clone()),
+            ArrowReaderOptions::new().with_page_index(true),
+        )?;
+        let md = builder.metadata();
+        assert_eq!(md.num_row_groups(), 2);
+        assert_eq!(md.file_metadata().num_rows(), 5);
+        for rg in md.row_groups() {
+            for col in rg.columns() {
+                assert!(
+                    col.offset_index_offset().is_some(),
+                    "offset index present on every row group"
+                );
+                assert!(
+                    col.column_index_offset().is_none(),
+                    "no column index on any row group: the appended unbounded-max Binary \
+                     group forces the cached source group to drop its ColumnIndex"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// Append after ADD COLUMN must keep footer statistics. ADD COLUMN raw-copies
+    /// the existing row group (stats kept) and backfills a stats-less null column,
+    /// emitting no page index. A later append in update mode must still read the
+    /// source as statistics-bearing (from the copied columns) and keep computing
+    /// footer min/max, not infer statistics-off from the missing page index.
+    #[test]
+    fn append_after_add_column_keeps_footer_statistics() -> Result<(), Box<dyn Error>> {
+        use crate::allocator::TestAllocatorState;
+
+        // 1. Source with statistics on: [ts(id=0), val(id=1)].
+        let ts = [1i64, 2, 3, 4];
+        let val = [10i32, 20, 30, 40];
+        let src_partition = Partition {
+            table: "t".to_string(),
+            columns: vec![
+                make_designated_ts_with_id(0, "ts", &ts),
+                make_column_with_id(1, "val", ColumnTypeTag::Int.into_type(), &val),
+            ],
+        };
+        let src = NamedTempFile::new()?;
+        ParquetWriter::new(src.reopen()?)
+            .with_statistics(true)
+            .finish(src_partition)?;
+        let src_len = src.as_file().metadata()?.len();
+
+        // 2. ADD COLUMN rewrite to [ts, val, added]: raw-copies the source row
+        //    group (stats kept, no page index) and backfills `added` with nulls.
+        let added = ColumnTypeTag::Int.into_type();
+        let added_file = NamedTempFile::new()?;
+        let alloc = TestAllocatorState::new();
+        let mut rewriter = super::ParquetUpdater::new(
+            alloc.allocator(),
+            src.reopen()?,
+            src_len,
+            added_file.reopen()?,
+            0, // rewrite
+            None,
+            true, // statistics on
+            false,
+            CompressionOptions::Uncompressed,
+            None,
+            None,
+            DEFAULT_BLOOM_FILTER_FPP,
+            0.0,
+            None,
+            0,
+            0,
+            -1,
+        )?;
+        let target = Partition {
+            table: "t".to_string(),
+            columns: vec![
+                make_designated_ts_with_id(0, "ts", &ts),
+                make_column_with_id(1, "val", ColumnTypeTag::Int.into_type(), &val),
+                make_column_with_id(2, "added", added, &val),
+            ],
+        };
+        rewriter.set_target_schema(&target)?;
+        rewriter.copy_row_group_with_null_columns(0, &[(2, added)])?;
+        rewriter.end(None)?;
+
+        // The rewrite must establish the F1 precondition: stats present on the
+        // copied data columns, but no ColumnIndex anywhere.
+        let added_len = added_file.as_file().metadata()?.len();
+        {
+            let f = added_file.reopen()?;
+            let md = read_metadata_with_size(&mut &f, added_len)?;
+            assert_eq!(md.row_groups.len(), 1);
+            let cols = md.row_groups[0].columns();
+            assert!(cols[0].statistics().is_some(), "ts keeps stats after copy");
+            assert!(cols[1].statistics().is_some(), "val keeps stats after copy");
+            assert!(
+                cols.iter().all(|c| c.column_index_offset().is_none()),
+                "ADD COLUMN output carries no ColumnIndex"
+            );
+        }
+
+        // 3. O3 append into the rewritten file (update mode).
+        let app_ts = [5i64, 6, 7];
+        let app_val = [50i32, 60, 70];
+        let app_added = [1i32, 2, 3];
+        let app = Partition {
+            table: "t".to_string(),
+            columns: vec![
+                make_designated_ts_with_id(0, "ts", &app_ts),
+                make_column_with_id(1, "val", ColumnTypeTag::Int.into_type(), &app_val),
+                make_column_with_id(2, "added", added, &app_added),
+            ],
+        };
+        let alloc2 = TestAllocatorState::new();
+        let mut updater = super::ParquetUpdater::new(
+            alloc2.allocator(),
+            added_file.reopen()?,
+            added_len,
+            added_file.reopen()?,
+            added_len, // update (append) mode
+            None,
+            true,
+            false,
+            CompressionOptions::Uncompressed,
+            None,
+            None,
+            DEFAULT_BLOOM_FILTER_FPP,
+            0.0,
+            None,
+            0,
+            0,
+            -1,
+        )?;
+        updater.insert_row_group(&app, 1)?;
+        updater.end(None)?;
+
+        // 4. The appended group must carry footer chunk statistics: the writer
+        //    kept computing min/max because the source's copied columns still
+        //    bear stats, rather than dropping them over the absent page index.
+        let final_len = added_file.as_file().metadata()?.len();
+        let f = added_file.reopen()?;
+        let md = read_metadata_with_size(&mut &f, final_len)?;
+        assert_eq!(md.row_groups.len(), 2);
+        let appended = md.row_groups[1].columns();
+        assert!(
+            appended.iter().all(|c| c.statistics().is_some()),
+            "every appended column must keep footer min/max after append-to-ADD-COLUMN"
         );
         Ok(())
     }

@@ -288,7 +288,10 @@ where
 /// from the column's logical type. The decision selects a const-generic
 /// monomorphization so the comparison inlines, mirroring the per-page
 /// `StatsUpdater<T, UNSIGNED_STATS>` split. Every chunk of one column shares a
-/// primitive type, so the first decides.
+/// primitive type, so the first decides. CHAR (UInt16) is the one type whose
+/// reduce runs unsigned here while its per-page stats are computed signed; the
+/// two agree only because CHAR values are non-negative as i32, so a genuinely
+/// signed 16-bit type must not reuse this pairing.
 fn reduce_int_primitive<T: NativeType>(stats: &[&dyn Statistics]) -> PrimitiveStatistics<T> {
     let typed = || {
         stats

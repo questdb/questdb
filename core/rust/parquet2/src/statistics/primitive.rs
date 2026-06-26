@@ -28,6 +28,14 @@ impl<T: types::NativeType> Statistics for PrimitiveStatistics<T> {
     fn null_count(&self) -> Option<i64> {
         self.null_count
     }
+
+    fn has_min_value(&self) -> bool {
+        self.min_value.is_some()
+    }
+
+    fn has_max_value(&self) -> bool {
+        self.max_value.is_some()
+    }
 }
 
 pub fn read<T: types::NativeType>(

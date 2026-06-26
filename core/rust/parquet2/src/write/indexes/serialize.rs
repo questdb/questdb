@@ -70,8 +70,8 @@ pub fn serialize_column_index(
 pub fn pages_support_column_index(pages: &[PageWriteSpec]) -> bool {
     pages.iter().filter(|x| is_data_page(x)).all(|spec| {
         spec.statistics.as_ref().is_none_or(|stats| {
-            let stats = serialize_statistics(stats.as_ref());
-            stats.min_value.is_none() || stats.max_value.is_some()
+            let stats = stats.as_ref();
+            !stats.has_min_value() || stats.has_max_value()
         })
     })
 }

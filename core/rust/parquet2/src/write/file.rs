@@ -283,9 +283,13 @@ pub struct CopiedColumnIndex {
 ///
 /// Call only when every row group is indexable, so the OffsetIndex stays
 /// uniform. The ColumnIndex is emitted all-or-nothing on top of that: only when
-/// `write_statistics` is set AND every copied group carried a source ColumnIndex,
-/// so the file never advertises a ColumnIndex on some row groups but not others.
-/// The caller must have written all page data first.
+/// `allow_column_index` is set AND every group in `row_groups` can supply one
+/// (a copied group carried a source ColumnIndex; a fresh group has no opaque-Binary
+/// page with an unbounded max). Returns whether the ColumnIndex was emitted, so an
+/// append caller that passes only the new groups here can reconcile the cached
+/// source groups it re-emits separately (strip their ColumnIndex when this returns
+/// false) and keep the file from advertising a ColumnIndex on some row groups but
+/// not others. The caller must have written all page data first.
 fn write_page_index<W: Write>(
     writer: &mut W,
     offset: &mut u64,
@@ -293,18 +297,18 @@ fn write_page_index<W: Write>(
     page_specs: &[Vec<Vec<PageWriteSpec>>],
     copied_page_index: &[Option<Vec<CopiedColumnIndex>>],
     sorting_columns: &Option<Vec<SortingColumn>>,
-    write_statistics: bool,
-) -> Result<()> {
+    allow_column_index: bool,
+) -> Result<bool> {
     let copied_for = |rg_idx: usize| copied_page_index.get(rg_idx).and_then(Option::as_ref);
 
     // A fresh group can supply a ColumnIndex from its page stats when
-    // write_statistics is set, unless a column carries an opaque-Binary page with an
+    // allow_column_index is set, unless a column carries an opaque-Binary page with an
     // unbounded (max-less) max, which the ColumnIndex cannot represent. A copied group
     // can only supply one if its source carried it. If any group cannot supply one,
     // emit none: a copied group whose source predates statistics, or a fresh group
     // with an unbounded-max page, would otherwise leave the output with a ColumnIndex
     // on some row groups but not others.
-    let emit_column_index = write_statistics
+    let emit_column_index = allow_column_index
         && (0..row_groups.len()).all(|rg_idx| match copied_for(rg_idx) {
             Some(columns) => columns.iter().all(|c| c.column_index.is_some()),
             None => page_specs
@@ -357,7 +361,7 @@ fn write_page_index<W: Write>(
         }
     }
 
-    Ok(())
+    Ok(emit_column_index)
 }
 
 /// An interface to write a parquet file.
@@ -1035,6 +1039,18 @@ impl<W: Write> ParquetFile<W> {
                     .iter()
                     .all(|rg| rg.columns.iter().all(|c| c.offset_index_offset.is_some()));
 
+                // ColumnIndex emission is gated independently of chunk statistics: a
+                // source can carry stats with no ColumnIndex (an ADD COLUMN raw-copy,
+                // or a group whose ColumnIndex was stripped below on a prior append).
+                // New groups emit a ColumnIndex only when the source is uniformly
+                // ColumnIndexed, else the file would advertise one on some groups but
+                // not others.
+                let source_column_indexed = !metadata.row_groups.is_empty()
+                    && metadata
+                        .row_groups
+                        .iter()
+                        .all(|rg| rg.columns.iter().all(|c| c.column_index_offset.is_some()));
+
                 // Drain row_groups and is_insert so we can move instead of clone.
                 let mut groups = std::mem::take(&mut self.row_groups);
                 let is_insert_flags = std::mem::take(&mut self.is_insert);
@@ -1049,7 +1065,8 @@ impl<W: Write> ParquetFile<W> {
                 // same all-or-nothing rule the Mode::Write branch applies.
                 let new_groups_indexable = (0..groups.len())
                     .all(|i| !page_specs[i].is_empty() || copied_page_index[i].is_some());
-                if source_offset_indexed && new_groups_indexable {
+                let new_groups_have_column_index = if source_offset_indexed && new_groups_indexable
+                {
                     write_page_index(
                         &mut self.writer,
                         &mut self.offset,
@@ -1057,9 +1074,11 @@ impl<W: Write> ParquetFile<W> {
                         &page_specs,
                         &copied_page_index,
                         &self.sorting_columns,
-                        self.options.write_statistics,
-                    )?;
-                }
+                        source_column_indexed && self.options.write_statistics,
+                    )?
+                } else {
+                    false
+                };
 
                 // Partition into replacements/appends and insertions.
                 let mut insertion_groups = Vec::new();
@@ -1110,6 +1129,33 @@ impl<W: Write> ParquetFile<W> {
                     num_rows += group.num_rows;
                     metadata.row_groups.insert(adjusted_pos, group);
                     sources.insert(adjusted_pos, RowGroupSource::Inserted);
+                }
+
+                // Keep the ColumnIndex all-or-nothing across cached and new groups. A
+                // cached source group carries its ColumnIndex verbatim, but a newly
+                // written group with an opaque-Binary page that has an unbounded
+                // (max-less) max cannot supply one, so write_page_index emitted none for
+                // the new groups. Strip the cached groups' ColumnIndex too -- re-serialize
+                // them (Cached -> Fresh) with the pointer cleared -- so the footer never
+                // advertises a ColumnIndex on some row groups but not others. Their
+                // OffsetIndex and data offsets are untouched.
+                if source_column_indexed && !new_groups_have_column_index {
+                    for (i, source) in sources.iter_mut().enumerate() {
+                        if !matches!(source, RowGroupSource::Cached(_)) {
+                            continue;
+                        }
+                        let mut had_column_index = false;
+                        for column in &mut metadata.row_groups[i].columns {
+                            if column.column_index_offset.is_some() {
+                                column.column_index_offset = None;
+                                column.column_index_length = None;
+                                had_column_index = true;
+                            }
+                        }
+                        if had_column_index {
+                            *source = RowGroupSource::Fresh;
+                        }
+                    }
                 }
 
                 metadata.num_rows = num_rows;
