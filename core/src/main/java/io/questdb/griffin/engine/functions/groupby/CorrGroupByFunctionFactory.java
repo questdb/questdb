@@ -104,13 +104,10 @@ public class CorrGroupByFunctionFactory implements FunctionFactory {
             double sumX = rec.getDouble(valueIndex + 3);
             double sumXY = rec.getDouble(valueIndex + 4);
             double count = rec.getLong(valueIndex + 5);
-            if (count <= 0) {
+            if (count <= 1) {
                 return Double.NaN;
             }
-            if (sumY == 0 || sumX == 0) {
-                return Double.NaN;
-            }
-            return sumXY / Math.sqrt(sumY * sumX);
+            return Numbers.corrFromSums(sumXY, sumY, sumX);
         }
 
         @Override
