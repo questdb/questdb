@@ -58,6 +58,7 @@ import io.questdb.std.Long256Impl;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
@@ -70,6 +71,7 @@ import io.questdb.std.datetime.millitime.DateFormatCompiler;
 import io.questdb.std.fastdouble.FastFloatParser;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -900,6 +902,23 @@ public class SqlUtil {
         } else {
             return (double) value;
         }
+    }
+
+    private static final ThreadLocal<Utf8StringSink> TL_UTF8_SINK =
+            new ThreadLocal<>(Utf8StringSink::new);
+
+    @SuppressWarnings("unused")
+// used by the row copier
+    public static Utf8Sequence implicitCastLongAsVarchar(long value) {
+        if (value == Numbers.LONG_NULL) {
+            return null;
+        }
+
+        Utf8StringSink sink = TL_UTF8_SINK.get();
+        sink.clear();
+        sink.put(value);
+
+        return sink;
     }
 
     @SuppressWarnings("unused")
