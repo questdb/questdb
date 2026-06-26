@@ -29,6 +29,7 @@ import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.idx.IndexWriter;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.lv.LiveViewDefinition;
+import io.questdb.cairo.lv.LiveViewState;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -169,7 +170,8 @@ public class TableSnapshotRestore implements QuietCloseable {
 
     /**
      * Copies all metadata files for a table from source to destination.
-     * Includes: _meta, _name (optional), _txn, _cv, mat view state (optional), mat view definition (optional)
+     * Includes: _meta, _name (optional), _txn, _cv, mat view state (optional), mat view definition (optional),
+     * live view definition (optional), live view state (optional)
      *
      * @param srcPath            source path (will be modified)
      * @param dstPath            destination path (will be modified)
@@ -186,6 +188,13 @@ public class TableSnapshotRestore implements QuietCloseable {
             copyFile(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), recoveredMetaFiles, TableUtils.COLUMN_VERSION_FILE_NAME, false);
             copyFile(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), recoveredMetaFiles, MatViewState.MAT_VIEW_STATE_FILE_NAME, true);
             copyFile(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), recoveredMetaFiles, MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME, true);
+            // Live views are WAL-backed tables that restore through this path (like mat views), with two
+            // sidecars: _lv (definition) and _lv.s (durable refresh state). Both must be restored - the
+            // engine refuses to load a live view whose _lv is present but _lv.s is missing. They are
+            // optional here only because non-live-view tables lack them. The _checkpoints/ in-memory
+            // window snapshots are derived (recovery rebuilds them), so they are not copied.
+            copyFile(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), recoveredMetaFiles, LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME, true);
+            copyFile(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), recoveredMetaFiles, LiveViewState.LIVE_VIEW_STATE_FILE_NAME, true);
         } finally {
             srcPath.trimTo(srcPathLen);
             dstPath.trimTo(dstPathLen);
