@@ -99,9 +99,8 @@ public class CastTimestampToTimestampFunctionFactory implements FunctionFactory 
                 if (lo != Numbers.LONG_NULL) {
                     lo = ceilDiv(lo, NANOS_PER_MICRO);
                 }
-                if (hi != Long.MAX_VALUE) {
-                    hi = Math.floorDiv(hi, NANOS_PER_MICRO);
-                }
+                // a micro value above this overflows the nano domain, so the open upper bound becomes finite
+                hi = hi != Long.MAX_VALUE ? Math.floorDiv(hi, NANOS_PER_MICRO) : Math.floorDiv(Long.MAX_VALUE, NANOS_PER_MICRO);
                 soundness = EXACT;
             } else if (ColumnType.isTimestampMicro(outType) && ColumnType.isTimestampNano(leftTimestampType)) {
                 // narrowing nano -> micro: the bound, resolved in the micro domain, loses the

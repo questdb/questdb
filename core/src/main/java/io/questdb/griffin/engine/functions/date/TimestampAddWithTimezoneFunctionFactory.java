@@ -223,12 +223,15 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory 
 
         private boolean tryExactShift(Interval io, long margin) {
             final long k = periodAddFunction.add(0, stride);
+            if (addOverflows(0, k, stride)) {
+                return false;
+            }
             final long lo = io.getLo();
             final long hi = io.getHi();
             final boolean isLoFinite = lo != Numbers.LONG_NULL;
             final boolean isHiFinite = hi != Long.MAX_VALUE;
-            long newLo = Numbers.LONG_NULL;
-            long newHi = Long.MAX_VALUE;
+            long newLo = k < 0 ? Long.MIN_VALUE - k : Numbers.LONG_NULL;
+            long newHi = k > 0 ? Long.MAX_VALUE - k : Long.MAX_VALUE;
             long spanLo = Long.MAX_VALUE;
             long spanHi = Long.MIN_VALUE;
             if (isLoFinite) {

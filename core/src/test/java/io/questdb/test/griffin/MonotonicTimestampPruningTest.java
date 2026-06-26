@@ -81,6 +81,26 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAddLongNanoNearMaxOverflow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tn (price DOUBLE, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY;");
+            execute("INSERT INTO tn VALUES " +
+                    "(1, '2024-06-15T12:00:00.000000000Z')," +
+                    "(2, '2262-04-11T10:00:00.000000000Z');");
+            // ts + 1 day overflows the nano domain for the 2262 row, so its shifted value wraps below
+            // the bound; the EXACT inverse must cap the open upper end at MAX - shift, not leave it open
+            assertQuery("SELECT * FROM tn WHERE ts + 86_400_000_000_000 >= '2024-01-01'")
+                    .timestamp("ts")
+                    .withPlanContaining("Interval forward scan on: tn")
+                    .withPlanNotContaining("filter:")
+                    .returns("""
+                            price\tts
+                            1.0\t2024-06-15T12:00:00.000000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testAddLongRuntimeNow() throws Exception {
         assertMemoryLeak(() -> {
             setCurrentMicros(1_641_168_000_000_000L); // 2022-01-03T00:00:00Z
@@ -717,6 +737,27 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
                             price\ttimestamp
                             2.0\t2022-07-15T12:30:00.000000Z
                             3.0\t2022-07-15T20:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testFloorTimezoneFixedOffsetNanoNearMaxOverflow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tn (price DOUBLE, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY;");
+            execute("INSERT INTO tn VALUES " +
+                    "(1, '2024-06-15T12:00:00.000000000Z')," +
+                    "(2, '2262-04-11T10:00:00.000000000Z');");
+            // rounding the bound up to the next 10h bucket overflows the nano domain max (~2262-04-11);
+            // the EXACT floor inverse must detect the wrap and keep a residual filter rather than prune
+            // with a wrapped interval that drops both matching rows
+            assertQuery("SELECT * FROM tn WHERE timestamp_floor('10h', ts, null, '00:00', '+01:00') <= '2262-04-11T20:00:00.000000000Z'")
+                    .timestamp("ts")
+                    .withPlanContaining("filter:")
+                    .returns("""
+                            price\tts
+                            1.0\t2024-06-15T12:00:00.000000000Z
+                            2.0\t2262-04-11T10:00:00.000000000Z
                             """);
         });
     }

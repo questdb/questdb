@@ -173,12 +173,16 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
                         return NONE;
                     }
                     lo -= shift;
+                } else if (shift < 0) {
+                    lo = Long.MIN_VALUE - shift;
                 }
                 if (hi != Long.MAX_VALUE) {
                     if ((shift > 0 && hi < Long.MIN_VALUE + shift) || (shift < 0 && hi > Long.MAX_VALUE + shift)) {
                         return NONE;
                     }
                     hi -= shift;
+                } else if (shift > 0) {
+                    hi = Long.MAX_VALUE - shift;
                 }
                 io.of(lo, hi);
                 return EXACT;

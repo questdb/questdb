@@ -209,6 +209,9 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
         final long margin = timestampDriver.fromDays(2);
         // add()/dateadd use the lowercase microsecond unit while ceil/floor use the uppercase one
         final long bucket = timestampDriver.add(0, unit == 'U' ? 'u' : unit, stride);
+        if (bucket <= 0) {
+            return MonotonicTimestampFunction.NONE;
+        }
         long lo = io.getLo();
         long hi = io.getHi();
         if (lo != Numbers.LONG_NULL) {
@@ -332,14 +335,24 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
         }
         if (lo != Numbers.LONG_NULL) {
             final long b = floorFunc.floor(lo, stride, offset);
-            final long bound = b == lo ? lo : timestampDriver.add(b, addUnit, stride);
+            long bound = lo;
+            if (b != lo) {
+                bound = timestampDriver.add(b, addUnit, stride);
+                if (bound < lo) {
+                    return false;
+                }
+            }
             if ((shift > 0 && bound < Long.MIN_VALUE + shift) || (shift < 0 && bound > Long.MAX_VALUE + shift)) {
                 return false;
             }
             lo = bound - shift;
         }
         if (hi != Long.MAX_VALUE) {
-            final long bound = timestampDriver.add(floorFunc.floor(hi, stride, offset), addUnit, stride) - 1;
+            final long c = timestampDriver.add(floorFunc.floor(hi, stride, offset), addUnit, stride);
+            if (c <= hi) {
+                return false;
+            }
+            final long bound = c - 1;
             if ((shift > 0 && bound < Long.MIN_VALUE + shift) || (shift < 0 && bound > Long.MAX_VALUE + shift)) {
                 return false;
             }

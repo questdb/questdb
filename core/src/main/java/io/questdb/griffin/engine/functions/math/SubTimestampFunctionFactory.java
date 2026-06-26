@@ -110,12 +110,16 @@ public class SubTimestampFunctionFactory implements FunctionFactory {
                     return NONE;
                 }
                 lo += k;
+            } else if (k > 0) {
+                lo = Long.MIN_VALUE + k;
             }
             if (hi != Long.MAX_VALUE) {
                 if ((k > 0 && hi > Long.MAX_VALUE - k) || (k < 0 && hi < Long.MIN_VALUE - k)) {
                     return NONE;
                 }
                 hi += k;
+            } else if (k < 0) {
+                hi = Long.MAX_VALUE + k;
             }
             io.of(lo, hi);
             return EXACT;

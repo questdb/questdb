@@ -133,8 +133,8 @@ public interface MonotonicTimestampFunction {
         }
         final long offset = shiftSign * tzRules.getOffset(ref);
         io.of(
-                isLoFinite ? lo + offset : Numbers.LONG_NULL,
-                isHiFinite ? hi + offset : Long.MAX_VALUE
+                isLoFinite ? lo + offset : (offset > 0 ? Long.MIN_VALUE + offset : Numbers.LONG_NULL),
+                isHiFinite ? hi + offset : (offset < 0 ? Long.MAX_VALUE + offset : Long.MAX_VALUE)
         );
         return true;
     }

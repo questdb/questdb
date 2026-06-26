@@ -67,12 +67,16 @@ class OffsetTimestampFunction extends TimestampFunction implements UnaryFunction
                 return NONE;
             }
             lo -= offset;
+        } else if (offset < 0) {
+            lo = Long.MIN_VALUE - offset;
         }
         if (hi != Long.MAX_VALUE) {
             if ((offset > 0 && hi < Long.MIN_VALUE + offset) || (offset < 0 && hi > Long.MAX_VALUE + offset)) {
                 return NONE;
             }
             hi -= offset;
+        } else if (offset > 0) {
+            hi = Long.MAX_VALUE - offset;
         }
         io.of(lo, hi);
         return EXACT;
