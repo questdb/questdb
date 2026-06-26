@@ -52,6 +52,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     private boolean isSoftLink;
     private int maxUncommittedRows;
     private MemoryCARW metaCopyMem; // used when loadFrom() called
+    private int commitMode = CommitMode.UNSET;
     private MemoryMR metaMem;
     private long metadataVersion;
     private long o3MaxLag;
@@ -129,6 +130,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         o3MaxLag = 0;
         ttlHoursOrMonths = 0;
         tableFormat = TableUtils.TABLE_FORMAT_NATIVE;
+        commitMode = CommitMode.UNSET;
         writerColumnCount = 0;
     }
 
@@ -221,6 +223,11 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     @Override
     public TableToken getTableToken() {
         return tableToken;
+    }
+
+    @Override
+    public int getCommitMode() {
+        return commitMode;
     }
 
     @Override
@@ -323,6 +330,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         this.walEnabled = mem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
         this.ttlHoursOrMonths = TableUtils.getTtlHoursOrMonths(mem);
         this.tableFormat = TableUtils.getTableFormat(mem);
+        this.commitMode = TableUtils.getCommitMode(mem);
         this.columnMetadata.clear();
         this.timestampIndex = -1;
 
@@ -392,6 +400,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         this.walEnabled = newMetaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
         this.ttlHoursOrMonths = TableUtils.getTtlHoursOrMonths(newMetaMem);
         this.tableFormat = TableUtils.getTableFormat(newMetaMem);
+        this.commitMode = TableUtils.getCommitMode(newMetaMem);
 
         int shiftLeft = 0, existingIndex = 0;
         TableUtils.buildColumnListFromMetadataFile(newMetaMem, columnCount, columnOrderList);

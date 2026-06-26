@@ -108,7 +108,9 @@ public class WalTableListFunctionFactory implements FunctionFactory {
         private final TableListRecordCursor cursor;
         private final FilesFacade ff;
         private final SqlExecutionContext sqlExecutionContext;
-        private final String commitModeName;
+        // The global cairo.commit.mode, used as the fallback when a table has no per-table override
+        // published on its SeqTxnTracker (CommitMode.UNSET).
+        private final int globalCommitMode;
         private CairoEngine engine;
         private Path rootPath;
 
@@ -118,22 +120,8 @@ public class WalTableListFunctionFactory implements FunctionFactory {
             this.rootPath = new Path();
             rootPath.of(configuration.getDbRoot());
             this.sqlExecutionContext = sqlExecutionContext;
-            this.commitModeName = commitModeName(configuration.getCommitMode());
+            this.globalCommitMode = configuration.getCommitMode();
             this.cursor = new TableListRecordCursor();
-        }
-
-        private static String commitModeName(int commitMode) {
-            switch (commitMode) {
-                case CommitMode.SYNC:
-                    return "sync";
-                case CommitMode.NOSYNC:
-                    return "nosync";
-                case CommitMode.ADAPTIVE:
-                    return "adaptive";
-                case CommitMode.ASYNC:
-                default:
-                    return "async";
-            }
         }
 
         @Override
@@ -296,7 +284,12 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                         SeqTxnTracker seqTxnTracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
                         memoryPressureLevel = seqTxnTracker.getMemPressureControl().getMemoryPressureLevel();
                         tableName = tableToken.getTableName();
-                        commitMode = commitModeName;
+                        // Per-table EFFECTIVE commit mode: the override published on the tracker, else the
+                        // global mode. Deferred 1 — a WITH commit_mode='adaptive' table reports 'adaptive'
+                        // even when the instance default is 'nosync'.
+                        commitMode = CommitMode.toString(
+                                CommitMode.effectiveCommitMode(seqTxnTracker.getCommitMode(), globalCommitMode)
+                        );
 
                         if (seqTxnTracker.isInitialised()) {
                             suspendedFlag = seqTxnTracker.isSuspended();

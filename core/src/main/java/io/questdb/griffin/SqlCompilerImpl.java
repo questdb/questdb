@@ -32,6 +32,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.DefaultLifecycleManager;
 import io.questdb.cairo.EntityColumnFilter;
 import io.questdb.cairo.EntryUnavailableException;
@@ -1715,6 +1716,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 throw SqlException.$(paramNamePosition, "o3MaxLag must be non negative");
             }
             compiledQuery.ofAlter(alterOperationBuilder.ofSetO3MaxLag(tableNamePosition, tableToken, tableId, o3MaxLag).build());
+        } else if (isCommitModeKeyword(paramName)) {
+            int commitMode = CommitMode.fromString(unquote(value));
+            if (commitMode == CommitMode.UNKNOWN) {
+                throw SqlException.$(paramNamePosition, "unrecognized commit_mode value '").put(value)
+                        .put("', expected one of: nosync, sync, async, adaptive, unset");
+            }
+            compiledQuery.ofAlter(alterOperationBuilder.ofSetParamCommitMode(
+                    tableNamePosition, tableToken, tableId, commitMode).build());
         } else {
             throw SqlException.$(paramNamePosition, "unknown parameter '").put(paramName).put('\'');
         }

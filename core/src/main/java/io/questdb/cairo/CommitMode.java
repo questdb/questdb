@@ -25,6 +25,15 @@
 package io.questdb.cairo;
 
 public final class CommitMode {
+    /**
+     * UNSET sentinel for the PER-TABLE commit-mode override stored in {@code _meta}
+     * ({@link io.questdb.cairo.TableUtils#META_OFFSET_COMMIT_MODE}). A table whose {@code _meta} stores
+     * UNSET (every table created before this field existed, and every table that never set an explicit
+     * mode) defers to the global {@code cairo.commit.mode}. Resolve a table's effective mode with
+     * {@link #effectiveCommitMode(int, int)}. UNSET must never reach a durability decision point — it is
+     * resolved against the global mode first.
+     */
+    public static final int UNSET = -1;
     public static final int ASYNC = 0;
     public static final int SYNC = 1;
     public static final int NOSYNC = 2;
@@ -67,4 +76,76 @@ public final class CommitMode {
     public static boolean appliesColumnSync(int commitMode) {
         return commitMode == SYNC || commitMode == ASYNC;
     }
+
+    /**
+     * Resolves a table's EFFECTIVE commit mode: the per-table override stored in {@code _meta} when it is
+     * set, otherwise the global {@code cairo.commit.mode}. This is the single rule every per-table
+     * adaptive decision point must apply (WAL-commit durability, the apply lazy gate, the durable-epoch
+     * trigger, the WAL-purge floor, recovery) so that a {@code WITH commit_mode='adaptive'} table behaves
+     * adaptively even when the instance default is {@code nosync}, while its siblings keep the global mode.
+     *
+     * @param tableMode  the mode stored in the table's {@code _meta} ({@link #UNSET} if none)
+     * @param globalMode the instance-wide {@code cairo.commit.mode}
+     * @return {@code tableMode} when it is not {@link #UNSET}, else {@code globalMode}
+     */
+    public static int effectiveCommitMode(int tableMode, int globalMode) {
+        return tableMode != UNSET ? tableMode : globalMode;
+    }
+
+    /**
+     * Parses a {@code commit_mode} token from DDL ({@code WITH commit_mode='...'} /
+     * {@code SET PARAM commit_mode='...'}) into a {@link CommitMode} constant. Case-insensitive. Returns
+     * {@link #UNSET} for an unrecognized value so the caller can raise a precise SQL error; {@code "unset"}
+     * is accepted explicitly to allow reverting a table to the global default.
+     */
+    public static int fromString(CharSequence mode) {
+        if (mode == null) {
+            return UNSET;
+        }
+        if (io.questdb.std.Chars.equalsIgnoreCase(mode, "nosync")) {
+            return NOSYNC;
+        }
+        if (io.questdb.std.Chars.equalsIgnoreCase(mode, "sync")) {
+            return SYNC;
+        }
+        if (io.questdb.std.Chars.equalsIgnoreCase(mode, "async")) {
+            return ASYNC;
+        }
+        if (io.questdb.std.Chars.equalsIgnoreCase(mode, "adaptive")) {
+            return ADAPTIVE;
+        }
+        if (io.questdb.std.Chars.equalsIgnoreCase(mode, "unset")) {
+            return UNSET;
+        }
+        // Unknown token: signal via a distinct out-of-range value so callers don't confuse it with the
+        // legitimate UNSET default. -2 is never a valid mode.
+        return UNKNOWN;
+    }
+
+    /**
+     * Returns the lower-case canonical name of a commit mode, or {@code "unset"} for {@link #UNSET}. Used
+     * by {@code wal_tables().commitMode} and {@code SHOW CREATE TABLE}-style output.
+     */
+    public static String toString(int commitMode) {
+        switch (commitMode) {
+            case SYNC:
+                return "sync";
+            case ASYNC:
+                return "async";
+            case NOSYNC:
+                return "nosync";
+            case ADAPTIVE:
+                return "adaptive";
+            case UNSET:
+                return "unset";
+            default:
+                return "unknown";
+        }
+    }
+
+    /**
+     * Distinct from {@link #UNSET}: returned by {@link #fromString(CharSequence)} for a token that is not a
+     * recognized mode name, so DDL can reject it with a precise error rather than silently storing UNSET.
+     */
+    public static final int UNKNOWN = -2;
 }

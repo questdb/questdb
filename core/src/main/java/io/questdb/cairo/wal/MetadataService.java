@@ -235,6 +235,13 @@ public interface MetadataService {
      */
     void setMatViewRefreshTimer(long startUs, int interval, char unit);
 
+    /**
+     * Sets the PER-TABLE commit-mode override (a {@link io.questdb.cairo.CommitMode} constant, or
+     * {@link io.questdb.cairo.CommitMode#UNSET} to revert to the global {@code cairo.commit.mode}).
+     * Rewrites {@code _meta} and republishes the effective mode to the table's runtime state.
+     */
+    void setMetaCommitMode(int commitMode);
+
     void setMetaMaxUncommittedRows(int maxUncommittedRows);
 
     void setMetaO3MaxLag(long o3MaxLagUs);

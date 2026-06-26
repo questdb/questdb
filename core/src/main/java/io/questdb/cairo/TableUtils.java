@@ -114,7 +114,8 @@ public final class TableUtils {
     public static final int LONGS_PER_TX_ATTACHED_PARTITION_MSB = Numbers.msb(LONGS_PER_TX_ATTACHED_PARTITION);
     public static final long META_COLUMN_DATA_SIZE = 32;
     public static final String META_FILE_NAME = "_meta";
-    public static final short META_FORMAT_MINOR_VERSION_LATEST = 2;
+    public static final short META_FORMAT_MINOR_VERSION_LATEST = 3;
+    public static final short META_FORMAT_MINOR_VERSION_COMMIT_MODE = 3;
     public static final short META_FORMAT_MINOR_VERSION_PARQUET_ENCODING_CONFIG = 1;
     public static final short META_FORMAT_MINOR_VERSION_TABLE_FORMAT = 2;
     public static final short META_FORMAT_MINOR_VERSION_TTL = 1;
@@ -133,6 +134,10 @@ public final class TableUtils {
     public static final long META_OFFSET_META_FORMAT_MINOR_VERSION = META_OFFSET_WAL_ENABLED + 1; // INT
     public static final long META_OFFSET_TTL_HOURS_OR_MONTHS = META_OFFSET_META_FORMAT_MINOR_VERSION + 4; // INT
     public static final long META_OFFSET_TABLE_FORMAT = META_OFFSET_TTL_HOURS_OR_MONTHS + 4; // INT
+    // Per-table commit-mode override (CommitMode int; CommitMode.UNSET when the table defers to the global
+    // cairo.commit.mode). Additive field at the meta tail, gated by META_FORMAT_MINOR_VERSION_COMMIT_MODE;
+    // tables written before this field existed read CommitMode.UNSET via getCommitMode(MemoryR).
+    public static final long META_OFFSET_COMMIT_MODE = META_OFFSET_TABLE_FORMAT + 4; // INT
     public static final String META_PREV_FILE_NAME = "_meta.prev";
     public static final String META_SWAP_FILE_NAME = "_meta.swp";
     public static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(2);
@@ -1141,6 +1146,25 @@ public final class TableUtils {
                 yield 0;
             }
         };
+    }
+
+    /**
+     * Reads the table's PER-TABLE commit-mode override (the value stored in {@code _meta}, possibly
+     * {@link CommitMode#UNSET}). This is the RAW stored value, NOT yet resolved against the global
+     * {@code cairo.commit.mode}; resolve with {@link CommitMode#effectiveCommitMode(int, int)}. Mirrors
+     * {@link #getO3MaxLag(TableRecordMetadata, CairoEngine)}: when the caller already holds a writer
+     * metadata it is read directly, otherwise the physical {@code _meta} is consulted via the engine's
+     * pooled table metadata. Because ALTER ... SET PARAM commit_mode is a WAL transaction, a WAL-side
+     * reader may briefly observe the pre-ALTER value until the change has been applied — acceptable for a
+     * durability-policy knob, identical to the staleness window of the other per-table physical settings.
+     */
+    public static int getCommitMode(TableRecordMetadata metadata, CairoEngine engine) {
+        if (metadata instanceof TableWriterMetadata) {
+            return ((TableWriterMetadata) metadata).getCommitMode();
+        }
+        try (TableMetadata tableMetadata = engine.getTableMetadata(metadata.getTableToken())) {
+            return tableMetadata.getCommitMode();
+        }
     }
 
     public static long getO3MaxLag(TableRecordMetadata metadata, CairoEngine engine) {
@@ -2782,6 +2806,7 @@ public final class TableUtils {
         mem.putInt(TableUtils.calculateMetaFormatMinorVersionField(0, count));
         mem.putInt(tableStruct.getTtlHoursOrMonths());
         mem.putInt(tableStruct.getTableFormat());
+        mem.putInt(tableStruct.getCommitMode());
 
         mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
         assert count > 0;
@@ -2994,6 +3019,12 @@ public final class TableUtils {
 
     static int getIndexBlockCapacity(MemoryR metaMem, int columnIndex) {
         return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 4 + 8);
+    }
+
+    static int getCommitMode(MemoryR metaMem) {
+        return isMetaFormatAtLeast(metaMem, META_FORMAT_MINOR_VERSION_COMMIT_MODE)
+                ? metaMem.getInt(TableUtils.META_OFFSET_COMMIT_MODE)
+                : CommitMode.UNSET;
     }
 
     static int getTableFormat(MemoryR metaMem) {

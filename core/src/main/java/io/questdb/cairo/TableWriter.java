@@ -311,6 +311,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private ObjList<? extends MemoryA> activeColumns;
     private ObjList<Runnable> activeNullSetters;
     private ColumnVersionReader attachColumnVersionReader;
+    // The table's EFFECTIVE commit mode (its _meta override resolved against the global cairo.commit.mode).
+    // Cached once when metadata is (re)loaded and recomputed on ALTER ... SET PARAM commit_mode. Every
+    // apply-path adaptive decision in this writer (syncColumns, applyColumnSyncMode, configureColumn's
+    // setApplyLazy, partition split/squash, parquet rebuild) uses THIS, not configuration.getCommitMode(),
+    // so the table behaves per its own mode even when the instance default differs. See Deferred 1.
+    private int effectiveCommitMode = CommitMode.UNSET;
     private IndexBuilder attachIndexBuilder;
     private long attachMaxTimestamp;
     private MemoryCMR attachMetaMem;
@@ -484,6 +490,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             this.metadata = new TableWriterMetadata(this.tableToken);
             openMetaFile(ff, path, pathSize, ddlMem, metadata);
+            this.effectiveCommitMode = CommitMode.effectiveCommitMode(metadata.getCommitMode(), configuration.getCommitMode());
             this.metadata.setTxReader(txWriter);
             this.timestampType = metadata.getTimestampType();
             this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
@@ -591,6 +598,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             // wal specific
             segmentFileCache = metadata.isWalEnabled() ? new TableWriterSegmentFileCache(tableToken, configuration) : null;
+            // Publish this table's effective commit mode to the per-table tracker so the WAL-side jobs
+            // (purge floor, durable-epoch trigger, recovery, wal_tables) read the same value this writer
+            // uses for its apply-path decisions — covers a post-restart reopen where registerTable did not
+            // run for this table.
+            publishEffectiveCommitMode();
 
             // Replay any posting seal-purge intents a prior close spilled to a
             // table-local file because it could not reach the purge queue or the
@@ -3145,6 +3157,30 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         final MatViewDefinition newDefinition = oldDefinition.updateTimer(interval, unit, startUs);
         updateMatViewDefinition(newDefinition);
+    }
+
+    /**
+     * Publishes this writer's cached {@link #effectiveCommitMode} to the table's {@link io.questdb.cairo.wal.seq.SeqTxnTracker}
+     * so every WAL-side adaptive decision point (purge floor, durable-epoch trigger, recovery, wal_tables)
+     * reads the same per-table mode this writer applies. No-op for non-WAL tables (they have no tracker
+     * and no durable WAL to drive the adaptive lifecycle).
+     */
+    private void publishEffectiveCommitMode() {
+        if (metadata.isWalEnabled()) {
+            engine.getTableSequencerAPI().getTxnTracker(tableToken).setCommitMode(effectiveCommitMode);
+        }
+    }
+
+    @Override
+    public void setMetaCommitMode(int commitMode) {
+        commit();
+        metadata.setCommitMode(commitMode);
+        writeMetadataToDisk();
+        // Recompute this writer's cached effective mode and republish it to the per-table tracker so all
+        // adaptive decision points (WAL durability, apply lazy gate, epoch, purge, recovery, wal_tables)
+        // pick up the change. The WAL-commit path reads the tracker (republished here) on its next commit.
+        this.effectiveCommitMode = CommitMode.effectiveCommitMode(commitMode, configuration.getCommitMode());
+        publishEffectiveCommitMode();
     }
 
     @Override
@@ -12431,6 +12467,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ddlMem.putInt(TableUtils.calculateMetaFormatMinorVersionField(version, columnCount));
             ddlMem.putInt(metadata.getTtlHoursOrMonths());
             ddlMem.putInt(metadata.getTableFormat());
+            ddlMem.putInt(metadata.getCommitMode());
 
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
             for (int i = 0; i < columnCount; i++) {

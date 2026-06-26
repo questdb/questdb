@@ -78,6 +78,9 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public final static short SET_MAT_VIEW_REFRESH = SET_MAT_VIEW_REFRESH_TIMER + 1; // 25
     public final static short SET_PARQUET_ENCODING = SET_MAT_VIEW_REFRESH + 1; // 26
     public final static short SET_TABLE_FORMAT = SET_PARQUET_ENCODING + 1; // 27
+    // Per-table commit-mode override (Deferred 1). Appended at the tail so existing op codes are not
+    // renumbered (back-compat with ALTER messages already queued in the WAL across an upgrade).
+    public final static short SET_PARAM_COMMIT_MODE = SET_TABLE_FORMAT + 1; // 28
     // V2 layout (this branch onwards): index type fits in low 3 bits, dedup
     // key sits at bit 3, and bit 63 is the format-version marker that
     // distinguishes v2 payloads from any pre-v2 ALTER message still queued in
@@ -208,7 +211,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                     securityContext.authorizeAlterTableDropPartition(tableToken);
             case ATTACH_PARTITION -> securityContext.authorizeAlterTableAttachPartition(tableToken);
             case DETACH_PARTITION -> securityContext.authorizeAlterTableDetachPartition(tableToken);
-            case SET_PARAM_MAX_UNCOMMITTED_ROWS, SET_PARAM_COMMIT_LAG, SET_TTL ->
+            case SET_PARAM_MAX_UNCOMMITTED_ROWS, SET_PARAM_COMMIT_LAG, SET_PARAM_COMMIT_MODE, SET_TTL ->
                     securityContext.authorizeAlterTableSetParam(tableToken);
             case SET_TABLE_FORMAT -> securityContext.authorizeAlterTableSetFormat(tableToken);
             case SET_DEDUP_ENABLE -> securityContext.authorizeAlterTableDedupEnable(tableToken);
@@ -593,6 +596,16 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         svc.forceRemovePartitions(extraInfo);
     }
 
+    private void applyParamCommitMode(MetadataService svc) {
+        final int commitMode = (int) extraInfo.get(0);
+        try {
+            svc.setMetaCommitMode(commitMode);
+        } catch (CairoException e) {
+            e.position(tableNamePosition);
+            throw e;
+        }
+    }
+
     private void applyParamO3MaxLag(MetadataService svc) {
         long o3MaxLag = extraInfo.get(0);
         try {
@@ -756,6 +769,9 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                 break;
             case SET_PARAM_COMMIT_LAG:
                 applyParamO3MaxLag(svc);
+                break;
+            case SET_PARAM_COMMIT_MODE:
+                applyParamCommitMode(svc);
                 break;
             case SET_TTL:
                 applyTtl(svc);

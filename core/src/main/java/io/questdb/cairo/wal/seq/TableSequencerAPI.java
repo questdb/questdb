@@ -258,6 +258,28 @@ public class TableSequencerAPI implements QuietCloseable {
         return getSeqTxnTracker(tableToken);
     }
 
+    /**
+     * Returns the table's EFFECTIVE per-table commit mode (the {@code _meta} override resolved against the
+     * global {@code cairo.commit.mode}), populating the per-table {@link SeqTxnTracker} cache on first use.
+     * This is the single accessor every WAL-side adaptive decision point uses (WAL-commit durability, the
+     * WAL-purge floor, the durable-epoch trigger, recovery). The tracker is normally pre-populated at
+     * CREATE ({@code registerTable}) and on each writer open; this lazy path covers a post-restart WAL
+     * commit that may precede the first apply for the table. The physical {@code _meta} read goes through
+     * the engine's pooled table metadata (cheap, cached) and may briefly observe a pre-ALTER value across
+     * an {@code ALTER ... SET PARAM commit_mode} — acceptable for a durability-policy knob.
+     */
+    public int resolveEffectiveCommitMode(TableToken tableToken) {
+        final SeqTxnTracker tracker = getSeqTxnTracker(tableToken);
+        int mode = tracker.getCommitMode();
+        if (mode != io.questdb.cairo.CommitMode.UNSET) {
+            return mode;
+        }
+        final int tableMode = TableUtils.getCommitMode(engine.getTableMetadata(tableToken), engine);
+        final int effective = io.questdb.cairo.CommitMode.effectiveCommitMode(tableMode, configuration.getCommitMode());
+        tracker.setCommitMode(effective);
+        return effective;
+    }
+
     public boolean initTxnTracker(TableToken tableToken, long writerTxn, long seqTxn) {
         SeqTxnTracker seqTxnTracker = getSeqTxnTracker(tableToken);
         final boolean isSuspended = isSuspended(tableToken);
@@ -372,6 +394,12 @@ public class TableSequencerAPI implements QuietCloseable {
         ) {
             SeqTxnTracker seqTxnTracker = getSeqTxnTracker(tableToken);
             seqTxnTracker.initTxns(0, 0, false);
+            // Publish the new table's effective commit mode from its CREATE-time structure so WAL-side
+            // durability (which can run before any TableWriter opens) sees the per-table override
+            // immediately. Resolved against the global mode here (UNSET => global).
+            seqTxnTracker.setCommitMode(
+                    io.questdb.cairo.CommitMode.effectiveCommitMode(tableDescriptor.getCommitMode(), configuration.getCommitMode())
+            );
             tableSequencer.unlockWrite();
         }
     }
