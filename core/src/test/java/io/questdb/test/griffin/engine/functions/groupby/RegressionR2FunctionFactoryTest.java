@@ -284,6 +284,57 @@ public class RegressionR2FunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRegrR2OverflowDenominator() throws Exception {
+        // Values near ±1e153: sumX and sumY are each ~1e306, their product overflows to
+        // +Infinity. Before the fix this returned 0 (0.0 / Infinity). After the fix the
+        // split-sqrt fallback correctly returns 1.0 for a perfect positive correlation.
+        assertMemoryLeak(() -> {
+            execute("create table tbl1(x double, y double)");
+            execute("insert into tbl1 values (1e153, 1e153), (-1e153, -1e153)");
+            assertQuery("select regr_r2(y, x) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("regr_r2\n1.0\n");
+        });
+    }
+
+    @Test
+    public void testRegrR2UnderflowDenominator() throws Exception {
+        // Values near ±1e-150: sumX and sumY are each ~1e-300, their product underflows
+        // to 0.0. Before the fix dividing by sqrt(0.0) = 0 returned NaN or Infinity.
+        // After the fix the split-sqrt fallback returns a value that rounds to 1.0 to
+        // 10 decimal places (the split-sqrt path uses two sqrt roundings, so the result
+        // can be 0.9999999999999998 -- within 2 ULP of 1.0; that is correct finite r^2).
+        assertMemoryLeak(() -> {
+            execute("create table tbl1(x double, y double)");
+            execute("insert into tbl1 values (1e-150, 1e-150), (-1e-150, -1e-150)");
+            assertQuery("select round(regr_r2(y, x), 10) regr_r2 from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("regr_r2\n1.0\n");
+        });
+    }
+
+    @Test
+    public void testRegrR2ClampAboveOne() throws Exception {
+        // Rounding drift from the split-sqrt path can in theory produce a value marginally
+        // above 1.0. Verify the [0, 1] clamp holds: for a perfect linear relationship
+        // the result must be exactly 1.0, never 1.0000000000000002.
+        assertMemoryLeak(() -> {
+            execute("create table tbl1(x double, y double)");
+            // Use a moderately large magnitude to exercise the split-sqrt path.
+            execute("insert into tbl1 values (1e153, 2e153), (-1e153, -2e153), (0.5e153, 1e153)");
+            assertQuery("select regr_r2(y, x) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("regr_r2\n1.0\n");
+        });
+    }
+
+    @Test
     public void testRegrR2SomeNull() throws Exception {
         // Null pairs are skipped; remaining 100 rows form a perfect line => r^2 = 1.0
         assertMemoryLeak(() -> {

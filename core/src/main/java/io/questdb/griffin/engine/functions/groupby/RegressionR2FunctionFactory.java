@@ -74,7 +74,25 @@ public class RegressionR2FunctionFactory implements FunctionFactory {
                 return 1.0;
             }
             double sumXY = rec.getDouble(valueIndex + 4);
-            return (sumXY * sumXY) / (sumX * sumY);
+            // Guard against intermediate overflow and underflow in the denominator.
+            // sumX * sumY can overflow to +Inf (inputs near ±1e153) or underflow to 0.0
+            // (inputs near ±1e-150), both of which produce wrong results (0 or Inf/NaN).
+            // The Pearson r is sumXY / sqrt(sumX * sumY), so r^2 = (sumXY / sqrt(sumX * sumY))^2.
+            // When the product overflows or underflows we fall back to the split-sqrt form
+            // sqrt(sumX) * sqrt(sumY), which keeps each factor below overflow individually.
+            // The final value is clamped to [0, 1] to absorb sub-ULP rounding drift.
+            final double product = sumX * sumY;
+            final double denom;
+            if (product == 0.0 || Double.isInfinite(product)) {
+                // Overflow to Inf or underflow to 0.0 while both factors are non-zero:
+                // fall back to the split-sqrt form.
+                denom = Math.sqrt(sumX) * Math.sqrt(sumY);
+            } else {
+                denom = Math.sqrt(product);
+            }
+            final double r = sumXY / denom;
+            final double r2 = r * r;
+            return r2 > 1.0 ? 1.0 : r2;
         }
 
         @Override
