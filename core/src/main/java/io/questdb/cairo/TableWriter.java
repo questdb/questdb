@@ -13854,13 +13854,30 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         // Step 1+2: columns (and symbol maps) durable, UNCONDITIONALLY — the durable cut forces the
         // flush regardless of commit mode. Reuse the proven machinery.
+        //
+        // I1 (must-fix): the EPOCH flush must be FILESYSTEM-WIDE, not just the currently-open partition.
+        // Under ADAPTIVE the apply is lazy, so CLOSED / O3-merged partition columns are non-durable; the
+        // epoch records _txn/_cv that reference rows in those closed partitions. syncColumns0() only
+        // msyncs the columns of the OPEN partition, so on the non-batched path (non-Linux, or ext4
+        // fast_commit where isBatchedColumnSyncEnabled()==false) it would leave the closed partitions'
+        // tail non-durable -> recovery restores an epoch whose data was never flushed -> silent row loss.
+        // The batched path already finishes with a single fs-wide syncfs(); the non-batched path must do
+        // the same for the EPOCH (this is NOT the per-commit apply path, which stays lazy by design).
         if (Os.isLinux() && configuration.isBatchedColumnSyncEnabled()) {
-            syncColumnsBatchedSync(); // 3-pass KICK/DRAIN/syncfs; also syncs symbol writers
+            syncColumnsBatchedSync(); // 3-pass KICK/DRAIN/syncfs; also syncs symbol writers (fs-wide)
         } else {
+            // Push the OPEN partition's dirty mmap pages to the page cache + device (msync MS_SYNC), and
+            // make the symbol maps durable, exactly as before.
             syncColumns0(false /* sync, not async */);
             for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
                 denseSymbolMapWriters.getQuick(i).sync(false);
             }
+            // Then make the flush WHOLE-TABLE: one syncfs() over the table's filesystem writes back every
+            // CLOSED partition's dirty page (left in the page cache after the partition was unmapped) and
+            // journals all their extent conversions + i_size in one device flush. On Linux (the ext4
+            // fast_commit case that disables the batched path) this is the real fs-wide syncfs(2) and is
+            // exactly the guarantee I1 requires. Any open column fd identifies the filesystem.
+            fsyncMaterializedStateSyncFs();
         }
 
         // Step 3+4: commit pointers durable, data-before-pointer: _cv before _txn.
@@ -13879,6 +13896,31 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         // Mirror syncColumns(): forward indexer purge entries safe for the committed txn.
         publishPendingPostingSealPurges(txWriter.getTxn());
+    }
+
+    /**
+     * I1 helper: issue ONE filesystem-wide {@code syncfs()} for the EPOCH flush over an open column fd of
+     * this table. This is what makes the non-batched {@link #fsyncMaterializedState()} path equally
+     * fs-wide: it writes back+journals every CLOSED partition's lazily-written column data (left dirty in
+     * the page cache after the partition was unmapped), which {@code syncColumns0()} — open-partition only
+     * — does not reach. Any column fd of the table identifies the filesystem; we pick the first open one.
+     * If no column is open (no fd), there is no materialized column data to flush, so this is a no-op.
+     */
+    private void fsyncMaterializedStateSyncFs() {
+        long syncfsFd = -1;
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final MemoryMA m = columns.getQuick(i);
+            if (m != null) {
+                final long fd = m.getFd();
+                if (fd != -1) {
+                    syncfsFd = fd;
+                    break;
+                }
+            }
+        }
+        if (syncfsFd != -1) {
+            ff.syncfs(syncfsFd);
+        }
     }
 
     private void throwApplyBlockColumnShuffleFailed(int columnIndex, int columnType, long totalRows, long rowCount) {

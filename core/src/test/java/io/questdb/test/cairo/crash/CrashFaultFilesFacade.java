@@ -172,9 +172,13 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
 
     private int durabilityOps = 0;
     private int crashAtOp = -1; // -1 = disarmed
+    private int syncfsCount = 0; // number of syncfs(2) calls observed (filesystem-wide flushes)
 
     /** Ordered list of file paths as they were fsync'd/fsyncAndClose'd (for sync-order assertions). */
     public java.util.List<String> getSyncOrder() { return syncOrder; }
+
+    /** Number of filesystem-wide syncfs(2) calls observed so far (for the I1 fs-wide-epoch-flush proof). */
+    public int syncfsCount() { return syncfsCount; }
 
     @Override
     public long openAppend(LPSZ name) {
@@ -321,6 +325,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     @Override
     public void syncfs(long fd) {
         super.syncfs(fd);
+        syncfsCount++;
         String p = fdToPath.get(fd);
         if (p != null) {
             syncOrder.add(p);

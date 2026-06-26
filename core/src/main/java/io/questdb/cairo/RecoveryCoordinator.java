@@ -24,9 +24,11 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
@@ -109,6 +111,15 @@ public class RecoveryCoordinator {
     }
 
     private void recoverTable(TableToken token, Path src, Path dst, Path dir) {
+        // M1 (cheap pre-check): only adaptive tables that actually took an epoch have a _snapshot marker.
+        // SnapshotMarker.of() would CREATE+grow the file to FILE_SIZE (104 bytes) for every adaptive table
+        // on boot; existence-gate it so a never-epoch'd table is left completely untouched (no marker
+        // materialised) and falls through to normal open / full WAL replay.
+        tablePath(dir, token).concat(TableUtils.SNAPSHOT_FILE_NAME);
+        if (!ff.exists(dir.$())) {
+            return;
+        }
+
         // Does this table have a durable epoch? Load the _snapshot marker; absent / both slots torn =>
         // no recovery anchor => leave the table untouched (full WAL replay / normal open).
         final long epochSeqTxn;
@@ -135,6 +146,23 @@ public class RecoveryCoordinator {
             return;
         }
 
+        // C1 (CRITICAL — validate before restore): existence is NOT enough. The .epoch copies are
+        // single-buffered (writeEpochCopy uses creat O_TRUNC) and the anchor is updated NON-ATOMICALLY
+        // across three files (_cv.epoch, _txn.epoch, then the _snapshot marker). A crash inside that
+        // window can leave a LOADABLE _snapshot pointing at a TORN (0-byte / half-written / stale) .epoch
+        // copy. Blindly copying such a copy over the HEALTHY live _txn/_cv truncates/corrupts them and
+        // bricks the table on boot (empirically a 0-byte _txn.epoch made the restore truncate live _txn to
+        // 0). So VALIDATE both copies AND cross-check the _txn.epoch seqTxn against the marker; if EITHER
+        // is invalid/torn/mismatched, SKIP the restore entirely and fall through to normal open. The live
+        // _txn/_cv + full WAL replay from the durable frontier is always safe (the WAL is durable), so the
+        // worst case of skipping is re-deriving slightly more from the WAL — never data loss.
+        if (!epochCopiesValid(token, src, epochSeqTxn)) {
+            LOG.error().$("adaptive epoch durable copy is torn/invalid or seqTxn-mismatched, SKIPPING roll-forward "
+                            + "(falling back to normal open + full WAL replay) [table=").$(token)
+                    .$(", epochSeqTxn=").$(epochSeqTxn).I$();
+            return;
+        }
+
         // Restore the durable cut: _txn.epoch -> _txn, _cv.epoch -> _cv. ff.copy() (creat O_TRUNC)
         // fully replaces the live, lazily-advanced files with the epoch's canonical A/B record. The
         // .epoch copies are immutable until the next epoch, so re-running this (a crash mid-recovery)
@@ -157,6 +185,85 @@ public class RecoveryCoordinator {
 
         LOG.info().$("adaptive epoch roll-forward restored durable cut [table=").$(token)
                 .$(", epochSeqTxn=").$(epochSeqTxn).I$();
+    }
+
+    /**
+     * C1 guard: validate the immutable {@code _txn.epoch}/{@code _cv.epoch} copies BEFORE they are
+     * allowed to overwrite the live files. Returns {@code true} only if BOTH copies fully load via the
+     * same A/B-checksummed readers the engine uses ({@link TxReader#unsafeLoadAll()} /
+     * {@link ColumnVersionReader#readSafe()}) AND the loaded {@code _txn.epoch} {@code seqTxn} matches
+     * the {@code _snapshot} marker's {@code epochSeqTxn} (the three anchor files agree on one cut).
+     * <p>
+     * Any failure mode of a TORN copy is treated as invalid and returns {@code false}:
+     * <ul>
+     *   <li>a 0-byte / short {@code _txn.epoch} -> {@code TxReader.ofRO} throws {@code CairoException}
+     *       ({@code fileNotFound}: length below the base header);</li>
+     *   <li>a full-size but corrupt-body copy -> the reader returns {@code false} (one slot torn) or
+     *       throws {@code CairoException} (both A/B slots fail their checksum);</li>
+     *   <li>a SIGBUS reading past a truncated mmap -> {@code InternalError} / {@code CairoError};</li>
+     *   <li>a stale copy whose {@code seqTxn} != the marker -> a clean load but a mismatch.</li>
+     * </ul>
+     * On any of these the restore is skipped and the table falls through to normal open + full WAL
+     * replay from the durable frontier (always safe — the WAL is durable). Never copies an unvalidated
+     * {@code .epoch} over a live file.
+     */
+    private boolean epochCopiesValid(TableToken token, Path scratch, long markerEpochSeqTxn) {
+        final int partitionBy;
+        final int timestampType;
+        try (TableMetadata meta = engine.getTableMetadata(token)) {
+            partitionBy = meta.getPartitionBy();
+            timestampType = meta.getTimestampType();
+        } catch (CairoException | CairoError e) {
+            // Cannot even read the table metadata -> we cannot safely interpret the _txn.epoch record;
+            // do NOT restore (the normal open path will surface the same metadata problem properly).
+            LOG.error().$("adaptive epoch validation could not read table metadata, skipping roll-forward [table=")
+                    .$(token).$(", error=").$safe(e.getFlyweightMessage()).I$();
+            return false;
+        }
+
+        // Validate _txn.epoch: a clean A/B-checksummed load whose seqTxn equals the marker's epoch cut.
+        TxReader txReader = null;
+        ColumnVersionReader cvReader = null;
+        try {
+            epochCopyPath(scratch, token, TableUtils.TXN_FILE_NAME);
+            txReader = new TxReader(ff);
+            txReader.ofRO(scratch.$(), timestampType, partitionBy);
+            if (!txReader.unsafeLoadAll()) {
+                return false; // torn _txn.epoch (one slot bad; the other absent/old)
+            }
+            final long copySeqTxn = txReader.getSeqTxn();
+            if (copySeqTxn != markerEpochSeqTxn) {
+                LOG.error().$("adaptive epoch _txn.epoch seqTxn does not match _snapshot marker [table=").$(token)
+                        .$(", copySeqTxn=").$(copySeqTxn).$(", markerSeqTxn=").$(markerEpochSeqTxn).I$();
+                return false; // stale / mismatched copy: the anchor trio disagree
+            }
+
+            // Validate _cv.epoch: a clean A/B-checksummed load (readSafe verifies the live area's checksum
+            // and only adopts a self-consistent record).
+            epochCopyPath(scratch, token, TableUtils.COLUMN_VERSION_FILE_NAME);
+            cvReader = new ColumnVersionReader();
+            cvReader.ofRO(ff, scratch.$());
+            if (!cvReader.readSafe()) {
+                return false; // torn _cv.epoch
+            }
+            return true;
+        } catch (Throwable e) {
+            // FAIL SAFE: ANY failure while decoding a torn copy means "invalid -> skip restore", never
+            // "fall through and blindly copy it over the live file". Concrete failure modes seen on a torn
+            // copy: CairoException (fileNotFound on a 0-byte _txn.epoch; both-A/B checksum mismatch), an
+            // mmap bounds AssertionError or SIGBUS-as-InternalError from a garbage base header steering an
+            // out-of-bounds read, CairoError. We deliberately catch broadly here because the cost of a
+            // false "invalid" is only a fall-back to the (always-safe) live files + full WAL replay,
+            // whereas the cost of letting it through would be the brick this guard exists to prevent. The
+            // exception is confined to one table's .epoch decode and never escapes to abort recovery for
+            // the rest of the tables.
+            LOG.error().$("adaptive epoch durable copy failed validation, skipping roll-forward [table=").$(token)
+                    .$(", error=").$safe(String.valueOf(e.getMessage())).I$();
+            return false;
+        } finally {
+            Misc.free(cvReader);
+            Misc.free(txReader);
+        }
     }
 
     /** Copy {@code <fileName>.epoch} over {@code <fileName>} in the table dir (O_TRUNC replace). */
