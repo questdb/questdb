@@ -309,6 +309,65 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
     }
 
     /**
+     * (e2) Task C Part 1 — ADAPTIVE O3 apply: ZERO msync/fdatasync on table partition column files.
+     *
+     * <p>Test (e) exercises only the in-order LAG fast-path
+     * ({@code applyFromWalLagToLastPartition}), whose column sync is gated by
+     * {@code TableWriter.syncColumns()} (already lazy under ADAPTIVE since Plan 2B). But an
+     * OUT-OF-ORDER apply takes the O3 merge path ({@code processO3Block} -> {@code O3CopyJob}),
+     * whose OWN destination-column sync ({@code O3CopyJob.run()} -> {@code syncColumns}) was gated
+     * only on {@code commitMode != NOSYNC} and therefore STILL msync+fsync'd the columns under
+     * ADAPTIVE — defeating lazy apply for every O3 commit (the column was journaled durable on
+     * apply, so a crash could not lose post-epoch rows; the Plan-3B negative control could not
+     * reproduce row loss because of this leak).
+     *
+     * <p>This forces the O3 path: apply one in-order row, then insert an EARLIER timestamp into the
+     * SAME, already-materialized partition and apply again — that second apply must merge
+     * out-of-order, going through O3CopyJob. Under ADAPTIVE its destination-column sync must now be
+     * skipped (gated on {@code appliesColumnSync}).
+     *
+     * <p>RED before Task C Part 1 (O3CopyJob msync'd the columns); GREEN after gating it.
+     */
+    @Test
+    public void testAdaptiveO3ApplyIssuesZeroColumnSyncsOnApply() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 16);
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, -1); // isolate apply
+
+        final TableSyncTrackingFacade trackFf = new TableSyncTrackingFacade();
+        assertMemoryLeak(trackFf, () -> {
+            execute("create table tab_e2 (ts timestamp, v long) timestamp(ts) partition by day wal");
+
+            // First, an in-order row, fully applied so the partition is materialized on disk.
+            execute("insert into tab_e2 values ('2024-06-01T05:00:00.000000Z', 1)");
+            drainWalQueue();
+
+            // Reset AFTER the first apply: only the O3 merge apply below is measured.
+            trackFf.resetTableColumnSyncs();
+
+            // An EARLIER timestamp into the same partition => the next apply must merge
+            // out-of-order through processO3Block -> O3CopyJob (NOT the LAG fast-path).
+            execute("insert into tab_e2 values ('2024-06-01T01:00:00.000000Z', 2)");
+            drainWalQueue();
+
+            long tableColumnSyncs = trackFf.getTableColumnSyncCount();
+            Assert.assertEquals(
+                    "ADAPTIVE O3 apply must issue ZERO msync/fdatasync on table partition column files, but got: "
+                            + tableColumnSyncs + "; synced paths: " + trackFf.getTableColumnSyncPaths(),
+                    0, tableColumnSyncs
+            );
+
+            // Correctness: both rows visible, in timestamp order, after the lazy O3 merge.
+            assertQuery("select * from tab_e2 order by ts")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tv\n" +
+                            "2024-06-01T01:00:00.000000Z\t2\n" +
+                            "2024-06-01T05:00:00.000000Z\t1\n");
+        });
+    }
+
+    /**
      * (f) Task B — SYNC apply: NON-ZERO msync/fdatasync on table partition column files.
      *
      * <p>Contrast test: proves the tracking facade correctly distinguishes table-partition

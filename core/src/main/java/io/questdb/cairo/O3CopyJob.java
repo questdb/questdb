@@ -651,7 +651,11 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             }
 
             final int commitMode = tableWriter.getConfiguration().getCommitMode();
-            if (commitMode != CommitMode.NOSYNC) {
+            // Apply-path destination-column sync. Gated on appliesColumnSync (SYNC/ASYNC only): under
+            // ADAPTIVE this O3-merged column is a rebuildable cache of the durable WAL, so it is left
+            // non-durable here (lazy apply) and made crash-safe by the durable epoch + recovery
+            // roll-forward (Plan 3). NOSYNC skips as before. See CommitMode.appliesColumnSync.
+            if (CommitMode.appliesColumnSync(commitMode)) {
                 syncColumns(
                         columnCounter,
                         timestampMergeIndexAddr,

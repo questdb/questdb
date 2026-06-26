@@ -4887,13 +4887,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final MemoryCARW o3DataMem2;
         final MemoryCARW o3AuxMem2;
 
+        // Under ADAPTIVE the materialized partition columns are a rebuildable cache of the durable WAL
+        // (durability via the epoch + recovery roll-forward), so their append-page-release msync is
+        // skipped (lazy apply). Non-adaptive modes leave applyLazy false => byte-identical behavior.
+        final boolean applyLazyColumns = !appliesColumnSync(configuration.getCommitMode());
         if (type > 0) {
             dataMem = Vm.getPMARInstance(configuration);
+            dataMem.setApplyLazy(applyLazyColumns);
             o3DataMem1 = Vm.getCARWInstance(o3ColumnMemorySize, configuration.getO3MemMaxPages(), MemoryTag.NATIVE_O3);
             o3DataMem2 = Vm.getCARWInstance(o3ColumnMemorySize, configuration.getO3MemMaxPages(), MemoryTag.NATIVE_O3);
 
             if (ColumnType.isVarSize(type)) {
                 auxMem = Vm.getPMARInstance(configuration);
+                auxMem.setApplyLazy(applyLazyColumns);
                 o3AuxMem1 = Vm.getCARWInstance(o3ColumnMemorySize, configuration.getO3MemMaxPages(), MemoryTag.NATIVE_O3);
                 o3AuxMem2 = Vm.getCARWInstance(o3ColumnMemorySize, configuration.getO3MemMaxPages(), MemoryTag.NATIVE_O3);
             } else {
@@ -8417,7 +8423,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             setStateForTimestamp(other, newSplitPartitionTimestamp);
                             ff.mkdir(other.$(), configuration.getMkDirMode());
                             try (Frame targetFrame = frameFactory.createRW(other, newSplitPartitionTimestamp, metadata, columnVersionWriter, 0)) {
-                                FrameAlgebra.append(targetFrame, sourceFrame, newPrevPartitionSize, prevPartitionSize, txWriter.getTxn() + 1L, configuration.getCommitMode());
+                                // Apply-path column write (partition split): lazy under ADAPTIVE via
+                                // applyColumnSyncMode() — the split's column bytes are rebuilt from the
+                                // durable WAL on recovery; the new partition's _txn/_cv stays as durable
+                                // as the commit mode dictates.
+                                FrameAlgebra.append(targetFrame, sourceFrame, newPrevPartitionSize, prevPartitionSize, txWriter.getTxn() + 1L, applyColumnSyncMode());
                             }
                         }
                         addPhysicallyWrittenRows(prevPartitionSize - newPrevPartitionSize);
@@ -10959,7 +10969,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             for (long i = 0, n = columnFdAndDataSize.size() / 3; i < n; i++) {
                 final long dstAuxFd = columnFdAndDataSize.get(3L * i);
                 final long dstDataFd = columnFdAndDataSize.get(3L * i + 1);
-                if (configuration.getCommitMode() != CommitMode.NOSYNC) {
+                // Apply-path destination-column fsync of the parquet->native conversion result. Gated
+                // on appliesColumnSync: under ADAPTIVE this rebuilt native partition is a cache of the
+                // durable WAL (the convert-partition command is itself WAL-replayed), so it is left
+                // non-durable here (lazy) and made crash-safe by the epoch + recovery roll-forward.
+                // The partition DIRECTORY entry below stays durable (structural). See appliesColumnSync.
+                if (appliesColumnSync(configuration.getCommitMode())) {
                     if (dstDataFd != -1) {
                         ff.fsync(dstDataFd);
                     }
@@ -13324,7 +13339,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     LOG.info().$("copying partition to force squash [from=").$substr(pathRootSize, path).$(", to=").$(other).I$();
 
                     targetFrame = frameFactory.openRW(other, targetPartition, metadata, columnVersionWriter, 0);
-                    FrameAlgebra.append(targetFrame, firstPartitionFrame, txWriter.getTxn() + 1L, configuration.getCommitMode());
+                    // Apply-path column write (squash copy): lazy under ADAPTIVE (applyColumnSyncMode).
+                    FrameAlgebra.append(targetFrame, firstPartitionFrame, txWriter.getTxn() + 1L, applyColumnSyncMode());
                     addPhysicallyWrittenRows(firstPartitionFrame.getRowCount());
                     txWriter.updatePartitionSizeAndTxnByRawIndex(targetPartitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, originalSize);
                     partitionRemoveCandidates.add(targetPartition, targetPartitionNameTxn);
@@ -13366,7 +13382,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         .I$();
 
                 try (Frame sourceFrame = frameFactory.openRO(other, sourcePartition, metadata, columnVersionWriter, partitionRowCount)) {
-                    FrameAlgebra.append(targetFrame, sourceFrame, txWriter.getTxn() + 1L, configuration.getCommitMode());
+                    // Apply-path column write (squash merge): lazy under ADAPTIVE (applyColumnSyncMode).
+                    FrameAlgebra.append(targetFrame, sourceFrame, txWriter.getTxn() + 1L, applyColumnSyncMode());
                     addPhysicallyWrittenRows(sourceFrame.getRowCount());
                 } catch (Throwable th) {
                     LOG.critical().$("partition squashing failed [table=").$(tableToken)
@@ -13567,25 +13584,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Returns true if and only if this commit mode requires a per-commit msync/fdatasync flush
-     * of the TABLE PARTITION COLUMN FILES on the apply path (TableWriter.syncColumns).
-     *
-     * <p>SYNC and ASYNC both flush column files on every commit — SYNC blocks until the data is
-     * durable, ASYNC schedules writeback. NOSYNC never flushes.
-     *
-     * <p>ADAPTIVE is intentionally excluded here. Under ADAPTIVE the WAL commit is made durable
-     * (fdatasync of segment→events→sequencer, Task A), so the table-apply is a REBUILDABLE CACHE
-     * of the WAL: if the process crashes the WAL is replayed and the table is re-derived on recovery.
-     * Flushing the materialized column files on every apply would negate the performance advantage
-     * of adaptive (fsync the small log, not the big table).
-     *
-     * <p>Non-WAL tables: for non-WAL tables there is no durable WAL to replay, so ADAPTIVE on a
-     * non-WAL table degrades to NOSYNC-grade apply durability — the same as the current engine
-     * default. This is explicitly documented here so the semantics are clear: if you need
-     * per-commit apply durability on a non-WAL table, use SYNC instead of ADAPTIVE.
+     * Apply-path column-sync gate. Thin alias for {@link CommitMode#appliesColumnSync(int)} (the
+     * single source of truth, shared with {@code O3CopyJob}'s destination-column sync). Returns true
+     * only for SYNC/ASYNC; ADAPTIVE is lazy on the apply side (durability via the epoch + recovery
+     * roll-forward). See {@link CommitMode#appliesColumnSync(int)} for the full rationale.
      */
     private static boolean appliesColumnSync(int commitMode) {
-        return commitMode == CommitMode.SYNC || commitMode == CommitMode.ASYNC;
+        return CommitMode.appliesColumnSync(commitMode);
+    }
+
+    /**
+     * The EFFECTIVE commit mode for an apply-path COLUMN-DATA sync: the configured mode when
+     * {@link #appliesColumnSync(int)} is true, otherwise {@link CommitMode#NOSYNC}. Passed to
+     * {@link io.questdb.cairo.frm.FrameAlgebra#append} at the partition split/squash sites so those
+     * column writes skip their msync/fsync under ADAPTIVE (lazy apply), exactly like the O3 path —
+     * while every other (structural) effect of split/squash, recorded via {@code _txn}/{@code _cv},
+     * stays as durable as the commit mode dictates. NOSYNC and the structural metadata are untouched.
+     */
+    private int applyColumnSyncMode() {
+        final int commitMode = configuration.getCommitMode();
+        return appliesColumnSync(commitMode) ? commitMode : CommitMode.NOSYNC;
     }
 
     private void syncColumns() {

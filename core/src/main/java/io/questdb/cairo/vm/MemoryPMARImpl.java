@@ -46,6 +46,12 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     // we do not skip msync for PMAR (see sync()), so there is no cross-sync offset state to go stale.
     // Defaults to false: the non-appendOnly path is byte-identical to the original full-page msync.
     private boolean appendOnly = false;
+    // When true this is a TABLE PARTITION column under CommitMode.ADAPTIVE: the page-release / close
+    // path skips its msync so the materialized column stays NON-DURABLE on the apply side (lazy apply;
+    // durability via the durable epoch + recovery roll-forward, Plan 3). Set ONLY by TableWriter for
+    // partition columns under adaptive; never for WAL segment columns (explicit per-commit fdatasync)
+    // nor under any other mode, so all those paths are byte-identical. Default false.
+    private boolean applyLazy = false;
     private long fd = -1;
     private FilesFacade ff;
     private long lastSyncedSize = 0;
@@ -140,6 +146,11 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     @Override
     public void setAppendOnly(boolean appendOnly) {
         this.appendOnly = appendOnly;
+    }
+
+    @Override
+    public void setApplyLazy(boolean applyLazy) {
+        this.applyLazy = applyLazy;
     }
 
     @Override
@@ -273,7 +284,10 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     protected void release(long address) {
         if (address != 0) {
             int commitMode = configuration != null ? configuration.getCommitMode() : CommitMode.NOSYNC;
-            if (commitMode != CommitMode.NOSYNC) {
+            // applyLazy (adaptive table partition column) skips the page-release msync — the column is
+            // a rebuildable cache of the durable WAL, made durable only by the epoch + recovery. WAL
+            // segment columns never set applyLazy, so their explicit per-commit fdatasync is unaffected.
+            if (commitMode != CommitMode.NOSYNC && !applyLazy) {
                 ff.msync(address, getPageSize(), commitMode == CommitMode.ASYNC);
             }
             ff.munmap(address, getPageSize(), memoryTag);

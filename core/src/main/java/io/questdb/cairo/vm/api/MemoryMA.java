@@ -54,6 +54,18 @@ public interface MemoryMA extends MemoryM, MemoryA {
     default void setAppendOnly(boolean appendOnly) {
     }
 
+    /**
+     * Marks this append memory as an ADAPTIVE LAZY-APPLY column: its page-release / close path skips
+     * the per-page {@code msync} that would otherwise make the column durable on the apply side. Used
+     * ONLY for TABLE PARTITION columns under {@link io.questdb.cairo.CommitMode#ADAPTIVE}, where the
+     * materialized column is a rebuildable cache of the durable WAL (durability comes from the epoch +
+     * recovery roll-forward, Plan 3). It is NOT set for WAL segment columns (whose durability is an
+     * explicit per-commit fdatasync) nor under any other commit mode, so those paths are unaffected.
+     * Default is a no-op so implementations that do not flush on release are unaffected.
+     */
+    default void setApplyLazy(boolean applyLazy) {
+    }
+
     default void setSize(long size) {
         jumpTo(size);
     }
