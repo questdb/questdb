@@ -138,6 +138,18 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
         return true;
     }
 
+    /**
+     * Returns true iff a single column of {@code columnType} is supported by the
+     * in-memory tier (fixed-width). Tags the type before the width probe, so
+     * callers may pass a full column type. The read path additionally rejects
+     * SYMBOL (the tier holds WAL-segment-local ids the disk reader cannot
+     * resolve), so a SYMBOL-bearing projection routes disk-only even though this
+     * method reports SYMBOL as a supported storage type.
+     */
+    public static boolean isColumnTypeSupported(int columnType) {
+        return isFixedWidthSupported(ColumnType.tagOf(columnType));
+    }
+
     public int columnCount() {
         return columnTypes.size();
     }

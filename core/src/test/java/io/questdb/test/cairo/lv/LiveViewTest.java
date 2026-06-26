@@ -497,22 +497,48 @@ public class LiveViewTest extends AbstractCairoTest {
         // Reading from a live view at SELECT time is a plain forward scan of the
         // LV's own materialized table, wrapped in a thin LiveView node - there is
         // no in-memory-tier merge node in the plan. Mode B seam routing happens at
-        // cursor iteration time (disk below the seam, the in-mem slot above it),
-        // which EXPLAIN does not yet surface. The window function that defines the
+        // cursor iteration time (disk below the seam, the in-mem slot above it);
+        // the LiveView node's "inMemory" attribute surfaces whether the read's
+        // static shape permits that routing. The window function that defines the
         // view runs only in the refresh job, never at read time, so it is absent
         // from the read plan too.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (sym SYMBOL, price DOUBLE, ts TIMESTAMP) " +
                     "TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            // A SYMBOL output column routes disk-only (the tier holds
+            // WAL-segment-local symbol ids), so inMemory is false here.
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
                     "SELECT sym, price, ts, row_number() OVER w AS rn FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')");
             assertQuery("SELECT * FROM lv").noLeakCheck().assertsPlan("LiveView\n" +
                     "  view: lv\n" +
+                    "  inMemory: false\n" +
                     "    PageFrame\n" +
                     "        Row forward scan\n" +
                     "        Frame forward scan on: lv\n");
+            // The same view projected without the SYMBOL column is all
+            // fixed-width and timestamp-bearing on a forward scan, so the read's
+            // shape permits Mode B routing: inMemory is true.
+            execute("CREATE LIVE VIEW lv_fixed FLUSH EVERY 1s AS " +
+                    "SELECT price, ts, row_number() OVER w AS rn FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')");
+            assertQuery("SELECT * FROM lv_fixed").noLeakCheck().assertsPlan("LiveView\n" +
+                    "  view: lv_fixed\n" +
+                    "  inMemory: true\n" +
+                    "    PageFrame\n" +
+                    "        Row forward scan\n" +
+                    "        Frame forward scan on: lv_fixed\n");
+            // A timestamp-pruned projection cannot seam (the base scan drops the
+            // designated timestamp, leaving timestampColumnIndex < 0), so
+            // inMemory is false even on the fixed-width view.
+            assertQuery("SELECT price, rn FROM lv_fixed").noLeakCheck().assertsPlan("LiveView\n" +
+                    "  view: lv_fixed\n" +
+                    "  inMemory: false\n" +
+                    "    PageFrame\n" +
+                    "        Row forward scan\n" +
+                    "        Frame forward scan on: lv_fixed\n");
             execute("DROP LIVE VIEW lv");
+            execute("DROP LIVE VIEW lv_fixed");
         });
     }
 
@@ -528,8 +554,11 @@ public class LiveViewTest extends AbstractCairoTest {
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
                     "SELECT sym, price, ts, row_number() OVER w AS rn FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')");
+            // A backward scan cannot seam (Mode B assumes ascending disk rows),
+            // so inMemory is false regardless of schema.
             assertQuery("SELECT * FROM lv ORDER BY ts DESC").noLeakCheck().assertsPlan("LiveView\n" +
                     "  view: lv\n" +
+                    "  inMemory: false\n" +
                     "    PageFrame\n" +
                     "        Row backward scan\n" +
                     "        Frame backward scan on: lv\n");

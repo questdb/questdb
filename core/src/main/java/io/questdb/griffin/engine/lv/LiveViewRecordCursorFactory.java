@@ -26,10 +26,13 @@ package io.questdb.griffin.engine.lv;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.lv.LiveViewInMemoryBuffer;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -50,6 +53,8 @@ import io.questdb.std.Misc;
  * The fence ({@code slot.lvSeqTxn == diskReader.seqTxn}) plus a full-schema,
  * ascending, unfiltered-scan requirement keep this safe; anything else falls
  * back to disk-only. See {@link LiveViewRecordCursor} for the routing details.
+ * {@link #toPlan} surfaces the static, query-shape part of this decision as the
+ * {@code inMemory} EXPLAIN attribute (see {@link #isInMemRoutable}).
  * <p>
  * Each {@link #getCursor(SqlExecutionContext)} call allocates a fresh
  * {@link LiveViewRecordCursor}: the cursor pins a tier slot until
@@ -62,6 +67,13 @@ import io.questdb.std.Misc;
 public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursorFactory base;
     private final CairoEngine engine;
+    // Static, query-shape eligibility for Mode B seam routing, surfaced as the
+    // EXPLAIN "inMemory" attribute. True when the read's shape permits the
+    // in-mem tier to serve the recent band (see isInMemRoutable). The runtime
+    // seqTxn fence, the tier's population state, and a timestamp-interval filter
+    // (not visible to a static plan) still make the final per-cursor call, so
+    // this is a capability indicator, not a guarantee. See LiveViewRecordCursor.
+    private final boolean inMemRoutable;
     private final TableToken liveViewToken;
     private final int timestampColumnIndex;
 
@@ -71,6 +83,7 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
         this.liveViewToken = liveViewToken;
         this.base = base;
         this.timestampColumnIndex = base.getMetadata().getTimestampIndex();
+        this.inMemRoutable = isInMemRoutable(base, timestampColumnIndex);
     }
 
     @Override
@@ -131,6 +144,10 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
     public void toPlan(PlanSink sink) {
         sink.type("LiveView");
         sink.optAttr("view", liveViewToken.getTableName());
+        // Surface whether the read's shape permits Mode B seam routing through
+        // the in-mem tier. A capability flag, not a guarantee - see the field
+        // doc and isInMemRoutable.
+        sink.attr("inMemory").val(inMemRoutable);
         sink.child(base);
     }
 
@@ -142,6 +159,44 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public boolean usesIndex() {
         return base.usesIndex();
+    }
+
+    /**
+     * Static, refresh-timing-independent eligibility for Mode B seam routing -
+     * the read-shape preconditions {@link LiveViewRecordCursor} checks before the
+     * runtime seqTxn fence. True only when:
+     * <ul>
+     *   <li>the base scan is forward (ascending timestamp) - Mode B's seam split
+     *   assumes ascending disk rows, so a backward / index scan routes
+     *   disk-only;</li>
+     *   <li>the projection keeps the timestamp ({@code timestampColumnIndex >= 0})
+     *   - a timestamp-pruned read (e.g. an aggregate over the LV) cannot seam;</li>
+     *   <li>every projected column is a fixed-width, non-SYMBOL type the tier can
+     *   both store and resolve on read - a var-length column means no tier, and a
+     *   SYMBOL column holds WAL-segment-local ids unresolvable against the disk
+     *   reader, so either routes disk-only.</li>
+     * </ul>
+     * A {@code true} result is a capability flag, not a guarantee: a static plan
+     * cannot see the runtime seqTxn fence, the tier's population state, a
+     * column-pruned (but timestamp-bearing) projection - the in-mem subset check
+     * still rejects it - or a timestamp-interval filter pushed into the scan, all
+     * of which can still route an individual cursor disk-only. A {@code false}
+     * result, by contrast, is reliable: the read is always disk-only, since these
+     * three preconditions are hard disqualifiers the cursor enforces too.
+     */
+    private static boolean isInMemRoutable(RecordCursorFactory base, int timestampColumnIndex) {
+        if (base.getScanDirection() != SCAN_DIRECTION_FORWARD || timestampColumnIndex < 0) {
+            return false;
+        }
+        final RecordMetadata metadata = base.getMetadata();
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            final int columnType = metadata.getColumnType(i);
+            if (ColumnType.tagOf(columnType) == ColumnType.SYMBOL
+                    || !LiveViewInMemoryBuffer.isColumnTypeSupported(columnType)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     @Override
