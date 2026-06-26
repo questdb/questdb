@@ -526,6 +526,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlPageFrameMinRows;
     private final int sqlParallelFilterDispatchLimit;
     private final boolean sqlParallelFilterEnabled;
+    private final boolean sqlVarcharRegexNativeEnabled;
     private final double sqlParallelFilterPreTouchThreshold;
     private final boolean sqlParallelGroupByEnabled;
     private final boolean sqlParallelHorizonJoinEnabled;
@@ -2223,6 +2224,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             final boolean defaultParallelSqlEnabled = queryWorkers > 0;
             this.sqlParallelFilterEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED, defaultParallelSqlEnabled);
+            this.sqlVarcharRegexNativeEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_VARCHAR_REGEX_NATIVE_ENABLED, false);
             this.sqlParallelTopKEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_TOP_K_ENABLED, defaultParallelSqlEnabled);
             this.sqlHorizonJoinBwdScanAbsoluteThreshold = getLong(properties, env, PropertyKey.CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_ABSOLUTE_THRESHOLD, 131_072);
             this.sqlHorizonJoinBwdScanMinGap = getLong(properties, env, PropertyKey.CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_MIN_GAP, 1_024);
@@ -5355,6 +5357,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isSqlParallelFilterEnabled() {
             return sqlParallelFilterEnabled;
+        }
+
+        @Override
+        public boolean isVarcharRegexNativeEnabled() {
+            return sqlVarcharRegexNativeEnabled;
         }
 
         @Override
