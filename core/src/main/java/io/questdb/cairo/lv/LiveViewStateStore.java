@@ -41,6 +41,14 @@ import org.jetbrains.annotations.TestOnly;
 public interface LiveViewStateStore extends QuietCloseable {
 
     /**
+     * Returns false when this store is a quiesced no-op stand-in -- e.g. on a read-only replica
+     * before a promote. {@link LiveViewRefreshJob} consults it to skip its entire refresh pass
+     * (both the notification-queue drain and the registry fallback scan) without touching the
+     * registry, so a replica's refresh workers stay idle until a promote swaps in a real store.
+     */
+    boolean isRefreshEnabled();
+
+    /**
      * Registers a base table so that {@link #notifyBaseTableCommit} stops treating it
      * as uninteresting. Called from the live view registry on view create/reload; the
      * per-table entry is never removed (grow-only, bounded by distinct base tables

@@ -84,6 +84,11 @@ public class LiveViewStateStoreImpl implements LiveViewStateStore {
     }
 
     @Override
+    public boolean isRefreshEnabled() {
+        return true;
+    }
+
+    @Override
     public void notifyBaseRefreshed(LiveViewRefreshTask task, long seqTxn) {
         final AtomicLong lastNotifiedTxn = lastNotifiedTxnByTableName.get(task.baseTableToken.getTableName());
         if (lastNotifiedTxn == null) {

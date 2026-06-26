@@ -2566,6 +2566,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     private boolean processNotifications() {
+        // Quiesced store (read-only replica before a promote): skip the whole pass, including the
+        // registry fallback scan, so refresh workers never touch a replica's live views. A promote
+        // swaps in a real store (see ForwardingLiveViewStateStore) and this gate reopens.
+        if (!stateStore.isRefreshEnabled()) {
+            return false;
+        }
         boolean didWork = false;
         while (stateStore.tryDequeueRefreshTask(refreshTask)) {
             refreshViewsForBaseTable(refreshTask.baseTableToken, refreshTask.seqTxn);

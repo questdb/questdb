@@ -49,9 +49,9 @@ import org.jetbrains.annotations.NotNull;
 public class ShowCreateLiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
     public static final int N_DDL_COL = 0;
     private static final RecordMetadata METADATA;
+    protected final int tokenPosition;
+    protected final TableToken viewToken;
     private final ShowCreateLiveViewCursor cursor = new ShowCreateLiveViewCursor();
-    private final int tokenPosition;
-    private final TableToken viewToken;
 
     public ShowCreateLiveViewRecordCursorFactory(TableToken viewToken, int tokenPosition) {
         super(METADATA);
@@ -82,10 +82,11 @@ public class ShowCreateLiveViewRecordCursorFactory extends AbstractRecordCursorF
         Misc.free(cursor);
     }
 
-    private static class ShowCreateLiveViewCursor implements NoRandomAccessRecordCursor {
+    public static class ShowCreateLiveViewCursor implements NoRandomAccessRecordCursor {
+        protected final Utf8StringSink sink = new Utf8StringSink();
         private final Path path;
         private final ShowCreateLiveViewRecord record = new ShowCreateLiveViewRecord();
-        private final Utf8StringSink sink = new Utf8StringSink();
+        protected SqlExecutionContext executionContext;
         private boolean backfillRequested;
         private char flushEveryUnit;
         private long flushEveryValue;
@@ -94,8 +95,8 @@ public class ShowCreateLiveViewRecordCursorFactory extends AbstractRecordCursorF
         private long inMemoryValue;
         private int partitionBy;
         private BlockFileReader reader;
-        private TableToken viewToken;
         private String viewSql;
+        private TableToken viewToken;
 
         public ShowCreateLiveViewCursor() {
             this.path = new Path();
@@ -130,6 +131,7 @@ public class ShowCreateLiveViewRecordCursorFactory extends AbstractRecordCursorF
                 int tokenPosition
         ) throws SqlException {
             this.viewToken = viewToken;
+            this.executionContext = executionContext;
 
             if (!viewToken.isLiveView()) {
                 throw SqlException.$(tokenPosition, "live view expected, got table");
@@ -208,8 +210,13 @@ public class ShowCreateLiveViewRecordCursorFactory extends AbstractRecordCursorF
             }
             sink.putAscii(" AS (\n")
                     .put(viewSql)
-                    .putAscii('\n');
-            sink.putAscii(");");
+                    .putAscii("\n)");
+            putAdditional();
+            sink.putAscii(';');
+        }
+
+        // placeholder for ent, do not remove!
+        protected void putAdditional() {
         }
 
         /**

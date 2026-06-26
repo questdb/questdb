@@ -42,6 +42,7 @@ import io.questdb.cairo.lv.LiveViewStateReader;
 import io.questdb.cairo.lv.LiveViewStateStore;
 import io.questdb.cairo.lv.LiveViewStateStoreImpl;
 import io.questdb.cairo.lv.LiveViewTableStructure;
+import io.questdb.cairo.lv.NoOpLiveViewStateStore;
 import io.questdb.cairo.mig.EngineMigration;
 import io.questdb.cairo.mv.DependentViewGraph;
 import io.questdb.cairo.mv.MatViewDefinition;
@@ -208,7 +209,6 @@ public class CairoEngine implements Closeable, WriterSource {
     private final DataID dataID;
     private final FunctionFactoryCache ffCache;
     private final LiveViewRegistry liveViewRegistry = new LiveViewRegistry();
-    private final LiveViewStateStore liveViewStateStore = new LiveViewStateStoreImpl();
     private final DependentViewGraph dependentViewGraph;
     private final Queue<MatViewTimerTask> matViewTimerQueue;
     private final MessageBusImpl messageBus;
@@ -300,6 +300,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private volatile @NotNull DdlListener ddlListener = DefaultDdlListener.INSTANCE;
     private volatile @NotNull DurableAckRegistry durableAckRegistry = DefaultDurableAckRegistry.INSTANCE;
     private FrameFactory frameFactory;
+    private @NotNull LiveViewStateStore liveViewStateStore = NoOpLiveViewStateStore.INSTANCE;
     private @NotNull MatViewStateStore matViewStateStore = NoOpMatViewStateStore.INSTANCE;
     // Lazily initialized on first call to getMemoryTrackerProvider(), because the
     // FactoryProvider that produces it is not bound until config.init(engine, ...)
@@ -2300,6 +2301,7 @@ public class CairoEngine implements Closeable, WriterSource {
         // Convert tables to WAL/non-WAL, if necessary.
         final ObjList<TableToken> convertedTables = TableConverter.convertTables(this, tableSequencerAPI, tableFlagResolver, tableNameRegistry);
         tableNameRegistry.reload(convertedTables);
+        liveViewStateStore = createLiveViewStateStore();
         matViewStateStore = createMatViewStateStore();
         viewStateStore = new ViewStateStoreImpl(this);
     }
@@ -3673,6 +3675,11 @@ public class CairoEngine implements Closeable, WriterSource {
 
     protected @NotNull DependentViewGraph createDependentViewGraph() {
         return new DependentViewGraph();
+    }
+
+    // used in ent
+    protected LiveViewStateStore createLiveViewStateStore() {
+        return configuration.isLiveViewEnabled() ? new LiveViewStateStoreImpl() : NoOpLiveViewStateStore.INSTANCE;
     }
 
     // used in ent
