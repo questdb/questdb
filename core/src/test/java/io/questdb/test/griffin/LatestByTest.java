@@ -1724,4 +1724,109 @@ public class LatestByTest extends AbstractCairoTest {
             }
         });
     }
+
+    @Test
+    public void testLatestBySubQueryIndexedFilteredAcrossPageFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.changePageFrameSizes(1, 8);
+            try {
+                executeWithRewriteTimestamp(
+                        "create table tk (sym symbol index, venue symbol index, px double, ts #TIMESTAMP) timestamp(ts)",
+                        timestampType.getTypeName()
+                );
+                execute(
+                        "insert into tk select\n" +
+                                "  'g' || (x % 4),\n" +
+                                "  case when x % 5 = 0 then 'v2' else 'v1' end,\n" +
+                                "  x::double,\n" +
+                                "  (x * 1_000_000)::" + timestampType.getTypeName() + "\n" +
+                                "from long_sequence(200);"
+                );
+                assertQuery("select sym, px from tk " +
+                        "where sym in (select list('g1', 'g2') from long_sequence(2)) and venue = 'v1' " +
+                        "latest on ts partition by sym order by sym")
+                        .expectSize()
+                        .returns("""
+                                sym\tpx
+                                g1\t197.0
+                                g2\t198.0
+                                """);
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
+            }
+        });
+    }
+
+    @Test
+    public void testLatestByIndexedDuplicateDeferredKeyDoesNotFullScan() throws Exception {
+        assertMemoryLeak(() -> {
+            ff = new TestFilesFacadeImpl() {
+                @Override
+                public long openRO(LPSZ name) {
+                    // The duplicate deferred key must not make the cursor scan an older partition
+                    // after the only unique key has already been found in the latest partition.
+                    if (Utf8s.containsAscii(name, "1970-01-01")) {
+                        return -1;
+                    }
+                    return TestFilesFacadeImpl.INSTANCE.openRO(name);
+                }
+            };
+
+            executeWithRewriteTimestamp(
+                    "create table tk (sym symbol index, px double, ts #TIMESTAMP) timestamp(ts) partition by day",
+                    timestampType.getTypeName()
+            );
+            execute("""
+                    insert into tk values
+                    ('a', 1.0, '1970-01-01T00:00:00.000000Z'),
+                    ('a', 2.0, '1970-01-02T00:00:00.000000Z')
+                    """);
+            bindVariableService.clear();
+            bindVariableService.setStr("sym", "a");
+
+            assertQuery("select sym, px from tk where sym in ('a', :sym) latest on ts partition by sym")
+                    .expectSize()
+                    .returns("""
+                            sym\tpx
+                            a\t2.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLatestByIndexedFilteredDuplicateDeferredKeyDoesNotFullScan() throws Exception {
+        assertMemoryLeak(() -> {
+            ff = new TestFilesFacadeImpl() {
+                @Override
+                public long openRO(LPSZ name) {
+                    // The duplicate deferred key must not make the cursor scan an older partition
+                    // after the only unique key has already passed the residual filter.
+                    if (Utf8s.containsAscii(name, "1970-01-01")) {
+                        return -1;
+                    }
+                    return TestFilesFacadeImpl.INSTANCE.openRO(name);
+                }
+            };
+
+            executeWithRewriteTimestamp(
+                    "create table tk (sym symbol index, venue symbol, px double, ts #TIMESTAMP) timestamp(ts) partition by day",
+                    timestampType.getTypeName()
+            );
+            execute("""
+                    insert into tk values
+                    ('a', 'v1', 1.0, '1970-01-01T00:00:00.000000Z'),
+                    ('a', 'v1', 2.0, '1970-01-02T00:00:00.000000Z')
+                    """);
+            bindVariableService.clear();
+            bindVariableService.setStr("sym", "a");
+
+            assertQuery("select sym, px from tk " +
+                    "where sym in ('a', :sym) and venue = 'v1' latest on ts partition by sym")
+                    .expectSize()
+                    .returns("""
+                            sym\tpx
+                            a\t2.0
+                            """);
+        });
+    }
 }
