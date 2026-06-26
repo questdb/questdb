@@ -102,6 +102,40 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
             // ASSERT: _txn was rewound to exactly the epoch cut.
             final long restoredSeqTxn = readTxnSeqTxn(tt);
             Assert.assertEquals("recovery must restore _txn to the epoch cut", epochSeqTxn, restoredSeqTxn);
+
+            // ASSERT: recoveryIncarnation was bumped exactly once (one successful restore).
+            final long incarnation = engine.getTableSequencerAPI().getTxnTracker(tt).getRecoveryIncarnation();
+            Assert.assertEquals("recoveryIncarnation must be 1 after one successful restore", 1L, incarnation);
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 1000);
+        }
+    }
+
+    /**
+     * Negative control: a table with NO {@code _snapshot} marker must NOT have its
+     * {@code recoveryIncarnation} bumped (the no-op / absent-marker path skips restore).
+     */
+    @Test
+    public void testRecoverWithNoSnapshotLeavesIncarnationZero() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, -1);
+        try {
+            execute("create table noepoch (ts timestamp, v long) timestamp(ts) partition by day wal");
+            execute("insert into noepoch values ('2024-09-01T00:00:00.000000Z', 42)");
+            drainWalQueue();
+
+            final TableToken tt = engine.verifyTableName("noepoch");
+
+            // Precondition: no _snapshot marker was ever written for this table.
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+
+            // ACT: recovery finds no marker → no restore → incarnation must stay 0.
+            new RecoveryCoordinator(engine).recover();
+
+            final long incarnation = engine.getTableSequencerAPI().getTxnTracker(tt).getRecoveryIncarnation();
+            Assert.assertEquals("recoveryIncarnation must be 0 when no epoch was restored", 0L, incarnation);
         } finally {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
             setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 1000);

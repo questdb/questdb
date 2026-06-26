@@ -240,13 +240,13 @@ public class ViewsFunctionTest extends AbstractViewTest {
 
             assertQueryAndPlan(
                     """
-                            name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure
-                            table1\tfalse\t9\t0\t9\t\t\t0
-                            table2\tfalse\t9\t0\t9\t\t\t0
-                            view1\tfalse\t0\t0\t0\t\t\t0
-                            view2\tfalse\t0\t0\t0\t\t\t0
-                            view3\tfalse\t1\t0\t1\t\t\t0
-                            view4\tfalse\t1\t0\t1\t\t\t0
+                            name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tcommitMode\tdurableEpochSeqTxn\twalRetentionTxn\trecoveryIncarnation
+                            table1\tfalse\t9\t0\t9\t\t\t0\tnosync\t0\t0\t0
+                            table2\tfalse\t9\t0\t9\t\t\t0\tnosync\t0\t0\t0
+                            view1\tfalse\t0\t0\t0\t\t\t0\tnosync\t0\t0\t0
+                            view2\tfalse\t0\t0\t0\t\t\t0\tnosync\t0\t0\t0
+                            view3\tfalse\t1\t0\t1\t\t\t0\tnosync\t0\t0\t0
+                            view4\tfalse\t1\t0\t1\t\t\t0\tnosync\t0\t0\t0
                             """,
                     "wal_tables() order by 1",
                     null,

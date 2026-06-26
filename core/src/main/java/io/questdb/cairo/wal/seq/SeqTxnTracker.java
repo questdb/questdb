@@ -50,6 +50,11 @@ public class SeqTxnTracker {
     // fresh adaptive table; the epoch job advances this as epochs are confirmed durable).
     // Read by WalPurgeJob to floor the purge seqTxn for ADAPTIVE commit mode only.
     private volatile long durableEpochSeqTxn = 0;
+    // In-memory counter: incremented each time RecoveryCoordinator successfully restores a durable
+    // epoch cut for this table (i.e. an actual roll-forward happened). Resets to 0 on restart
+    // (counts rollbacks since process start). Exposed via wal_tables() as an operator signal that
+    // recovery was required for this table in the current process lifetime.
+    private volatile long recoveryIncarnation = 0;
     // Wall-clock ms of the last durable epoch fired for this table (adaptive cadence gate). 0 => none
     // yet (so the first apply batch under adaptive is eligible to epoch). Read+written ONLY by the
     // apply worker that holds the table writer (single-threaded per table) -> no CAS needed.
@@ -100,6 +105,16 @@ public class SeqTxnTracker {
 
     public long getDurableEpochSeqTxn() {
         return durableEpochSeqTxn;
+    }
+
+    /** Returns the in-memory recovery incarnation counter (incremented each time recovery actually roll-forwarded this table). */
+    public long getRecoveryIncarnation() {
+        return recoveryIncarnation;
+    }
+
+    /** Increments the in-memory recovery incarnation counter (called by RecoveryCoordinator on a successful epoch restore). */
+    public void bumpRecoveryIncarnation() {
+        recoveryIncarnation++;
     }
 
     /** Wall-clock ms of the last durable epoch (adaptive cadence gate); 0 if none yet. */

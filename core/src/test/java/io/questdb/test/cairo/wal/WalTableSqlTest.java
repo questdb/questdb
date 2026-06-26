@@ -1370,8 +1370,8 @@ public class WalTableSqlTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
-                            name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure
-                            testEmptyTruncate\tfalse\t1\t0\t1\t\t\t0
+                            name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tcommitMode\tdurableEpochSeqTxn\twalRetentionTxn\trecoveryIncarnation
+                            testEmptyTruncate\tfalse\t1\t0\t1\t\t\t0\tnosync\t0\t0\t0
                             """);
         });
     }

@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
@@ -65,12 +66,16 @@ public class WalTableListFunctionFactory implements FunctionFactory {
     private static final RecordMetadata METADATA;
     private static final String SIGNATURE = "wal_tables()";
     private static final int bufferedTxnSizeColumn;
+    private static final int commitModeColumn;
+    private static final int durableEpochSeqTxnColumn;
     private static final int errorMessageColumn;
     private static final int errorTagColumn;
     private static final int memoryPressureLevelColumn;
     private static final int nameColumn;
+    private static final int recoveryIncarnationColumn;
     private static final int sequencerTxnColumn;
     private static final int suspendedColumn;
+    private static final int walRetentionTxnColumn;
     private static final int writerTxnColumn;
 
     @Override
@@ -103,6 +108,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
         private final TableListRecordCursor cursor;
         private final FilesFacade ff;
         private final SqlExecutionContext sqlExecutionContext;
+        private final String commitModeName;
         private CairoEngine engine;
         private Path rootPath;
 
@@ -112,7 +118,22 @@ public class WalTableListFunctionFactory implements FunctionFactory {
             this.rootPath = new Path();
             rootPath.of(configuration.getDbRoot());
             this.sqlExecutionContext = sqlExecutionContext;
+            this.commitModeName = commitModeName(configuration.getCommitMode());
             this.cursor = new TableListRecordCursor();
+        }
+
+        private static String commitModeName(int commitMode) {
+            switch (commitMode) {
+                case CommitMode.SYNC:
+                    return "sync";
+                case CommitMode.NOSYNC:
+                    return "nosync";
+                case CommitMode.ADAPTIVE:
+                    return "adaptive";
+                case CommitMode.ASYNC:
+                default:
+                    return "async";
+            }
         }
 
         @Override
@@ -190,12 +211,16 @@ public class WalTableListFunctionFactory implements FunctionFactory {
 
             public class TableListRecord implements Record {
                 private long bufferedTxnSize;
+                private String commitMode;
+                private long durableEpochSeqTxn;
                 private String errorMessage;
                 private String errorTag;
                 private int memoryPressureLevel;
+                private long recoveryIncarnation;
                 private long sequencerTxn;
                 private boolean suspendedFlag;
                 private String tableName;
+                private long walRetentionTxn;
                 private long writerTxn;
 
                 @Override
@@ -225,6 +250,15 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                     if (col == sequencerTxnColumn) {
                         return sequencerTxn;
                     }
+                    if (col == durableEpochSeqTxnColumn) {
+                        return durableEpochSeqTxn;
+                    }
+                    if (col == walRetentionTxnColumn) {
+                        return walRetentionTxn;
+                    }
+                    if (col == recoveryIncarnationColumn) {
+                        return recoveryIncarnation;
+                    }
                     return Numbers.LONG_NULL;
                 }
 
@@ -238,6 +272,9 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                     }
                     if (col == errorMessageColumn) {
                         return errorMessage;
+                    }
+                    if (col == commitModeColumn) {
+                        return commitMode;
                     }
                     return null;
                 }
@@ -259,12 +296,16 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                         SeqTxnTracker seqTxnTracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
                         memoryPressureLevel = seqTxnTracker.getMemPressureControl().getMemoryPressureLevel();
                         tableName = tableToken.getTableName();
+                        commitMode = commitModeName;
 
                         if (seqTxnTracker.isInitialised()) {
                             suspendedFlag = seqTxnTracker.isSuspended();
                             sequencerTxn = seqTxnTracker.getSeqTxn();
                             writerTxn = seqTxnTracker.getWriterTxn();
                             bufferedTxnSize = seqTxnTracker.getLagTxnCount();
+                            durableEpochSeqTxn = seqTxnTracker.getDurableEpochSeqTxn();
+                            walRetentionTxn = seqTxnTracker.getDurableEpochSeqTxn();
+                            recoveryIncarnation = seqTxnTracker.getRecoveryIncarnation();
                             if (suspendedFlag) {
                                 // only read error details from seqTxnTracker if the table is suspended
                                 // when the table is not suspended, it is not guaranteed that error details are immediately cleared
@@ -276,6 +317,11 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                             }
                             return true;
                         }
+
+                        // Tracker not yet initialised: epoch/retention fields default to 0
+                        durableEpochSeqTxn = 0;
+                        walRetentionTxn = 0;
+                        recoveryIncarnation = 0;
 
                         try {
                             // We used to have suspended flag saved in the sequencer metadata file
@@ -344,6 +390,15 @@ public class WalTableListFunctionFactory implements FunctionFactory {
         errorMessageColumn = metadata.getColumnCount() - 1;
         metadata.add(new TableColumnMetadata("memoryPressure", ColumnType.INT));
         memoryPressureLevelColumn = metadata.getColumnCount() - 1;
+        // Plan 4 adaptive observability columns (appended — existing positional consumers unaffected)
+        metadata.add(new TableColumnMetadata("commitMode", ColumnType.STRING));
+        commitModeColumn = metadata.getColumnCount() - 1;
+        metadata.add(new TableColumnMetadata("durableEpochSeqTxn", ColumnType.LONG));
+        durableEpochSeqTxnColumn = metadata.getColumnCount() - 1;
+        metadata.add(new TableColumnMetadata("walRetentionTxn", ColumnType.LONG));
+        walRetentionTxnColumn = metadata.getColumnCount() - 1;
+        metadata.add(new TableColumnMetadata("recoveryIncarnation", ColumnType.LONG));
+        recoveryIncarnationColumn = metadata.getColumnCount() - 1;
         METADATA = metadata;
     }
 }

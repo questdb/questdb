@@ -78,9 +78,9 @@ public class ServerMainCleanStartupTest extends AbstractBootstrapTest {
                 }, "select * from wal_tables order by 1")
                         .noLeakCheck()
                         .returns("""
-                                name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure
-                                x\tfalse\t0\t0\t0\t\t\t0
-                                y\tfalse\t2\t0\t2\t\t\t0
+                                name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tcommitMode\tdurableEpochSeqTxn\twalRetentionTxn\trecoveryIncarnation
+                                x\tfalse\t0\t0\t0\t\t\t0\tnosync\t0\t0\t0
+                                y\tfalse\t2\t0\t2\t\t\t0\tnosync\t0\t0\t0
                                 """);
 
 

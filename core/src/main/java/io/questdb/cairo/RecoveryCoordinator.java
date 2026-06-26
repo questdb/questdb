@@ -185,6 +185,11 @@ public class RecoveryCoordinator {
 
         LOG.info().$("adaptive epoch roll-forward restored durable cut [table=").$(token)
                 .$(", epochSeqTxn=").$(epochSeqTxn).I$();
+
+        // Bump the in-memory recovery incarnation counter ONLY on a successful validated restore
+        // (not on no-op/skip/absent-marker/torn-copy paths). The tracker is initialised lazily on
+        // first WAL apply, but the object itself always exists (getSeqTxnTracker creates it).
+        engine.getTableSequencerAPI().getTxnTracker(token).bumpRecoveryIncarnation();
     }
 
     /**
