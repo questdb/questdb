@@ -2617,8 +2617,9 @@ mod tests {
             DEFAULT_BLOOM_FILTER_FPP,
             0.0,
             None,
-            0,
-            -1,
+            0,  // parquet_meta_file_size
+            0,  // append_base
+            -1, // existing_parquet_file_size
         )?;
 
         let extra = [5i8, 6, 7, 8];

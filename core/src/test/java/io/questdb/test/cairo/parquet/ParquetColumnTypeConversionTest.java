@@ -2393,6 +2393,59 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testStringToUuidHalfCorrupt() throws Exception {
+        assertMemoryLeak(() -> {
+            for (String source : new String[]{"STRING", "VARCHAR", "SYMBOL"}) {
+                assertConversion(source, "UUID", """
+                        ('a0eebc99-9c0b-4ef8-zzzz-6bb9bd380a11', '2024-01-01T00:00:01.000000Z'),
+                        ('zzzzzzzz-9c0b-4ef8-bb6d-6bb9bd380a11', '2024-01-01T00:00:02.000000Z'),
+                        ('a0eebc99-9c0b-4ef8-bb6d-zzzzzzzzzzzz', '2024-01-01T00:00:03.000000Z'),
+                        ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', '2024-01-01T00:00:04.000000Z')""");
+            }
+        });
+    }
+
+    @Test
+    public void testStringToUuidLazyScanAcrossParquetPartitions() throws Exception {
+        // Two parquet partitions form two frames whose in-frame row indexes both start at 0, so the
+        // lazy scan reuses the same (rowIndex, columnIndex) for different data across the frame
+        // switch. PageFrameMemoryRecord caches the per-row var->UUID parse keyed by (frameIndex,
+        // rowIndex, columnIndex) -- frameIndex is what keeps a partition-2 read from serving a
+        // partition-1 cached value. The half-corrupt value at partition 2 row 0 must read NULL
+        // (matching native), and the distinct valid UUIDs across partitions must each round-trip.
+        assertMemoryLeak(() -> {
+            try {
+                execute("CREATE TABLE nt (val STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("CREATE TABLE pt (val STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                String rows = """
+                        ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', '2024-01-01T00:00:01.000000Z'),
+                        ('11111111-1111-1111-1111-111111111111', '2024-01-01T00:00:02.000000Z'),
+                        ('a0eebc99-9c0b-4ef8-zzzz-6bb9bd380a11', '2024-01-02T00:00:01.000000Z'),
+                        ('22222222-2222-2222-2222-222222222222', '2024-01-02T00:00:02.000000Z')""";
+                execute("INSERT INTO nt VALUES " + rows);
+                execute("INSERT INTO pt VALUES " + rows);
+                drainWalQueue();
+                execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-02'");
+                drainWalQueue();
+                execute("ALTER TABLE nt ALTER COLUMN val TYPE UUID");
+                execute("ALTER TABLE pt ALTER COLUMN val TYPE UUID");
+                drainWalQueue();
+                // Lazy read: both partitions are still parquet, scanned frame by frame.
+                assertSqlCursors("SELECT * FROM nt ORDER BY ts", "SELECT * FROM pt ORDER BY ts");
+                // Eager rewrite, then re-read against native files.
+                execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+                execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-02'");
+                drainWalQueue();
+                assertSqlCursors("SELECT * FROM nt ORDER BY ts", "SELECT * FROM pt ORDER BY ts");
+            } finally {
+                tryDrop("nt");
+                tryDrop("pt");
+            }
+        });
+    }
+
     /**
      * Pins parity between the lazy per-row parquet read path
      * ({@code PageFrameMemoryRecord.convertVarToXxx}) and the eager native rewrite path

@@ -4192,7 +4192,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 case ColumnType.SHORT ->
                         Unsafe.putShort(dstPtr + ((long) rowIndex << 1), (short) Numbers.parseInt(value));
                 case ColumnType.CHAR -> {
-                    char c = value.length() > 0 ? value.charAt(0) : 0;
+                    char c = !value.isEmpty() ? value.charAt(0) : 0;
                     Unsafe.putChar(dstPtr + ((long) rowIndex << 1), c);
                 }
                 case ColumnType.INT -> Unsafe.putInt(dstPtr + ((long) rowIndex << 2), Numbers.parseInt(value));

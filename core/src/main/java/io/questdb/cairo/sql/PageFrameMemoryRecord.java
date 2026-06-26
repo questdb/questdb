@@ -100,6 +100,17 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     private final StringSink utf16DecodeSink = new StringSink();
     private final ObjList<Utf8SplitString> utf8Views = new ObjList<>();
     private final ObjList<Utf8StringSink> varcharSinks = new ObjList<>();
+    // Single-entry cache so the two UUID accessors (getLong128Hi/getLong128Lo) parse a
+    // var->UUID value once per row instead of once each. Keyed by (frame, row, column): frameIndex
+    // is part of the key so any frame switch -- via either init() overload -- self-invalidates the
+    // cache without a per-init reset, since two frames reuse the same in-frame row indexes for
+    // different data. clear() resets the key for cross-query record reuse. The fields are only read
+    // and written on the UUID-cast accessor path, so a non-cast query never touches them.
+    private int uuidCacheColumnIndex = -1;
+    private int uuidCacheFrameIndex = -1;
+    private long uuidCacheHi;
+    private long uuidCacheLo;
+    private long uuidCacheRowIndex = -1;
     protected DirectLongList auxPageAddresses;
     protected DirectLongList auxPageSizes;
     // Pool bind generation captured when boundPool was stamped. The pool bumps its
@@ -197,6 +208,12 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
             sourceColumnTypes.clear();
         }
         invalidateTypeCastConverterCache();
+        // Drop the var->UUID parse cache key so a recycled record cannot serve a prior query's
+        // value: a fresh query may reuse the same frameIndex with different data. The frameIndex
+        // in the cache key invalidates frame switches WITHIN a query on its own; this guards the
+        // cross-query reuse where frameIndex repeats. rowIndex is 0 after clear(), so a -1 sentinel
+        // here guarantees the next read misses.
+        uuidCacheRowIndex = -1;
     }
 
     @Override
@@ -1186,31 +1203,13 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     }
 
     private long convertVarToUuidHi(int encoded, int columnIndex) {
-        CharSequence cs = readVarValueForConversion(encoded & 0xFF, columnIndex);
-        if (cs != null) {
-            try {
-                // checkDashesAndLength must run first: Uuid.parseHi indexes charAt up to
-                // UUID_LENGTH unconditionally and would throw IndexOutOfBoundsException on
-                // a short input (NumericException-only catch would not handle it). Matches
-                // the native ColumnTypeConverter.str2Uuid contract: malformed input is null.
-                Uuid.checkDashesAndLength(cs);
-                return Uuid.parseHi(cs);
-            } catch (NumericException ignore) {
-            }
-        }
-        return Numbers.LONG_NULL;
+        parseVarToUuid(encoded, columnIndex);
+        return uuidCacheHi;
     }
 
     private long convertVarToUuidLo(int encoded, int columnIndex) {
-        CharSequence cs = readVarValueForConversion(encoded & 0xFF, columnIndex);
-        if (cs != null) {
-            try {
-                Uuid.checkDashesAndLength(cs);
-                return Uuid.parseLo(cs);
-            } catch (NumericException ignore) {
-            }
-        }
-        return Numbers.LONG_NULL;
+        parseVarToUuid(encoded, columnIndex);
+        return uuidCacheLo;
     }
 
     private @NotNull DirectString csViewA(int columnIndex) {
@@ -1261,6 +1260,43 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         }
         longs256.extendAndSet(slot, long256 = new Long256Impl());
         return long256;
+    }
+
+    /**
+     * Parses the var->UUID value at the current row into {@link #uuidCacheHi}/{@link #uuidCacheLo},
+     * so the paired getLong128Hi/getLong128Lo accessors share a single parse per row rather than
+     * parsing the string twice. A second call for the same (row, column) is a no-op cache hit.
+     * <p>
+     * Both halves are parsed together and committed only if both succeed; if either half is
+     * malformed both cache values become {@code LONG_NULL}. This mirrors the native
+     * {@link ColumnTypeConverter} {@code str2Uuid}, which nulls both halves on any parse failure,
+     * so a structurally-valid UUID with one corrupt half reads as NULL on both paths.
+     */
+    private void parseVarToUuid(int encoded, int columnIndex) {
+        if (uuidCacheFrameIndex == frameIndex && uuidCacheRowIndex == rowIndex && uuidCacheColumnIndex == columnIndex) {
+            return;
+        }
+        long hi = Numbers.LONG_NULL;
+        long lo = Numbers.LONG_NULL;
+        CharSequence cs = readVarValueForConversion(encoded & 0xFF, columnIndex);
+        if (cs != null) {
+            try {
+                // checkDashesAndLength must run first: Uuid.parseHi indexes charAt up to
+                // UUID_LENGTH unconditionally and would throw IndexOutOfBoundsException on a
+                // short input (the NumericException-only catch would not handle it).
+                Uuid.checkDashesAndLength(cs);
+                long parsedHi = Uuid.parseHi(cs);
+                lo = Uuid.parseLo(cs);
+                // Commit hi only after parseLo succeeds, so a corrupt lo leaves both at LONG_NULL.
+                hi = parsedHi;
+            } catch (NumericException ignore) {
+            }
+        }
+        uuidCacheHi = hi;
+        uuidCacheLo = lo;
+        uuidCacheFrameIndex = frameIndex;
+        uuidCacheRowIndex = rowIndex;
+        uuidCacheColumnIndex = columnIndex;
     }
 
     /**
