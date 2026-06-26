@@ -89,13 +89,12 @@ public class RecoveryCoordinator {
         if (!configuration.isAdaptiveRecoveryRollForwardEnabled()) {
             return;
         }
-        // Adaptive-only: the durable epoch + lazy apply only exist under CommitMode.ADAPTIVE. Under
-        // any other mode the apply path is already self-durable (or NOSYNC by design), and no epoch
-        // copies are ever written, so there is nothing to roll forward.
-        if (configuration.getCommitMode() != CommitMode.ADAPTIVE) {
-            return;
-        }
-
+        // Deferred 1: the durable epoch + lazy apply are a PER-TABLE property now, not a global one.
+        // We must NOT short-circuit on the global commit mode — a WITH commit_mode='adaptive' table on a
+        // NOSYNC instance has epoch copies to roll forward, while a NOSYNC table on an ADAPTIVE instance
+        // has none. Recovery iterates every WAL table; recoverTable() is double-gated: (a) only adaptive
+        // tables that actually took an epoch have a _snapshot marker (the cheap existence pre-check), and
+        // (b) the per-table effective mode must be ADAPTIVE. Non-adaptive tables are left untouched.
         final ObjHashSet<TableToken> tokens = new ObjHashSet<>();
         engine.getTableTokens(tokens, false);
 
@@ -103,6 +102,9 @@ public class RecoveryCoordinator {
             for (int i = 0, n = tokens.size(); i < n; i++) {
                 final TableToken token = tokens.get(i);
                 if (!token.isWal()) {
+                    continue;
+                }
+                if (engine.getTableSequencerAPI().resolveEffectiveCommitMode(token) != CommitMode.ADAPTIVE) {
                     continue;
                 }
                 recoverTable(token, src, dst, dir);

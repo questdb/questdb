@@ -530,7 +530,11 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         // defaults to 0 (retain everything) for a fresh adaptive table; the epoch job advances it
         // as epochs are confirmed durable.  For non-adaptive modes this check is skipped entirely
         // so existing behaviour is completely unchanged.
-        if (configuration.getCommitMode() == CommitMode.ADAPTIVE) {
+        // Deferred 1: gate on the PER-TABLE effective mode, so a WITH commit_mode='adaptive' table keeps
+        // its WAL floor even under a NOSYNC instance default, while a NOSYNC sibling purges freely.
+        // resolveEffectiveCommitMode falls back to reading _meta when the tracker has not been published
+        // yet, so an adaptive table is recognized even before its first writer/commit publishes the mode.
+        if (engine.getTableSequencerAPI().resolveEffectiveCommitMode(tableToken) == CommitMode.ADAPTIVE) {
             final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
             safeToPurgeTxn = Math.min(safeToPurgeTxn, tracker.getDurableEpochSeqTxn());
         }

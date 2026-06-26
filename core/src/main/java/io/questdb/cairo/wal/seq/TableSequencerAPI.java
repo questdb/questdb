@@ -274,7 +274,13 @@ public class TableSequencerAPI implements QuietCloseable {
         if (mode != io.questdb.cairo.CommitMode.UNSET) {
             return mode;
         }
-        final int tableMode = TableUtils.getCommitMode(engine.getTableMetadata(tableToken), engine);
+        // Read the per-table _meta override via a pooled metadata handle and CLOSE it (the pool would
+        // otherwise report the tenant "left behind on shutdown"). Do not delegate to
+        // TableUtils.getCommitMode(metadata, engine) here — that opens a SECOND handle.
+        final int tableMode;
+        try (io.questdb.cairo.sql.TableMetadata meta = engine.getTableMetadata(tableToken)) {
+            tableMode = meta.getCommitMode();
+        }
         final int effective = io.questdb.cairo.CommitMode.effectiveCommitMode(tableMode, configuration.getCommitMode());
         tracker.setCommitMode(effective);
         return effective;

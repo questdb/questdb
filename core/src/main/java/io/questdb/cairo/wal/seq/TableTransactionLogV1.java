@@ -70,6 +70,9 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
     private final FilesFacade ff;
     private final AtomicLong maxTxn = new AtomicLong();
     private final MemoryCMARW txnMem = Vm.getCMARWInstance();
+    // Per-table EFFECTIVE commit mode for the sequencer-record flush; UNSET => defer to the global mode.
+    // Pushed by TableSequencerImpl from its SeqTxnTracker. See setCommitMode / sync0 (Deferred 1).
+    private volatile int tableCommitMode = CommitMode.UNSET;
 
     public TableTransactionLogV1(CairoConfiguration configuration) {
         this.configuration = configuration;
@@ -202,8 +205,13 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         return maxStructureVersion;
     }
 
+    @Override
+    public void setCommitMode(int commitMode) {
+        this.tableCommitMode = commitMode;
+    }
+
     private void sync0() {
-        int commitMode = configuration.getCommitMode();
+        int commitMode = CommitMode.effectiveCommitMode(tableCommitMode, configuration.getCommitMode());
         if (commitMode != CommitMode.NOSYNC) {
             txnMem.sync(commitMode == CommitMode.ASYNC);
             // ADAPTIVE: make the V1 sequencer header durable.

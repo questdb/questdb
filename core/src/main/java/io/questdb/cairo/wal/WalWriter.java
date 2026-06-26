@@ -124,6 +124,10 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     private final MetadataValidatorService metaValidatorSvc = new MetadataValidatorService();
     private final MetadataService metaWriterSvc = new MetadataWriterService();
     private final WalWriterMetadata metadata;
+    // The per-table SeqTxnTracker, cached once (stable per table). Carries the table's EFFECTIVE commit
+    // mode, read live on each commit via walCommitMode() so an ALTER ... SET PARAM commit_mode that
+    // republishes the tracker is picked up without reopening this WAL writer. See Deferred 1.
+    private final io.questdb.cairo.wal.seq.SeqTxnTracker seqTxnTracker;
     private final Metrics metrics;
     private final ObjList<Runnable> nullSetters;
     private final RecentWriteTracker recentWriteTracker;
@@ -192,6 +196,9 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             sequencer.getTableMetadata(tableToken, metadata);
             timestampDriver = ColumnType.getTimestampDriver(metadata.getTimestampType());
             this.tableToken = metadata.getTableToken();
+            // Cache the per-table tracker; the effective commit mode is read live from it on each commit
+            // (walCommitMode), so an ALTER ... SET PARAM commit_mode is picked up without reopening.
+            this.seqTxnTracker = sequencer.getTxnTracker(this.tableToken);
 
             columnCount = metadata.getColumnCount();
             timestampIndex = metadata.getTimestampIndex();
@@ -507,8 +514,8 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                     refreshIntervalsBaseTxn
             );
             // ADAPTIVE: events must be durable before the sequencer pointer (data→events→seq ordering).
-            if (configuration.getCommitMode() == CommitMode.ADAPTIVE) {
-                events.sync();
+            if (walCommitMode() == CommitMode.ADAPTIVE) {
+                events.sync(walCommitMode());
             }
             getSequencerTxn();
         } catch (Throwable th) {
@@ -623,8 +630,8 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         try {
             lastSegmentTxn = events.truncate();
             // ADAPTIVE: events must be durable before the sequencer pointer (data→events→seq ordering).
-            if (configuration.getCommitMode() == CommitMode.ADAPTIVE) {
-                events.sync();
+            if (walCommitMode() == CommitMode.ADAPTIVE) {
+                events.sync(walCommitMode());
             }
             getSequencerTxn();
         } catch (Throwable th) {
@@ -877,7 +884,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     }
 
     private void closeSegmentSwitchFiles(SegmentColumnRollSink newColumnFiles) {
-        int commitMode = configuration.getCommitMode();
+        int commitMode = walCommitMode();
         for (int columnIndex = 0, n = newColumnFiles.count(); columnIndex < n; columnIndex++) {
             final long primaryFd = newColumnFiles.getDestPrimaryFd(columnIndex);
             if (commitMode != CommitMode.NOSYNC) {
@@ -1400,7 +1407,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             final int segmentPathLen = createSegmentDir(newSegmentId);
             segmentId = newSegmentId;
             final long dirFd;
-            final int commitMode = configuration.getCommitMode();
+            final int commitMode = walCommitMode();
             if (Os.isWindows() || commitMode == CommitMode.NOSYNC) {
                 dirFd = -1;
             } else {
@@ -1435,7 +1442,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             totalSegmentsSize += events.size();
             events.openEventFile(path, segmentPathLen, isTruncateFilesOnClose(), tableToken.isSystem());
             if (commitMode != CommitMode.NOSYNC) {
-                events.sync();
+                events.sync(commitMode);
             }
 
             if (dirFd != -1) {
@@ -1681,7 +1688,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                     lastDedupMode
             );
         }
-        events.sync();
+        events.sync(walCommitMode());
     }
 
     private void rollUncommittedToNewSegment(int convertColumnIndex, int convertToColumnType) {
@@ -1729,7 +1736,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                                 .I$();
                     }
 
-                    final int commitMode = configuration.getCommitMode();
+                    final int commitMode = walCommitMode();
                     for (int columnIndex = 0; columnIndex < columnsToRoll; columnIndex++) {
                         // Allocate space for new column in columnRollSink and move to next record
                         // Do it for deleted columns too, it will be skipped in exactly same way in switchColumnsToNewSegment
@@ -1952,8 +1959,25 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         }
     }
 
+    /**
+     * The EFFECTIVE commit mode for THIS table's WAL durability (Deferred 1): the per-table override
+     * published on the tracker resolved against the global {@code cairo.commit.mode}. Read live so an
+     * {@code ALTER ... SET PARAM commit_mode} (which republishes the tracker) takes effect on the next
+     * commit without reopening this writer.
+     */
+    private int walCommitMode() {
+        int mode = seqTxnTracker.getCommitMode();
+        if (mode == CommitMode.UNSET) {
+            // Tracker not yet published (e.g. a post-restart WAL commit that precedes the first apply for
+            // this table). Resolve from _meta once; this publishes the effective mode onto the tracker so
+            // subsequent commits take the cheap volatile-read path above.
+            return sequencer.resolveEffectiveCommitMode(tableToken);
+        }
+        return CommitMode.effectiveCommitMode(mode, configuration.getCommitMode());
+    }
+
     private void syncIfRequired() {
-        int commitMode = configuration.getCommitMode();
+        int commitMode = walCommitMode();
         if (commitMode != CommitMode.NOSYNC) {
             final boolean async = commitMode == CommitMode.ASYNC;
             for (int i = 0, n = columns.size(); i < n; i++) {
@@ -1973,7 +1997,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                     }
                 }
             }
-            events.sync();
+            events.sync(commitMode);
         }
     }
 
@@ -2382,7 +2406,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                     // it will add the column file and switch metadata file on next row write
                     // as part of rolling to a new segment
                     if (uncommittedRows > 0) {
-                        setColumnNull(columnType, columnIndex, segmentRowCount, configuration.getCommitMode());
+                        setColumnNull(columnType, columnIndex, segmentRowCount, walCommitMode());
                         if (ColumnType.isSymbol(columnType)) {
                             symbolMapNullFlagsChanged.set(columnIndex, true);
                             symbolMapNullFlags.set(columnIndex, true);
@@ -2402,7 +2426,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                                         lastReplaceRangeHiTs,
                                         lastDedupMode
                                 );
-                                events.sync();
+                                events.sync(walCommitMode());
                             }
                         }
                     }

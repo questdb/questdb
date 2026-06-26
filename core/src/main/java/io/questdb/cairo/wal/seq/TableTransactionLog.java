@@ -190,6 +190,17 @@ public class TableTransactionLog implements Closeable {
         return lastTxn = txnLogFile.addEntry(structureVersion, walId, segmentId, segmentTxn, timestamp, txnMinTimestamp, txnMaxTimestamp, txnRowCount);
     }
 
+    /**
+     * Pushes the table's EFFECTIVE commit mode (Deferred 1) to the underlying log file so the
+     * per-commit sequencer-record flush follows the per-table mode. Idempotent. {@code txnLogFile} can be
+     * null before {@link #open}; the mode is re-pushed by TableSequencerImpl after open.
+     */
+    void setCommitMode(int commitMode) {
+        if (txnLogFile != null) {
+            txnLogFile.setCommitMode(commitMode);
+        }
+    }
+
     void beginMetadataChangeEntry(long newStructureVersion, MemorySerializer serializer, Object instance, long timestamp) {
         if (newStructureVersion != txnMetaMemIndex.getAppendOffset() / Long.BYTES) {
             if (instance instanceof AlterOperation) {

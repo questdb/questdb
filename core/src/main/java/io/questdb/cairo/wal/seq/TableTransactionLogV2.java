@@ -83,6 +83,9 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
     private final MemoryCMARW txnMem = Vm.getCMARWInstance();
     private final MemoryCMARW txnPartMem = Vm.getCMARWInstance();
     private final WalDirectoryPolicy walDirectoryPolicy;
+    // Per-table EFFECTIVE commit mode for the sequencer-record flush; UNSET => defer to the global mode.
+    // Pushed by TableSequencerImpl from its SeqTxnTracker. See setCommitMode / sync0 (Deferred 1).
+    private volatile int tableCommitMode = CommitMode.UNSET;
     private long partId = -1;
     private int partTransactionCount;
 
@@ -329,8 +332,13 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         txnPartMem.jumpTo((this.maxTxn.get() % partTransactionCount) * RECORD_SIZE);
     }
 
+    @Override
+    public void setCommitMode(int commitMode) {
+        this.tableCommitMode = commitMode;
+    }
+
     private void sync0() {
-        int commitMode = configuration.getCommitMode();
+        int commitMode = CommitMode.effectiveCommitMode(tableCommitMode, configuration.getCommitMode());
         if (commitMode != CommitMode.NOSYNC) {
             // Part file must be durable before the header that points to it.
             // A crash after the header sync but before the part file is written back

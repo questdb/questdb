@@ -486,7 +486,15 @@ class WalEventWriter implements Closeable {
     }
 
     void sync() {
-        int commitMode = configuration.getCommitMode();
+        sync(configuration.getCommitMode());
+    }
+
+    /**
+     * Flush (and, under ADAPTIVE, fdatasync) the WAL events files using the given EFFECTIVE commit mode.
+     * Callers on the WAL commit path pass the per-table effective mode (Deferred 1) so the events file's
+     * durability matches the table's WAL-commit durability, preserving the data→events→seq ordering.
+     */
+    void sync(int commitMode) {
         if (commitMode != CommitMode.NOSYNC) {
             eventMem.sync(commitMode == CommitMode.ASYNC);
             eventIndexMem.sync(commitMode == CommitMode.ASYNC);

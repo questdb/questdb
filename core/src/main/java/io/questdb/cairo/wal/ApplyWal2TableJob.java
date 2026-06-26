@@ -672,7 +672,10 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
      * distress) propagate to the apply loop's existing failure handling.
      */
     private void maybeAdvanceDurableEpoch(TableToken tableToken, TableWriter writer) {
-        if (config.getCommitMode() != CommitMode.ADAPTIVE) {
+        // Per-table EFFECTIVE mode (Deferred 1): the epoch lifecycle is driven by THIS table's mode, so a
+        // WITH commit_mode='adaptive' table fires epochs even under a NOSYNC instance default, while a
+        // sibling NOSYNC table never does (fastest path).
+        if (writer.getEffectiveCommitMode() != CommitMode.ADAPTIVE) {
             return;
         }
         final long intervalMs = config.getAdaptiveEpochIntervalMs();

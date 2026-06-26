@@ -153,4 +153,13 @@ public interface TableTransactionLogFile extends Closeable {
      * @return transaction id of the last committed transaction
      */
     long open(Path path);
+
+    /**
+     * Sets the table's EFFECTIVE commit mode (a {@link io.questdb.cairo.CommitMode} constant, or
+     * {@link io.questdb.cairo.CommitMode#UNSET} to defer to the global {@code cairo.commit.mode}) used by
+     * the per-commit sequencer-record durability flush. Deferred 1: lets an ADAPTIVE table fdatasync its
+     * sequencer records even when the instance default is NOSYNC, which is required for crash recovery to
+     * roll its committed transactions forward.
+     */
+    void setCommitMode(int commitMode);
 }

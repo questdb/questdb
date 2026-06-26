@@ -2264,6 +2264,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return txWriter.getMaxTimestamp();
     }
 
+    /**
+     * The table's EFFECTIVE commit mode (its {@code _meta} override resolved against the global
+     * {@code cairo.commit.mode}). Used by apply-path helpers that run outside this class (e.g.
+     * {@code O3CopyJob}) so their column-data sync follows THIS table's mode. See Deferred 1.
+     */
+    public int getEffectiveCommitMode() {
+        return effectiveCommitMode;
+    }
+
     @Override
     public int getMetaMaxUncommittedRows() {
         return metadata.getMaxUncommittedRows();
@@ -4926,7 +4935,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Under ADAPTIVE the materialized partition columns are a rebuildable cache of the durable WAL
         // (durability via the epoch + recovery roll-forward), so their append-page-release msync is
         // skipped (lazy apply). Non-adaptive modes leave applyLazy false => byte-identical behavior.
-        final boolean applyLazyColumns = !appliesColumnSync(configuration.getCommitMode());
+        final boolean applyLazyColumns = !appliesColumnSync(effectiveCommitMode);
         if (type > 0) {
             dataMem = Vm.getPMARInstance(configuration);
             dataMem.setApplyLazy(applyLazyColumns);
@@ -11010,7 +11019,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // durable WAL (the convert-partition command is itself WAL-replayed), so it is left
                 // non-durable here (lazy) and made crash-safe by the epoch + recovery roll-forward.
                 // The partition DIRECTORY entry below stays durable (structural). See appliesColumnSync.
-                if (appliesColumnSync(configuration.getCommitMode())) {
+                // Per-table effective mode (Deferred 1): the data sync follows THIS table's mode.
+                if (appliesColumnSync(effectiveCommitMode)) {
                     if (dstDataFd != -1) {
                         ff.fsync(dstDataFd);
                     }
@@ -13639,12 +13649,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * stays as durable as the commit mode dictates. NOSYNC and the structural metadata are untouched.
      */
     private int applyColumnSyncMode() {
-        final int commitMode = configuration.getCommitMode();
+        // Per-table effective mode (Deferred 1): under a table whose effective mode is ADAPTIVE the
+        // split/squash column writes are lazy even when the instance default is SYNC/ASYNC, and vice versa.
+        final int commitMode = effectiveCommitMode;
         return appliesColumnSync(commitMode) ? commitMode : CommitMode.NOSYNC;
     }
 
     private void syncColumns() {
-        final int commitMode = configuration.getCommitMode();
+        final int commitMode = effectiveCommitMode;
         // Always commit indexers: PostingIndexWriter buffers add() calls in native
         // memory and only publishes them to the memory-mapped files during commit().
         // Without this, readers see keyCount=0 until the writer is closed (seal).

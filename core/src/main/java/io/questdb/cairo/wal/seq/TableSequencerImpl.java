@@ -189,6 +189,7 @@ public class TableSequencerImpl implements TableSequencer {
     public void dropTable() {
         checkDropped();
         final long timestamp = microClock.getTicks();
+        pushCommitModeToLog();
         final long txn = tableTransactionLog.addEntry(
                 getStructureVersion(), WalUtils.DROP_TABLE_WAL_ID,
                 0, 0, timestamp, 0, 0, 0
@@ -344,6 +345,7 @@ public class TableSequencerImpl implements TableSequencer {
                 metadata.sync();
                 // TableToken can become updated as a result of alter.
                 tableToken = metadata.getTableToken();
+                pushCommitModeToLog();
                 txn = tableTransactionLog.endMetadataChangeEntry();
 
                 if (!seqTxnTracker.isSuspended()) {
@@ -477,6 +479,7 @@ public class TableSequencerImpl implements TableSequencer {
             long txnMaxTimestamp,
             long txnRowCount
     ) {
+        pushCommitModeToLog();
         return tableTransactionLog.addEntry(
                 getStructureVersion(),
                 walId,
@@ -493,6 +496,32 @@ public class TableSequencerImpl implements TableSequencer {
         if (txn == Long.MAX_VALUE || seqTxnTracker.notifyOnCommit(txn)) {
             engine.notifyWalTxnCommitted(tableToken);
         }
+    }
+
+    /**
+     * Pushes this table's EFFECTIVE commit mode (Deferred 1) onto the transaction log just before a commit,
+     * so the per-commit sequencer-record flush ({@code sync0}) makes ADAPTIVE tables durable even under a
+     * NOSYNC instance default — required for recovery to roll their committed transactions forward. Reads
+     * the live per-table mode from the tracker (republished by ALTER ... SET PARAM commit_mode) resolved
+     * against the global mode. Cheap: a volatile read + a volatile write on the commit path.
+     */
+    private void pushCommitModeToLog() {
+        // Resolve the per-table effective mode, reading _meta as a fallback when the tracker has not been
+        // published yet (e.g. the very first operation after a restart, including an ALTER that takes no
+        // data-sync path). Best-effort: if the _meta read fails (e.g. a table mid-drop), fall back to the
+        // global mode rather than failing the commit — resolveEffectiveCommitMode caches its result on the
+        // tracker so this _meta read happens at most once per table per process.
+        int mode = seqTxnTracker.getCommitMode();
+        if (mode == io.questdb.cairo.CommitMode.UNSET) {
+            try {
+                mode = pool.resolveEffectiveCommitMode(tableToken);
+            } catch (Throwable th) {
+                mode = engine.getConfiguration().getCommitMode();
+            }
+        } else {
+            mode = io.questdb.cairo.CommitMode.effectiveCommitMode(mode, engine.getConfiguration().getCommitMode());
+        }
+        tableTransactionLog.setCommitMode(mode);
     }
 
     private void openOrRecoverMetadata(long committedStructureVersion) {
