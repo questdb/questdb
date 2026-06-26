@@ -9422,6 +9422,98 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByWithQuotedTablePrefixAndFunction() throws Exception {
+        assertMemoryLeak(() -> {
+            createSampleByPrefixTrades("\"trades.hist\"");
+
+            assertQuery("""
+                    SELECT dateadd('d', 1, "trades.hist".timestamp) AS time, sum(price)
+                    FROM "trades.hist"
+                    SAMPLE BY 5m
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            time\tsum
+                            2026-04-01T02:00:00.000000Z\t201.0
+                            2026-04-01T02:05:00.000000Z\t102.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testSampleByWithTableAliasAndFunction() throws Exception {
+        assertMemoryLeak(() -> {
+            createSampleByPrefixTrades("trades");
+
+            assertQuery("""
+                    SELECT dateadd('d', 1, t.timestamp) AS time, sum(price)
+                    FROM trades t
+                    SAMPLE BY 5m
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            time\tsum
+                            2026-04-01T02:00:00.000000Z\t201.0
+                            2026-04-01T02:05:00.000000Z\t102.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testSampleByWithTableAliasAndFunctionInJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            createSampleByPrefixTrades("trades");
+            execute("""
+                    CREATE TABLE machines (
+                        host SYMBOL,
+                        grp SYMBOL
+                    )
+                    """);
+            execute("""
+                    INSERT INTO machines VALUES
+                        ('a', 'east'),
+                        ('b', 'west')
+                    """);
+
+            assertQuery("""
+                    SELECT dateadd('d', 1, t.timestamp) AS time, sum(t.price)
+                    FROM trades t
+                    JOIN machines m ON t.host = m.host
+                    WHERE m.grp = 'east'
+                    SAMPLE BY 5m
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            time\tsum
+                            2026-04-01T02:00:00.000000Z\t201.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testSampleByWithTablePrefixAndFunction() throws Exception {
+        assertMemoryLeak(() -> {
+            createSampleByPrefixTrades("trades");
+
+            assertQuery("""
+                    SELECT dateadd('d', 1, trades.timestamp) AS time, sum(price)
+                    FROM trades
+                    SAMPLE BY 5m
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            time\tsum
+                            2026-04-01T02:00:00.000000Z\t201.0
+                            2026-04-01T02:05:00.000000Z\t102.0
+                            """);
+        });
+    }
+
+    @Test
     public void testSampleByWithoutTimestamp() throws Exception {
         assertQuery("SELECT * FROM ( SELECT null as x) SAMPLE BY 1d FROM '2021-01-02T00:00:00' " +
                 "TO dateadd('d', 1095, '2021-01-02T00:00:00');")
@@ -17757,6 +17849,19 @@ public class SampleByTest extends AbstractCairoTest {
                     .expectSize(expectSize)
                     .returns(expected);
         });
+    }
+
+    private void createSampleByPrefixTrades(String tableName) throws SqlException {
+        execute("CREATE TABLE " + tableName + " (" +
+                "  host SYMBOL," +
+                "  price DOUBLE," +
+                "  timestamp TIMESTAMP" +
+                ") TIMESTAMP(timestamp) PARTITION BY DAY");
+
+        execute("INSERT INTO " + tableName + " VALUES" +
+                "('a', 100.0, '2026-03-31T02:00:00.000000Z')," +
+                "('a', 101.0, '2026-03-31T02:03:00.000000Z')," +
+                "('b', 102.0, '2026-03-31T02:06:00.000000Z')");
     }
 
     @NotNull

@@ -4620,13 +4620,17 @@ public class SqlOptimiser implements Mutable {
     private void fixTimestampAndCollectMissingTokens(
             ExpressionNode node,
             CharSequence timestampColumn,
+            int timestampDot,
+            int timestampLo,
+            int timestampHi,
             CharSequence timestampAlias,
+            IQueryModel model,
             CharSequenceHashSet missingTokens
     ) {
         sqlNodeStack.clear();
         while (node != null) {
             if (node.type == LITERAL) {
-                if (Chars.equalsIgnoreCase(node.token, timestampColumn)) {
+                if (referencesTimestampColumn(node.token, timestampColumn, timestampDot, timestampLo, timestampHi, model)) {
                     node.token = timestampAlias;
                 } else {
                     missingTokens.add(node.token);
@@ -5762,15 +5766,105 @@ public class SqlOptimiser implements Mutable {
         return nextLiteral(token, 0);
     }
 
-    private boolean nonAggregateFunctionDependsOn(ExpressionNode node, ExpressionNode timestampNode) {
-        if (timestampNode == null) {
+    private boolean referencesTimestampColumn(
+            CharSequence token,
+            CharSequence timestamp,
+            int timestampDot,
+            int timestampLo,
+            int timestampHi,
+            IQueryModel model
+    ) {
+        if (Chars.equalsIgnoreCase(token, timestamp)) {
+            return true;
+        }
+
+        final int tokenDot = Chars.indexOfLastUnquoted(token, '.');
+        final int tokenLo = tokenDot + 1;
+        final int tokenHi = token.length();
+        if (!equalsIgnoreCaseUnquoted(token, tokenLo, tokenHi, timestamp, timestampLo, timestampHi)) {
             return false;
         }
 
-        final CharSequence timestamp = timestampNode.token;
+        if (tokenDot == -1) {
+            return true;
+        }
+
+        if (timestampDot > -1) {
+            if (equalsIgnoreCaseUnquoted(timestamp, 0, timestampDot, token, 0, tokenDot)) {
+                return true;
+            }
+            if (model != null) {
+                final int tokenModelIndex = model.getModelAliasIndex(token, 0, tokenDot);
+                final int timestampModelIndex = model.getModelAliasIndex(timestamp, 0, timestampDot);
+                return tokenModelIndex > -1 && tokenModelIndex == timestampModelIndex;
+            }
+            return false;
+        }
+
+        if (model == null) {
+            return false;
+        }
+
+        final ExpressionNode alias = model.getAlias();
+        if (alias != null && equalsIgnoreCaseUnquoted(alias.token, 0, alias.token.length(), token, 0, tokenDot)) {
+            return true;
+        }
+
+        final CharSequence tableName = model.getTableName();
+        if (tableName != null && equalsIgnoreCaseUnquoted(tableName, 0, tableName.length(), token, 0, tokenDot)) {
+            return true;
+        }
+
+        final int modelIndex = model.getModelAliasIndex(token, 0, tokenDot);
+        if (modelIndex == -1) {
+            return false;
+        }
+        return model.getJoinModels().size() == 1 || modelIndex == 0;
+    }
+
+    private static boolean equalsIgnoreCaseUnquoted(CharSequence a, int aStart, int aEnd, CharSequence b, int bStart, int bEnd) {
+        if (a == null || b == null) {
+            return false;
+        }
+        
+        int aLen = aEnd - aStart;
+        if (aLen > 1 && a.charAt(aStart) == '"' && a.charAt(aEnd - 1) == '"') {
+            aStart++;
+            aEnd--;
+        }
+        
+        int bLen = bEnd - bStart;
+        if (bLen > 1 && b.charAt(bStart) == '"' && b.charAt(bEnd - 1) == '"') {
+            bStart++;
+            bEnd--;
+        }
+        
+        if (aEnd - aStart != bEnd - bStart) {
+            return false;
+        }
+        
+        for (int i = aStart, j = bStart; i < aEnd; i++, j++) {
+            char ca = a.charAt(i);
+            char cb = b.charAt(j);
+            if (ca != cb && Character.toLowerCase(ca) != Character.toLowerCase(cb)) {
+                return false;
+            }
+        }
+        
+        return true;
+    }
+
+    private boolean nonAggregateFunctionDependsOn(ExpressionNode node, CharSequence timestamp, IQueryModel model) {
+        if (timestamp == null) {
+            return false;
+        }
+
+        final int timestampDot = Chars.indexOfLastUnquoted(timestamp, '.');
+        final int timestampLo = timestampDot + 1;
+        final int timestampHi = timestamp.length();
         sqlNodeStack.clear();
         while (node != null) {
-            if (node.type == LITERAL && Chars.equalsIgnoreCase(node.token, timestamp)) {
+            if (node.type == LITERAL && referencesTimestampColumn(node.token, timestamp, timestampDot, timestampLo, timestampHi, model)) {
                 return true;
             }
 
@@ -5801,6 +5895,10 @@ public class SqlOptimiser implements Mutable {
         }
 
         return false;
+    }
+
+    private boolean nonAggregateFunctionDependsOn(ExpressionNode node, ExpressionNode timestampNode, IQueryModel model) {
+        return timestampNode != null && nonAggregateFunctionDependsOn(node, timestampNode.token, model);
     }
 
     private void normalizeWindowFrame(WindowExpression ac, SqlExecutionContext sqlExecutionContext) throws SqlException {
@@ -8964,16 +9062,19 @@ public class SqlOptimiser implements Mutable {
                 // columnToAlias map is lossy, it only stores "last" alias (non-deterministic)
                 // to find other aliases we have to loop thru all the columns. We are removing
                 // columns in this loop, that is why there is no auto-increment.
+                final int tsDot = Chars.indexOfLastUnquoted(timestampColumn, '.');
+                final int tsLo = tsDot + 1;
+                final int tsHi = timestampColumn.length();
                 for (int i = 0, k = 0, n = model.getBottomUpColumns().size(); i < n; k++) {
                     final QueryColumn qc = model.getBottomUpColumns().getQuick(i);
                     final boolean isFunctionWithTsColumn = (qc.getAst().type == FUNCTION || qc.getAst().type == OPERATION)
-                            && nonAggregateFunctionDependsOn(qc.getAst(), nested.getTimestamp());
+                            && nonAggregateFunctionDependsOn(qc.getAst(), timestampColumn, nested);
                     if (
                             isFunctionWithTsColumn ||
                                     // also check all literals that refer timestamp column, except the one
                                     // with our chosen timestamp alias
                                     (timestampAlias != null && qc.getAst().type == LITERAL
-                                            && Chars.equalsIgnoreCase(qc.getAst().token, timestampColumn)
+                                            && referencesTimestampColumn(qc.getAst().token, timestampColumn, tsDot, tsLo, tsHi, nested)
                                             && !Chars.equalsIgnoreCase(qc.getAlias(), timestampAlias))
                     ) {
                         model.removeColumn(i);
@@ -8997,7 +9098,7 @@ public class SqlOptimiser implements Mutable {
                             timestampOnly = false;
                         }
                     } else {
-                        if (!Chars.equalsIgnoreCase(qc.getAst().token, timestampColumn)) {
+                        if (!referencesTimestampColumn(qc.getAst().token, timestampColumn, tsDot, tsLo, tsHi, nested)) {
                             timestampOnly = false;
                         }
                         i++;
@@ -9132,7 +9233,7 @@ public class SqlOptimiser implements Mutable {
                 if ((wrapAction & SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES) != 0) {
                     tempCharSequenceHashSet.clear();
                     for (int i = 0, n = tempColumns.size(); i < n; i++) {
-                        fixTimestampAndCollectMissingTokens(tempColumns.get(i).getAst(), timestampColumn, timestampAlias, tempCharSequenceHashSet);
+                        fixTimestampAndCollectMissingTokens(tempColumns.get(i).getAst(), timestampColumn, tsDot, tsLo, tsHi, timestampAlias, nested, tempCharSequenceHashSet);
                     }
                     for (int i = 0, size = tempCharSequenceHashSet.size(); i < size; i++) {
                         final CharSequence dependentToken = tempCharSequenceHashSet.get(i);
@@ -9590,7 +9691,7 @@ public class SqlOptimiser implements Mutable {
 
         IQueryModel aggModel = isWindowJoin ? windowJoinModel : (isHorizonJoin ? horizonJoinModel : groupByModel);
         final int beforeSplit = aggModel.getBottomUpColumns().size();
-        if (checkForChildAggregates(qc.getAst()) || (sampleBy != null && nonAggregateFunctionDependsOn(qc.getAst(), baseModel.getTimestamp()))) {
+        if (checkForChildAggregates(qc.getAst()) || (sampleBy != null && nonAggregateFunctionDependsOn(qc.getAst(), baseModel.getTimestamp(), baseModel))) {
             // push aggregates and literals outside aggregate functions
             emitAggregatesAndLiterals(
                     qc.getAst(),
