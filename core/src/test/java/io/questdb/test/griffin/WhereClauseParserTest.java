@@ -1231,7 +1231,9 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         // which is: timestamp > '2015-05-09T00:00:00.000Z'
         IntrinsicModel m = modelOf("dateadd('d', 1, timestamp) > '2015-05-10T00:00:00.000Z'");
         Assert.assertTrue(m.hasIntervalFilters());
-        TestUtils.assertEquals(replaceTimestampSuffix("[{lo=2015-05-09T00:00:00.000001Z, hi=294247-01-10T04:00:54.775807Z}]"), intervalToString(m));
+        // dateadd wraps past the domain max, so a ts within one day of the max can never satisfy the
+        // predicate; the exact upper bound is the domain max minus the shift
+        TestUtils.assertEquals(replaceTimestampSuffix("[{lo=2015-05-09T00:00:00.000001Z, hi=294247-01-09T04:00:54.775807Z}]"), intervalToString(m));
         assertFilter(m, null);
     }
 
@@ -1242,7 +1244,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         // which is: timestamp >= '2015-05-10T10:00:00.000Z'
         IntrinsicModel m = modelOf("dateadd('h', 2, timestamp) >= '2015-05-10T12:00:00.000Z'");
         Assert.assertTrue(m.hasIntervalFilters());
-        TestUtils.assertEquals(replaceTimestampSuffix("[{lo=2015-05-10T10:00:00.000000Z, hi=294247-01-10T04:00:54.775807Z}]"), intervalToString(m));
+        // dateadd wraps past the domain max, so the exact upper bound is the domain max minus the shift
+        TestUtils.assertEquals(replaceTimestampSuffix("[{lo=2015-05-10T10:00:00.000000Z, hi=294247-01-10T02:00:54.775807Z}]"), intervalToString(m));
         assertFilter(m, null);
     }
 
@@ -1300,7 +1303,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         // dateadd('h', 1, timestamp) > '2015-05-10T12:00:00.000Z' and bid > 100
         IntrinsicModel m = modelOf("dateadd('h', 1, timestamp) > '2015-05-10T12:00:00.000Z' and bid > 100");
         Assert.assertTrue(m.hasIntervalFilters());
-        TestUtils.assertEquals(replaceTimestampSuffix("[{lo=2015-05-10T11:00:00.000001Z, hi=294247-01-10T04:00:54.775807Z}]"), intervalToString(m));
+        // dateadd wraps past the domain max, so the exact upper bound is the domain max minus the shift
+        TestUtils.assertEquals(replaceTimestampSuffix("[{lo=2015-05-10T11:00:00.000001Z, hi=294247-01-10T03:00:54.775807Z}]"), intervalToString(m));
         assertFilter(m, "100 bid >");
     }
 
@@ -4446,6 +4450,10 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                 ? expected.replaceAll("00000", "00000000")
                 .replaceAll("99999", "99999999")
                 .replaceAll("294247-01-10T04:00:54.775807Z", "2262-04-11T23:47:16.854775807Z")
+                // domain max minus a dateadd shift (1 day / 2h / 1h), used by the wrapping-bound dateadd tests
+                .replaceAll("294247-01-09T04:00:54.775807Z", "2262-04-10T23:47:16.854775807Z")
+                .replaceAll("294247-01-10T02:00:54.775807Z", "2262-04-11T21:47:16.854775807Z")
+                .replaceAll("294247-01-10T03:00:54.775807Z", "2262-04-11T22:47:16.854775807Z")
                 .replaceAll("-290308-01-01T19:59:05.224193Z", "1677-01-01T00:12:43.145224193Z")
                 : expected;
     }

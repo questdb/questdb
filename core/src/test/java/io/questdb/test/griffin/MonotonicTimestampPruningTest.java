@@ -1149,11 +1149,65 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNarrowingCastSubMicroPreserved() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades_ns (price DOUBLE, timestamp TIMESTAMP_NS) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("INSERT INTO trades_ns VALUES " +
+                    "(100, '2022-01-02T23:59:59.999999500Z')," +
+                    "(200, '2022-01-03T00:00:00.000000500Z');");
+            // narrowing nano -> micro truncates the sub-microsecond bits, so the inverse is SUPERSET
+            // and keeps the filter: the row just below midnight is scanned but filtered out, the one
+            // just above is kept
+            assertQuery("SELECT * FROM trades_ns WHERE cast(timestamp AS timestamp) >= '2022-01-03'")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Interval forward scan on: trades_ns")
+                    .withPlanContaining("filter:")
+                    .returns("""
+                            price\ttimestamp
+                            200.0\t2022-01-03T00:00:00.000000500Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testNotBetweenFallback() throws Exception {
+        assertMemoryLeak(() -> {
+            createTrades();
+            // a negated BETWEEN is not pushed onto the timestamp axis; it stays a row filter
+            assertQuery("SELECT * FROM trades WHERE date_trunc('day', timestamp) NOT BETWEEN '2022-01-02' AND '2022-01-03'")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Frame forward scan on: trades")
+                    .returns("""
+                            price\ttimestamp
+                            100.0\t2022-01-01T12:00:00.000000Z
+                            250.0\t2022-01-04T12:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testNotEqualsFallback() throws Exception {
         assertMemoryLeak(() -> {
             createTrades();
             // a negated predicate is not pushed onto the timestamp axis; it stays a row filter
             assertQuery("SELECT * FROM trades WHERE date_trunc('day', timestamp) != '2022-01-03'")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Frame forward scan on: trades")
+                    .returns("""
+                            price\ttimestamp
+                            100.0\t2022-01-01T12:00:00.000000Z
+                            150.0\t2022-01-02T12:00:00.000000Z
+                            250.0\t2022-01-04T12:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testNotInFallback() throws Exception {
+        assertMemoryLeak(() -> {
+            createTrades();
+            // a negated IN is not pushed onto the timestamp axis; it stays a row filter
+            assertQuery("SELECT * FROM trades WHERE date_trunc('day', timestamp) NOT IN '2022-01-03'")
                     .timestamp("timestamp")
                     .withPlanContaining("Frame forward scan on: trades")
                     .returns("""
@@ -1309,6 +1363,24 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
                     .withPlanNotContaining("filter:")
                     .returns("""
                             price\ttimestamp
+                            200.0\t2022-01-03T12:00:00.000000Z
+                            250.0\t2022-01-04T12:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testTimestampCeilNearMaxBound() throws Exception {
+        assertMemoryLeak(() -> {
+            createTrades();
+            // a bound a hair below the type maximum exercises the ceil inverse's div/overflow guards;
+            // the predicate is true for every row, which a wrapped inverse must preserve
+            assertQuery("SELECT * FROM trades WHERE timestamp_ceil('d', timestamp) <= 9223372036854775806")
+                    .timestamp("timestamp")
+                    .returns("""
+                            price\ttimestamp
+                            100.0\t2022-01-01T12:00:00.000000Z
+                            150.0\t2022-01-02T12:00:00.000000Z
                             200.0\t2022-01-03T12:00:00.000000Z
                             250.0\t2022-01-04T12:00:00.000000Z
                             """);
@@ -1541,6 +1613,44 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
                             200.0\t2022-01-03T12:00:00.000000Z
                             250.0\t2022-01-04T12:00:00.000000Z
                             """);
+        });
+    }
+
+    @Test
+    public void testWideningCastFiniteUpperExcludesOverflow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tm (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY YEAR;");
+            execute("INSERT INTO tm VALUES " +
+                    "(1, '2022-06-01T00:00:00.000000Z')," +
+                    "(2, '2300-06-01T00:00:00.000000Z');");
+            // a finite upper bound below the nano domain stays EXACT: the year-2300 row provably does
+            // not satisfy the predicate, so pruning it (and dropping the filter) is correct
+            assertQuery("SELECT * FROM tm WHERE cast(timestamp AS timestamp_ns) <= '2261-12-31'")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Interval forward scan on: tm")
+                    .withPlanNotContaining("filter:")
+                    .returns("""
+                            price\ttimestamp
+                            1.0\t2022-06-01T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testWideningCastOpenUpperPreservesOverflowError() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tm (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY YEAR;");
+            execute("INSERT INTO tm VALUES " +
+                    "(1, '2022-06-01T00:00:00.000000Z')," +
+                    "(2, '2300-06-01T00:00:00.000000Z');");
+            // an open upper bound stays SUPERSET so the filter is kept: the year-2300 micro value
+            // overflows the nano domain when cast, so the query surfaces that error rather than
+            // silently pruning the row
+            assertExceptionNoLeakCheck(
+                    "SELECT * FROM tm WHERE cast(timestamp AS timestamp_ns) >= '2022-01-01'",
+                    -1,
+                    "inconvertible value"
+            );
         });
     }
 
