@@ -792,7 +792,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         };
         assertMemoryLeak(ff, () -> {
             execute("CREATE TABLE t_rowless (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING, v LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
-            execute("INSERT INTO t_rowless(ts, sym, v) SELECT ('2024-01-01T00:00:00.000000Z'::timestamp + x * 3600000000L)::timestamp, 'a', x FROM long_sequence(20)");
+            execute("INSERT INTO t_rowless(ts, sym, v) SELECT ('2024-01-01T00:00:00.000000Z'::timestamp + x * 3_600_000_000L)::timestamp, 'a', x FROM long_sequence(20)");
             // extra has no rows on 2024-01-01 (columnTop == partition size).
             execute("ALTER TABLE t_rowless ADD COLUMN extra SYMBOL INDEX TYPE POSTING");
 
@@ -838,11 +838,11 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             // day1 rows start at 12:00 so the O3 back-fill at 00:00 lands at rowid 0
             // (columnTop for c on day1 becomes 0).
             execute("INSERT INTO t_probe(ts, sym, v) SELECT " +
-                    "('2024-01-01T12:00:00.000000Z'::timestamp + (x-1) * 3600000000L)::timestamp, 'a', x " +
+                    "('2024-01-01T12:00:00.000000Z'::timestamp + (x-1) * 3_600_000_000L)::timestamp, 'a', x " +
                     "FROM long_sequence(5)");
             // day2 (L): 3 rows.
             execute("INSERT INTO t_probe(ts, sym, v) SELECT " +
-                    "('2024-01-02T00:00:00.000000Z'::timestamp + (x-1) * 3600000000L)::timestamp, 'a', 100+x " +
+                    "('2024-01-02T00:00:00.000000Z'::timestamp + (x-1) * 3_600_000_000L)::timestamp, 'a', 100+x " +
                     "FROM long_sequence(3)");
             // c row-less on day2 (columnTop == 3), absent on day1.
             execute("ALTER TABLE t_probe ADD COLUMN c SYMBOL INDEX TYPE POSTING");
@@ -867,6 +867,63 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                     .noLeakCheck().returns("v\n555\n");
             assertQuery("SELECT v FROM t_probe WHERE c = 'X'")
                     .noLeakCheck().returns("v\n999\n");
+        });
+    }
+
+    @Test
+    public void testO3SealRestoreRowlessNoKeyFileDoesNotSuspendWalTable() throws Exception {
+        // WAL counterpart to testO3SealRestoreSkipsRowlessPostingColumnWithoutKeyFile.
+        // The headline symptom of the no-.pk bug is a WAL table suspending mid-apply:
+        // restorePostingIndexersToLastPartition throws "index does not exist",
+        // ApplyWal2TableJob catches it and suspends the table -- the commit lands but
+        // apply halts and the table needs a manual RESUME WAL. With the fix the seal
+        // restore skips the row-less keyless column, apply completes, the table stays live.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 20);
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 20);
+        final AtomicBoolean keyFileHidden = new AtomicBoolean(false);
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean exists(LPSZ path) {
+                if (keyFileHidden.get()
+                        && Utf8s.containsAscii(path, "extra.pk")
+                        && !Utf8s.containsAscii(path, "2024-01-01T")) {
+                    return false;
+                }
+                return super.exists(path);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE t_rowless_wal (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t_rowless_wal(ts, sym, v) SELECT ('2024-01-01T00:00:00.000000Z'::timestamp + x * 3_600_000_000L)::timestamp, 'a', x FROM long_sequence(20)");
+            // extra has no rows on 2024-01-01 (columnTop == partition size).
+            execute("ALTER TABLE t_rowless_wal ADD COLUMN extra SYMBOL INDEX TYPE POSTING");
+            // Apply everything while the .pk is visible, so ADD COLUMN builds extra's
+            // .pk on the active partition exactly as in production.
+            drainWalQueue();
+
+            final TableToken token = engine.verifyTableName("t_rowless_wal");
+            Assert.assertFalse("table must apply cleanly before the O3 split", engine.getTableSequencerAPI().isSuspended(token));
+
+            // O3 insert forces a last-partition split; the seal sweep then restores the
+            // posting indexers to the shrunk 2024-01-01, where extra is row-less and
+            // reports no .pk. On master the apply throws and suspends the table here.
+            execute("INSERT INTO t_rowless_wal(ts, sym, v) VALUES ('2024-01-01T18:30:00.000000Z', 'a', 999)");
+            keyFileHidden.set(true);
+            drainWalQueue();
+            keyFileHidden.set(false);
+
+            // The table kept applying: not suspended, all rows present, sym index serves reads.
+            Assert.assertFalse(
+                    "WAL apply must not suspend the table on a row-less keyless posting column",
+                    engine.getTableSequencerAPI().isSuspended(token)
+            );
+            assertQuery("SELECT count() FROM t_rowless_wal")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n21\n");
+            assertQuery("SELECT count() FROM t_rowless_wal WHERE sym = 'a'")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n21\n");
+            assertQuery("SELECT count() FROM t_rowless_wal WHERE extra IS NULL")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n21\n");
         });
     }
 

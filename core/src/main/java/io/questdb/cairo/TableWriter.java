@@ -12351,7 +12351,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (indexer == null) {
                     continue;
                 }
-                // A column added after this partition (columnTop == -1) has no .pk here.
+                // Defensive: columnTop == -1 means the column is absent on this partition
+                // (no .pk). Normally unreachable on the last partition; kept as a guard.
                 long columnTop = columnVersionWriter.getColumnTop(lastOpenPartitionTs, colIdx);
                 if (columnTop == -1) {
                     continue;
