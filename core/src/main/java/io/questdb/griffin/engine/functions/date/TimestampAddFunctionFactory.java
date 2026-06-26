@@ -148,12 +148,18 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
                 if (lo != Numbers.LONG_NULL) {
                     final long m = periodAddFunction.add(lo, -stride);
                     final long w = periodAddFunction.add(m, -1);
-                    lo = addOverflows(lo, m, -stride) || w >= m ? Numbers.LONG_NULL : w;
+                    if (addOverflows(lo, m, -stride) || w >= m) {
+                        return NONE;
+                    }
+                    lo = w;
                 }
                 if (hi != Long.MAX_VALUE) {
                     final long m = periodAddFunction.add(hi, -stride);
                     final long w = periodAddFunction.add(m, 1);
-                    hi = addOverflows(hi, m, -stride) || w <= m ? Long.MAX_VALUE : w;
+                    if (addOverflows(hi, m, -stride) || w <= m) {
+                        return NONE;
+                    }
+                    hi = w;
                 }
                 io.of(lo, hi);
                 return SUPERSET;

@@ -423,6 +423,26 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDateAddYearNegativeStrideNanoOverflow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE yn (price DOUBLE, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY YEAR;");
+            execute("INSERT INTO yn VALUES " +
+                    "(1, '2024-06-15T12:00:00.000000000Z')," +
+                    "(2, '2260-06-15T12:00:00.000000000Z');");
+            // dateadd('y',-5,bound) of '2260' rounds the inverse up past the nano domain max (~2262);
+            // the wrapped SUPERSET interval must not prune, so it falls back to a row filter
+            assertQuery("SELECT * FROM yn WHERE dateadd('y', -5, ts) <= '2260-01-01'")
+                    .timestamp("ts")
+                    .withPlanContaining("Frame forward scan on: yn")
+                    .returns("""
+                            price\tts
+                            1.0\t2024-06-15T12:00:00.000000000Z
+                            2.0\t2260-06-15T12:00:00.000000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testDateAddYearSuperset() throws Exception {
         assertMemoryLeak(() -> {
             createYears();
@@ -511,6 +531,26 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
                             price\ttimestamp
                             200.0\t2022-01-03T12:00:00.000000Z
                             250.0\t2022-01-04T12:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testDateTruncDayNanoNearMaxOverflow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tn (price DOUBLE, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY;");
+            execute("INSERT INTO tn VALUES " +
+                    "(1, '2024-06-15T12:00:00.000000000Z')," +
+                    "(2, '2262-04-10T08:00:00.000000000Z');");
+            // the round-up of a bound within one day of the nano domain max (~2262-04-11) overflows;
+            // both rows satisfy the predicate, so a wrapped interval must not drop them
+            assertQuery("SELECT * FROM tn WHERE date_trunc('day', ts) <= '2262-04-11'")
+                    .timestamp("ts")
+                    .withPlanContaining("Frame forward scan on: tn")
+                    .returns("""
+                            price\tts
+                            1.0\t2024-06-15T12:00:00.000000000Z
+                            2.0\t2262-04-10T08:00:00.000000000Z
                             """);
         });
     }

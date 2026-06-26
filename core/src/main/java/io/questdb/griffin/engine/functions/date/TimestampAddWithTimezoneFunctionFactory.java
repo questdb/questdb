@@ -181,24 +181,32 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory 
             long lo = io.getLo();
             long hi = io.getHi();
             if (lo != Numbers.LONG_NULL) {
-                long m = periodAddFunction.add(lo, -stride);
-                boolean overflow = addOverflows(lo, m, -stride);
-                if (isCalendar && !overflow) {
-                    final long w = periodAddFunction.add(m, -1);
-                    overflow = w >= m;
-                    m = w;
+                long w = periodAddFunction.add(lo, -stride);
+                if (addOverflows(lo, w, -stride)) {
+                    return NONE;
                 }
-                lo = overflow || m < Long.MIN_VALUE + margin ? Numbers.LONG_NULL : m - margin;
+                if (isCalendar) {
+                    final long c = periodAddFunction.add(w, -1);
+                    if (c >= w) {
+                        return NONE;
+                    }
+                    w = c;
+                }
+                lo = w < Long.MIN_VALUE + margin ? Numbers.LONG_NULL : w - margin;
             }
             if (hi != Long.MAX_VALUE) {
-                long m = periodAddFunction.add(hi, -stride);
-                boolean overflow = addOverflows(hi, m, -stride);
-                if (isCalendar && !overflow) {
-                    final long w = periodAddFunction.add(m, 1);
-                    overflow = w <= m;
-                    m = w;
+                long w = periodAddFunction.add(hi, -stride);
+                if (addOverflows(hi, w, -stride)) {
+                    return NONE;
                 }
-                hi = overflow || m > Long.MAX_VALUE - margin ? Long.MAX_VALUE : m + margin;
+                if (isCalendar) {
+                    final long c = periodAddFunction.add(w, 1);
+                    if (c <= w) {
+                        return NONE;
+                    }
+                    w = c;
+                }
+                hi = w > Long.MAX_VALUE - margin ? Long.MAX_VALUE : w + margin;
             }
             io.of(lo, hi);
             return SUPERSET;
