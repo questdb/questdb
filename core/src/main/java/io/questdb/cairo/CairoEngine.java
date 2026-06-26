@@ -78,8 +78,8 @@ import io.questdb.cairo.view.ViewStateStoreImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.cairo.wal.DefaultDurableAckRegistry;
 import io.questdb.cairo.wal.DefaultWalDirectoryPolicy;
+import io.questdb.cairo.wal.LocalDurableAckRegistry;
 import io.questdb.cairo.wal.DefaultWalListener;
 import io.questdb.cairo.wal.DurableAckRegistry;
 import io.questdb.cairo.wal.QdbrWalLocker;
@@ -270,7 +270,9 @@ public class CairoEngine implements Closeable, WriterSource {
     // (DefaultDdlListener.INSTANCE on REPLICA, EntDdlListener instance on PRIMARY) and read by
     // SqlCompilerImpl on worker threads. Matches the sibling volatile durableAckRegistry.
     private volatile @NotNull DdlListener ddlListener = DefaultDdlListener.INSTANCE;
-    private volatile @NotNull DurableAckRegistry durableAckRegistry = DefaultDurableAckRegistry.INSTANCE;
+    // Default is LocalDurableAckRegistry (local-fsync tier, isEnabled=true). Initialized in the
+    // constructor body after `this` is available. Enterprise overrides via setDurableAckRegistry.
+    private volatile @NotNull DurableAckRegistry durableAckRegistry;
     private FrameFactory frameFactory;
     private @NotNull MatViewStateStore matViewStateStore = NoOpMatViewStateStore.INSTANCE;
     // Lazily initialized on first call to getMemoryTrackerProvider(), because the
@@ -319,6 +321,8 @@ public class CairoEngine implements Closeable, WriterSource {
             this.copyImportContext = new CopyImportContext(this, configuration);
             this.copyExportContext = new CopyExportContext(this);
             this.tableSequencerAPI = new TableSequencerAPI(this, configuration);
+            // OSS default: local-fsync tier (isEnabled=true). Enterprise overrides via setDurableAckRegistry.
+            this.durableAckRegistry = new LocalDurableAckRegistry(this);
             // Per-deadline blocking timer threads. Each parked TxnWaiter (or other
             // DelayedFireable) sits in a shard and is woken at its precise deadline,
             // bounding resource retention when a wait_wal_table call parks and the

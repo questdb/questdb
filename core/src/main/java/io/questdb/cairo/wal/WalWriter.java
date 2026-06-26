@@ -951,6 +951,12 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 // flush disk before getting next txn
                 syncIfRequired();
                 final long seqTxn = getSequencerTxn();
+                // ADAPTIVE: fdatasync completed (data→events→seq) before sequencer publish.
+                // Record the committed seqTxn as the local-durable frontier so QWP can emit
+                // a durable-ack frame without waiting for an upload to an object store.
+                if (walCommitMode() == CommitMode.ADAPTIVE) {
+                    seqTxnTracker.setLocalDurableSeqTxn(seqTxn);
+                }
                 if (walTelemetryEnabled) {
                     final long minTs = txnRowCount > 0 ? txnMinTimestamp : Numbers.LONG_NULL;
                     final long maxTs = txnRowCount > 0 ? txnMaxTimestamp : Numbers.LONG_NULL;

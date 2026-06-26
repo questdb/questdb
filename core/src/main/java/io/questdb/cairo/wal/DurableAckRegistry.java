@@ -31,10 +31,11 @@ import io.questdb.cairo.TableToken;
  * the configured object store) for each WAL table. Used by QWP to emit a second
  * "durable" acknowledgment frame to clients that opt in.
  * <p>
- * The OSS server ships a no-op implementation ({@link DefaultDurableAckRegistry})
- * that reports nothing as durable; enterprise installations with primary
- * replication enabled install a real implementation backed by the upload
- * pipeline.
+ * The OSS server ships {@link LocalDurableAckRegistry} as the default, which tracks the
+ * local-fsync tier (ADAPTIVE commit mode). Enterprise installations with primary replication
+ * enabled override this via {@link io.questdb.cairo.CairoEngine#setDurableAckRegistry} with an
+ * implementation backed by the upload pipeline. {@link DefaultDurableAckRegistry} is a
+ * legacy no-op kept for tests and Enterprise composition.
  */
 public interface DurableAckRegistry {
 
@@ -48,6 +49,26 @@ public interface DurableAckRegistry {
      * @return the highest durably-uploaded seqTxn, or -1
      */
     long getDurablyUploadedSeqTxn(CharSequence tableDirName);
+
+    /**
+     * Returns the highest seqTxn whose WAL commit was fdatasync'd locally for the given table,
+     * or -1 if no local-fsync guarantee has been established (e.g. NOSYNC tables, unknown dir,
+     * or a registry that does not track local durability).
+     *
+     * <p>The local-durable frontier is a weaker tier than the uploaded frontier:
+     * {@code applied >= localDurable >= uploaded} in the durability ordering.
+     *
+     * <p>Default implementation returns -1 (no local-fsync tracking). Override in
+     * {@code LocalDurableAckRegistry} (OSS default) which reads from the table's
+     * {@link io.questdb.cairo.wal.seq.SeqTxnTracker#getLocalDurableSeqTxn()}.
+     *
+     * @param tableDirName the directory name of the table (matches
+     *                     {@code TableToken.getDirName()})
+     * @return the highest locally-fdatasync'd seqTxn, or -1
+     */
+    default long getLocalDurableSeqTxn(CharSequence tableDirName) {
+        return -1L;
+    }
 
     /**
      * Returns true when durable-ack tracking is wired up on this server (i.e.

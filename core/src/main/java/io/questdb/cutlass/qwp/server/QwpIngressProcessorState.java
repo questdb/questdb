@@ -217,6 +217,17 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
      * durable seqTxn has advanced since the last durable ack was sent.
      * The caller must consume the map before the next call.
      * <p>
+     * Uses the max of the two durability tiers:
+     * <ul>
+     *   <li>local tier: {@link DurableAckRegistry#getLocalDurableSeqTxn(CharSequence)} —
+     *       fdatasync'd to local disk (ADAPTIVE tables, OSS + Enterprise)</li>
+     *   <li>uploaded tier: {@link DurableAckRegistry#getDurablyUploadedSeqTxn(CharSequence)} —
+     *       uploaded to an object store (Enterprise replication only)</li>
+     * </ul>
+     * The frontier is {@code max(local, uploaded)}. An OSS adaptive table satisfies the durable-ack
+     * immediately via the local tier (W=0). An Enterprise table can satisfy via either tier,
+     * whichever is ahead.
+     * <p>
      * Only iterates tables with outstanding durable work, not every table
      * the connection has ever written to.
      */
@@ -229,11 +240,15 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         for (int i = 0, n = tableNames.size(); i < n; i++) {
             CharSequence tableName = tableNames.getQuick(i);
             String dirName = pendingDurableDirNames.get(tableName);
+            // Durability frontier = max(local-fsync tier, uploaded tier).
+            // Both return -1 when not applicable; max(-1, -1) = -1 => no progress.
+            long localSeqTxn = registry.getLocalDurableSeqTxn(dirName);
             long uploadedSeqTxn = registry.getDurablyUploadedSeqTxn(dirName);
-            if (uploadedSeqTxn >= 0) {
+            long durableSeqTxn = Math.max(localSeqTxn, uploadedSeqTxn);
+            if (durableSeqTxn >= 0) {
                 long lastSent = lastDurableSeqTxns.get(tableName);
-                if (uploadedSeqTxn > lastSent) {
-                    durableProgressSnapshot.put(tableName, uploadedSeqTxn);
+                if (durableSeqTxn > lastSent) {
+                    durableProgressSnapshot.put(tableName, durableSeqTxn);
                 }
             }
         }

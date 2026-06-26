@@ -75,6 +75,11 @@ public class SeqTxnTracker {
     // Which ping-pong slot currently holds pinnedEpochTxn: true => EPOCH_ID_A, false => EPOCH_ID_B.
     // The next epoch pins into the OTHER slot. Initial value is arbitrary (no pin held yet).
     private boolean pinnedEpochSlotIsA = false;
+    // The highest seqTxn whose WAL commit was fdatasync'd under ADAPTIVE mode (data→events→seq).
+    // Default -1 means "no local-fsync guarantee yet" — only ADAPTIVE tables advance this.
+    // NOSYNC tables leave it at -1 forever. Volatile: written on the WAL commit thread
+    // (WalWriter), read by QWP/durable-ack threads.
+    private volatile long localDurableSeqTxn = -1L;
     private volatile long dirtyWriterTxn;
     // Volatile because fireWaiters() and registerWaiter() can race. See comments there
     private volatile boolean dropped;
@@ -122,6 +127,14 @@ public class SeqTxnTracker {
 
     public long getDurableEpochSeqTxn() {
         return durableEpochSeqTxn;
+    }
+
+    /**
+     * Returns the highest seqTxn whose WAL commit was fdatasync'd under ADAPTIVE mode, or -1
+     * if no such commit has occurred (NOSYNC tables always return -1).
+     */
+    public long getLocalDurableSeqTxn() {
+        return localDurableSeqTxn;
     }
 
     /** Returns the in-memory recovery incarnation counter (incremented each time recovery actually roll-forwarded this table). */
@@ -273,6 +286,19 @@ public class SeqTxnTracker {
 
     public void setDurableEpochSeqTxn(long durableEpochSeqTxn) {
         this.durableEpochSeqTxn = durableEpochSeqTxn;
+    }
+
+    /**
+     * Records that the WAL commit for {@code seqTxn} was fdatasync'd (ADAPTIVE mode). Only
+     * advances the frontier — a lower value is silently ignored (monotone, same safety as seqTxn).
+     */
+    public void setLocalDurableSeqTxn(long seqTxn) {
+        // Monotone CAS-free update: ADAPTIVE commits publish strictly increasing seqTxns per table
+        // (the sequencer is single-writer per table), so a plain volatile write suffices.
+        // Guard against any ordering anomaly with a max() check.
+        if (seqTxn > localDurableSeqTxn) {
+            localDurableSeqTxn = seqTxn;
+        }
     }
 
     /** Record the wall-clock ms of the last durable epoch (adaptive cadence gate). */
