@@ -62,10 +62,13 @@ import org.jetbrains.annotations.TestOnly;
  * projection, a disk cursor that is not a plain table scan, a non-ascending
  * scan, or a seqTxn mismatch) the cursor falls back to disk-only, which is
  * always correct because in-mem is a subset of disk in steady state. O3 replay
- * rewrites the disk tier
- * and resets the in-mem tier (see {@code LiveViewRefreshJob.resetInMemoryTier}),
- * so a post-O3 cursor whose slot no longer matches reads from disk until the
- * tier refills.
+ * rewrites the disk tier and atomically rebuilds the in-mem tier from the
+ * rewritten LV table (see {@code LiveViewRefreshJob.rebuildInMemoryTier}),
+ * stamping the fresh slot with the post-O3 LV-table seqTxn; a cursor opened
+ * after the replay therefore regains Mode B once the rebuild publishes. Should
+ * the rebuild be skipped (both slots reader-pinned), the stale slot's pre-O3
+ * seqTxn no longer matches the rewritten disk, so the fence routes those reads
+ * disk-only until a later cycle republishes.
  * <p>
  * The in-mem tier stores the full output row, so the cursor routes through it
  * only when the read projects every output column in declared order (see

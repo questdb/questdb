@@ -313,6 +313,199 @@ public class LiveViewInMemReadTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testO3ReplayRebuildOracleSurvivesRestart() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // Pin the CREATE clock below the data so the non-backfill floor admits
+            // every row, including the back-dated O3 row.
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 30m AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base (ts, x) VALUES " +
+                        "('2026-05-12T00:00:01.000000Z', 1), " +
+                        "('2026-05-12T00:00:02.000000Z', 2), " +
+                        "('2026-05-12T00:00:03.000000Z', 3)");
+                drainWalQueue();
+                setCurrentMicros(250_000L);
+                drainJob(job);
+                drainWalQueue();
+
+                // A back-dated row forces an O3 head-miss replay (REPLACE_RANGE)
+                // that rebuilds the in-mem tier from the rewritten LV table.
+                LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                instance.setLastFlushTimeUs(Numbers.LONG_NULL);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-05-12T00:00:00.000000Z', 4)");
+                drainWalQueue();
+                setCurrentMicros(500_000L);
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            // The rebuilt tier (pre-restart) serves Mode B and agrees with disk-only.
+            assertModeBMatchesDiskOnly("SELECT * FROM lv");
+
+            // Simulated restart: drop the in-memory registry (and its tier) and
+            // rebuild it from on-disk state. The O3-rewritten rows live in the LV
+            // table, so the re-read must still match the recompute.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Settle the restored view (rehydrate window state from the head
+                // .cp), then ingest one in-order row so the fresh tier repopulates
+                // through the normal publish path post-restart.
+                setCurrentMicros(750_000L);
+                drainJob(job);
+                drainWalQueue();
+                LiveViewInstance restored = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(restored);
+                restored.setLastFlushTimeUs(Numbers.LONG_NULL);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-05-12T00:00:04.000000Z', 5)");
+                drainWalQueue();
+                setCurrentMicros(1_000_000L);
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            // Post-restart reads agree with disk-only across the restart boundary,
+            // and the LV's content reflects the O3 re-sequencing plus the new row.
+            assertModeBMatchesDiskOnly("SELECT * FROM lv");
+            assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tx\trn\n" +
+                            "2026-05-12T00:00:00.000000Z\t4\t1\n" +
+                            "2026-05-12T00:00:01.000000Z\t1\t2\n" +
+                            "2026-05-12T00:00:02.000000Z\t2\t3\n" +
+                            "2026-05-12T00:00:03.000000Z\t3\t4\n" +
+                            "2026-05-12T00:00:04.000000Z\t5\t5\n");
+        });
+    }
+
+    @Test
+    public void testO3ReplayRebuildBoundsToInMemoryWindow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // Pin the CREATE clock below the data so the non-backfill floor admits
+            // every row, including the back-dated O3 row.
+            setCurrentMicros(0L);
+            // A tight 2s IN MEMORY window: after O3 the rewritten LV table spans
+            // two day-partitions, but only the recent 2s suffix is resident.
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 2s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Cycle 1: four in-order rows on day 2026-05-12.
+                execute("INSERT INTO base (ts, x) VALUES " +
+                        "('2026-05-12T00:00:00.000000Z', 1), " +
+                        "('2026-05-12T00:00:01.000000Z', 2), " +
+                        "('2026-05-12T00:00:02.000000Z', 3), " +
+                        "('2026-05-12T00:00:03.000000Z', 4)");
+                drainWalQueue();
+                setCurrentMicros(250_000L);
+                drainJob(job);
+                drainWalQueue();
+
+                // O3: a row back-dated onto the previous day forces a head-miss
+                // replay that rewrites the LV table across both day-partitions.
+                instance.setLastFlushTimeUs(Numbers.LONG_NULL);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-05-11T23:59:59.000000Z', 5)");
+                drainWalQueue();
+                setCurrentMicros(500_000L);
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            // The rebuild's tail read skips the 2026-05-11 partition entirely
+            // (its newest row is below maxTs - 2s) and binary-searches the
+            // 2026-05-12 partition for the window's lower edge (00:00:01), so the
+            // slot holds only the recent three rows, not all five.
+            LiveViewInMemoryTier tier = instance.getInMemoryTier();
+            Assert.assertNotNull(tier);
+            Assert.assertEquals(
+                    "rebuilt slot holds only the IN MEMORY window suffix",
+                    3,
+                    tier.getSlot(tier.getPublishedIdx()).rowCount()
+            );
+
+            InnerRead modeB = readInner("SELECT * FROM lv");
+            Assert.assertTrue("post-O3 cursor must regain Mode B", modeB.routingEligible);
+            Assert.assertEquals("in-mem serves only the recent suffix", 3, modeB.inMemRowsServed);
+
+            assertModeBMatchesDiskOnly("SELECT * FROM lv");
+            // Disk serves the two below-seam rows, the tier the three above it.
+            assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tx\trn\n" +
+                            "2026-05-11T23:59:59.000000Z\t5\t1\n" +
+                            "2026-05-12T00:00:00.000000Z\t1\t2\n" +
+                            "2026-05-12T00:00:01.000000Z\t2\t3\n" +
+                            "2026-05-12T00:00:02.000000Z\t3\t4\n" +
+                            "2026-05-12T00:00:03.000000Z\t4\t5\n");
+        });
+    }
+
+    @Test
+    public void testO3ReplayRebuildRegainsModeB() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // Pin the CREATE clock below the data so the non-backfill floor admits
+            // every row, including the back-dated O3 row.
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 30m AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Cycle 1: three in-order rows, forward-appended; the tier is
+                // populated and the O3 watermark advances to the newest ts.
+                execute("INSERT INTO base (ts, x) VALUES " +
+                        "('2026-05-12T00:00:01.000000Z', 1), " +
+                        "('2026-05-12T00:00:02.000000Z', 2), " +
+                        "('2026-05-12T00:00:03.000000Z', 3)");
+                drainWalQueue();
+                setCurrentMicros(250_000L);
+                drainJob(job);
+                drainWalQueue();
+
+                // Cycle 2: a back-dated row below the watermark forces an O3 replay
+                // (head-miss - any head's maxTs >= the late row's ts), rewriting
+                // the LV table via REPLACE_RANGE and rebuilding the in-mem tier.
+                instance.setLastFlushTimeUs(Numbers.LONG_NULL);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-05-12T00:00:00.000000Z', 4)");
+                drainWalQueue();
+                setCurrentMicros(500_000L);
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            // The rebuild repopulated the tier from the rewritten LV table: a
+            // cursor opened right after the O3 cycle regains Mode B and serves the
+            // whole window (all four rows fit the 30m IN MEMORY window).
+            InnerRead modeB = readInner("SELECT * FROM lv");
+            Assert.assertTrue("post-O3 cursor must regain Mode B", modeB.routingEligible);
+            Assert.assertEquals("rebuilt tier serves the whole window", 4, modeB.inMemRowsServed);
+
+            assertModeBMatchesDiskOnly("SELECT * FROM lv");
+            // The O3 replay re-sequenced the rows; the rebuilt tier reflects it.
+            assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tx\trn\n" +
+                            "2026-05-12T00:00:00.000000Z\t4\t1\n" +
+                            "2026-05-12T00:00:01.000000Z\t1\t2\n" +
+                            "2026-05-12T00:00:02.000000Z\t2\t3\n" +
+                            "2026-05-12T00:00:03.000000Z\t3\t4\n");
+        });
+    }
+
+    @Test
     public void testToTopReReadIsConsistent() throws Exception {
         assertMemoryLeak(() -> {
             createSeamSplitLv();

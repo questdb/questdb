@@ -13215,15 +13215,16 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testO3ResetsInMemoryTier() throws Exception {
-        // After an O3 replay rewrites the on-disk tier, the in-mem tier still
-        // holds the pre-replay output rows for the rewritten range. The refresh
-        // worker resets the in-mem tier so a post-O3 cursor falls through to the
-        // now-correct on-disk tier; the next normal cycle republishes it. Under
-        // the current max-disk-ts routing the stale rows would be masked anyway,
-        // so this guards the latent gap that activates once the cursor adopts
-        // seam_ts routing (Phase 3a completion) or the Phase 4 hand-off ring lets
-        // the in-mem tier outrun disk.
+    public void testO3RebuildsInMemoryTier() throws Exception {
+        // After an O3 replay rewrites the on-disk tier (REPLACE_RANGE), the in-mem
+        // tier still holds the pre-replay output rows for the rewritten range. The
+        // refresh worker rebuilds the in-mem tier atomically from the rewritten LV
+        // table, stamped with the post-O3 LV-table seqTxn, so a post-O3 cursor
+        // regains Mode B immediately rather than falling through to disk until the
+        // next normal cycle. (This LV has a SYMBOL output column, so reads still
+        // route disk-only - the tier is populated for accounting but the read path
+        // routes around the WAL-segment-local symbol ids.) The seqTxn fence keeps
+        // the read correct regardless of whether the rebuild populated the tier.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
             // IN MEMORY 1h keeps every test row resident in the in-mem tier.
@@ -13270,10 +13271,12 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 drainJob(job);
                 drainWalQueue();
 
-                // The replay reset the in-mem tier: the published slot is empty.
+                // The replay rebuilt the in-mem tier from the rewritten LV table:
+                // the published slot holds the full IN MEMORY window (all five
+                // rows fit the 1h window), not the pre-O3 four.
                 Assert.assertEquals(
-                        "O3 replay must reset the in-mem tier",
-                        0,
+                        "O3 replay must rebuild the in-mem tier from disk",
+                        5,
                         tier.getSlot(tier.getPublishedIdx()).rowCount()
                 );
 
@@ -13286,16 +13289,17 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                                 "2026-11-01T00:00:30.000000Z\ta\t11.0\n" +
                                 "2026-11-01T00:00:40.000000Z\ta\t15.0\n");
 
-                // A subsequent in-order commit republishes the in-mem tier.
+                // A subsequent in-order commit appends onto the rebuilt tier.
                 setCurrentMicros(600_000L);
                 execute("INSERT INTO base (ts, sym, x) VALUES " +
                         "('2026-11-01T00:00:50.000000Z', 'a', 6.0)");
                 drainWalQueue();
                 drainJob(job);
                 drainWalQueue();
-                Assert.assertTrue(
-                        "next normal cycle republishes the in-mem tier",
-                        tier.getSlot(tier.getPublishedIdx()).rowCount() > 0
+                Assert.assertEquals(
+                        "next normal cycle appends onto the rebuilt in-mem tier",
+                        6,
+                        tier.getSlot(tier.getPublishedIdx()).rowCount()
                 );
             }
 

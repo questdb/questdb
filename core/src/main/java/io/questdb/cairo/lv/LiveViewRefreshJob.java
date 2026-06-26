@@ -40,6 +40,7 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
@@ -975,11 +976,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         }
 
         // The replay rewrote the on-disk tier (REPLACE_RANGE); the in-mem tier
-        // still holds the pre-replay output rows for the rewritten range. Reset
-        // it so a post-O3 cursor falls through to the now-correct on-disk tier
-        // until the next refresh cycle republishes a fresh (subset-of-disk)
-        // buffer. See resetInMemoryTier.
-        resetInMemoryTier(instance);
+        // still holds the pre-replay output rows for the rewritten range. Rebuild
+        // it atomically from the rewritten LV table so a post-O3 cursor regains
+        // Mode B immediately instead of falling through to disk until the next
+        // normal cycle republishes. The seqTxn fence keeps this safe either way.
+        // See rebuildInMemoryTier.
+        rebuildInMemoryTier(instance, advanceTo);
     }
 
     /**
@@ -2494,6 +2496,228 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * Atomic O3 in-mem tier rebuild. Runs after an O3 replay has rewritten the
+     * on-disk tier (REPLACE_RANGE) and applied it inline. Instead of emptying
+     * the tier - which would drop Mode B routing until a later normal cycle
+     * refills it - this repopulates the recent {@code IN MEMORY} window directly
+     * from the rewritten LV table and publishes it stamped with the post-O3
+     * LV-table seqTxn. A cursor opened right after the O3 cycle therefore regains
+     * the tier immediately.
+     * <p>
+     * This is a performance restoration, not a correctness requirement. The
+     * seqTxn fence ({@code slot.lvSeqTxn == diskReader.seqTxn}) already routes any
+     * cursor whose slot disagrees with the disk snapshot to disk-only, so an
+     * empty or stale tier after O3 is always safe; the rebuild only shortens the
+     * disk-only window.
+     * <p>
+     * The read is bounded to the tail. {@link #stageInMemoryWindowFromDisk} walks
+     * partitions, skips any whose newest row falls below the retain threshold
+     * ({@code maxTs - IN_MEMORY}), and copies only the window suffix into the
+     * worker-local staging buffer in ts-ascending order. A head-hit replay that
+     * rewrote only the recent partition(s) therefore does not pay a full-table
+     * scan here.
+     * <p>
+     * The acquire protocol mirrors {@link #publishToInMemoryTier}: fast-path
+     * replaces the published slot in place when no reader pins it; slow-path
+     * fills the non-published slot and swaps. When both slots are reader-pinned
+     * the rebuild is skipped this cycle - those pinned readers hold a frozen
+     * snapshot whose pre-O3 seqTxn no longer matches the rewritten disk, so the
+     * fence already routes them disk-only, and the next eligible cycle
+     * republishes.
+     */
+    private void rebuildInMemoryTier(LiveViewInstance instance, long advanceTo) {
+        LiveViewInMemoryTier tier = instance.getInMemoryTier();
+        if (tier == null) {
+            // Unsupported (var-length) output schema never allocates the tier.
+            return;
+        }
+        // Stage the recent IN MEMORY window from the rewritten, applied LV table.
+        // The reader's getSeqTxn() is the same coordinate a query's disk reader
+        // reports, so stamping the slot with it makes the fence pass for an
+        // immediately-following cursor (no intervening apply).
+        final long lvSeqTxn;
+        try (TableReader lvReader = engine.getReader(instance.getLiveViewToken())) {
+            lvSeqTxn = lvReader.getSeqTxn();
+            stageInMemoryWindowFromDisk(instance, lvReader);
+        }
+
+        int publishedIdx = tier.getPublishedIdx();
+        // Fast-path: replace the published slot in place when no reader pins it.
+        // A successful 0 -> -1 CAS proves there are no active read pins, and the
+        // writer sentinel keeps new readers spinning until the fill + release.
+        LiveViewInMemoryBuffer acquired = tier.tryAcquireWrite(publishedIdx);
+        if (acquired != null) {
+            try {
+                fillSlotFromStaging(acquired, advanceTo, lvSeqTxn);
+            } catch (Throwable t) {
+                tier.releaseWriteWithoutPublish(publishedIdx);
+                throw t;
+            }
+            tier.releaseWriteWithoutPublish(publishedIdx);
+            return;
+        }
+        // Slow-path: a reader pins the published slot. Fill the non-published
+        // slot and swap to it; the old slot's pinned readers keep their frozen
+        // (pre-O3) rows until they release, and the fence routes them disk-only.
+        int writeIdx = 1 - publishedIdx;
+        LiveViewInMemoryBuffer writeSlot = tier.tryAcquireWrite(writeIdx);
+        if (writeSlot == null) {
+            LOG.info().$("live view in-mem tier rebuild skipped, both slots pinned [view=")
+                    .$(instance.getDefinition().getViewName()).I$();
+            return;
+        }
+        try {
+            fillSlotFromStaging(writeSlot, advanceTo, lvSeqTxn);
+            tier.publishSwap(writeIdx);
+        } catch (Throwable t) {
+            tier.releaseWriteWithoutPublish(writeIdx);
+            throw t;
+        }
+    }
+
+    /**
+     * Stages the LV table's recent {@code IN MEMORY} window suffix into the
+     * worker-local {@code stagingBuffer} in ts-ascending order. Partitions whose
+     * newest row sits below {@code maxTs - IN_MEMORY} are skipped entirely; the
+     * first partition that crosses the threshold is binary-searched for the
+     * boundary row so the copy starts exactly at the window's lower edge. The
+     * staging buffer's {@code seamTs} is set to the lowest copied timestamp (or
+     * {@code LONG_NULL} when the table is empty).
+     */
+    private void stageInMemoryWindowFromDisk(LiveViewInstance instance, TableReader lvReader) {
+        stagingBuffer.reset();
+        final int pc = lvReader.getPartitionCount();
+        if (pc == 0) {
+            // Empty LV table - the slot publishes empty (equivalent to a reset).
+            stagingBuffer.setRowCount(0);
+            stagingBuffer.setSeamTs(Numbers.LONG_NULL);
+            return;
+        }
+        final int tsIdx = lvReader.getMetadata().getTimestampIndex();
+        final long maxTs = lvReader.getMaxTimestamp();
+        final TimestampDriver driver = ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType());
+        final long inMemoryInBaseUnits = driver.fromMicros(instance.getDefinition().getInMemoryMicros());
+        final long retainThreshold = maxTs - inMemoryInBaseUnits;
+
+        long dstRow = 0;
+        long seamTs = Numbers.LONG_NULL;
+        for (int p = 0; p < pc; p++) {
+            final long size = lvReader.openPartition(p);
+            if (size <= 0) {
+                continue;
+            }
+            final int columnBase = lvReader.getColumnBase(p);
+            final MemoryCR tsCol = lvReader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, tsIdx));
+            // Skip whole partitions whose newest row is still below the window.
+            if (tsCol.getLong((size - 1) << 3) < retainThreshold) {
+                continue;
+            }
+            // Rows within a partition are ts-ascending: find the first one at or
+            // above the threshold, then copy the suffix.
+            for (long r = firstRowAtOrAbove(tsCol, size, retainThreshold); r < size; r++) {
+                if (seamTs == Numbers.LONG_NULL) {
+                    seamTs = tsCol.getLong(r << 3);
+                }
+                copyReaderRowToStaging(lvReader, columnBase, r, dstRow);
+                dstRow++;
+            }
+        }
+        stagingBuffer.setRowCount(dstRow);
+        stagingBuffer.setSeamTs(seamTs);
+    }
+
+    /**
+     * Copies one LV-table row's fixed-width columns into {@code stagingBuffer}
+     * at {@code dstRow}, reading directly from the reader's mapped column memory.
+     * Dispatches by the staging buffer's column type (which equals the LV output
+     * schema, 1:1 with the LV table column order). Only the in-mem tier's
+     * supported fixed-width types reach here - {@code stagingBuffer} is allocated
+     * only for such schemas.
+     */
+    private void copyReaderRowToStaging(TableReader reader, int columnBase, long partitionRow, long dstRow) {
+        for (int c = 0, n = stagingColumnTypes.size(); c < n; c++) {
+            final int type = ColumnType.tagOf(stagingColumnTypes.getQuick(c));
+            final MemoryCR col = reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, c));
+            switch (type) {
+                case ColumnType.LONG:
+                case ColumnType.TIMESTAMP:
+                case ColumnType.DATE:
+                case ColumnType.GEOLONG:
+                    stagingBuffer.putLong(dstRow, c, col.getLong(partitionRow << 3));
+                    break;
+                case ColumnType.INT:
+                case ColumnType.SYMBOL:
+                case ColumnType.GEOINT:
+                case ColumnType.IPv4:
+                    stagingBuffer.putInt(dstRow, c, col.getInt(partitionRow << 2));
+                    break;
+                case ColumnType.DOUBLE:
+                    stagingBuffer.putDouble(dstRow, c, col.getDouble(partitionRow << 3));
+                    break;
+                case ColumnType.FLOAT:
+                    stagingBuffer.putFloat(dstRow, c, col.getFloat(partitionRow << 2));
+                    break;
+                case ColumnType.SHORT:
+                case ColumnType.GEOSHORT:
+                    stagingBuffer.putShort(dstRow, c, col.getShort(partitionRow << 1));
+                    break;
+                case ColumnType.CHAR:
+                    stagingBuffer.putShort(dstRow, c, (short) col.getChar(partitionRow << 1));
+                    break;
+                case ColumnType.BYTE:
+                case ColumnType.GEOBYTE:
+                    stagingBuffer.putByte(dstRow, c, col.getByte(partitionRow));
+                    break;
+                case ColumnType.BOOLEAN:
+                    stagingBuffer.putBool(dstRow, c, col.getBool(partitionRow));
+                    break;
+                default:
+                    throw new UnsupportedOperationException(
+                            "live view in-memory tier does not support column type: "
+                                    + ColumnType.nameOf(stagingColumnTypes.getQuick(c)));
+            }
+        }
+    }
+
+    /**
+     * Binary-searches a ts-ascending timestamp column for the first row index in
+     * {@code [0, size)} whose value is at or above {@code threshold}, returning
+     * {@code size} when every row is below it.
+     */
+    private static long firstRowAtOrAbove(MemoryCR tsCol, long size, long threshold) {
+        long lo = 0;
+        long hi = size;
+        while (lo < hi) {
+            final long mid = (lo + hi) >>> 1;
+            if (tsCol.getLong(mid << 3) < threshold) {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        return lo;
+    }
+
+    /**
+     * Replaces {@code slot}'s contents with the current {@code stagingBuffer}
+     * rows and stamps the slot. The slot is reset first (full replace, not an
+     * append) - the rebuild slot reflects the disk tail exactly, with no carry
+     * over of pre-O3 rows. Runs under the writer sentinel, so no reader observes
+     * the intermediate state.
+     */
+    private void fillSlotFromStaging(LiveViewInMemoryBuffer slot, long cycleSeqTxn, long lvSeqTxn) {
+        slot.reset();
+        final long rows = stagingBuffer.rowCount();
+        for (long r = 0; r < rows; r++) {
+            slot.copyRowFrom(stagingBuffer, r, r);
+        }
+        slot.setRowCount(rows);
+        slot.setSeamTs(stagingBuffer.seamTs());
+        slot.setMaxSeqTxn(cycleSeqTxn);
+        slot.setLvSeqTxn(lvSeqTxn);
+    }
+
+    /**
      * Rewrites {@code _lv.s} from the in-memory state mirror. Called after each
      * cycle's advance so restart sees the latest {@code lastProcessedSeqTxn}.
      * <p>
@@ -2506,53 +2730,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * which logs at LOG.critical level. Subsequent cycles re-attempt the persist
      * the next time the in-memory state advances.
      */
-    /**
-     * Resets the in-mem tier to empty after an O3 replay. The replay rewrote
-     * the on-disk tier (REPLACE_RANGE), but the in-mem tier still holds the
-     * pre-replay output rows for the rewritten range. Under the current
-     * max-disk-ts cursor routing those stale rows are already masked (the replay
-     * raised the max disk ts to cover them), so this reset is defensive: it
-     * keeps the in-mem tier from serving stale rows the moment the cursor adopts
-     * seam_ts routing or the Phase 4 hand-off ring lets the in-mem tier outrun
-     * disk. The next normal refresh cycle republishes a fresh, subset-of-disk
-     * in-mem buffer.
-     * <p>
-     * Mirrors {@link #publishToInMemoryTier}'s acquire protocol but publishes an
-     * empty buffer: fast-path clears the published slot in place when no reader
-     * pins it; slow-path swaps in an empty non-published slot. When both slots
-     * are reader-pinned the reset is skipped this cycle - the pinned readers see
-     * a frozen, self-consistent snapshot regardless, and the stale rows stay
-     * masked under max-disk-ts routing until a later cycle supersedes them.
-     */
-    private void resetInMemoryTier(LiveViewInstance instance) {
-        LiveViewInMemoryTier tier = instance.getInMemoryTier();
-        if (tier == null) {
-            return;
-        }
-        int publishedIdx = tier.getPublishedIdx();
-        // Fast-path: clear the published slot in place when no reader pins it.
-        // A successful 0 -> -1 CAS proves there are no active read pins, and the
-        // writer sentinel keeps new readers spinning until reset() + release.
-        LiveViewInMemoryBuffer acquired = tier.tryAcquireWrite(publishedIdx);
-        if (acquired != null) {
-            acquired.reset();
-            tier.releaseWriteWithoutPublish(publishedIdx);
-            return;
-        }
-        // Slow-path: a reader pins the published slot. Empty the non-published
-        // slot and swap to it; the old slot's pinned readers keep their frozen
-        // rows until they release.
-        int writeIdx = 1 - publishedIdx;
-        LiveViewInMemoryBuffer writeSlot = tier.tryAcquireWrite(writeIdx);
-        if (writeSlot == null) {
-            LOG.info().$("live view in-mem tier reset skipped, both slots pinned [view=")
-                    .$(instance.getDefinition().getViewName()).I$();
-            return;
-        }
-        writeSlot.reset();
-        tier.publishSwap(writeIdx);
-    }
-
     private void persistState(LiveViewInstance instance) {
         TableToken token = instance.getLiveViewToken();
         // Synchronize on the instance: ApplyWal2TableJob also rewrites _lv.s when it
