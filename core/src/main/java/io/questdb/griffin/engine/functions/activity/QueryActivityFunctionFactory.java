@@ -46,6 +46,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
 
 import java.util.Objects;
@@ -159,23 +160,6 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
                 clear();
             }
 
-            private static boolean copy(CharSequence source, StringSink target) {
-                target.clear();
-                if (source != null) {
-                    final int len = source.length();
-                    try {
-                        // A concurrent shrink can throw while copying; a later
-                        // length mismatch rejects shrink/grow without an exception.
-                        target.put(source, 0, len);
-                    } catch (IndexOutOfBoundsException e) {
-                        target.clear();
-                        return false;
-                    }
-                    return source.length() == len;
-                }
-                return true;
-            }
-
             @Override
             public boolean getBool(int col) {
                 if (col == 7) {
@@ -234,6 +218,23 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
                 }
 
                 return Record.super.getTimestamp(col);
+            }
+
+            private static boolean copy(CharSequence source, StringSink target) {
+                target.clear();
+                if (source != null) {
+                    final int len = source.length();
+                    try {
+                        // A concurrent shrink can throw while copying; a later
+                        // length mismatch rejects shrink/grow without an exception.
+                        target.put(source, 0, len);
+                    } catch (IndexOutOfBoundsException e) {
+                        target.clear();
+                        return false;
+                    }
+                    return source.length() == len;
+                }
+                return true;
             }
 
             private void clear() {
@@ -307,6 +308,7 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
                     return false;
                 }
 
+                Unsafe.loadFence();
                 return entry.getLifecycle() == lifecycle && entry.getState() == state;
             }
         }
