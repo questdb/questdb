@@ -82,6 +82,11 @@ public class RecoveryCoordinator {
      * after the table registry is loaded and before any WAL apply.
      */
     public void recover() {
+        // Operator kill-switch / negative-control hook: when disabled, skip the roll-forward entirely
+        // (under ADAPTIVE this leaves a post-crash table torn ahead of the last epoch — by design).
+        if (!configuration.isAdaptiveRecoveryRollForwardEnabled()) {
+            return;
+        }
         // Adaptive-only: the durable epoch + lazy apply only exist under CommitMode.ADAPTIVE. Under
         // any other mode the apply path is already self-durable (or NOSYNC by design), and no epoch
         // copies are ever written, so there is nothing to roll forward.

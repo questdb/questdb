@@ -244,6 +244,23 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     }
 
     @Override
+    public int copy(LPSZ from, LPSZ to) {
+        final int rc = super.copy(from, to);
+        if (rc == 0) {
+            // copy() (creat(O_TRUNC) + sendfile) writes REAL bytes for the whole source extent into the
+            // destination (replacing it). Track the destination's written-data end as the resulting file
+            // size, so a subsequent fsync of the copy journals its full content durable (otherwise the
+            // sendfile path bypasses write()/msync tracking, writtenDataEnd stays 0, and crash() would
+            // roll the copied file back to length 0). Mirrors how write()/append() advance writtenDataEnd.
+            final String dst = toAbsPath(to);
+            track(dst);
+            // After the copy the real file length IS the written extent (creat truncated, sendfile filled).
+            advanceWrittenDataEnd(dst, length(to));
+        }
+        return rc;
+    }
+
+    @Override
     public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
         long addr = super.mmap(fd, len, offset, flags, memoryTag);
         recordMmap(fd, addr, len, offset);

@@ -218,6 +218,20 @@ public interface CairoConfiguration {
         return 1000;
     }
 
+    /**
+     * Whether the adaptive durable-epoch RECOVERY ROLL-FORWARD runs at engine startup (Plan 3 Task C).
+     * When {@code true} (default) {@link RecoveryCoordinator} rewinds each adaptive WAL table with a
+     * durable epoch to its {@code _txn.epoch}/{@code _cv.epoch} cut before the boot WAL apply re-derives
+     * the rest. An operator kill-switch / test hook; setting it {@code false} makes recovery a no-op,
+     * which under ADAPTIVE means a post-crash table may be torn ahead of the last epoch (the negative
+     * control). Has no effect under non-ADAPTIVE commit modes (recovery is adaptive-only anyway).
+     *
+     * @return {@code true} to run the adaptive epoch roll-forward on startup
+     */
+    default boolean isAdaptiveRecoveryRollForwardEnabled() {
+        return true;
+    }
+
     int getCompileViewModelPoolCapacity();
 
     @NotNull
