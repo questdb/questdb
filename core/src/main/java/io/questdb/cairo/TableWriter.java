@@ -13867,11 +13867,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         columnVersionWriter.fsync();
         txWriter.fsync();
 
-        // Step 5: durable epoch copies (immutable recovery anchor) — copy the just-fsync'd live _txn
-        // then _cv into _txn.epoch / _cv.epoch. Order mirrors the durability order (_cv before _txn is
-        // not required here since both live files are already durable; both copies are immutable).
-        writeEpochCopy(TableUtils.TXN_FILE_NAME);
+        // Step 5: durable epoch copies (immutable recovery anchor) — copy the just-fsync'd live _cv and
+        // _txn into _cv.epoch / _txn.epoch. CV BEFORE TXN (data-before-pointer), mirroring steps 3+4:
+        // RecoveryCoordinator restores BOTH copies, so a crash BETWEEN these two copies must leave a SAFE
+        // skew. With _cv.epoch first, a crash after it but before _txn.epoch leaves _cv.epoch NEWER than
+        // _txn.epoch; restoring that pair makes _cv ahead of _txn — harmless (column versions only grow;
+        // the older _txn never references the extra ones, and _txn is the authoritative row-count/seqTxn
+        // pointer). The reverse order could leave _txn ahead of _cv (a dangling column-version reference).
         writeEpochCopy(TableUtils.COLUMN_VERSION_FILE_NAME);
+        writeEpochCopy(TableUtils.TXN_FILE_NAME);
 
         // Mirror syncColumns(): forward indexer purge entries safe for the committed txn.
         publishPendingPostingSealPurges(txWriter.getTxn());

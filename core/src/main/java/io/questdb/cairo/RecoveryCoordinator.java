@@ -139,6 +139,12 @@ public class RecoveryCoordinator {
         // fully replaces the live, lazily-advanced files with the epoch's canonical A/B record. The
         // .epoch copies are immutable until the next epoch, so re-running this (a crash mid-recovery)
         // re-copies identical bytes and lands on the same cut -> idempotent.
+        //
+        // Restore _txn (the pointer) BEFORE _cv (the data) here. We are overwriting live files that, post-
+        // crash, sit at the FRONTIER. A crash BETWEEN these two restores leaves _txn at the (older) epoch
+        // while _cv is still at the (newer) frontier -> _txn behind _cv, the SAFE skew (the older _txn
+        // never references column versions beyond it). The reverse would briefly leave _txn at the frontier
+        // over an epoch _cv (a dangling reference). Recovery re-runs on the next boot and completes the pair.
         restoreFile(token, src, dst, TableUtils.TXN_FILE_NAME);
         restoreFile(token, src, dst, TableUtils.COLUMN_VERSION_FILE_NAME);
 
