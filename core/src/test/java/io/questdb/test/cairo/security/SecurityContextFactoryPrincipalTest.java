@@ -47,6 +47,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class SecurityContextFactoryPrincipalTest {
 
+    // must match AbstractAllowAllSecurityContext / AbstractReadOnlySecurityContext.MAX_CACHED_PRINCIPALS
+    private static final int CACHE_CAP = 256;
+
     @Test
     public void testAllowAllFactoryAnonymousReturnsSingleton() {
         // a null principal (anonymous, no http.user configured) keeps the shared singleton and the default name
@@ -87,10 +90,11 @@ public class SecurityContextFactoryPrincipalTest {
     public void testAllowAllForPrincipalCachesDerivedContext() {
         // the HTTP path re-derives the context per request, so the same principal must reuse the
         // cached context instead of allocating a new one (and copying the principal) every time
-        SecurityContext first = AllowAllSecurityContext.INSTANCE.forPrincipal("cacheduser");
-        SecurityContext second = AllowAllSecurityContext.INSTANCE.forPrincipal("cacheduser");
+        AllowAllSecurityContext root = freshAllowAll();
+        SecurityContext first = root.forPrincipal("cacheduser");
+        SecurityContext second = root.forPrincipal("cacheduser");
         Assert.assertSame(first, second);
-        Assert.assertNotSame(AllowAllSecurityContext.INSTANCE, first);
+        Assert.assertNotSame(root, first);
         TestUtils.assertEquals("cacheduser", first.getPrincipal());
     }
 
@@ -109,9 +113,9 @@ public class SecurityContextFactoryPrincipalTest {
 
     @Test
     public void testForPrincipalConcurrentAlternatingPrincipalsNeverLeak() throws Exception {
-        // every thread alternates between two principals, forcing constant eviction of the single-entry
-        // cache on the shared singleton. Even with a context for the other principal mid-publish in the
-        // cache slot, every call must return a context reporting exactly its own requested principal.
+        // every thread alternates between two principals on the shared singleton. Even while another
+        // thread is mid-publish swapping in a freshly grown cache, every call must return a context
+        // reporting exactly its own requested principal.
         final int threadCount = 4;
         final int iterations = 50_000;
         final CyclicBarrier barrier = new CyclicBarrier(threadCount);
@@ -143,7 +147,7 @@ public class SecurityContextFactoryPrincipalTest {
 
     @Test
     public void testForPrincipalConcurrentReportsOwnPrincipal() throws Exception {
-        // the single-entry cache on the shared singleton is updated without a lock; under contention
+        // the per-principal cache on the shared singleton is published copy-on-write; under contention
         // every caller must still get a context reporting its own principal, never another thread's
         final int threadCount = 4;
         final int iterations = 50_000;
@@ -176,13 +180,14 @@ public class SecurityContextFactoryPrincipalTest {
 
     @Test
     public void testForPrincipalConcurrentSamePrincipalReusesCachedContext() throws Exception {
-        // all threads request the same principal: once the single-entry cache is warmed it is never evicted
-        // (no other principal is ever requested), so every concurrent caller must hit the cache and get back
-        // the very same derived instance, which must always report that principal. This exercises the
-        // cache-hit path under contention, which the distinct-principal test never takes.
+        // all threads request the same principal: once the cache is warmed the entry is never evicted,
+        // so every concurrent caller must hit the cache and get back the very same derived instance,
+        // which must always report that principal. This exercises the cache-hit path under contention,
+        // which the distinct-principal test never takes.
+        final AllowAllSecurityContext root = freshAllowAll();
         final String principal = "shared";
-        final SecurityContext warmed = AllowAllSecurityContext.INSTANCE.forPrincipal(principal);
-        Assert.assertNotSame(AllowAllSecurityContext.INSTANCE, warmed);
+        final SecurityContext warmed = root.forPrincipal(principal);
+        Assert.assertNotSame(root, warmed);
 
         final int threadCount = 4;
         final int iterations = 50_000;
@@ -194,7 +199,7 @@ public class SecurityContextFactoryPrincipalTest {
                 try {
                     barrier.await();
                     for (int i = 0; i < iterations; i++) {
-                        SecurityContext context = AllowAllSecurityContext.INSTANCE.forPrincipal(principal);
+                        SecurityContext context = root.forPrincipal(principal);
                         // the warmed entry is never evicted, so the same cached instance must come back
                         if (context != warmed || !Chars.equals(principal, context.getPrincipal())) {
                             errors.incrementAndGet();
@@ -215,17 +220,19 @@ public class SecurityContextFactoryPrincipalTest {
 
     @Test
     public void testForPrincipalDoesNotLeakAcrossPrincipals() {
-        // the single-entry cache on the shared singleton must never hand one principal's context to
-        // another: every call returns a context reporting its own principal, regardless of cache state
-        SecurityContext alice = AllowAllSecurityContext.INSTANCE.forPrincipal("alice");
-        SecurityContext bob = AllowAllSecurityContext.INSTANCE.forPrincipal("bob");
-        SecurityContext aliceAgain = AllowAllSecurityContext.INSTANCE.forPrincipal("alice");
+        // the per-principal cache must never hand one principal's context to another: every call
+        // returns a context reporting its own principal, regardless of cache state
+        AllowAllSecurityContext root = freshAllowAll();
+        SecurityContext alice = root.forPrincipal("alice");
+        SecurityContext bob = root.forPrincipal("bob");
+        SecurityContext aliceAgain = root.forPrincipal("alice");
         TestUtils.assertEquals("alice", alice.getPrincipal());
         TestUtils.assertEquals("bob", bob.getPrincipal());
         TestUtils.assertEquals("alice", aliceAgain.getPrincipal());
         Assert.assertNotSame(alice, bob);
-        // "bob" evicted "alice" from the single-entry cache, so the second "alice" is a fresh derivation
-        Assert.assertNotSame(alice, aliceAgain);
+        // both principals stay cached (the M1 fix): "bob" does not evict "alice", so the second
+        // "alice" returns the very same cached instance rather than a fresh derivation
+        Assert.assertSame(alice, aliceAgain);
     }
 
     @Test
@@ -357,6 +364,185 @@ public class SecurityContextFactoryPrincipalTest {
         }
         // it still allows everything else
         context.authorizeHttp();
+    }
+
+    @Test
+    public void testForPrincipalCapDegradesToAllocatePerCall() {
+        // beyond the cache cap, additional principals must degrade to allocate-per-call (the pre-cache
+        // behavior) rather than growing the cache without bound, while staying correct
+        final AllowAllSecurityContext root = freshAllowAll();
+        for (int i = 0; i < CACHE_CAP; i++) {
+            root.forPrincipal("p" + i);
+        }
+        // a principal cached before the cap was reached is still retained
+        Assert.assertSame(root.forPrincipal("p0"), root.forPrincipal("p0"));
+        // a brand-new principal beyond the cap is re-derived every call (not cached), yet correct
+        SecurityContext a = root.forPrincipal("overflow");
+        SecurityContext b = root.forPrincipal("overflow");
+        TestUtils.assertEquals("overflow", a.getPrincipal());
+        TestUtils.assertEquals("overflow", b.getPrincipal());
+        Assert.assertNotSame(a, b);
+        Assert.assertTrue(a.isSystemAdmin());
+    }
+
+    @Test
+    public void testForPrincipalConcurrentDistinctPrincipalsRetainedNoThrash() throws Exception {
+        // the core M1 guarantee under contention: each thread owns a distinct principal and, after the
+        // cache is warmed, every one of its repeated calls must return the *same* cached instance. The
+        // old single-entry cache thrashed here (each thread's context evicted by the others); the
+        // per-principal cache must keep them all live with zero eviction.
+        final int threadCount = 6;
+        final int iterations = 20_000;
+        final AllowAllSecurityContext root = freshAllowAll();
+        final CyclicBarrier barrier = new CyclicBarrier(threadCount);
+        final AtomicInteger errors = new AtomicInteger();
+        final ObjList<Thread> threads = new ObjList<>();
+        for (int t = 0; t < threadCount; t++) {
+            final String principal = "tenant" + t;
+            final Thread thread = new Thread(() -> {
+                try {
+                    barrier.await();
+                    final SecurityContext mine = root.forPrincipal(principal);
+                    if (!Chars.equals(principal, mine.getPrincipal())) {
+                        errors.incrementAndGet();
+                    }
+                    for (int i = 0; i < iterations; i++) {
+                        SecurityContext context = root.forPrincipal(principal);
+                        // no eviction: this thread's cached context must come back unchanged every time
+                        if (context != mine || !Chars.equals(principal, context.getPrincipal())) {
+                            errors.incrementAndGet();
+                        }
+                    }
+                } catch (Throwable th) {
+                    errors.incrementAndGet();
+                }
+            });
+            threads.add(thread);
+            thread.start();
+        }
+        for (int t = 0; t < threadCount; t++) {
+            threads.getQuick(t).join();
+        }
+        Assert.assertEquals(0, errors.get());
+    }
+
+    @Test
+    public void testForPrincipalConcurrentFirstDerivationConverges() throws Exception {
+        // many threads race to derive the SAME new principal for the first time; the copy-on-write
+        // write path must converge them all onto a single cached instance (no duplicate cached
+        // contexts, no observation of a half-published map).
+        final int threadCount = 8;
+        final AllowAllSecurityContext root = freshAllowAll();
+        final String principal = "racy";
+        final CyclicBarrier barrier = new CyclicBarrier(threadCount);
+        final SecurityContext[] results = new SecurityContext[threadCount];
+        final AtomicInteger errors = new AtomicInteger();
+        final ObjList<Thread> threads = new ObjList<>();
+        for (int t = 0; t < threadCount; t++) {
+            final int idx = t;
+            final Thread thread = new Thread(() -> {
+                try {
+                    barrier.await();
+                    results[idx] = root.forPrincipal(principal);
+                } catch (Throwable th) {
+                    errors.incrementAndGet();
+                }
+            });
+            threads.add(thread);
+            thread.start();
+        }
+        for (int t = 0; t < threadCount; t++) {
+            threads.getQuick(t).join();
+        }
+        Assert.assertEquals(0, errors.get());
+        for (int t = 0; t < threadCount; t++) {
+            TestUtils.assertEquals(principal, results[t].getPrincipal());
+            Assert.assertSame("all racing callers must converge on one cached instance", results[0], results[t]);
+        }
+        // the converged instance is the one now cached
+        Assert.assertSame(results[0], root.forPrincipal(principal));
+    }
+
+    @Test
+    public void testForPrincipalCopiesTransientPrincipal() {
+        // forPrincipal must copy the @Transient principal, never retain the caller's mutable buffer,
+        // and a later lookup with an equal-content flyweight must still hit the cached entry
+        AllowAllSecurityContext root = freshAllowAll();
+        StringSink mutable = new StringSink();
+        mutable.put("foo");
+        SecurityContext context = root.forPrincipal(mutable);
+        mutable.clear();
+        mutable.put("bar");
+        TestUtils.assertEquals("foo", context.getPrincipal());
+        StringSink probe = new StringSink();
+        probe.put("foo");
+        Assert.assertSame(context, root.forPrincipal(probe));
+    }
+
+    @Test
+    public void testForPrincipalPreservesRuntimeType() {
+        // derived contexts must keep their concrete runtime type, not be downgraded
+        Assert.assertTrue(freshAllowAll().forPrincipal("u") instanceof AllowAllSecurityContext);
+        Assert.assertTrue(freshReadOnly().forPrincipal("u") instanceof ReadOnlySecurityContext);
+    }
+
+    @Test
+    public void testForPrincipalRetainsManyDistinctPrincipals() {
+        // the M1 fix: many distinct principals are retained concurrently in the cache instead of
+        // evicting one another. Derive a batch, then re-request each: every one must return the very
+        // same cached instance and report its own principal (the old single-slot cache failed this).
+        final int n = 32;
+        final AllowAllSecurityContext root = freshAllowAll();
+        final SecurityContext[] first = new SecurityContext[n];
+        for (int i = 0; i < n; i++) {
+            first[i] = root.forPrincipal("user" + i);
+            TestUtils.assertEquals("user" + i, first[i].getPrincipal());
+            Assert.assertNotSame(root, first[i]);
+        }
+        for (int i = 0; i < n; i++) {
+            SecurityContext again = root.forPrincipal("user" + i);
+            Assert.assertSame("user" + i + " must stay cached", first[i], again);
+        }
+    }
+
+    @Test
+    public void testForPrincipalShortCircuitsReturnThis() {
+        // null, empty, and the context's own principal all short-circuit to `this` without deriving
+        AllowAllSecurityContext root = freshAllowAll();
+        Assert.assertSame(root, root.forPrincipal(null));
+        Assert.assertSame(root, root.forPrincipal(""));
+        Assert.assertSame(root, root.forPrincipal("admin")); // the default seeded principal
+    }
+
+    @Test
+    public void testReadOnlyForPrincipalRetainsAndStaysReadOnly() {
+        // ReadOnly mirrors AllowAll: distinct principals are retained, and every derived context keeps
+        // the read-only restriction (writes denied) while reporting its own principal
+        final ReadOnlySecurityContext root = freshReadOnly();
+        SecurityContext alice = root.forPrincipal("alice");
+        SecurityContext bob = root.forPrincipal("bob");
+        Assert.assertSame(alice, root.forPrincipal("alice"));
+        Assert.assertSame(bob, root.forPrincipal("bob"));
+        Assert.assertNotSame(alice, bob);
+        TestUtils.assertEquals("alice", alice.getPrincipal());
+        try {
+            alice.authorizeInsert(null);
+            Assert.fail("expected write to be denied");
+        } catch (CairoException e) {
+            Assert.assertTrue(e.getFlyweightMessage().toString().contains("Write permission denied"));
+        }
+    }
+
+    private static AllowAllSecurityContext freshAllowAll() {
+        // a fresh instance (not the shared singleton) so each test gets an isolated, empty principal cache
+        return new AllowAllSecurityContext() {
+        };
+    }
+
+    private static ReadOnlySecurityContext freshReadOnly() {
+        // a fresh instance (not the shared singleton) so each test gets an isolated, empty principal cache
+        return new ReadOnlySecurityContext() {
+        };
     }
 
     private static PrincipalContext principal(CharSequence name) {

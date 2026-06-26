@@ -29,6 +29,7 @@ import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.engine.functions.catalogue.Constants;
+import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -38,10 +39,19 @@ import org.jetbrains.annotations.Nullable;
 public abstract class AbstractAllowAllSecurityContext implements SecurityContext {
     protected final boolean settingsReadOnly;
 
+    // upper bound on the number of distinct principals cached by forPrincipal; beyond it, additional
+    // principals degrade to allocate-per-call instead of growing the cache without bound
+    private static final int MAX_CACHED_PRINCIPALS = 256;
+
     // the reported principal; the singletons seed it with Constants.USER_NAME ("admin"), which is also
     // the value forPrincipal treats as the default/anonymous case (it returns the shared singleton)
     private final CharSequence principal;
-    private volatile SecurityContext principalContextCache;
+    // contexts derived for non-default principals, keyed by principal. Published copy-on-write: the
+    // (rare) write path builds a fresh immutable map under the instance lock and swaps this reference,
+    // so the lock-free reader in forPrincipal only ever sees a fully built map. These contexts model
+    // identity only (pure functions of the principal), so caching one per distinct principal lets
+    // concurrently active principals coexist instead of evicting each other.
+    private volatile CharSequenceObjHashMap<SecurityContext> principalContextCache;
 
     protected AbstractAllowAllSecurityContext() {
         this(false, Constants.USER_NAME);
@@ -266,10 +276,13 @@ public abstract class AbstractAllowAllSecurityContext implements SecurityContext
      * or already matches, to keep the singleton path allocation-free.
      * <p>
      * The HTTP authentication path re-derives the security context on every request (see
-     * {@code HttpConnectionContext.configureSecurityContext}), so the last derived context is
-     * cached to avoid allocating a context and copying the principal on every request when the
-     * principal does not change. The cache holds only the most recently derived context, which fits
-     * the common case of a single configured user; a varying principal degrades to allocate-per-call.
+     * {@code HttpConnectionContext.configureSecurityContext}), and PGWire/LineTCP derive once per
+     * connection, so derived contexts are cached by principal to avoid allocating a context and
+     * copying the principal on every call. The cache keeps one context per distinct principal, so
+     * concurrently active principals coexist instead of evicting each other; it is populated
+     * copy-on-write under the instance lock and read lock-free. It is bounded at
+     * {@value #MAX_CACHED_PRINCIPALS} entries, beyond which further principals degrade to
+     * allocate-per-call rather than growing without bound.
      * <p>
      * The method is {@code final} and routes instance creation through
      * {@link #newPrincipalContext(CharSequence)} so subclasses preserve their runtime type
@@ -277,17 +290,53 @@ public abstract class AbstractAllowAllSecurityContext implements SecurityContext
      */
     public final SecurityContext forPrincipal(@Transient @Nullable CharSequence principal) {
         // compare against getPrincipal(), not the raw field, so a subclass that overrides getPrincipal()
-        // is matched consistently here and in the cache check below; equalsNc tolerates a null
-        // getPrincipal() (e.g. a validation context delegating to a null-principal delegate)
+        // is matched consistently; equalsNc tolerates a null getPrincipal() (e.g. a validation context
+        // delegating to a null-principal delegate)
         if (principal == null || principal.isEmpty() || Chars.equalsNc(principal, getPrincipal())) {
             return this;
         }
-        final SecurityContext cached = principalContextCache;
-        if (cached != null && Chars.equalsNc(principal, cached.getPrincipal())) {
-            return cached;
+        // lock-free read of the published (immutable) cache; get() is side-effect-free and hashes the
+        // incoming flyweight principal by content, so a cache hit allocates nothing
+        final CharSequenceObjHashMap<SecurityContext> cache = principalContextCache;
+        if (cache != null) {
+            final SecurityContext hit = cache.get(principal);
+            if (hit != null) {
+                return hit;
+            }
         }
-        final SecurityContext context = newPrincipalContext(Chars.toString(principal));
-        principalContextCache = context;
+        return addPrincipalContext(principal);
+    }
+
+    /**
+     * Derives and caches the context for a principal not yet present in the cache. Synchronized so
+     * concurrent callers for new principals serialize on this (rare) write path; the common cache-hit
+     * path in {@link #forPrincipal(CharSequence)} never reaches here. The cache is published
+     * copy-on-write: a fresh map is built and stored into the volatile field, so the lock-free reader
+     * only ever observes a fully built, immutable map.
+     */
+    private synchronized SecurityContext addPrincipalContext(@Transient @NotNull CharSequence principal) {
+        // re-read under the lock; all writers hold this lock, so this is the latest published cache
+        final CharSequenceObjHashMap<SecurityContext> cache = principalContextCache;
+        if (cache != null) {
+            // another thread may have derived this principal while we waited for the lock
+            final SecurityContext hit = cache.get(principal);
+            if (hit != null) {
+                return hit;
+            }
+            if (cache.size() >= MAX_CACHED_PRINCIPALS) {
+                // pathological principal cardinality: stop growing and fall back to allocate-per-call
+                // (the pre-cache behavior) instead of retaining contexts without bound
+                return newPrincipalContext(Chars.toString(principal));
+            }
+        }
+        final String key = Chars.toString(principal);
+        final SecurityContext context = newPrincipalContext(key);
+        final CharSequenceObjHashMap<SecurityContext> next = new CharSequenceObjHashMap<>();
+        if (cache != null) {
+            next.putAll(cache);
+        }
+        next.put(key, context);
+        principalContextCache = next;
         return context;
     }
 
