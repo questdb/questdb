@@ -148,8 +148,9 @@ pub mod int32 {
     }
 
     impl Int32ToDoubleConverter {
-        /// QuestDB's maximum decimal precision; the parquet spec caps decimal
-        /// precision at 38, so anything above 76 must be malformed metadata.
+        /// Upper bound on the decimal *scale* this converter accepts, distinct
+        /// from the parquet precision cap of 38. A scale beyond 76 cannot come
+        /// from valid metadata and is rejected as malformed.
         const MAX_SCALE: usize = 76;
 
         pub fn try_new(scale: usize) -> ParquetResult<Self> {

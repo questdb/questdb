@@ -938,9 +938,9 @@ unsafe fn write_decimal_le(ptr: *mut u8, idx: usize, dst_size: usize, value: i12
 }
 
 /// Narrowing decimal->decimal: the decoder kept the SOURCE width (DecodeAs::Source), so read each
-/// value at the source width, rescale to the target scale, NULL out anything that does not fit the
-/// target exactly (lossy scale-down, or magnitude beyond the target precision), and write the result
-/// at the smaller target width. Writes trail reads (dst_size < src_size), so a forward in-place pass
+/// value at the source width, rescale to the target scale (scale-down rounds half away from zero),
+/// NULL out only values whose magnitude overflows the target precision, and write the result at the
+/// smaller target width. Writes trail reads (dst_size < src_size), so a forward in-place pass
 /// is safe; the buffer is then shrunk to `count * dst_size`. This mirrors the native
 /// DecimalColumnTypeConverter (widen -> rescale -> range-check -> narrow), keeping narrowing lazy.
 fn convert_decimal_narrowing(
