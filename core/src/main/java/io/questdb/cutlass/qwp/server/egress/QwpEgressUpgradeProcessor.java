@@ -1063,7 +1063,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             // apply here -- between queries, not between batches -- guarantees
             // the reset fires at a clean frame boundary and never interleaves
             // with a RESULT_BATCH already staged in the response buffer.
-            applyCacheResetForUpcomingQuery(context, state, forceDictReset);
+            boolean cacheResetApplied = applyCacheResetForUpcomingQuery(context, state, forceDictReset);
             LOG.info().$("Egress QUERY_REQUEST [fd=").$(context.getFd())
                     .$(", requestId=").$(requestId)
                     .$(", sqlLen=").$(decoder.sql.length()).I$();
@@ -1112,6 +1112,11 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                             // cached: they mutate state and can't be reused as plans.
                             if (!isStreamingType(type, cq)) {
                                 executeNonSelect(context, state, sqlCtx, cq, requestId);
+                                // A non-SELECT never streams, so it misses the scratch shrink
+                                // beginStreaming owns. Run it here when this query reset the dict.
+                                if (cacheResetApplied) {
+                                    state.getBatchBuffer().resetForNewQuery();
+                                }
                                 return;
                             }
                             factory = cq.getRecordCursorFactory();
@@ -1284,14 +1289,14 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
      * resetting the dict mid-stream would invalidate ids referenced by
      * in-flight RESULT_BATCH frames.
      */
-    private void applyCacheResetForUpcomingQuery(
+    private boolean applyCacheResetForUpcomingQuery(
             HttpConnectionContext context,
             QwpEgressProcessorState state,
             boolean forceDictReset
     ) {
         byte resetMask = state.computeCacheResetMask(forceDictReset);
         if (resetMask == 0) {
-            return;
+            return false;
         }
         state.applyCacheReset(resetMask);
         // OR-merge rather than overwrite: an earlier query may have staged
@@ -1308,6 +1313,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         LOG.debug().$("Egress cache reset staged [fd=").$(context.getFd())
                 .$(", mask=0x").$(Integer.toHexString(resetMask & 0xFF))
                 .I$();
+        return true;
     }
 
     /**
