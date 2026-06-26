@@ -211,7 +211,6 @@ public class PropServerConfigurationTest {
         Assert.assertTrue(configuration.getCairoConfiguration().isMatViewEnabled());
         Assert.assertFalse(configuration.getCairoConfiguration().isMatViewCoveringIndexEnabled());
         Assert.assertEquals(10, configuration.getCairoConfiguration().getMatViewMaxRefreshRetries());
-        Assert.assertEquals(200, configuration.getCairoConfiguration().getMatViewRefreshOomRetryTimeout());
         Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getMatViewInsertAsSelectBatchSize());
         Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getMatViewRowsPerQueryEstimate());
         Assert.assertEquals(100, configuration.getCairoConfiguration().getMatViewMaxRefreshIntervals());
@@ -761,6 +760,28 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testDeprecatedMatViewOomRetryTimeoutKey() throws Exception {
+        // cairo.mat.view.refresh.oom.retry.timeout is a removed live setting kept as a deprecated no-op
+        // so that an existing server.conf carrying it still validates and starts, even under strict
+        // validation. It must not throw and must not affect the live busy-retry backoff that supersedes it.
+        Properties properties = new Properties();
+        properties.setProperty("config.validation.strict", "true");
+        properties.setProperty("cairo.mat.view.refresh.oom.retry.timeout", "200");
+        properties.setProperty("cairo.mat.view.refresh.busy.retry.timeout", "5000");
+
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        // The deprecated key is inert: only the live busy-retry timeout takes effect.
+        Assert.assertEquals(5000, configuration.getCairoConfiguration().getMatViewRefreshBusyRetryTimeout());
+
+        PropServerConfiguration.ValidationResult result = validate(properties);
+        Assert.assertNotNull(result);
+        Assert.assertFalse(result.isError());
+        Assert.assertNotEquals(-1, result.message().indexOf("Deprecated settings"));
+        Assert.assertNotEquals(-1, result.message().indexOf("cairo.mat.view.refresh.oom.retry.timeout"));
+        Assert.assertNotEquals(-1, result.message().indexOf("`cairo.mat.view.refresh.busy.retry.timeout`"));
+    }
+
+    @Test
     public void testDeprecatedValidationResult() {
         Properties properties = new Properties();
         properties.setProperty("http.net.rcv.buf.size", "10000");
@@ -947,6 +968,14 @@ public class PropServerConfigurationTest {
         assertPageSizeRejected("cairo.sql.window.rowid.page.size", "8");
         assertPageSizeRejected("cairo.sql.window.store.page.size", "0");
         assertPageSizeRejected("cairo.sql.window.store.page.size", "32");
+    }
+
+    @Test
+    public void testParquetExportTablePrefixNonBlankLoads() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_PARQUET_EXPORT_TABLE_PREFIX.getPropertyPath(), "qdb.export.");
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        TestUtils.assertEquals("qdb.export.", configuration.getCairoConfiguration().getParquetExportTableNamePrefix());
     }
 
     @Test
@@ -1406,6 +1435,32 @@ public class PropServerConfigurationTest {
         Properties properties = new Properties();
         properties.setProperty("cairo.idle.check.interval", "1234a");
         newPropServerConfiguration(properties);
+    }
+
+    @Test
+    public void testInvalidParquetExportTablePrefixBlank() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_PARQUET_EXPORT_TABLE_PREFIX.getPropertyPath(), "");
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "cairo.parquet.export.table.prefix");
+            TestUtils.assertContains(e.getMessage(), "prefix must not be blank");
+        }
+    }
+
+    @Test
+    public void testInvalidParquetExportTablePrefixWhitespace() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_PARQUET_EXPORT_TABLE_PREFIX.getPropertyPath(), "   ");
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "cairo.parquet.export.table.prefix");
+            TestUtils.assertContains(e.getMessage(), "prefix must not be blank");
+        }
     }
 
     @Test
@@ -2027,7 +2082,6 @@ public class PropServerConfigurationTest {
 
             Assert.assertFalse(configuration.getCairoConfiguration().isMatViewEnabled());
             Assert.assertEquals(100, configuration.getCairoConfiguration().getMatViewMaxRefreshRetries());
-            Assert.assertEquals(10, configuration.getCairoConfiguration().getMatViewRefreshOomRetryTimeout());
             Assert.assertEquals(1000, configuration.getCairoConfiguration().getMatViewInsertAsSelectBatchSize());
             Assert.assertEquals(10000, configuration.getCairoConfiguration().getMatViewRowsPerQueryEstimate());
             Assert.assertFalse(configuration.getCairoConfiguration().isMatViewParallelSqlEnabled());

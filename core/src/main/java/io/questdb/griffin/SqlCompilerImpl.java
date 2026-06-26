@@ -143,6 +143,7 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
+import java.util.concurrent.locks.Lock;
 
 import static io.questdb.cairo.TableUtils.TABLE_KIND_REGULAR_TABLE;
 import static io.questdb.griffin.SqlKeywords.*;
@@ -1641,6 +1642,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private void alterTableResume(int tableNamePosition, TableToken tableToken, long resumeFromTxn, SqlExecutionContext executionContext) {
         try {
             if (!executionContext.isValidationOnly()) {
+                // Clear the runtime hard-suspend entry before resuming so the resume re-notification
+                // is not swallowed. A config-listed table stays suspended until removed from config.
+                engine.removeWalApplySuspended(tableToken);
                 engine.getTableSequencerAPI().resumeTable(tableToken, resumeFromTxn);
                 executionContext.storeTelemetry(TelemetryEvent.WAL_APPLY_RESUME, TelemetryOrigin.WAL_APPLY);
             }
@@ -1752,6 +1756,18 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             TableToken tableToken,
             byte walFlag
     ) throws SqlException {
+        if (engine.isReadOnlyMode()) {
+            // SET TYPE writes the _convert marker via createConvertFile during compilation,
+            // outside the engine writer chokepoint, so the per-statement ingress write-gate (which
+            // runs after compile() for parse-time-executed statements) cannot stop it. Refuse the
+            // instant the node is read-only. This eager check also orders before the auth call:
+            // isReadOnlyMode() flips first, while a connection's security context may still be the
+            // PRIMARY one that authorizeAlterTableSetType() would accept, so the check must precede
+            // the auth call. The eager check alone does not close the demote window though -- a
+            // demote landing between here and the marker write would still strand the marker on a
+            // demoting node; the role-switch read-lock hold around the write below is what closes it.
+            throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+        }
         executionContext.getSecurityContext().authorizeAlterTableSetType(tableToken);
         try {
             try (TableReader reader = engine.getReader(tableToken)) {
@@ -1769,8 +1785,28 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
 
             if (!executionContext.isValidationOnly()) {
-                path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
-                TableUtils.createConvertFile(ff, path, walFlag);
+                // Demote write-fence for the parse-time SET TYPE marker write. The eager check above
+                // ran while the node was still PRIMARY, but createConvertFile externalizes the
+                // _convert marker (acted on at the next restart to flip the table's WAL<->non-WAL
+                // format); a demote landing between that eager check and here would write the marker
+                // on an already-demoting node, where at restart it would convert the now-replica
+                // table's format and diverge from the primary. Hold the role-switch READ lock across
+                // an authoritative in-lock isReadOnlyMode() re-check and the write: either the flip
+                // ran first (refuse) or this runs fully as PRIMARY while the flip's write acquire
+                // waits. The fence is a no-op for pure-OSS deployments (uncontended read lock, static
+                // flag).
+                final Lock lock = engine.getRoleSwitchReadLock();
+                lock.lock();
+                try {
+                    if (engine.isReadOnlyMode()) {
+                        throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+                    }
+                    engine.fireRoleSwitchMintObserver();
+                    path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
+                    TableUtils.createConvertFile(ff, path, walFlag);
+                } finally {
+                    lock.unlock();
+                }
             }
             compiledQuery.ofTableSetType();
         } catch (CairoException e) {
@@ -1783,6 +1819,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private void alterTableSuspend(int tableNamePosition, TableToken tableToken, ErrorTag errorTag, String errorMessage, SqlExecutionContext executionContext) {
         try {
             if (!executionContext.isValidationOnly()) {
+                engine.addWalApplySuspended(tableToken);
                 engine.getTableSequencerAPI().suspendTable(tableToken, errorTag, errorMessage);
                 executionContext.storeTelemetry(TelemetryEvent.WAL_APPLY_SUSPEND, TelemetryOrigin.WAL_APPLY);
             }
@@ -1954,7 +1991,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         try (TableRecordMetadata tableMetadata = engine.getTableMetadata(matViewToken)) {
             tok = SqlUtil.fetchNext(lexer);
-            if (tok == null || (!isAlterKeyword(tok) && !isResumeKeyword(tok) && !isSuspendKeyword(tok) && !isSetKeyword(tok))) {
+            if (tok == null || (!isAlterKeyword(tok) && !isResumeKeyword(tok) && !isRebaseKeyword(tok) && !isSuspendKeyword(tok) && !isSetKeyword(tok))) {
                 compileAlterMatViewExt(executionContext, tok, matViewToken, matViewNamePosition);
                 return;
             }
@@ -2269,6 +2306,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
             } else if (isResumeKeyword(tok)) {
                 parseResumeWal(matViewToken, matViewNamePosition, executionContext);
+            } else if (isRebaseKeyword(tok)) {
+                parseRebaseWal(matViewToken, matViewNamePosition, executionContext);
             } else if (isSuspendKeyword(tok)) {
                 parseSuspendWal(matViewToken, matViewNamePosition, executionContext);
             }
@@ -2596,6 +2635,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
             } else if (isResumeKeyword(tok)) {
                 parseResumeWal(tableToken, tableNamePosition, executionContext);
+            } else if (isRebaseKeyword(tok)) {
+                parseRebaseWal(tableToken, tableNamePosition, executionContext);
             } else if (isSuspendKeyword(tok)) {
                 parseSuspendWal(tableToken, tableNamePosition, executionContext);
             } else if (isSquashKeyword(tok)) {
@@ -3120,6 +3161,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     private InsertOperation compileInsert(InsertModel insertModel, SqlExecutionContext executionContext) throws SqlException {
         // todo: consider moving this method to InsertModel
+        // A connection authorized while the node was PRIMARY keeps a read-write security
+        // context across an in-place demote. Check the live engine state before touching the
+        // table registry, so the caller sees "replica access is read-only" rather than
+        // "table does not exist" when the table has not yet been replicated to this node.
+        if (engine.isReadOnlyMode()) {
+            throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+        }
         final ExpressionNode tableNameExpr = insertModel.getTableNameExpr();
         InsertOperationImpl insertOperation = null;
         Function timestampFunction = null;
@@ -3243,6 +3291,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private InsertOperation compileInsertAsSelect(ExecutionModel executionModel, SqlExecutionContext executionContext) throws SqlException {
+        // A connection authorized while the node was PRIMARY keeps a read-write security
+        // context across an in-place demote. Check the live engine state before touching the
+        // table registry, so the caller sees "replica access is read-only" rather than
+        // "table does not exist" when the table has not yet been replicated to this node.
+        if (engine.isReadOnlyMode()) {
+            throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+        }
         final InsertModel model = (InsertModel) executionModel;
         final ExpressionNode tableNameExpr = model.getTableNameExpr();
         TableToken tableToken = tableExistsOrFail(tableNameExpr.position, tableNameExpr.token, executionContext);
@@ -3516,6 +3571,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         executionContext.getSecurityContext().authorizeMatViewRefresh(matViewToken);
         if (!executionContext.isValidationOnly()) {
+            if (engine.isReadOnlyMode()) {
+                // A connection authorized while the node was PRIMARY keeps a read-write security
+                // context across an in-place demote, so authorizeMatViewRefresh above still passes.
+                // Refuse the instant the node goes read-only, mirroring the per-statement write gates
+                // on the pg-wire and HTTP /exec paths -- otherwise this enqueues an async refresh that
+                // writes to a node that is already demoting and loses the write once it settles.
+                throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+            }
             final MatViewStateStore matViewStateStore = engine.getMatViewStateStore();
             if (isStatsReset) {
                 final MatViewState viewState = matViewStateStore.getViewState(matViewToken);
@@ -3708,6 +3771,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         try {
                             tableWriters.add(engine.getTableWriterAPI(tableToken, "truncateTables"));
                         } catch (CairoException e) {
+                            if (e.isAuthorizationError()) {
+                                // A read-only refusal (e.g. a demoted replica) already carries the
+                                // clean, actionable message; surface it as-is instead of masking it
+                                // behind the generic "could not be truncated" wrap.
+                                throw e;
+                            }
                             LOG.info().$("table busy [table=").$(tok).$(", e=").$((Throwable) e).I$();
                             throw SqlException.$(lexer.lastTokenPosition(), "table '").put(tok).put("' could not be truncated: ").put(e);
                         }
@@ -3752,7 +3821,30 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     final TableWriterAPI writer = tableWriters.getQuick(i);
                     try {
                         if (writer.getMetadata().isWalEnabled()) {
-                            writer.truncateSoft();
+                            // Demote write-fence for the parse-time TRUNCATE mint. The writer was
+                            // acquired while the node was still PRIMARY (the eager getTableWriterAPI
+                            // gate passed), but truncateSoft() externalizes a replicated WAL sequencer
+                            // txn; a demote landing between that eager gate and here would mint on an
+                            // already-demoting node whose uploader is gone, acknowledging a truncate the
+                            // peer never receives. Hold the role-switch READ lock across an authoritative
+                            // in-lock isReadOnlyMode() re-check and truncateSoft(): either the flip ran
+                            // first (refuse, the finally below frees the still-uncommitted writers) or
+                            // this runs fully as PRIMARY while the flip's write acquire waits. The fence
+                            // is a no-op for pure-OSS deployments (uncontended read lock, static flag).
+                            if (engine.isReadOnlyMode()) {
+                                throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+                            }
+                            final Lock lock = engine.getRoleSwitchReadLock();
+                            lock.lock();
+                            try {
+                                if (engine.isReadOnlyMode()) {
+                                    throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+                                }
+                                engine.fireRoleSwitchMintObserver();
+                                writer.truncateSoft();
+                            } finally {
+                                lock.unlock();
+                            }
                         } else {
                             TableToken tableToken = writer.getTableToken();
                             if (engine.lockReaders(tableToken)) {
@@ -5050,6 +5142,49 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         alterOperationBuilder.setParquetConversionOptions(bloomFilterColumns, fpp);
     }
 
+    private void parseRebaseWal(TableToken tableToken, int tableNamePosition, SqlExecutionContext executionContext) throws SqlException {
+        CharSequence tok = expectToken(lexer, "'wal'");
+        if (!isWalKeyword(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "'wal' expected");
+        }
+        if (!engine.isWalTable(tableToken)) {
+            throw SqlException.$(lexer.lastTokenPosition(), tableToken.getTableName()).put(" is not a WAL table.");
+        }
+        tok = SqlUtil.fetchNext(lexer);
+        String targetDir = null;
+        if (tok != null && !Chars.equals(tok, ';')) {
+            // ALTER TABLE <t> REBASE WAL INTO '<dirName>': the replica-side variant. Instead of minting a
+            // fresh dir, it reconstructs the table into the primary's already-chosen rebased dir so the
+            // replica follows the primary's rebase past a poison-pill WAL transaction.
+            if (!isIntoKeyword(tok)) {
+                throw SqlException.$(lexer.lastTokenPosition(), "'into' expected");
+            }
+            tok = expectToken(lexer, "target directory name");
+            targetDir = unquote(tok).toString();
+            try {
+                TableUtils.getTableIdFromTableDir(targetDir);
+            } catch (NumericException e) {
+                throw SqlException.$(lexer.lastTokenPosition(), "invalid rebase target directory [dir=").put(targetDir).put(']');
+            }
+            if (Chars.indexOf(targetDir, '/') != -1 || Chars.indexOf(targetDir, '\\') != -1 || Chars.contains(targetDir, "..")) {
+                throw SqlException.$(lexer.lastTokenPosition(), "invalid rebase target directory [dir=").put(targetDir).put(']');
+            }
+            tok = SqlUtil.fetchNext(lexer);
+            if (tok != null && !Chars.equals(tok, ';')) {
+                throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [token=").put(tok).put(']');
+            }
+        }
+        executionContext.getSecurityContext().authorizeRebaseWal(tableToken);
+        if (!executionContext.isValidationOnly()) {
+            if (targetDir == null) {
+                engine.rebaseWalTable(tableToken);
+            } else {
+                engine.rebaseWalTableInto(tableToken, targetDir);
+            }
+        }
+        compiledQuery.ofRebaseWal();
+    }
+
     private void parseResumeWal(TableToken tableToken, int tableNamePosition, SqlExecutionContext executionContext) throws SqlException {
         CharSequence tok = expectToken(lexer, "'wal'");
         if (!isWalKeyword(tok)) {
@@ -5089,9 +5224,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         if (!engine.isWalTable(tableToken)) {
             throw SqlException.$(lexer.lastTokenPosition(), tableToken.getTableName()).put(" is not a WAL table.");
         }
-        if (!configuration.isDevModeEnabled()) {
-            throw SqlException.$(0, "Cannot suspend table, database is not in dev mode");
-        }
 
         ErrorTag errorTag = ErrorTag.NONE;
         String errorMessage = "";
@@ -5125,6 +5257,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 throw SqlException.$(lexer.lastTokenPosition(), "'with' expected");
             }
         }
+        executionContext.getSecurityContext().authorizeSuspendWal(tableToken);
         alterTableSuspend(tableNamePosition, tableToken, errorTag, errorMessage, executionContext);
     }
 

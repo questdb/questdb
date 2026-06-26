@@ -41,6 +41,7 @@ import io.questdb.mp.continuation.TimerShards;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IOURingFacade;
 import io.questdb.std.IOURingFacadeImpl;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.Rnd;
 import io.questdb.std.RostiAllocFacade;
@@ -361,6 +362,10 @@ public interface CairoConfiguration {
 
     long getMatViewMaxRefreshStepUs();
 
+    int getMatViewRefreshBusyRetryLimit();
+
+    long getMatViewRefreshBusyRetryTimeout();
+
     long getMatViewRefreshIntervalsUpdatePeriod();
 
     int getMatViewRefreshMaxClusters();
@@ -370,8 +375,6 @@ public interface CairoConfiguration {
      * attempt. {@code 0} means unlimited; only the global RSS limit applies.
      */
     long getMatViewRefreshMemoryLimitBytes();
-
-    long getMatViewRefreshOomRetryTimeout();
 
     long getMatViewRowsPerQueryEstimate();
 
@@ -912,7 +915,33 @@ public interface CairoConfiguration {
      */
     long getWalApplyMemoryLimitBytes();
 
+    /**
+     * Set of table directory names (e.g. {@code my_table~3}) whose WAL transactions must not be
+     * applied by the ApplyWal2Table job ("hard suspended" tables). Directory names are matched, not
+     * logical names, so the suspension binds to the physical table across a rename and a fresh table
+     * reusing the name is unaffected. Configured via {@code cairo.wal.apply.suspended.tables}
+     * (comma-separated) and reloadable. The runtime set extended through
+     * {@code ALTER TABLE ... SUSPEND WAL} is held separately on the engine.
+     *
+     * @return the configured set, or null when none are configured (treated as empty).
+     */
+    @Nullable
+    default ObjHashSet<String> getWalApplySuspendedTables() {
+        return null;
+    }
+
     long getWalApplyTableTimeQuota();
+
+    /**
+     * Whether WAL-apply-suspended tables (see {@link #getWalApplySuspendedTables()} and
+     * {@code ALTER TABLE ... SUSPEND WAL}) also deny WAL writes, rejecting commits like a dropped
+     * table but with a distinct exception. When false, suspension only excludes the table from WAL
+     * apply while writes keep buffering for later. Configured via
+     * {@code cairo.wal.apply.suspended.write.denied} and reloadable.
+     */
+    default boolean isWalApplySuspendedWriteDenied() {
+        return false;
+    }
 
     long getWalDataAppendPageSize();
 
@@ -1019,6 +1048,24 @@ public interface CairoConfiguration {
     boolean isMatViewEnabled();
 
     boolean isMatViewParallelSqlEnabled();
+
+    /**
+     * Returns true if the materialized view with the given name is in the configured refresh block
+     * list ({@code cairo.mat.view.refresh.block.list}). Blocked views are skipped by every refresh
+     * path; they may still be invalidated by a base-table/parent cascade or an explicit INVALIDATE.
+     * Invalidation is safe for a blocked view: it runs no view SQL (so it can't trigger the crash
+     * the block list guards against) and it releases the base table's WAL retention. This is an
+     * operator escape hatch for a view whose refresh keeps crashing the database: blocking it lets
+     * the database start and stay up. Because a blocked view that is never invalidated never advances
+     * its last refreshed base txn, it can pin the base table's WAL retention until it is dropped or
+     * removed from the block list. This applies equally to all
+     * refresh types: the block skip in the refresh job short-circuits before the refresh-intervals
+     * caching bump, so blocked timer and manual views stop caching intervals just like immediate
+     * views, and the base WAL is pinned just as hard.
+     */
+    default boolean isMatViewRefreshBlocked(CharSequence viewName) {
+        return false;
+    }
 
     boolean isMatViewRefreshMissingWalFilesFatal();
 

@@ -419,6 +419,8 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
          * for the detailed strategy description). Aggregates results into dataMap.
          */
         private void buildMap() {
+            // Consult the breaker before iterating, so an empty master still observes cancellation.
+            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
             for (int s = 0; s < slaveCount; s++) {
                 timeFrameHelpers.getQuick(s).toTop();
                 if (slaveStates.getQuick(s).isKeyed() && asOfJoinMaps.getQuick(s) != null) {
