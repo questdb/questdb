@@ -6409,52 +6409,63 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return factory;
         }
 
-        // We require timestamp with any order.
-        final int timestampIndex;
+        // From here on the factory is ours to wrap. Every step below can reject the query --
+        // getTimestampIndex on a missing designated timestamp, prepareLatestByColumnIndexes on an
+        // unsupported latest-by key type (e.g. DECIMAL), the record sink compiler, or the wrapping
+        // cursor factory constructors -- so free the input on any failure to avoid leaking it (and the
+        // async page-frame circuit breaker it may transitively own) when latest by sits over a subquery.
         try {
-            timestampIndex = getTimestampIndex(model, factory);
+            // We require timestamp with any order.
+            final int timestampIndex = getTimestampIndex(model, factory);
             if (timestampIndex == -1) {
                 throw SqlException.$(model.getModelPosition(), "latest by query does not provide dedicated TIMESTAMP column");
             }
-        } catch (Throwable e) {
-            Misc.free(factory);
-            throw e;
-        }
 
-        final RecordMetadata metadata = factory.getMetadata();
-        prepareLatestByColumnIndexes(latestBy, metadata);
+            final RecordMetadata metadata = factory.getMetadata();
+            prepareLatestByColumnIndexes(latestBy, metadata);
 
-        if (!factory.recordCursorSupportsRandomAccess()) {
-            return new LatestByRecordCursorFactory(
+            if (!factory.recordCursorSupportsRandomAccess()) {
+                final RecordSink recordSink = RecordSinkFactory.getInstance(configuration, asm, metadata, listColumnFilterA);
+                // LatestByRecordCursorFactory's constructor frees the base factory on failure, so null
+                // our reference before handing it off to keep the catch below from double-freeing it.
+                final RecordCursorFactory base = factory;
+                factory = null;
+                return new LatestByRecordCursorFactory(
+                        configuration,
+                        base,
+                        recordSink,
+                        keyTypes,
+                        timestampIndex
+                );
+            }
+
+            boolean orderedByTimestampAsc = false;
+            final IQueryModel nested = model.getNestedModel();
+            assert nested != null;
+            final LowerCaseCharSequenceIntHashMap orderBy = nested.getOrderHash();
+            CharSequence timestampColumn = metadata.getColumnName(timestampIndex);
+            if (orderBy.get(timestampColumn) == IQueryModel.ORDER_DIRECTION_ASCENDING) {
+                // ORDER BY the timestamp column case.
+                orderedByTimestampAsc = true;
+            } else if (timestampIndex == metadata.getTimestampIndex() && orderBy.size() == 0) {
+                // Empty ORDER BY, but the timestamp column in the designated timestamp.
+                orderedByTimestampAsc = true;
+            }
+
+            // LatestByLightRecordCursorFactory's constructor does not free the base on failure, so the
+            // catch below owns it (factory stays non-null until the constructor returns successfully).
+            return new LatestByLightRecordCursorFactory(
                     configuration,
                     factory,
                     RecordSinkFactory.getInstance(configuration, asm, metadata, listColumnFilterA),
                     keyTypes,
-                    timestampIndex
+                    timestampIndex,
+                    orderedByTimestampAsc
             );
+        } catch (Throwable e) {
+            Misc.free(factory);
+            throw e;
         }
-
-        boolean orderedByTimestampAsc = false;
-        final IQueryModel nested = model.getNestedModel();
-        assert nested != null;
-        final LowerCaseCharSequenceIntHashMap orderBy = nested.getOrderHash();
-        CharSequence timestampColumn = metadata.getColumnName(timestampIndex);
-        if (orderBy.get(timestampColumn) == IQueryModel.ORDER_DIRECTION_ASCENDING) {
-            // ORDER BY the timestamp column case.
-            orderedByTimestampAsc = true;
-        } else if (timestampIndex == metadata.getTimestampIndex() && orderBy.size() == 0) {
-            // Empty ORDER BY, but the timestamp column in the designated timestamp.
-            orderedByTimestampAsc = true;
-        }
-
-        return new LatestByLightRecordCursorFactory(
-                configuration,
-                factory,
-                RecordSinkFactory.getInstance(configuration, asm, metadata, listColumnFilterA),
-                keyTypes,
-                timestampIndex,
-                orderedByTimestampAsc
-        );
     }
 
     @NotNull

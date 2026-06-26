@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
+import io.questdb.mp.WorkerPool;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
@@ -40,6 +41,8 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.BindVarTuple;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -713,6 +716,42 @@ public class LatestByTest extends AbstractCairoTest {
                             "a\tc\td\t1970-01-05T01:00:00.000000" + suffix + "\n" +
                             "b\t\td\t1970-01-05T02:00:00.000000" + suffix + "\n" +
                             "\tc\td\t1970-01-05T03:00:00.000000" + suffix + "\n");
+        });
+    }
+
+    @Test
+    public void testLatestByOverSubQueryRejectedKeyDoesNotLeak() throws Exception {
+        // generateLatestBy used to leak its input factory -- and the async page-frame circuit
+        // breaker (NATIVE_CB2) the factory transitively owns -- when latest by over a sub-query was
+        // rejected at codegen because the partition key is an unsupported type (DECIMAL). The
+        // CTE keeps latest by over a sub-query (not pushed into the table scan), and under a worker
+        // pool the WHERE compiles to an async filter that allocates the breaker at compile time, so
+        // the rejection must free the half-built factory tree and leak nothing.
+        TestUtils.assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        engine.execute(
+                                "CREATE TABLE x (ts TIMESTAMP, v LONG, d DECIMAL(18,1)) TIMESTAMP(ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+                        engine.execute(
+                                "INSERT INTO x SELECT (x * 1_000_000L)::timestamp, x, x::decimal(18,1) FROM long_sequence(1_000)",
+                                sqlExecutionContext
+                        );
+                        try (RecordCursorFactory ignore = engine.select(
+                                "WITH cte0 AS (SELECT * FROM x) SELECT * FROM cte0 WHERE v > 0 LATEST ON ts PARTITION BY d",
+                                sqlExecutionContext
+                        )) {
+                            Assert.fail("expected the query to be rejected for the DECIMAL partition key");
+                        } catch (SqlException e) {
+                            TestUtils.assertContains(e.getFlyweightMessage(), "invalid type, only");
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
         });
     }
 
