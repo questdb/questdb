@@ -12340,6 +12340,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         path.trimTo(pathSize);
         setPathForNativePartition(path, timestampType, partitionBy, lastOpenPartitionTs, currentNameTxn);
         int plen = path.size();
+        long partitionSize = txWriter.getPartitionRowCountByTimestamp(lastOpenPartitionTs);
         try {
             for (int colIdx = 0; colIdx < columnCount; colIdx++) {
                 if (metadata.getColumnType(colIdx) <= 0 || !metadata.isColumnIndexed(colIdx)
@@ -12350,17 +12351,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (indexer == null) {
                     continue;
                 }
-                // Absent (columnTop == -1) or row-less (columnTop >= partition size) columns
-                // have no .pk file here, so there is no index to restore. Same guard as
-                // sealPostingIndexForPartition -- use getColumnTop (sentinel -1), not
-                // getColumnTopQuick (returns 0 for an absent column, so the -1 arm is dead).
-                long partitionSize = txWriter.getPartitionRowCountByTimestamp(lastOpenPartitionTs);
+                // A column added after this partition (columnTop == -1) has no .pk here.
                 long columnTop = columnVersionWriter.getColumnTop(lastOpenPartitionTs, colIdx);
-                if (columnTop == -1 || columnTop >= partitionSize) {
+                if (columnTop == -1) {
                     continue;
                 }
                 CharSequence colName = metadata.getColumnName(colIdx);
                 long colNameTxn = columnVersionWriter.getColumnNameTxn(lastOpenPartitionTs, colIdx);
+                // A row-less column (columnTop >= partition size) has a .pk only if ADD COLUMN
+                // INDEX TYPE POSTING built one here on the active partition; a split tail whose
+                // seal never built one has none. Discriminate on the .pk's presence: skipping a
+                // present .pk strands the indexer on an older partition (silent index loss),
+                // while opening an absent one throws "index does not exist".
+                if (columnTop >= partitionSize) {
+                    boolean keyFileExists = ff.exists(
+                            keyFileName(metadata.getColumnIndexType(colIdx), path.trimTo(plen), colName, colNameTxn));
+                    path.trimTo(plen);
+                    if (!keyFileExists) {
+                        continue;
+                    }
+                }
                 indexer.configureFollowerAndWriter(
                         path.trimTo(plen), colName, colNameTxn,
                         getPrimaryColumn(colIdx), columnTop,

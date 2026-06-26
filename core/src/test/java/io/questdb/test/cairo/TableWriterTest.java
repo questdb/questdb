@@ -44,6 +44,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.TxWriter;
+import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
@@ -3351,6 +3352,27 @@ public class TableWriterTest extends AbstractCairoTest {
                         "partition must be parquet after the switch",
                         writer.getTxWriter().isPartitionParquet(partitionIndex)
                 );
+
+                // linkPartitionIndexFiles must link sym's .pk (it has rows) and skip
+                // extra's (row-less, no .pk). The positive sym check pins the link arm:
+                // an over-broad guard that also dropped the live sym would link nothing
+                // yet still return SWITCH_OK, which rc alone cannot catch.
+                long symNameTxn = writer.getColumnNameTxn(partitionTs, writer.getColumnIndex("sym"));
+                long extraNameTxn = writer.getColumnNameTxn(partitionTs, writer.getColumnIndex("extra"));
+                long newNameTxn = writer.getTxWriter().getPartitionNameTxn(partitionIndex);
+                try (Path p = new Path()) {
+                    p.of(configuration.getDbRoot()).concat(token);
+                    TableUtils.setPathForNativePartition(p, timestampType, PartitionBy.DAY, partitionTs, newNameTxn);
+                    int dirLen = p.size();
+                    Assert.assertTrue(
+                            "sym .pk must be linked into the parquet partition dir",
+                            FF.exists(IndexFactory.keyFileName(IndexType.POSTING, p, "sym", symNameTxn))
+                    );
+                    Assert.assertFalse(
+                            "row-less extra must have no .pk in the parquet partition dir",
+                            FF.exists(IndexFactory.keyFileName(IndexType.POSTING, p.trimTo(dirLen), "extra", extraNameTxn))
+                    );
+                }
             }
         });
     }
