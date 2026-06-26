@@ -601,6 +601,16 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     @Override
     protected boolean runSerially() {
         final long t = clock.getTicks();
+        // Deferred 2 (adaptive group commit): sweep the pending-flush registry on EVERY pass (the sweep has
+        // an empty-set fast path, so it is ~free when W=0 / nothing is pending). The age gate lives in
+        // WalWriter.forceDurableIfPending (flush only when the oldest pending commit is >= W old), so this
+        // makes an IDLE writer's last commit durable within ~W of the window elapsing even though commits
+        // stopped — the hard requirement. Independent of the (much slower) WAL-purge broad-sweep cadence.
+        boolean busy = false;
+        final long groupWindowUs = configuration.getAdaptiveCommitGroupWindowUs();
+        if (groupWindowUs > 0) {
+            busy = engine.getWalGroupCommitFlushQueue().sweep(t, groupWindowUs);
+        }
         if (last + checkInterval < t) {
             last = t;
             if (engine.tryLockWalPurgeJob(0, TimeUnit.SECONDS)) {
@@ -613,7 +623,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                 LOG.info().$("skipping, locked out").$();
             }
         }
-        return false;
+        return busy;
     }
 
     public interface Deleter {

@@ -298,6 +298,16 @@ public class TableSequencerImpl implements TableSequencer {
         return closed;
     }
 
+    /**
+     * Adaptive group-commit (Deferred 2) deferred device flush of the sequencer txn log
+     * (part-before-header). Must be called holding the sequencer WRITE lock (the same lock {@code nextTxn}
+     * takes), so it cannot race a concurrent sequencer append/rotation of the txn-log mmaps.
+     */
+    public void fdatasyncTxnLog() {
+        assert !closed;
+        tableTransactionLog.fdatasyncTxnLog();
+    }
+
     public boolean isDistressed() {
         return distressed;
     }

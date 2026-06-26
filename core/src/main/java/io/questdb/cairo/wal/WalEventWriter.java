@@ -496,20 +496,38 @@ class WalEventWriter implements Closeable {
      */
     void sync(int commitMode) {
         if (commitMode != CommitMode.NOSYNC) {
-            eventMem.sync(commitMode == CommitMode.ASYNC);
-            eventIndexMem.sync(commitMode == CommitMode.ASYNC);
+            // Deferred 2 (group commit, W>0): push the events files to the page cache with msync(MS_ASYNC)
+            // — writeback-only, NO device flush — and DEFER the events fdatasync to the WalWriter's batched
+            // flushPendingDurable() (via fdatasync()), which carries it BETWEEN the columns and the sequencer
+            // so the whole data→events→seq device flush is batched and ordered. Other modes (and ADAPTIVE
+            // W=0) keep their exact existing sync grade + per-commit fdatasync.
+            final boolean deferDeviceFlush = commitMode == CommitMode.ADAPTIVE
+                    && configuration.getAdaptiveCommitGroupWindowUs() > 0;
+            final boolean async = commitMode == CommitMode.ASYNC || deferDeviceFlush;
+            eventMem.sync(async);
+            eventIndexMem.sync(async);
             // ADAPTIVE: make the events file durable. msync flushes data to the page cache;
             // fdatasync ensures both the data and the inode size reach the device before the
             // sequencer record is written. Events must be durable before the sequencer pointer
             // is committed (events before seq, matching data→events→seq order).
-            if (commitMode == CommitMode.ADAPTIVE) {
-                if (eventMem.isOpen()) {
-                    ff.fdatasync(eventMem.getFd());
-                }
-                if (eventIndexMem.isOpen()) {
-                    ff.fdatasync(eventIndexMem.getFd());
-                }
+            if (commitMode == CommitMode.ADAPTIVE && !deferDeviceFlush) {
+                fdatasync();
             }
+        }
+    }
+
+    /**
+     * The deferred (batched) device flush of the WAL-e events files for adaptive group commit (Deferred 2):
+     * fdatasync the events file and its index. The msync in {@link #sync(int)} already pushed the bytes to
+     * the page cache; this carries the device flush + journal commit, ordered AFTER the column data and
+     * BEFORE the sequencer in the batched flush.
+     */
+    void fdatasync() {
+        if (eventMem.isOpen()) {
+            ff.fdatasync(eventMem.getFd());
+        }
+        if (eventIndexMem.isOpen()) {
+            ff.fdatasync(eventIndexMem.getFd());
         }
     }
 

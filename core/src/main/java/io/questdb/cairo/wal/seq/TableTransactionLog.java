@@ -104,6 +104,15 @@ public class TableTransactionLog implements Closeable {
         rootPath.clear();
     }
 
+    /**
+     * The deferred (batched) device flush for adaptive group commit (Deferred 2): fdatasync the txn log
+     * files (part-before-header). The txn-meta mems carry only structural-change records (not data commits)
+     * and are not part of the deferred per-commit path, so they are not flushed here.
+     */
+    public void fdatasyncTxnLog() {
+        txnLogFile.fdatasyncTxnLog();
+    }
+
     public void fullSync() {
         txnMetaMemIndex.sync(false);
         txnMetaMem.sync(false);

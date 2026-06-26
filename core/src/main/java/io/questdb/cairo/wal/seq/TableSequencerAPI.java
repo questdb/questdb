@@ -259,6 +259,16 @@ public class TableSequencerAPI implements QuietCloseable {
     }
 
     /**
+     * The engine's adaptive group-commit (Deferred 2) pending-flush registry. Exposed here so a
+     * {@link io.questdb.cairo.wal.WalWriter} (which holds the sequencer API, not the engine) can register
+     * itself when it defers a device flush under {@code cairo.adaptive.commit.group.window.us > 0}.
+     */
+    @NotNull
+    public io.questdb.cairo.wal.WalGroupCommitFlushQueue getWalGroupCommitFlushQueue() {
+        return engine.getWalGroupCommitFlushQueue();
+    }
+
+    /**
      * Returns the table's EFFECTIVE per-table commit mode (the {@code _meta} override resolved against the
      * global {@code cairo.commit.mode}), populating the per-table {@link SeqTxnTracker} cache on first use.
      * This is the single accessor every WAL-side adaptive decision point uses (WAL-commit durability, the
@@ -336,6 +346,23 @@ public class TableSequencerAPI implements QuietCloseable {
                 tableSequencer.unlockWrite();
             }
             return txn;
+        }
+    }
+
+    /**
+     * Adaptive group-commit (Deferred 2): perform the DEFERRED device flush ({@code fdatasync}) of the
+     * sequencer txn log for {@code tableToken}, the final (seq) step of the batched data→events→seq flush.
+     * Opens the sequencer under the WRITE lock (the same lock {@code nextTxn} takes) so the flush cannot
+     * race a concurrent sequencer append/rotation. A no-op-safe call: callers only invoke it for ADAPTIVE
+     * tables that have deferred at least one sequencer commit under {@code W > 0}.
+     */
+    public void fdatasyncTxnLog(final TableToken tableToken) {
+        try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
+            try {
+                tableSequencer.fdatasyncTxnLog();
+            } finally {
+                tableSequencer.unlockWrite();
+            }
         }
     }
 

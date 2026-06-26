@@ -219,6 +219,28 @@ public interface CairoConfiguration {
     }
 
     /**
+     * The adaptive GROUP-COMMIT window in MICROSECONDS (the RPO knob,
+     * {@code cairo.adaptive.commit.group.window.us}). Default {@code 0} keeps today's synchronous
+     * fsync-before-return under {@link CommitMode#ADAPTIVE}: every acked WAL commit is fdatasync-durable
+     * before {@code commit0} returns (zero loss). When {@code > 0}, the WAL fdatasync (the device flush) is
+     * BATCHED across an adaptive table's commits within this window: {@code commit0} returns after the txn
+     * is sequenced (segment/events/sequencer msync'd to the page cache and ordered, but NOT yet
+     * device-durable) and the fdatasync is performed by a batched flush — bounded to {@code <= W} even when
+     * commits stop, by the background flusher in {@code WalPurgeJob}. A crash loses only commits whose batch
+     * fdatasync had not completed (RPO {@code <= W}); a torn tail is handled by the integrity CRCs +
+     * recovery frontier. {@code localDurableSeqTxn} (the durable-ack frontier) advances ONLY when the batch
+     * fdatasync completes, so a durable-ack'd txn always survives a crash.
+     *
+     * <p>Has effect only under ADAPTIVE; other modes ignore it. A negative value is treated as {@code 0}.
+     *
+     * @return the adaptive group-commit window in microseconds; {@code 0} (the default) = synchronous,
+     * zero-loss
+     */
+    default long getAdaptiveCommitGroupWindowUs() {
+        return 0;
+    }
+
+    /**
      * Whether the adaptive durable-epoch RECOVERY ROLL-FORWARD runs at engine startup (Plan 3 Task C).
      * When {@code true} (default) {@link RecoveryCoordinator} rewinds each adaptive WAL table with a
      * durable epoch to its {@code _txn.epoch}/{@code _cv.epoch} cut before the boot WAL apply re-derives

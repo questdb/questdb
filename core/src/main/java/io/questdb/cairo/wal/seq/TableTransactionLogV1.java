@@ -156,6 +156,14 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
     }
 
     @Override
+    public void fdatasyncTxnLog() {
+        // The deferred (batched) device flush for adaptive group commit (V1 has a single header file).
+        if (txnMem.isOpen()) {
+            ff.fdatasync(txnMem.getFd());
+        }
+    }
+
+    @Override
     public void fullSync() {
         txnMem.sync(false);
     }
@@ -213,9 +221,15 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
     private void sync0() {
         int commitMode = CommitMode.effectiveCommitMode(tableCommitMode, configuration.getCommitMode());
         if (commitMode != CommitMode.NOSYNC) {
-            txnMem.sync(commitMode == CommitMode.ASYNC);
-            // ADAPTIVE: make the V1 sequencer header durable.
-            if (commitMode == CommitMode.ADAPTIVE) {
+            // Deferred 2 (group commit, W>0): push the V1 sequencer header to the page cache with
+            // msync(MS_ASYNC) — writeback-only, NO device flush — and DEFER the fdatasync to the batched
+            // flushPendingDurable (via fdatasyncTxnLog) as the final seq step. MS_SYNC here would device-flush
+            // every commit and defeat the window. Other modes (and ADAPTIVE W=0) keep their existing grade.
+            final boolean deferDeviceFlush = commitMode == CommitMode.ADAPTIVE
+                    && configuration.getAdaptiveCommitGroupWindowUs() > 0;
+            txnMem.sync(commitMode == CommitMode.ASYNC || deferDeviceFlush);
+            // ADAPTIVE: make the V1 sequencer header durable (deferred to the batch under W>0).
+            if (commitMode == CommitMode.ADAPTIVE && !deferDeviceFlush) {
                 ff.fdatasync(txnMem.getFd());
             }
         }

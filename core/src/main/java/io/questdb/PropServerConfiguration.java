@@ -227,6 +227,10 @@ public class PropServerConfiguration implements ServerConfiguration {
     // Min interval between adaptive durable epochs per table (ms); default 1000. See
     // CairoConfiguration.getAdaptiveEpochIntervalMs / ApplyWal2TableJob.
     private final long adaptiveEpochIntervalMs;
+    // Adaptive group-commit window (us); default 0 = synchronous fsync-before-return (zero loss). >0 batches
+    // the WAL fdatasync across an adaptive table's commits within the window (RPO <= W). See
+    // CairoConfiguration.getAdaptiveCommitGroupWindowUs / WalWriter group-commit / WalPurgeJob flusher.
+    private final long adaptiveCommitGroupWindowUs;
     // Whether the adaptive durable-epoch recovery roll-forward runs at startup; default true.
     // See CairoConfiguration.isAdaptiveRecoveryRollForwardEnabled / RecoveryCoordinator.
     private final boolean adaptiveRecoveryRollForwardEnabled;
@@ -1544,6 +1548,9 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             this.commitMode = getCommitMode(properties, env, PropertyKey.CAIRO_COMMIT_MODE);
             this.adaptiveEpochIntervalMs = getMillis(properties, env, PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 1000);
+            // Default 0 == today's synchronous fsync-before-return under ADAPTIVE (zero loss). A negative
+            // value is clamped to 0 (synchronous) so a misconfiguration never silently weakens durability.
+            this.adaptiveCommitGroupWindowUs = Math.max(0, getMicros(properties, env, PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW_US, 0));
             this.adaptiveRecoveryRollForwardEnabled = getBoolean(properties, env, PropertyKey.CAIRO_ADAPTIVE_RECOVERY_ROLL_FORWARD_ENABLED, true);
             this.commitSyncColumnBatchedProp = getBoolean(properties, env, PropertyKey.CAIRO_COMMIT_SYNC_COLUMN_BATCHED, true);
             this.detectFastCommit = loadAdditionalConfigurations;
@@ -3842,6 +3849,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getAdaptiveEpochIntervalMs() {
             return adaptiveEpochIntervalMs;
+        }
+
+        @Override
+        public long getAdaptiveCommitGroupWindowUs() {
+            return adaptiveCommitGroupWindowUs;
         }
 
         @Override

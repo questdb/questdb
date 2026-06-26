@@ -54,6 +54,13 @@ public enum PropertyKey implements ConfigPropertyKey {
     // Plan 3 Task C: run the adaptive durable-epoch recovery roll-forward at startup. Default true;
     // false makes it a no-op (operator kill-switch / negative-control test hook). See RecoveryCoordinator.
     CAIRO_ADAPTIVE_RECOVERY_ROLL_FORWARD_ENABLED("cairo.adaptive.recovery.roll.forward.enabled"),
+    // Deferred 2 (the RPO knob): adaptive GROUP-COMMIT window in microseconds. 0 (default) keeps today's
+    // synchronous fsync-before-return (every acked commit is immediately device-durable, zero loss). When
+    // > 0, the WAL fdatasync is BATCHED across an adaptive table's commits within this window: commit0
+    // returns after the txn is sequenced (msync'd to page cache, NOT yet device-durable) and the fdatasync
+    // is performed by a batched flush, so RPO <= W. localDurableSeqTxn (the durable-ack frontier) advances
+    // only when the batch fdatasync completes. See WalWriter group-commit + WalPurgeJob background flusher.
+    CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW_US("cairo.adaptive.commit.group.window.us"),
     CAIRO_CREATE_AS_SELECT_RETRY_COUNT("cairo.create.as.select.retry.count"),
     CAIRO_DEFAULT_MAP_TYPE("cairo.default.map.type"),
     CAIRO_DEFAULT_SYMBOL_CACHE_FLAG("cairo.default.symbol.cache.flag"),

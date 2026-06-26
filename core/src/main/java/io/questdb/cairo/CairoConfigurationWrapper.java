@@ -103,6 +103,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getAdaptiveCommitGroupWindowUs() {
+        return getDelegate().getAdaptiveCommitGroupWindowUs();
+    }
+
+    @Override
     public long getAdaptiveEpochIntervalMs() {
         return getDelegate().getAdaptiveEpochIntervalMs();
     }

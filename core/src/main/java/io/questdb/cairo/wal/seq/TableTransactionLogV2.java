@@ -343,7 +343,16 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             // Part file must be durable before the header that points to it.
             // A crash after the header sync but before the part file is written back
             // would leave maxTxn=N pointing at a zeroed/partial record.
-            boolean async = commitMode == CommitMode.ASYNC;
+            //
+            // Deferred 2 (group commit, W>0): push the sequencer files to the page cache with msync(MS_ASYNC)
+            // — writeback-only, NO device flush — and DEFER the fdatasync (the device flush) to the batched
+            // flushPendingDurable (via fdatasyncTxnLog), which performs it as the final seq step of
+            // data→events→seq. Doing MS_SYNC here would device-flush the sequencer on every commit and defeat
+            // the window; the record is still in the page cache + ordered, so the batched fdatasync captures
+            // it. localDurableSeqTxn advances only after that batch flush, so a durable-ack'd txn is always
+            // device-durable. Other modes (and ADAPTIVE W=0) keep their exact existing sync grade.
+            final boolean deferDeviceFlush = commitMode == CommitMode.ADAPTIVE && deferDeviceFlush();
+            final boolean async = commitMode == CommitMode.ASYNC || deferDeviceFlush;
             if (txnPartMem.isOpen()) {
                 txnPartMem.sync(async);
             }
@@ -351,13 +360,36 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             // ADAPTIVE: make the sequencer durable. fdatasync part file first, then the header
             // that points to it — same ordering invariant as the msync above. The header's
             // maxTxn=N must not be device-visible before the record at txn N in the part file.
-            if (commitMode == CommitMode.ADAPTIVE) {
+            if (commitMode == CommitMode.ADAPTIVE && !deferDeviceFlush) {
                 if (txnPartMem.isOpen()) {
                     ff.fdatasync(txnPartMem.getFd());
                 }
                 ff.fdatasync(txnMem.getFd());
             }
         }
+    }
+
+    @Override
+    public void fdatasyncTxnLog() {
+        // The deferred (batched) device flush for adaptive group commit: part file before the header, the
+        // same ordering invariant sync0() preserves. The msync in sync0() already pushed the bytes to the
+        // page cache; this carries the device flush + journal commit.
+        if (txnPartMem.isOpen()) {
+            ff.fdatasync(txnPartMem.getFd());
+        }
+        if (txnMem.isOpen()) {
+            ff.fdatasync(txnMem.getFd());
+        }
+    }
+
+    /**
+     * Adaptive group-commit (Deferred 2): true when this table is ADAPTIVE AND a group window {@code W > 0}
+     * is configured, so the per-commit sequencer fdatasync is DEFERRED to the batched flush. A pure function
+     * of the table's effective mode + config (no per-commit racing state), so concurrent WAL writers of the
+     * same table all agree.
+     */
+    private boolean deferDeviceFlush() {
+        return configuration.getAdaptiveCommitGroupWindowUs() > 0;
     }
 
     private static class TransactionLogCursorImpl implements TransactionLogCursor {
