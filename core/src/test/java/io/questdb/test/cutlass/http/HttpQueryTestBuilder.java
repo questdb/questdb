@@ -229,6 +229,7 @@ public class HttpQueryTestBuilder {
                 @Override
                 public ObjHashSet<String> getUrls() {
                     return new ObjHashSet<>() {{
+                        add("/imp");
                         add("/upload");
                     }};
                 }
