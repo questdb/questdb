@@ -170,6 +170,48 @@ public class DefaultPGCircuitBreakerRegistryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testClearCancelSentinelClearsStaleCancel() throws Exception {
+        // A guarded "if (!isTimerSet()) resetTimer()" cannot clear the sentinel because isTimerSet()
+        // is true for MIN_VALUE. clearCancelSentinel() is the unconditional per-query clear that bounds
+        // the sentinel to a single query.
+        assertMemoryLeak(() -> {
+            try (NetworkSqlExecutionCircuitBreaker cb = newCircuitBreaker()) {
+                cb.resetTimer();
+                cb.cancel();
+                // A guarded reset does NOT clear the sentinel (the breaker still reports the cancel):
+                if (!cb.isTimerSet()) {
+                    cb.resetTimer();
+                }
+                expectQueryCancelled(cb::statefulThrowExceptionIfTripped);
+
+                // The connection's per-query entry clears the stale sentinel:
+                cb.clearCancelSentinel();
+                // Now a guarded reset arms a fresh timer, and the breaker is OK:
+                if (!cb.isTimerSet()) {
+                    cb.resetTimer();
+                }
+                cb.statefulThrowExceptionIfTripped(); // must not throw
+                Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_OK, cb.getState());
+            }
+        });
+    }
+
+    @Test
+    public void testClearCancelSentinelKeepsRunningTimer() throws Exception {
+        // clearCancelSentinel() must not disturb a legitimately running timer (e.g. a named portal
+        // paginated across Sync); it clears only the cancel sentinel.
+        assertMemoryLeak(() -> {
+            try (NetworkSqlExecutionCircuitBreaker cb = newCircuitBreaker()) {
+                cb.resetTimer();
+                cb.clearCancelSentinel(); // no-op: powerUpTime is a real timer, not the sentinel
+                Assert.assertTrue(cb.isTimerSet());
+                cb.statefulThrowExceptionIfTripped(); // must not throw
+                Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_OK, cb.getState());
+            }
+        });
+    }
+
+    @Test
     public void testSentinelCancelReportedByGetState() throws Exception {
         // A cancel that lands before QueryRegistry binds the per-query flag leaves only the
         // powerUpTime == MIN_VALUE sentinel. getState() must report it as cancelled instead of

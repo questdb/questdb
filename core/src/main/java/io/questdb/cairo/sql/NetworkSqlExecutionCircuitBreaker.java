@@ -111,6 +111,17 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         timeout = defaultMaxTime;
     }
 
+    public void clearCancelSentinel() {
+        // A cancel that raced QueryRegistry.register() before the per-query flag was attached leaves
+        // only the powerUpTime == MIN_VALUE sentinel. A guarded "if (!isTimerSet()) resetTimer()" cannot
+        // clear it (isTimerSet() is true for MIN_VALUE), so the connection clears it explicitly at the
+        // start of every query. Clearing only the sentinel, never a real running timer, keeps a
+        // query_timeout window intact for a named portal paginated across Sync.
+        if (powerUpTime == Long.MIN_VALUE) {
+            powerUpTime = Long.MAX_VALUE;
+        }
+    }
+
     @Override
     public void close() {
         buffer = Unsafe.free(buffer, bufferSize, memoryTag);
