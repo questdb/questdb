@@ -567,9 +567,11 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         // If distressed, no need to rollback, WalWriter will not be used any more.
         if (isDistressed()) {
             // A distressed writer is discarded; its un-flushed group-commit tail (if any) never advanced
-            // localDurableSeqTxn, so no false durability is claimed. Just drop it from the flush queue so the
-            // background flusher does not keep hitting a dead writer (doClose also deregisters).
-            sequencer.getWalGroupCommitFlushQueue().unregister(this);
+            // localDurableSeqTxn, so no false durability is claimed. Clear the pending fields AND deregister
+            // under the writer monitor BEFORE doClose closes any fd, so a background flusher that captured
+            // this writer reference before the deregister (weakly-consistent iterator) cannot fdatasync a
+            // closed fd (use-after-close). dropPendingDurable() restores the invariant on the distressed path.
+            dropPendingDurable();
             return;
         }
         if (isInColumnarWrite()) {
@@ -579,12 +581,13 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         // is durable — the next acquirer and any durable-ack consumer must see the frontier on disk. A flush
         // failure here is a genuine durability fault: mark distressed (which expels rather than pools the
         // writer) and rethrow, rather than silently pooling a writer whose acked-as-handed-off tail is not
-        // on disk.
+        // on disk. Use dropPendingDurable() after distressing to clear pending + deregister under the monitor
+        // before doClose can close any fd.
         try {
             flushPendingDurable();
         } catch (Throwable th) {
             distressed = true;
-            sequencer.getWalGroupCommitFlushQueue().unregister(this);
+            dropPendingDurable();
             throw th;
         }
         rollback0();
@@ -827,7 +830,19 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
         try {
             lastSegmentTxn = events.appendSql(op.getCmdType(), op.getSqlText(), op.getSqlExecutionContext());
-            return getSequencerTxn();
+            final long seqTxn = getSequencerTxn();
+            // Deferred 2 (group commit, W>0): mirror the commit0 durable-ack path. The callers
+            // (apply(AlterOperation) and apply(UpdateOperation)) already flushed any prior pending DATA
+            // commits before reaching here (preserving data→events→seq order), so it is safe to start a
+            // NEW pending batch for THIS SQL txn. Without this call, a SQL-only-then-idle table's
+            // localDurableSeqTxn would never advance over the SQL txn under W>0 (durable-ack liveness gap).
+            // This is not a safety bug — the structural apply() path already flushed before sequencing, so
+            // there is no torn order — but it closes the liveness gap so the background flusher carries the
+            // SQL txn to durable within ≤W even when commits stop.
+            if (walCommitMode() == CommitMode.ADAPTIVE && deferDeviceFlush()) {
+                recordPendingDurable(seqTxn);
+            }
+            return seqTxn;
         } catch (Throwable th) {
             // perhaps half record was written to WAL-e, better to not use this WAL writer instance
             distressed = true;
@@ -1286,8 +1301,10 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             // Deferred 2 (group commit): ensure this writer is never left in the background flush queue past
             // its own lifetime. cleanupBeforeClose already flushed (clean) or dropped (distressed) it; this
             // is the belt-and-suspenders for any close path that bypasses cleanupBeforeClose (e.g. a
-            // constructor failure before the writer ever committed).
-            sequencer.getWalGroupCommitFlushQueue().unregister(this);
+            // constructor failure before the writer ever committed). Use dropPendingDurable() (synchronized)
+            // so pending is cleared under the monitor BEFORE the fd-close loop below — closing the
+            // use-after-close race even on this fallback path (doClose is not itself synchronized).
+            dropPendingDurable();
             if (metadata != null) {
                 metadata.close(truncate, Vm.TRUNCATE_TO_POINTER);
             }
@@ -2180,6 +2197,12 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
      * @return {@code true} if a flush was performed
      */
     synchronized boolean forceDurableIfPending(long nowMicros, long windowUs) {
+        // CLOCK-UNIT INVARIANT: both nowMicros (caller's clock) and pendingSinceMicros (set in
+        // recordPendingDurable via configuration.getMicrosecondClock()) MUST be in MICROSECONDS.
+        // WalPurgeJob constructs with getMicrosecondClock() by default (the single-arg constructor) and
+        // passes t = clock.getTicks() here. If a future test or constructor ever injects a millisecond
+        // clock, the age comparison will silently read 1000× too small and the W-window bound will break.
+        // Keep both sources as MicrosecondClock (extends Clock); never inject a MillisecondClock here.
         if (pendingDurableSeqTxn < 0) {
             return false;
         }
@@ -2188,6 +2211,24 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         }
         flushPendingDurable();
         return true;
+    }
+
+    /**
+     * Clear the pending group-commit fields AND deregister from the background flush queue, ALL under the
+     * writer monitor. This restores the invariant "pending is cleared before any fd is closed" on every
+     * teardown path: a background flusher sweep that captured this writer reference before the deregister
+     * (the {@link ConcurrentHashMap#newKeySet()} iterator is weakly consistent) will enter the synchronized
+     * block, find {@code pendingDurableSeqTxn == -1}, and return immediately without touching any fd.
+     *
+     * <p>Must be called from ALL teardown paths ({@code cleanupBeforeClose} distressed branch, flush-failure
+     * catch, and {@code doClose} belt-and-suspenders) BEFORE closing any column/events fds. {@code doClose}
+     * is not itself synchronized, so it MUST route through this helper rather than calling {@code unregister}
+     * directly.
+     */
+    private synchronized void dropPendingDurable() {
+        pendingDurableSeqTxn = -1L;
+        pendingSinceMicros = -1L;
+        sequencer.getWalGroupCommitFlushQueue().unregister(this);
     }
 
     /**

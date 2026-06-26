@@ -232,6 +232,8 @@ public interface CairoConfiguration {
      * fdatasync completes, so a durable-ack'd txn always survives a crash.
      *
      * <p>Has effect only under ADAPTIVE; other modes ignore it. A negative value is treated as {@code 0}.
+     * Note: mat-view refresh WAL ({@link io.questdb.cairo.wal.ViewWalWriter}) is exempt from this setting
+     * and keeps a per-commit fdatasync (strictly more durable; mat-view refresh has its own flush cadence).
      *
      * @return the adaptive group-commit window in microseconds; {@code 0} (the default) = synchronous,
      * zero-loss

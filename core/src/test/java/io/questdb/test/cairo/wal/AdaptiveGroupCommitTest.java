@@ -413,6 +413,65 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * (i) TEARDOWN RACE: a background sweep that captured a writer reference (weakly-consistent iterator)
+     * must not fdatasync a closed fd when the writer is simultaneously closed / distressed. The
+     * {@code dropPendingDurable()} helper clears the pending fields AND deregisters under the writer monitor
+     * BEFORE {@code doClose} closes any fd, so a concurrent sweep entering the synchronized block finds
+     * {@code pendingDurableSeqTxn == -1} and no-ops without touching any fd.
+     *
+     * <p>This stress test commits rows under W&gt;0 (leaving a pending group-commit tail in the registry),
+     * then CLOSES the writer while a background-flusher thread is spinning the sweep concurrently. Any
+     * fdatasync-on-closed-fd (use-after-close) shows up as a non-zero {@code failedFlushCount}.
+     */
+    @Test
+    public void testBackgroundFlusherDoesNotRaceTeardown() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 16);
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        // Tiny window so the flusher fires immediately — maximising the chance it runs while the
+        // writer is mid-close and still in the registry (before dropPendingDurable deregisters it).
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW_US, "1");
+
+        final int iterations = 50; // repeat open→commit→close many times to stress the race window
+        final int rowsPerIter = 10;
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
+            final TableToken tt = engine.verifyTableName("x");
+
+            final java.util.concurrent.atomic.AtomicBoolean stop = new java.util.concurrent.atomic.AtomicBoolean();
+            final ExposedWalPurgeJob flusher = new ExposedWalPurgeJob(engine);
+            final Thread flusherThread = new Thread(() -> {
+                while (!stop.get()) {
+                    flusher.flushNow();
+                }
+                io.questdb.std.str.Path.clearThreadLocals();
+            }, "group-commit-flusher-teardown");
+            flusherThread.start();
+
+            try {
+                for (int iter = 0; iter < iterations; iter++) {
+                    try (WalWriter w = engine.getWalWriter(tt)) {
+                        for (int i = 0; i < rowsPerIter; i++) {
+                            commitRow(w, (long) (iter * rowsPerIter + i) * 1_000_000L, iter * rowsPerIter + i);
+                        }
+                        // writer closes here with pending state still in the flush registry
+                    }
+                }
+            } finally {
+                stop.set(true);
+                flusherThread.join();
+                flusher.close();
+            }
+
+            // dropPendingDurable() in cleanupBeforeClose/doClose must have prevented any fdatasync on a
+            // closed fd. A non-zero count would mean the use-after-close race fired.
+            Assert.assertEquals(
+                    "background flusher raced teardown (fdatasync on a closed fd)",
+                    0L, engine.getWalGroupCommitFlushQueue().getFailedFlushCount()
+            );
+        });
+    }
+
     /** Append one (ts, v) row to a HELD WalWriter and commit it (one WAL txn, writer NOT released). */
     private static void commitRow(WalWriter w, long ts, long v) {
         TableWriter.Row row = w.newRow(ts);
