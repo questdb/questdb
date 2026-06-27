@@ -183,27 +183,27 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         // Check if we're at the start of an arithmetic expression
         predicateContext.onNodeDescended(node);
 
-        // Constant integer arithmetic subtree whose long-precision value
-        // overflows INT: emit a single I8 IMM in place of the subtree.
-        // FunctionParser.functionToConstant0 sees intConst != longConst for
-        // such subtrees and folds them to a single LongConstant for the Java
-        // filter; we mirror that fold here so the JIT computes at long
-        // width. The matching I8 observation in NarrowI64WidenDetector
-        // ensures column reads in the same predicate get sign-extended to
-        // I8, so the comparison sees matching operand widths.
+        // Constant integer arithmetic subtree that overflows INT. Post
+        // FunctionParser.functionToConstant0 it stays INT (getInt() wraps,
+        // getLong() widens), so the Java filter compares at INT width unless a
+        // LONG operand promotes it. Mirror that: fold to a full-width I8 IMM when
+        // a LONG operand is present (needsNarrowI64Widening) or a wrapped I4 IMM
+        // otherwise -- the I8-vs-I4 choice serializeUntypedNumber already makes
+        // for a plain constant.
         if (predicateContext.isActive() && node.type == ExpressionNode.OPERATION) {
             try {
                 long longVal = tryFoldConstantArith(node);
                 if ((int) longVal != longVal) {
-                    // Skipping the OPERATION children means visit() never sees
-                    // their arithmetic tokens or operand types, so the
-                    // existing scalar-mode forcer in serialize() and
-                    // getExecHint()'s mixed-size detection would both
-                    // miscompute. markFoldedI8Imm() flags the fold root as
-                    // arithmetic and observes the emitted I8 so neither
-                    // misses the I8 IMM.
-                    predicateContext.markFoldedI8Imm();
-                    putOperand(IMM, I8_TYPE, longVal);
+                    // Children are skipped, so flag the fold root as arithmetic
+                    // and observe the emitted IMM (markFoldedI4Imm/I8Imm) for the
+                    // scalar-mode forcer and getExecHint() mixed-size detection.
+                    if (predicateContext.needsNarrowI64Widening) {
+                        predicateContext.markFoldedI8Imm();
+                        putOperand(IMM, I8_TYPE, longVal);
+                    } else {
+                        predicateContext.markFoldedI4Imm();
+                        putOperand(IMM, I4_TYPE, (int) longVal);
+                    }
                     return false;
                 }
             } catch (NumericException ignored) {
@@ -2121,15 +2121,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 }
                 case ExpressionNode.OPERATION:
                     hasArithmetic |= isArithmeticOperation(node);
-                    // Pure-constant integer arithmetic subtree whose long
-                    // value overflows INT will be folded to a single I8 IMM
-                    // by descend(); observe I8 here to pull narrow column
-                    // reads in the same predicate up to I8 so the comparison
-                    // sees matching operand widths.
+                    // Overflowing pure-constant subtree folds to an IMM in
+                    // descend(). Observe it as I4 (it keeps INT type), so
+                    // shouldWiden() fires only on a real LONG operand -- then
+                    // descend() wraps it to I4, or widens to I8 alongside it.
                     try {
                         long longVal = tryFoldConstantArith(node);
                         if ((int) longVal != longVal) {
-                            typesObserver.observe(I8_TYPE);
+                            typesObserver.observe(I4_TYPE);
                         }
                     } catch (NumericException ignored) {
                         // Not a pure-constant integer arithmetic subtree; nothing to observe.
@@ -2418,6 +2417,17 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     columnType = columnType0;
                     break;
             }
+        }
+
+        /**
+         * I4 counterpart of {@link #markFoldedI8Imm} for an overflowing constant
+         * folded to a wrapped I4 IMM (INT-width comparison): flags arithmetic and
+         * observes I4 so getExecHint() and the scalar-mode forcer see the operand.
+         */
+        void markFoldedI4Imm() {
+            hasArithmeticOperations = true;
+            localTypesObserver.observe(I4_TYPE);
+            globalTypesObserver.observe(I4_TYPE);
         }
 
         /**

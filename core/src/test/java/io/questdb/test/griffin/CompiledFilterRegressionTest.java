@@ -529,61 +529,69 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
 
     @Test
     public void testConstantOverflowFoldOnByteColumn() throws Exception {
-        // Constant arithmetic subtree whose long-precision value overflows
-        // INT must produce the same result whether the JIT is off, scalar,
-        // or vectorized. The CompiledFilterIRSerializer folds the subtree
-        // to a single i64 IMM in the IR, mirroring FunctionParser's
-        // LongConstant fold for the Java filter.
+        // Overflowing INT constant arithmetic must agree across JIT off/scalar/
+        // vectorized. A BYTE column compares at INT width, so the JIT folds the
+        // constant to a wrapped I4 IMM, matching the Java filter's getInt() wrap.
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
                 " cast(x - 100 as byte) i8" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
         assertMemoryLeak(() -> {
             execute(ddl);
-            // -286452 * (-952151 * -382988) = -1.04e17 (long); BYTE values are
-            // all > -1.04e17 so every row passes.
-            assertQueryNotNullNoLeakCheck("x where i8 > -286452 * (-952151 * -382988)");
-            // Symmetric upper-bound case: huge positive constant fails for every BYTE.
-            assertQueryNullableNoLeakCheck("x where i8 > 286452 * (952151 * 382988)");
+            // -1.04e17 wraps to +1_699_321_072 at INT width; no BYTE exceeds it.
+            assertQueryNullableNoLeakCheck("x where i8 > -286452 * (-952151 * -382988)");
+            // Symmetric: +1.04e17 wraps to -1_699_321_072, below every BYTE.
+            assertQueryNotNullNoLeakCheck("x where i8 > 286452 * (952151 * 382988)");
         });
     }
 
     @Test
     public void testConstantOverflowFoldOnIntColumn() throws Exception {
+        // INT column compares at INT width: the JIT wraps the constant (I4) like
+        // the Java filter rather than widening to i64.
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
                 " cast(x - 100 as int) i32" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
         assertMemoryLeak(() -> {
             execute(ddl);
-            assertQueryNotNullNoLeakCheck("x where i32 > -286452 * (-952151 * -382988)");
-            assertQueryNullableNoLeakCheck("x where i32 > 286452 * (952151 * 382988)");
+            // Wraps to +1_699_321_072: no INT row exceeds it.
+            assertQueryNullableNoLeakCheck("x where i32 > -286452 * (-952151 * -382988)");
+            // Wraps to -1_699_321_072: below every INT row.
+            assertQueryNotNullNoLeakCheck("x where i32 > 286452 * (952151 * 382988)");
         });
     }
 
     @Test
     public void testConstantOverflowFoldOnLongColumn() throws Exception {
+        // A LONG column promotes the comparison to LONG: both the Java filter
+        // (getLong()) and the JIT (i64 fold) read full long width and never wrap.
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
                 " (x - 100) i64" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
         assertMemoryLeak(() -> {
             execute(ddl);
+            // -1.04e17 stays -1.04e17 at LONG width; every LONG row exceeds it.
             assertQueryNotNullNoLeakCheck("x where i64 > -286452 * (-952151 * -382988)");
+            // +1.04e17 stays +1.04e17; no LONG row exceeds it.
             assertQueryNullableNoLeakCheck("x where i64 > 286452 * (952151 * 382988)");
         });
     }
 
     @Test
     public void testConstantOverflowFoldOnShortColumn() throws Exception {
+        // A SHORT column promotes to INT, so the constant wraps at INT width.
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
                 " cast(x - 100 as short) i16" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
         assertMemoryLeak(() -> {
             execute(ddl);
-            assertQueryNotNullNoLeakCheck("x where i16 > -286452 * (-952151 * -382988)");
-            assertQueryNullableNoLeakCheck("x where i16 > 286452 * (952151 * 382988)");
+            // Wraps to +1_699_321_072: no SHORT row exceeds it.
+            assertQueryNullableNoLeakCheck("x where i16 > -286452 * (-952151 * -382988)");
+            // Wraps to -1_699_321_072: below every SHORT row.
+            assertQueryNotNullNoLeakCheck("x where i16 > 286452 * (952151 * 382988)");
         });
     }
 
@@ -604,11 +612,12 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             assertQueryNotNullNoLeakCheck("x where i64 > -5000000000 - 5000000000");
             assertQueryNotNullNoLeakCheck("x where i64 > -100000 * 100000");
             assertQueryNotNullNoLeakCheck("x where i64 > -1000000000000 / 1");
-            // Unary minus in front of an overflowing product.
+            // Unary minus over an overflowing product. The i64 column promotes
+            // to LONG and reads full width (-1.04e17); every row passes.
             assertQueryNotNullNoLeakCheck("x where i64 > -(286452 * (-952151 * -382988))");
-            // Same overflow constants on a BYTE column exercise the scalar
-            // mode path that the fold's markArithmetic call forces.
-            assertQueryNotNullNoLeakCheck("x where i8 > -(286452 * (-952151 * -382988))");
+            // Same constant on a BYTE column compares at INT width: wraps to
+            // +1_699_321_072, which no BYTE row exceeds (wrapped-I4 fold path).
+            assertQueryNullableNoLeakCheck("x where i8 > -(286452 * (-952151 * -382988))");
         });
     }
 
