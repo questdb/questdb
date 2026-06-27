@@ -111,6 +111,14 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         timeout = defaultMaxTime;
     }
 
+    public void clearCancelSentinel() {
+        // Drop a cancel left by a prior, finished query so it cannot trip the next one on this reused
+        // breaker. Guarded per-query resets cannot clear it (isTimerSet() reports MIN_VALUE as "set").
+        if (isCancelled()) {
+            unsetTimer();
+        }
+    }
+
     @Override
     public void close() {
         buffer = Unsafe.free(buffer, bufferSize, memoryTag);
@@ -147,6 +155,12 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
 
     @Override
     public int getState(long millis, long fd) {
+        // A cancelled breaker carries the powerUpTime == MIN_VALUE sentinel, which the overflow-safe
+        // timeout predicate below would otherwise report as STATE_TIMEOUT. Classify it as cancelled so
+        // callers reading getState() see an honest reason.
+        if (isCancelled()) {
+            return STATE_CANCELLED;
+        }
         if (clock.getTicks() - timeout > millis) {
             return STATE_TIMEOUT;
         }
@@ -267,7 +281,12 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     }
 
     private void testCancelled() {
-        if ((cancelledFlag != null && cancelledFlag.get()) || engine.isClosing()) {
+        // isCancelled() (the powerUpTime == MIN_VALUE sentinel) must come first: cancel() sets the
+        // sentinel unconditionally but only flips cancelledFlag when it is already attached. A cancel
+        // that races QueryRegistry.register() before it binds the per-query flag leaves only the
+        // sentinel, and testTimeout()'s now - MIN_VALUE arithmetic overflows without tripping, so this
+        // is the single place that reliably turns such a cancel into a thrown queryCancelled().
+        if (isCancelled() || (cancelledFlag != null && cancelledFlag.get()) || engine.isClosing()) {
             throw CairoException.queryCancelled(fd);
         }
     }
