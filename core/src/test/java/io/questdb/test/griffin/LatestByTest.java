@@ -720,6 +720,60 @@ public class LatestByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLatestByOverSubQueryFilterLimitNotPushedDown() throws Exception {
+        // A LATEST ON over a sub-query with a residual WHERE and a LIMIT used to push the limit
+        // advice into the base async filter, truncating it to the first N rows. LATEST ON then saw
+        // only that prefix and returned the latest row per key within it (the earliest rows
+        // overall). The literal WHERE folds away (no filter to push into) and stayed correct; only
+        // the runtime-constant (bind-variable) residual async filter diverged. Pin the latest-per-key
+        // rows and cross-check the bind form against the equivalent no-filter form.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE t (sym SYMBOL, v LONG, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;",
+                    timestampType.getTypeName()
+            );
+            // Six day-1 rows then two day-2 rows. The latest row per key is in day 2 (v=7, v=8);
+            // the first four rows are all day 1, so a limit pushed below LATEST ON would pick
+            // a=v3, b=v4 from day 1 instead.
+            executeWithRewriteTimestamp(
+                    "INSERT INTO t VALUES " +
+                            "('a', 1, '2024-01-01T00:00:00.000000Z'::#TIMESTAMP)," +
+                            "('b', 2, '2024-01-01T01:00:00.000000Z'::#TIMESTAMP)," +
+                            "('a', 3, '2024-01-01T02:00:00.000000Z'::#TIMESTAMP)," +
+                            "('b', 4, '2024-01-01T03:00:00.000000Z'::#TIMESTAMP)," +
+                            "('a', 5, '2024-01-01T04:00:00.000000Z'::#TIMESTAMP)," +
+                            "('b', 6, '2024-01-01T05:00:00.000000Z'::#TIMESTAMP)," +
+                            "('a', 7, '2024-01-02T00:00:00.000000Z'::#TIMESTAMP)," +
+                            "('b', 8, '2024-01-02T01:00:00.000000Z'::#TIMESTAMP);",
+                    timestampType.getTypeName()
+            );
+
+            // A column-free runtime constant (TIMESTAMP vs DATE compare behind a bind variable)
+            // that always evaluates to true - the exact shape the query fuzzer surfaced.
+            bindVariableService.clear();
+            bindVariableService.setStr("b0", "2024-01-01T00:00:00.000000Z");
+
+            final String bind = "WITH cte0 AS (SELECT sym AS r0, v AS r1, ts AS r7 FROM t) " +
+                    "SELECT r0, r1 FROM cte0 WHERE :b0::timestamp < '2024-09-22'::date " +
+                    "LATEST ON r7 PARTITION BY r0 ORDER BY r7 ASC LIMIT 4";
+            final String noFilter = "WITH cte0 AS (SELECT sym AS r0, v AS r1, ts AS r7 FROM t) " +
+                    "SELECT r0, r1 FROM cte0 " +
+                    "LATEST ON r7 PARTITION BY r0 ORDER BY r7 ASC LIMIT 4";
+
+            // Canonical latest-per-key answer (no timestamp in the projection, so
+            // format-independent across the timestamp-type parameterizations).
+            assertQuery(bind).expectSize().returns("r0\tr1\na\t7\nb\t8\n");
+
+            // The residual-filter form must match the equivalent no-filter form.
+            StringSink expected = new StringSink();
+            StringSink actual = new StringSink();
+            printSql(noFilter, expected);
+            printSql(bind, actual);
+            Assert.assertEquals(expected.toString(), actual.toString());
+        });
+    }
+
+    @Test
     public void testLatestByOverSubQueryRejectedKeyDoesNotLeak() throws Exception {
         // generateLatestBy used to leak its input factory -- and the async page-frame circuit
         // breaker (NATIVE_CB2) the factory transitively owns -- when latest by over a sub-query was

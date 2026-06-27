@@ -11190,6 +11190,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     @Nullable
     private Function getLimitLoFunctionOnly(IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
+        // A LATEST ON on this model sits above the filter (generateLatestBy consumes the filter's
+        // full output, then generateLimit applies the limit), so the filter must scan every row.
+        // Pushing the limit advice into it would feed LATEST ON only the first N rows and return
+        // the earliest row per key instead of the latest.
+        if (model.getLatestBy().size() > 0) {
+            return null;
+        }
         if (model.getLimitAdviceLo() != null && model.getLimitAdviceHi() == null) {
             return toLimitFunction(executionContext, model.getLimitAdviceLo(), LongConstant.ZERO);
         }
