@@ -45,6 +45,7 @@ import io.questdb.cairo.mv.WalTxnRangeLoader;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlCompiler;
@@ -2578,6 +2579,89 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testChainedMatViewInvalidatedOnHydrateAfterParentInvalidation() throws Exception {
+        // Repro of the demote->promote stale-chained-view bug. Parent A is durably invalidated (type-4 in A's
+        // WAL) while child B's cascade INVALIDATE is discarded (severed here by holding B's lock). On the
+        // promote hydrate path (hydrateMatViewStateStore), B must end INVALID: the load-time backstop detects
+        // A's type-4 in B's base WAL gap. Before the fix, B reloads VALID and serves stale rows.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, val double, ts timestamp) timestamp(ts) partition by DAY WAL");
+            createMatView("mv_a", "select ts, count() cnt from base sample by 1h");
+            createMatView("mv_b", "select ts, sum(cnt) cnt from mv_a sample by 1d");
+            execute("insert into base values ('a', 1.0, '2024-09-10T12:00'), ('a', 2.0, '2024-09-10T12:30')");
+            drainQueues();
+
+            final TableToken viewA = engine.verifyTableName("mv_a");
+            final TableToken viewB = engine.verifyTableName("mv_b");
+            final MatViewStateStoreImpl store = (MatViewStateStoreImpl) engine.getMatViewStateStore();
+            Assert.assertFalse(store.getViewState(viewA).isInvalid());
+            Assert.assertFalse(store.getViewState(viewB).isInvalid());
+            Assert.assertTrue("precondition: child refreshed off parent", store.getViewState(viewB).getLastRefreshBaseTxn() > -1);
+
+            severCascadeLeavingParentInvalidChildValid(store, viewA, store.getViewState(viewB));
+            Assert.assertTrue("precondition: parent durably invalid", store.getViewState(viewA).isInvalid());
+            Assert.assertFalse("precondition: child still valid on disk", store.getViewState(viewB).isInvalid());
+
+            // Promote hydrate: rebuilds state from disk and re-runs the load-time backstop.
+            engine.hydrateMatViewStateStore();
+            drainWalAndMatViewQueues();
+
+            Assert.assertTrue(
+                    "a chained mat-view must reload INVALID when its base mat-view is durably invalid",
+                    store.getViewState(viewB).isInvalid()
+            );
+        });
+    }
+
+    @Test
+    public void testChainedMatViewReCascadesWhenParentGapPurged() throws Exception {
+        // Isolates the hydrate re-cascade fallback (a). After the sever, engine.clear() drops the
+        // matViewStateStore so the purge job no longer sees B's lastRefreshBaseTxn and removes
+        // A's wal1 (the data segment containing txn 1). The backstop (b) scans A's WAL from txn 1
+        // but wal1 is gone; the scan throws CairoException and reports no invalidating barrier.
+        // With DEBUG_MAT_VIEW_REFRESH_MISSING_WAL_FILES_FATAL=false the subsequent refresh falls
+        // back to a full table read instead of failing, so B reloads VALID without the re-cascade
+        // fix. Only fix (a) -- re-cascade on invalid parent load -- can invalidate B here.
+        setProperty(PropertyKey.DEBUG_MAT_VIEW_REFRESH_MISSING_WAL_FILES_FATAL, "false");
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, val double, ts timestamp) timestamp(ts) partition by DAY WAL");
+            createMatView("mv_a", "select ts, count() cnt from base sample by 1h");
+            createMatView("mv_b", "select ts, sum(cnt) cnt from mv_a sample by 1d");
+            execute("insert into base values ('a', 1.0, '2024-09-10T12:00'), ('a', 2.0, '2024-09-10T12:30')");
+            drainQueues();
+
+            final TableToken viewA = engine.verifyTableName("mv_a");
+            final TableToken viewB = engine.verifyTableName("mv_b");
+            final MatViewStateStoreImpl store = (MatViewStateStoreImpl) engine.getMatViewStateStore();
+            severCascadeLeavingParentInvalidChildValid(store, viewA, store.getViewState(viewB));
+            Assert.assertTrue("precondition: parent durably invalid", store.getViewState(viewA).isInvalid());
+            Assert.assertFalse("precondition: child still valid on disk", store.getViewState(viewB).isInvalid());
+
+            // engine.clear() drops the in-memory state store so WalPurgeJob no longer sees
+            // B's lastRefreshBaseTxn=1 that would otherwise cap safeToPurgeTxn and keep wal1.
+            engine.clear();
+            try (WalPurgeJob purgeJob = new WalPurgeJob(engine)) {
+                purgeJob.drain(0);
+            }
+            // Confirm wal1 (A's data segment for txn 1) is gone so the backstop (b) scan from
+            // txn 1 throws and returns null. If this assertion fires the test setup has changed
+            // and the RED step may pass spuriously because fix (b) can still see the type-4.
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(viewA).concat(WAL_NAME_BASE).put(1);
+                Assert.assertFalse("A's wal1 must be purged to blind fix (b)", Files.exists(path.$()));
+            }
+
+            engine.hydrateMatViewStateStore();
+            drainWalAndMatViewQueues();
+
+            Assert.assertTrue(
+                    "the hydrate re-cascade must invalidate a chained mat-view even when the parent WAL gap is unreadable",
+                    store.getViewState(viewB).isInvalid()
+            );
+        });
+    }
+
+    @Test
     public void testCheckMatViewModification() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -3420,7 +3504,7 @@ public class MatViewTest extends AbstractCairoTest {
             drainWalQueue();
 
             // Delete segment 5's event file so loader.load() throws a CairoException when
-            // hasBaseTableTruncateInWalGap tries to open it during the next hydrateMatViewStateStore call.
+            // baseGapInvalidationReason tries to open it during the next hydrateMatViewStateStore call.
             final TableToken baseTableToken = engine.getTableTokenIfExists("base");
             Assert.assertNotNull(baseTableToken);
             try (Path path = new Path()) {
@@ -3456,7 +3540,7 @@ public class MatViewTest extends AbstractCairoTest {
 
             // Simulate the role-promote hydrate path. The truncate scan's load() will throw because
             // the WAL segment file is missing. The fix catches the exception inside
-            // hasBaseTableTruncateInWalGap and returns false, allowing enqueueIncrementalRefresh to
+            // baseGapInvalidationReason and returns null, allowing enqueueIncrementalRefresh to
             // run. Without the fix the view is silently left unscheduled.
             engine.hydrateMatViewStateStore();
 
@@ -8644,6 +8728,62 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWalTxnRangeLoaderDetectsMatViewInvalidate() throws Exception {
+        // Direct unit coverage for the type-4 detection the chained-view backstop rests on: a range holding a
+        // MAT_VIEW_INVALIDATE (invalid=true) reports hasMatViewInvalidate()==true; a data-only range and a
+        // range whose only type-4 is a reset-to-valid (invalid=false) both report false; and a clean reload
+        // resets the flag (no stale carry-over on a reused loader).
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, val double, ts timestamp) timestamp(ts) partition by DAY WAL");
+            createMatView("mv_a", "select ts, count() cnt from base sample by 1h");
+            execute("insert into base values ('a', 1.0, '2024-09-10T12:00')");
+            drainQueues();
+
+            final TableToken viewA = engine.verifyTableName("mv_a");
+            final MatViewStateStoreImpl store = (MatViewStateStoreImpl) engine.getMatViewStateStore();
+            final long txnAfterRefresh = engine.getTableSequencerAPI().getTxnTracker(viewA).getWriterTxn();
+
+            // Durably invalidate A: writes a MAT_VIEW_INVALIDATE (invalid=true) txn into A's own WAL.
+            store.enqueueInvalidate(viewA, "forced for test");
+            drainWalAndMatViewQueues();
+            Assert.assertTrue("precondition: A invalidated", store.getViewState(viewA).isInvalid());
+            final long txnAfterInvalidate = engine.getTableSequencerAPI().getTxnTracker(viewA).getWriterTxn();
+
+            // Re-validate A with a full refresh: resetInvalidState writes a MAT_VIEW_INVALIDATE (invalid=false).
+            execute("refresh materialized view mv_a full");
+            drainQueues();
+            Assert.assertFalse("precondition: A re-validated", store.getViewState(viewA).isInvalid());
+            final long txnAfterRevalidate = engine.getTableSequencerAPI().getTxnTracker(viewA).getWriterTxn();
+
+            try (
+                    WalTxnRangeLoader loader = new WalTxnRangeLoader(engine.getConfiguration());
+                    Path path = new Path()
+            ) {
+                final LongList intervals = new LongList();
+
+                // Data-only range (the initial refresh): no type-4 invalidation.
+                loader.load(engine, path, viewA, intervals, 0, txnAfterRefresh);
+                Assert.assertFalse("a data-only range must not report a mat-view invalidate", loader.hasMatViewInvalidate());
+
+                // Range spanning the invalidate: detected.
+                intervals.clear();
+                loader.load(engine, path, viewA, intervals, txnAfterRefresh, txnAfterInvalidate);
+                Assert.assertTrue("a range containing a MAT_VIEW_INVALIDATE (invalid=true) must report it", loader.hasMatViewInvalidate());
+
+                // Range whose only type-4 is the reset-to-valid (invalid=false): must NOT trip the flag.
+                intervals.clear();
+                loader.load(engine, path, viewA, intervals, txnAfterInvalidate, txnAfterRevalidate);
+                Assert.assertFalse("a reset-to-valid (invalid=false) must not report a mat-view invalidate", loader.hasMatViewInvalidate());
+
+                // A second clean (data-only) load must reset the flag, proving no stale carry-over.
+                intervals.clear();
+                loader.load(engine, path, viewA, intervals, 0, txnAfterRefresh);
+                Assert.assertFalse("a clean reload must reset the mat-view invalidate flag to false", loader.hasMatViewInvalidate());
+            }
+        });
+    }
+
+    @Test
     public void testWalTxnRangeLoaderDetectsTruncate() throws Exception {
         // Direct unit coverage for the detection primitive the whole truncate barrier rests on:
         // a range with a TRUNCATE reports hasTruncate()==true; a data-only range reports false; and a
@@ -9049,6 +9189,22 @@ public class MatViewTest extends AbstractCairoTest {
 
     private String replaceExpectedTimestamp(String expected) {
         return ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? expected : expected.replaceAll(".000000Z", ".000000000Z");
+    }
+
+    // Drives parent view A to a durable INVALID state while leaving child view B durably VALID -- the
+    // on-disk shape a demote leaves behind after discarding B's in-memory cascade. Holding B's state lock
+    // forces A's cascade INVALIDATE for B onto the deferral path (mark pending + re-enqueue), so B's _mv
+    // state on disk stays valid. The pending marker is then cleared and the lock released so the in-memory
+    // state matches disk.
+    private void severCascadeLeavingParentInvalidChildValid(MatViewStateStoreImpl store, TableToken viewA, MatViewState stateB) {
+        Assert.assertTrue("test must acquire child state lock to block its cascade", stateB.tryLock());
+        try {
+            store.enqueueInvalidate(viewA, "forced for test");
+            drainWalAndMatViewQueues();
+        } finally {
+            stateB.markAsValid();
+            stateB.unlock();
+        }
     }
 
     private void testAlignToCalendarTimezoneOffset() throws Exception {
