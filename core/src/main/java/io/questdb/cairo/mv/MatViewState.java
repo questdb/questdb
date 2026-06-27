@@ -48,7 +48,7 @@ import static io.questdb.TelemetryEvent.*;
  * {@link MatViewRefreshJob}s.
  * <p>
  * Unlike {@link MatViewStateReader}, it does not carry a persisted invalidation
- * reason string. The only reason it holds, {@link #pendingInvalidationReason}, is a
+ * reason string. The only reason it holds, the {@link #pendingInvalidationMarker}, is a
  * transient in-memory marker for an invalidation that deferred behind the view lock;
  * it is distinct from the reader's durable invalidationReason and is cleared once the
  * lock-holding refresh finalizes the deferral.
@@ -81,6 +81,11 @@ public class MatViewState implements QuietCloseable {
     // refresh may have just armed. See clearRefreshRetry(long).
     private static final AtomicLongFieldUpdater<MatViewState> REFRESH_RETRY_AFTER_UPDATER =
             AtomicLongFieldUpdater.newUpdater(MatViewState.class, "refreshRetryAfterMicros");
+    // Sentinel stored in pendingInvalidationMarker to represent a pending invalidation that carries
+    // no reason -- the full-refresh reschedule (see MatViewRefreshJob#fullRefresh). It is distinct
+    // from null (not pending) so the whole marker stays a single atomically-written volatile
+    // reference; getPendingInvalidationReason() reports null for it.
+    private static final Object PENDING_INVALIDATION_NO_REASON = new Object();
     // Used to avoid concurrent refresh runs.
     private final AtomicBoolean latch = new AtomicBoolean(false);
     // Protected by this.latch.
@@ -135,8 +140,17 @@ public class MatViewState implements QuietCloseable {
     private volatile long lastRefreshBaseTxn = -1;
     private volatile long lastRefreshFinishTimestampUs = Numbers.LONG_NULL;
     private volatile long lastRefreshStartTimestampUs = Numbers.LONG_NULL;
-    private volatile boolean pendingInvalidation;
-    private volatile String pendingInvalidationReason;
+    // Single atomic marker for a deferred invalidation, collapsing the former
+    // (pendingInvalidation, pendingInvalidationReason) two-volatile composite. Writers run off-latch
+    // (invalidateView's read-only / tryLock-fail deferrals) while finalizeDeferredInvalidation clears
+    // it under the latch, in opposite field orders: two volatiles could tear to (pending=true,
+    // reason=null), routing a real deferral down finalize's null-reason no-op branch and stranding the
+    // view valid+stale with no self-heal. One volatile reference makes every transition a single
+    // atomic write/read, so no torn intermediate exists:
+    //   null                            -> not pending
+    //   PENDING_INVALIDATION_NO_REASON  -> pending, no reason (full-refresh reschedule)
+    //   any String                      -> pending, with that invalidation reason
+    private volatile Object pendingInvalidationMarker;
     // Protected by this.latch.
     private long recordRowCopierMetadataVersion;
     // Protected by this.latch.
@@ -348,8 +362,7 @@ public class MatViewState implements QuietCloseable {
      * it never resurrects an invalid view.
      */
     public void clearPendingInvalidation() {
-        this.pendingInvalidation = false;
-        this.pendingInvalidationReason = null;
+        this.pendingInvalidationMarker = null;
     }
 
     @Override
@@ -455,7 +468,10 @@ public class MatViewState implements QuietCloseable {
     }
 
     public String getPendingInvalidationReason() {
-        return pendingInvalidationReason;
+        // Single volatile read. A String carries the deferral reason; the sentinel (full-refresh
+        // reschedule) and null (not pending) both report no reason.
+        final Object marker = pendingInvalidationMarker;
+        return marker instanceof String ? (String) marker : null;
     }
 
     public long getRecordRowCopierMetadataVersion() {
@@ -544,7 +560,7 @@ public class MatViewState implements QuietCloseable {
     }
 
     public boolean isPendingInvalidation() {
-        return pendingInvalidation;
+        return pendingInvalidationMarker != null;
     }
 
     public void markAsDropped() {
@@ -564,14 +580,14 @@ public class MatViewState implements QuietCloseable {
     }
 
     public void markAsPendingInvalidation(String invalidationReason) {
-        pendingInvalidationReason = invalidationReason;
-        pendingInvalidation = true;
+        // Single atomic volatile write. A null reason is the full-refresh reschedule marker, stored as
+        // the sentinel so the marker is never the torn (pending=true, reason=null) composite.
+        this.pendingInvalidationMarker = invalidationReason != null ? invalidationReason : PENDING_INVALIDATION_NO_REASON;
     }
 
     public void markAsValid() {
         this.invalid = false;
-        this.pendingInvalidation = false;
-        this.pendingInvalidationReason = null;
+        this.pendingInvalidationMarker = null;
         this.refreshRetryAfterMicros = Numbers.LONG_NULL;
         this.refreshRetryCount = 0;
     }

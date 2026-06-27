@@ -1552,12 +1552,15 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         // lock-holder finalizes a deferral on completion -- the incremental, range, interval-update and
         // full-refresh holders, plus invalidateView's own force=false decline below (a never-refreshed view it
         // holds without minting) -- clearing the guard so the view ends invalid, not frozen. Residuals: a
-        // read-only deferral rebuilds from disk on promote; and the window between a holder's finalize and its
-        // unlock, where a second deferral re-sets the marker (a torn (pending, reason) write lands here too --
-        // the defer writers hold no latch and write the two volatile fields in opposite orders, so reason can
-        // tear to null and route a real deferral down finalize's no-op marker branch) and is then swallowed
+        // read-only deferral rebuilds from disk on promote; and the lost-update window between a holder's
+        // finalize-clear and its unlock, where a second off-latch deferral re-sets the marker after the clear,
+        // so both the holder's re-enqueued INVALIDATE and the second deferral are then swallowed by this guard
         // for good. When hit that is a terminal silent freeze -- far narrower than the pre-fix always-lost
-        // deferral, but, unlike it, not self-healing.
+        // deferral, but, unlike it, not self-healing. (The pending marker is now a single volatile reference --
+        // see MatViewState#pendingInvalidationMarker -- so it can no longer *tear* to (pending=true,
+        // reason=null) and strand a real deferral in finalize's null-reason no-op branch; the sentinel
+        // null-reason marker is only ever written alongside a queued full refresh that recovers it. Only this
+        // lost-update window remains.)
         if (viewState != null && !viewState.isDropped() && !viewState.isInvalid() && !viewState.isPendingInvalidation()) {
             if (engine.isReadOnlyMode()) {
                 // The node is, or just became, a replica: marking the view invalid acquires a WalWriter

@@ -614,4 +614,110 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                             """);
         });
     }
+
+    // Locks in the pending-invalidation marker state machine after the (pendingInvalidation,
+    // pendingInvalidationReason) two-volatile composite was collapsed into a single atomic reference
+    // (MatViewState#pendingInvalidationMarker). Every transition must be observable as exactly one of:
+    // not-pending, pending-with-reason, or the no-reason full-refresh marker -- never a torn mix.
+    @Test
+    public void testPendingInvalidationMarkerStateMachineIsAtomic() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base_price (sym varchar, price double, amount int, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("create materialized view price_1h as (select sym, last(price) as price, ts from base_price sample by 1h) partition by DAY");
+            drainWalAndMatViewQueues();
+
+            final TableToken viewToken = engine.verifyTableName("price_1h");
+            final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
+            Assert.assertNotNull("expected a real (non-no-op) state store to hold the view state", state);
+
+            // Fresh state: not pending, no reason.
+            Assert.assertFalse(state.isPendingInvalidation());
+            Assert.assertNull(state.getPendingInvalidationReason());
+
+            // A reason-bearing deferral is observed atomically as pending AND carrying exactly that reason --
+            // never the old torn (pending=true, reason=null).
+            state.markAsPendingInvalidation("truncate operation");
+            Assert.assertTrue(state.isPendingInvalidation());
+            Assert.assertEquals("truncate operation", state.getPendingInvalidationReason());
+
+            // The no-arg overload is the full-refresh reschedule marker: pending, but with no reason (the
+            // sentinel), still distinct from the cleared state.
+            state.markAsPendingInvalidation();
+            Assert.assertTrue(state.isPendingInvalidation());
+            Assert.assertNull(state.getPendingInvalidationReason());
+
+            // Clearing drops the whole marker in a single write.
+            state.clearPendingInvalidation();
+            Assert.assertFalse(state.isPendingInvalidation());
+            Assert.assertNull(state.getPendingInvalidationReason());
+
+            // markAsValid also clears the marker.
+            state.markAsPendingInvalidation("update operation");
+            Assert.assertTrue(state.isPendingInvalidation());
+            state.markAsValid();
+            Assert.assertFalse(state.isPendingInvalidation());
+            Assert.assertNull(state.getPendingInvalidationReason());
+        });
+    }
+
+    // Hammers an off-latch reason-bearing deferral against an off-latch clear -- the two writers that, with
+    // the former composite written in opposite field orders, could tear to (pending=true, reason=null) and
+    // strand the view valid+stale with no self-heal. With a single atomic marker that intermediate cannot
+    // exist: once the writers quiesce, a pending marker must still carry its (only ever non-null) reason.
+    // This test is deterministically green on the fixed code; it can only fail if the torn composite returns.
+    @Test
+    public void testConcurrentDeferAndClearNeverTearsToReasonlessPending() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base_price (sym varchar, price double, amount int, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("create materialized view price_1h as (select sym, last(price) as price, ts from base_price sample by 1h) partition by DAY");
+            drainWalAndMatViewQueues();
+
+            final TableToken viewToken = engine.verifyTableName("price_1h");
+            final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
+            Assert.assertNotNull("expected a real (non-no-op) state store to hold the view state", state);
+
+            final int rounds = 200;
+            final int iterations = 5_000;
+            for (int r = 0; r < rounds; r++) {
+                final AtomicBoolean go = new AtomicBoolean();
+                final Runnable gate = () -> {
+                    while (!go.get()) {
+                        Thread.onSpinWait();
+                    }
+                };
+                final Thread setter = new Thread(() -> {
+                    gate.run();
+                    for (int i = 0; i < iterations; i++) {
+                        state.markAsPendingInvalidation("update operation");
+                    }
+                }, "defer-setter");
+                final Thread clearer = new Thread(() -> {
+                    gate.run();
+                    for (int i = 0; i < iterations; i++) {
+                        state.clearPendingInvalidation();
+                    }
+                }, "defer-clearer");
+                setter.start();
+                clearer.start();
+                go.set(true);
+                setter.join();
+                clearer.join();
+
+                // Quiesced -> a single stable resting state. The only reason ever written is non-null, so a
+                // pending marker MUST report it; a reasonless pending marker would mean the torn write is back.
+                if (state.isPendingInvalidation()) {
+                    Assert.assertEquals(
+                            "reason-bearing pending marker tore to a null reason -- the torn composite is back",
+                            "update operation",
+                            state.getPendingInvalidationReason()
+                    );
+                } else {
+                    Assert.assertNull(state.getPendingInvalidationReason());
+                }
+            }
+
+            // Leave the view clean for teardown.
+            state.markAsValid();
+        });
+    }
 }
