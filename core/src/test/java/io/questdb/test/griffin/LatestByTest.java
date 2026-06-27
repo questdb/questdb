@@ -1794,8 +1794,11 @@ public class LatestByTest extends AbstractCairoTest {
         });
     }
 
-    // Same as above but with a NULL element in the IN-list. The sym column contains no nulls, so the NULL
-    // constant resolves to VALUE_NOT_FOUND and is dropped, leaving the resolvable keys (g1, g2) intact.
+    // Same as above but with a NULL element in the IN-list. Unlike the not-found 'zzz' case, the NULL
+    // constant resolves to SymbolTable.VALUE_IS_NULL (not VALUE_NOT_FOUND), and toIndexKey(VALUE_IS_NULL)
+    // == 0, so it is added to symbolKeys as the null bucket (index key 0). The sym column contains no
+    // nulls, so key 0 matches nothing and the result is still (g1, g2). Verifies a NULL key in the
+    // IN-list does not corrupt the row positioning under the split-frame setup.
     @Test
     public void testLatestByValuesIndexedFilteredWithNullKeyAcrossPageFrames() throws Exception {
         assertMemoryLeak(() -> {
