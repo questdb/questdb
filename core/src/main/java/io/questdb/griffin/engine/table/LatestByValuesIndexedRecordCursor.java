@@ -162,11 +162,12 @@ class LatestByValuesIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                 addFoundKey(symbolKey, indexReader, invertedFrameIndex, partitionLo, partitionHi);
             }
             if (deferredSymbolKeys != null) {
+                // deferredSymbolKeys is deduped against symbolKeys at factory level
+                // (AbstractDeferredTreeSetRecordCursorFactory.initRecordCursor), so no overlap guard
+                // is needed here; addFoundKey is idempotent regardless.
                 for (int i = 0, n = deferredSymbolKeys.size(); i < n; i++) {
                     int symbolKey = deferredSymbolKeys.get(i);
-                    if (!symbolKeys.contains(symbolKey)) {
-                        addFoundKey(symbolKey, indexReader, invertedFrameIndex, partitionLo, partitionHi);
-                    }
+                    addFoundKey(symbolKey, indexReader, invertedFrameIndex, partitionLo, partitionHi);
                 }
             }
         }

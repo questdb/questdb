@@ -1757,6 +1757,108 @@ public class LatestByTest extends AbstractCairoTest {
         });
     }
 
+    // Coverage for a not-found element in an indexed IN-list combined with the split-frame setup.
+    // 'zzz' is absent from the symbol table, so it resolves to VALUE_NOT_FOUND and is never added to
+    // deferredSymbolKeys. keyCount must therefore stay at the count of resolvable keys (g1, g2) so the
+    // early exit (found.size() < keyCount) still fires; otherwise the cursor would full-scan. Small page
+    // frames force partitionLo > 0 on the matched (deep) rows.
+    @Test
+    public void testLatestByValuesIndexedFilteredWithNotFoundKeyAcrossPageFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.changePageFrameSizes(1, 8);
+            try {
+                executeWithRewriteTimestamp(
+                        "create table tk (sym symbol index, venue symbol index, px double, ts #TIMESTAMP) timestamp(ts)",
+                        timestampType.getTypeName()
+                );
+                execute(
+                        "insert into tk select\n" +
+                                "  'g' || (x % 4),\n" +
+                                "  case when x % 5 = 0 then 'v2' else 'v1' end,\n" +
+                                "  x::double,\n" +
+                                "  (x * 1000000)::" + timestampType.getTypeName() + "\n" +
+                                "from long_sequence(200);"
+                );
+                // 'zzz' is not in the symbol table: it must not inflate keyCount nor change the result.
+                assertQuery("select sym, px from tk " +
+                        "where sym in ('g1', 'g2', 'zzz') and venue = 'v1' latest on ts partition by sym order by sym")
+                        .expectSize()
+                        .returns("""
+                                sym\tpx
+                                g1\t197.0
+                                g2\t198.0
+                                """);
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
+            }
+        });
+    }
+
+    // Same as above but with a NULL element in the IN-list. The sym column contains no nulls, so the NULL
+    // constant resolves to VALUE_NOT_FOUND and is dropped, leaving the resolvable keys (g1, g2) intact.
+    @Test
+    public void testLatestByValuesIndexedFilteredWithNullKeyAcrossPageFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.changePageFrameSizes(1, 8);
+            try {
+                executeWithRewriteTimestamp(
+                        "create table tk (sym symbol index, venue symbol index, px double, ts #TIMESTAMP) timestamp(ts)",
+                        timestampType.getTypeName()
+                );
+                execute(
+                        "insert into tk select\n" +
+                                "  'g' || (x % 4),\n" +
+                                "  case when x % 5 = 0 then 'v2' else 'v1' end,\n" +
+                                "  x::double,\n" +
+                                "  (x * 1000000)::" + timestampType.getTypeName() + "\n" +
+                                "from long_sequence(200);"
+                );
+                assertQuery("select sym, px from tk " +
+                        "where sym in ('g1', 'g2', null) and venue = 'v1' latest on ts partition by sym order by sym")
+                        .expectSize()
+                        .returns("""
+                                sym\tpx
+                                g1\t197.0
+                                g2\t198.0
+                                """);
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
+            }
+        });
+    }
+
+    // Same coverage for the non-filtered indexed cursor (LatestByValuesIndexedRecordCursor): no residual
+    // filter, an indexed IN-list with a not-found element, under the split-frame setup.
+    @Test
+    public void testLatestByValuesIndexedWithNotFoundKeyAcrossPageFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.changePageFrameSizes(1, 8);
+            try {
+                executeWithRewriteTimestamp(
+                        "create table tk (sym symbol index, px double, ts #TIMESTAMP) timestamp(ts)",
+                        timestampType.getTypeName()
+                );
+                execute(
+                        "insert into tk select\n" +
+                                "  'g' || (x % 4),\n" +
+                                "  x::double,\n" +
+                                "  (x * 1000000)::" + timestampType.getTypeName() + "\n" +
+                                "from long_sequence(200);"
+                );
+                assertQuery("select sym, px from tk " +
+                        "where sym in ('g1', 'g2', 'zzz') latest on ts partition by sym order by sym")
+                        .expectSize()
+                        .returns("""
+                                sym\tpx
+                                g1\t197.0
+                                g2\t198.0
+                                """);
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
+            }
+        });
+    }
+
     @Test
     public void testLatestByIndexedDuplicateDeferredKeyDoesNotFullScan() throws Exception {
         assertMemoryLeak(() -> {
