@@ -47,7 +47,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class SecurityContextFactoryPrincipalTest {
 
-    // must match AbstractAllowAllSecurityContext / AbstractReadOnlySecurityContext.MAX_CACHED_PRINCIPALS
+    // must match AbstractPrincipalAwareSecurityContext.MAX_CACHED_PRINCIPALS
     private static final int CACHE_CAP = 256;
 
     @Test

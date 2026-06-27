@@ -31,7 +31,7 @@ import io.questdb.griffin.engine.functions.catalogue.Constants;
  * The concrete read-only security context. The shared singletons ({@link #INSTANCE} /
  * {@link #SETTINGS_READ_ONLY}) are instances of this class, and {@code forPrincipal} derives further
  * instances of it, so a derived context reports the authenticated user while preserving the read-only
- * (and settings-read-only) behavior. It extends {@link AbstractReadOnlySecurityContext}, which declares
+ * (and settings-read-only) behavior. It extends {@link AbstractReadOnlySecurityContext}, which leaves
  * {@code newPrincipalContext} abstract so every subclass must supply its own and is never silently
  * downgraded. Subclasses that need to allow more than plain read-only (e.g. the mat view refresh
  * context) can extend this concrete class instead of implementing the abstract base from scratch.
