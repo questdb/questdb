@@ -335,36 +335,35 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testConstantArithFoldOnByteColumn() throws Exception {
-        // Pure-constant arithmetic subtree whose long-precision value overflows
-        // INT: emitted as a single I8 IMM in place of the multi-node subtree.
-        // Mirrors FunctionParser.functionToConstant0's LongConstant fold so the
-        // JIT compares at long width and matches the Java filter.
+        // Pure-INT arithmetic subtree whose long-precision value overflows INT:
+        // collapsed to a single IMM. A BYTE column compares at INT width, so the
+        // subtree folds to a wrapped I4 IMM ((int) 10000000000L = 1410065408),
+        // mirroring the Java filter's getInt() wrap.
         serialize("abyte > 100000 * 100000");
-        assertIR("(i64 10000000000L)(i8 abyte)(>)(ret)");
+        assertIR("(i32 1410065408L)(i8 abyte)(>)(ret)");
     }
 
     @Test
     public void testConstantArithFoldOnIntColumn() throws Exception {
-        // Same shape on an INT column. Mixed I4 (anint) + I8 (folded
-        // constant) triggers the existing NarrowI64WidenDetector, so the
-        // column read picks up an SX_I64 to lift it to i64 before the
-        // comparison.
+        // Same shape on an INT column: both operands stay at INT width, so the
+        // fold wraps to an I4 IMM and no SX_I64 widening is needed.
         serialize("anint > 100000 * 100000");
-        assertIR("(i64 10000000000L)(i32 anint)(sx_i64)(>)(ret)");
+        assertIR("(i32 1410065408L)(i32 anint)(>)(ret)");
     }
 
     @Test
     public void testConstantArithFoldOnLongColumn() throws Exception {
-        // LONG column already at I8 width: the fold still collapses the
-        // subtree to one IMM and the comparison stays at i64 throughout.
+        // A LONG column promotes the comparison to i64, so the fold stays at full
+        // width as a single I8 IMM and never wraps.
         serialize("along > 100000 * 100000");
         assertIR("(i64 10000000000L)(i64 along)(>)(ret)");
     }
 
     @Test
     public void testConstantArithFoldOnShortColumn() throws Exception {
+        // A SHORT column promotes to INT, so the fold wraps to an I4 IMM.
         serialize("ashort > 100000 * 100000");
-        assertIR("(i64 10000000000L)(i16 ashort)(>)(ret)");
+        assertIR("(i32 1410065408L)(i16 ashort)(>)(ret)");
     }
 
     @Test

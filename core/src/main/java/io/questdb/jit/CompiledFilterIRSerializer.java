@@ -183,13 +183,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         // Check if we're at the start of an arithmetic expression
         predicateContext.onNodeDescended(node);
 
-        // Constant integer arithmetic subtree that overflows INT. Post
-        // FunctionParser.functionToConstant0 it stays INT (getInt() wraps,
-        // getLong() widens), so the Java filter compares at INT width unless a
-        // LONG operand promotes it. Mirror that: fold to a full-width I8 IMM when
-        // a LONG operand is present (needsNarrowI64Widening) or a wrapped I4 IMM
-        // otherwise -- the I8-vs-I4 choice serializeUntypedNumber already makes
-        // for a plain constant.
+        // Constant integer arithmetic subtree that overflows INT. The Java
+        // filter wraps a pure-INT subtree (getInt() mod 2^32) but evaluates a
+        // LONG-typed subtree at full width (getLong(), never wraps). Mirror
+        // that: emit a full-width I8 IMM when the subtree is LONG-typed (any
+        // LONG leaf) or a LONG operand promotes the comparison
+        // (needsNarrowI64Widening), and a wrapped I4 IMM otherwise -- the
+        // I8-vs-I4 choice serializeUntypedNumber already makes for a plain
+        // constant.
         if (predicateContext.isActive() && node.type == ExpressionNode.OPERATION) {
             try {
                 long longVal = tryFoldConstantArith(node);
@@ -197,7 +198,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     // Children are skipped, so flag the fold root as arithmetic
                     // and observe the emitted IMM (markFoldedI4Imm/I8Imm) for the
                     // scalar-mode forcer and getExecHint() mixed-size detection.
-                    if (predicateContext.needsNarrowI64Widening) {
+                    if (predicateContext.needsNarrowI64Widening || isLongTypedConstArith(node)) {
                         predicateContext.markFoldedI8Imm();
                         putOperand(IMM, I8_TYPE, longVal);
                     } else {
@@ -512,6 +513,28 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             case ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG -> true;
             default -> false;
         };
+    }
+
+    /**
+     * Reports whether a pure-constant integer arithmetic subtree is LONG-typed,
+     * i.e. has at least one LONG constant leaf (L/l suffix or a magnitude that
+     * overflows INT). The Java filter evaluates such a subtree at long width via
+     * getLong() and never wraps, so descend() must emit a full I8 IMM rather than
+     * a wrapped I4 even when no separate LONG operand triggers narrow-i64
+     * widening (e.g. a FLOAT in the predicate suppresses shouldWiden()). Assumes
+     * the subtree already folded via tryFoldConstantArith.
+     */
+    private static boolean isLongTypedConstArith(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.CONSTANT) {
+            return longConstantTypeCode(node.token) == I8_TYPE;
+        }
+        if (node.type != ExpressionNode.OPERATION) {
+            return false;
+        }
+        return isLongTypedConstArith(node.lhs) || isLongTypedConstArith(node.rhs);
     }
 
     // Stands for PredicateType.NUMERIC
