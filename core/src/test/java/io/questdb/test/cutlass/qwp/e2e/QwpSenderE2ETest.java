@@ -428,46 +428,6 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
-    public void testIntColumnIntoIPv4TranslatesNullSentinel() throws Exception {
-        runInContext((port) -> {
-            String table = "test_qwp_int_to_ipv4_null";
-            // The IPv4 arm of QwpWalAppender.appendToWalColumnar accepts
-            // qwpType == TYPE_INT as a legacy-client migration path (a
-            // client that predates TYPE_IPV4 can still ingest into an
-            // IPv4 column by sending int bits). But INT's NULL sentinel
-            // (Integer.MIN_VALUE = 0x80000000) is not IPv4's NULL
-            // sentinel (0 = 0.0.0.0). Without translation the bit
-            // pattern lands verbatim through putFixedColumn's no-bitmap
-            // memcpy fast path, and reads back as the valid address
-            // 128.0.0.0 -- silently changing what the user wrote (a
-            // NULL on the INT side) into a non-null IPv4 value.
-            execute("CREATE TABLE " + table + " (addr IPv4, ts TIMESTAMP) "
-                    + "TIMESTAMP(ts) PARTITION BY DAY WAL");
-
-            try (QwpWebSocketSender sender = connectWs(port)) {
-                sender.table(table)
-                        .intColumn("addr", Integer.MIN_VALUE)   // INT_NULL
-                        .at(1_000_000, ChronoUnit.MICROS);
-                // Sanity row to confirm the TYPE_INT migration path
-                // still ingests real values correctly after the fix.
-                sender.table(table)
-                        .intColumn("addr", 0x0A000001)          // 10.0.0.1
-                        .at(2_000_000, ChronoUnit.MICROS);
-                sender.flush();
-            }
-
-            drainWalQueue();
-            assertQuery("SELECT coalesce(addr::string, 'null') v FROM " + table + " ORDER BY ts")
-                    .noLeakCheck()
-                    .returnsOnce("""
-                            v
-                            null
-                            10.0.0.1
-                            """);
-        });
-    }
-
-    @Test
     public void testAutoCreateIPv4Column() throws Exception {
         runInContext((port) -> {
             String table = "test_qwp_auto_ipv4";
@@ -2536,6 +2496,88 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
         });
     }
 
+    // Covers the binary double-to-DECIMAL conversion under concurrent senders.
+    // The QWP WebSocket path uses a per-connection QwpWalAppender, so this is
+    // correctness coverage of the conversion, not a repro of the cross-worker
+    // scratch race fixed in the ILP/TCP path; that race is reproduced by
+    // LineTcpWalDecimalConcurrencyTest.
+    @Test
+    public void testConcurrentSenders_sameTable_doubleToDecimal() throws Exception {
+        sendChunk = Integer.MAX_VALUE;
+        recvChunk = Integer.MAX_VALUE;
+        runInContext((port) -> {
+            String table = "concurrent_decimal";
+            execute("CREATE TABLE " + table + " (" +
+                    "sender_id LONG, " +
+                    "row_id LONG, " +
+                    "variant LONG, " +
+                    "price DECIMAL(38,18), " +
+                    "quantity DECIMAL(38,18), " +
+                    "ts TIMESTAMP" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            int senderCount = 16;
+            int rowsPerSender = 5000;
+            int autoFlushRows = 100;
+            double[] prices = {1.25, 2.5, 999999.875, 12345.125};
+            double[] quantities = {1024.5, 2048.25, 4096.125, 8192.875};
+            CyclicBarrier barrier = new CyclicBarrier(senderCount);
+            AtomicReference<Throwable> error = new AtomicReference<>();
+
+            Thread[] threads = new Thread[senderCount];
+            for (int s = 0; s < senderCount; s++) {
+                final int senderIdx = s;
+                threads[s] = new Thread(() -> {
+                    try (QwpWebSocketSender sender = connectWs(port,
+                            autoFlushRows,
+                            1024 * 1024,
+                            100_000_000L)) {
+                        barrier.await();
+                        for (int i = 0; i < rowsPerSender; i++) {
+                            int variant = (senderIdx + i) & 3;
+                            sender.table(table)
+                                    .longColumn("sender_id", senderIdx)
+                                    .longColumn("row_id", i)
+                                    .longColumn("variant", variant)
+                                    .doubleColumn("price", prices[variant])
+                                    .doubleColumn("quantity", quantities[variant])
+                                    .at(1_000_000_000_000L + senderIdx * 1_000_000L + i * 1000L, ChronoUnit.MICROS);
+                        }
+                        sender.flush();
+                    } catch (Throwable t) {
+                        error.compareAndSet(null, t);
+                    }
+                });
+                threads[s].start();
+            }
+
+            for (Thread t : threads) {
+                t.join();
+            }
+            if (error.get() != null) {
+                throw new RuntimeException("sender thread failed", error.get());
+            }
+
+            drainWalQueue();
+            assertQuery("SELECT count() FROM " + table)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n" + (senderCount * rowsPerSender) + "\n");
+            assertQuery(
+                    "SELECT count() FROM " + table + " WHERE " +
+                            "(variant = 0 AND (price != 1.25::decimal(38,18) OR quantity != 1024.5::decimal(38,18))) OR " +
+                            "(variant = 1 AND (price != 2.5::decimal(38,18) OR quantity != 2048.25::decimal(38,18))) OR " +
+                            "(variant = 2 AND (price != 999999.875::decimal(38,18) OR quantity != 4096.125::decimal(38,18))) OR " +
+                            "(variant = 3 AND (price != 12345.125::decimal(38,18) OR quantity != 8192.875::decimal(38,18)))"
+            )
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n0\n");
+        });
+    }
+
     @Test
     public void testConcurrentSenders_sameTable_sameSymbols() throws Exception {
         runInContext((port) -> {
@@ -2592,6 +2634,124 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                         .noLeakCheck()
                         .returnsOnce("count\n" + rowsPerSender + "\n");
             }
+        });
+    }
+
+    @Test
+    public void testDecimal() throws Exception {
+        runInContext((port) -> {
+            String table = "test_qwp_decimal";
+
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                sender.table(table)
+                        .decimalColumn("d", "123.45")
+                        .at(1_000_000, ChronoUnit.MICROS);
+                sender.table(table)
+                        .decimalColumn("d", "-999.99")
+                        .at(2_000_000, ChronoUnit.MICROS);
+                sender.table(table)
+                        .decimalColumn("d", "0.01")
+                        .at(3_000_000, ChronoUnit.MICROS);
+                sender.table(table)
+                        .decimalColumn("d", Decimal256.fromLong(42_000, 2))
+                        .at(4_000_000, ChronoUnit.MICROS);
+                sender.flush();
+            }
+
+            drainWalQueue();
+            assertQuery("SELECT count() FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("count\n4\n");
+        });
+    }
+
+    @Test
+    public void testDecimalRescale() throws Exception {
+        runInContext((port) -> {
+            String table = "test_qwp_decimal_rescale";
+            execute("CREATE TABLE " + table + " (" +
+                    "d DECIMAL(10, 4), " +
+                    "ts TIMESTAMP" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                // Send with scale=2, but column expects scale=4 - should rescale
+                sender.table(table)
+                        .decimalColumn("d", Decimal64.fromLong(12_345, 2))
+                        .at(1_000_000, ChronoUnit.MICROS);
+                sender.flush();
+            }
+
+            drainWalQueue();
+            assertQuery("SELECT count() FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
+            assertQuery("SELECT d FROM " + table)
+                    .noLeakCheck()
+                    .returnsOnce("""
+                            d
+                            123.4500
+                            """);
+        });
+    }
+
+    @Test
+    public void testDeferredCommitConnectionDropRollsBack() throws Exception {
+        runInContext((port) -> {
+            // Send deferred messages then close without committing
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                sender.setDeferCommit(true);
+                for (int i = 0; i < 10; i++) {
+                    sender.table("defer_drop")
+                            .longColumn("id", i)
+                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
+                }
+                sender.flush();
+
+                // Close without ever clearing the defer flag — server should roll back
+            }
+
+            drainWalQueue();
+
+            // Table may not even exist, or if auto-created it should have 0 committed rows
+            try {
+                assertQuery("SELECT count() FROM defer_drop")
+                        .noLeakCheck()
+                        .returnsOnce("count\n0\n");
+            } catch (AssertionError e) {
+                // Table was never created — that's also correct
+                if (!e.getMessage().contains("defer_drop")) {
+                    throw e;
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testDeferredCommitEmptyFinalMessage() throws Exception {
+        runInContext((port) -> {
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                // Deferred messages carry all the data
+                sender.setDeferCommit(true);
+                for (int i = 0; i < 20; i++) {
+                    sender.table("defer_empty_final")
+                            .longColumn("id", i)
+                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
+                }
+                sender.flush();
+
+                // Final message without defer flag and with more rows triggers commit
+                sender.setDeferCommit(false);
+                sender.table("defer_empty_final")
+                        .longColumn("id", 99)
+                        .at(1_000_000_100_000L, ChronoUnit.MICROS);
+                sender.flush();
+            }
+
+            drainWalQueue();
+            assertQuery("SELECT count() FROM defer_empty_final")
+                    .noLeakCheck()
+                    .returnsOnce("count\n21\n");
         });
     }
 
@@ -2672,96 +2832,6 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             assertQuery("SELECT count() FROM defer_mixed_b")
                     .noLeakCheck()
                     .returnsOnce("count\n15\n");
-        });
-    }
-
-    @Test
-    public void testDeferredCommitEmptyFinalMessage() throws Exception {
-        runInContext((port) -> {
-            try (QwpWebSocketSender sender = connectWs(port)) {
-                // Deferred messages carry all the data
-                sender.setDeferCommit(true);
-                for (int i = 0; i < 20; i++) {
-                    sender.table("defer_empty_final")
-                            .longColumn("id", i)
-                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
-                }
-                sender.flush();
-
-                // Final message without defer flag and with more rows triggers commit
-                sender.setDeferCommit(false);
-                sender.table("defer_empty_final")
-                        .longColumn("id", 99)
-                        .at(1_000_000_100_000L, ChronoUnit.MICROS);
-                sender.flush();
-            }
-
-            drainWalQueue();
-            assertQuery("SELECT count() FROM defer_empty_final")
-                    .noLeakCheck()
-                    .returnsOnce("count\n21\n");
-        });
-    }
-
-    @Test
-    public void testDeferredCommitSingleDeferredMessage() throws Exception {
-        runInContext((port) -> {
-            try (QwpWebSocketSender sender = connectWs(port)) {
-                // One deferred message
-                sender.setDeferCommit(true);
-                for (int i = 0; i < 5; i++) {
-                    sender.table("defer_single")
-                            .longColumn("id", i)
-                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
-                }
-                sender.flush();
-
-                // Immediately followed by a committing message
-                sender.setDeferCommit(false);
-                for (int i = 5; i < 10; i++) {
-                    sender.table("defer_single")
-                            .longColumn("id", i)
-                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
-                }
-                sender.flush();
-            }
-
-            drainWalQueue();
-            assertQuery("SELECT count() FROM defer_single")
-                    .noLeakCheck()
-                    .returnsOnce("count\n10\n");
-        });
-    }
-
-    @Test
-    public void testDeferredCommitConnectionDropRollsBack() throws Exception {
-        runInContext((port) -> {
-            // Send deferred messages then close without committing
-            try (QwpWebSocketSender sender = connectWs(port)) {
-                sender.setDeferCommit(true);
-                for (int i = 0; i < 10; i++) {
-                    sender.table("defer_drop")
-                            .longColumn("id", i)
-                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
-                }
-                sender.flush();
-
-                // Close without ever clearing the defer flag — server should roll back
-            }
-
-            drainWalQueue();
-
-            // Table may not even exist, or if auto-created it should have 0 committed rows
-            try {
-                assertQuery("SELECT count() FROM defer_drop")
-                        .noLeakCheck()
-                        .returnsOnce("count\n0\n");
-            } catch (AssertionError e) {
-                // Table was never created — that's also correct
-                if (!e.getMessage().contains("defer_drop")) {
-                    throw e;
-                }
-            }
         });
     }
 
@@ -2869,6 +2939,36 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testDeferredCommitSingleDeferredMessage() throws Exception {
+        runInContext((port) -> {
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                // One deferred message
+                sender.setDeferCommit(true);
+                for (int i = 0; i < 5; i++) {
+                    sender.table("defer_single")
+                            .longColumn("id", i)
+                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
+                }
+                sender.flush();
+
+                // Immediately followed by a committing message
+                sender.setDeferCommit(false);
+                for (int i = 5; i < 10; i++) {
+                    sender.table("defer_single")
+                            .longColumn("id", i)
+                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
+                }
+                sender.flush();
+            }
+
+            drainWalQueue();
+            assertQuery("SELECT count() FROM defer_single")
+                    .noLeakCheck()
+                    .returnsOnce("count\n10\n");
+        });
+    }
+
+    @Test
     public void testDeferredCommitSymbolDictContinuity() throws Exception {
         runInContext((port) -> {
             try (QwpWebSocketSender sender = connectWs(port)) {
@@ -2916,64 +3016,6 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                             server-01\t3\t1970-01-01T00:00:03.000000Z
                             server-03\t4\t1970-01-01T00:00:04.000000Z
                             server-02\t5\t1970-01-01T00:00:05.000000Z
-                            """);
-        });
-    }
-
-    @Test
-    public void testDecimal() throws Exception {
-        runInContext((port) -> {
-            String table = "test_qwp_decimal";
-
-            try (QwpWebSocketSender sender = connectWs(port)) {
-                sender.table(table)
-                        .decimalColumn("d", "123.45")
-                        .at(1_000_000, ChronoUnit.MICROS);
-                sender.table(table)
-                        .decimalColumn("d", "-999.99")
-                        .at(2_000_000, ChronoUnit.MICROS);
-                sender.table(table)
-                        .decimalColumn("d", "0.01")
-                        .at(3_000_000, ChronoUnit.MICROS);
-                sender.table(table)
-                        .decimalColumn("d", Decimal256.fromLong(42_000, 2))
-                        .at(4_000_000, ChronoUnit.MICROS);
-                sender.flush();
-            }
-
-            drainWalQueue();
-            assertQuery("SELECT count() FROM " + table)
-                    .noLeakCheck()
-                    .returnsOnce("count\n4\n");
-        });
-    }
-
-    @Test
-    public void testDecimalRescale() throws Exception {
-        runInContext((port) -> {
-            String table = "test_qwp_decimal_rescale";
-            execute("CREATE TABLE " + table + " (" +
-                    "d DECIMAL(10, 4), " +
-                    "ts TIMESTAMP" +
-                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
-
-            try (QwpWebSocketSender sender = connectWs(port)) {
-                // Send with scale=2, but column expects scale=4 - should rescale
-                sender.table(table)
-                        .decimalColumn("d", Decimal64.fromLong(12_345, 2))
-                        .at(1_000_000, ChronoUnit.MICROS);
-                sender.flush();
-            }
-
-            drainWalQueue();
-            assertQuery("SELECT count() FROM " + table)
-                    .noLeakCheck()
-                    .returnsOnce("count\n1\n");
-            assertQuery("SELECT d FROM " + table)
-                    .noLeakCheck()
-                    .returnsOnce("""
-                            d
-                            123.4500
                             """);
         });
     }
@@ -3340,6 +3382,46 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                             0
                             2147483647
                             null
+                            """);
+        });
+    }
+
+    @Test
+    public void testIntColumnIntoIPv4TranslatesNullSentinel() throws Exception {
+        runInContext((port) -> {
+            String table = "test_qwp_int_to_ipv4_null";
+            // The IPv4 arm of QwpWalAppender.appendToWalColumnar accepts
+            // qwpType == TYPE_INT as a legacy-client migration path (a
+            // client that predates TYPE_IPV4 can still ingest into an
+            // IPv4 column by sending int bits). But INT's NULL sentinel
+            // (Integer.MIN_VALUE = 0x80000000) is not IPv4's NULL
+            // sentinel (0 = 0.0.0.0). Without translation the bit
+            // pattern lands verbatim through putFixedColumn's no-bitmap
+            // memcpy fast path, and reads back as the valid address
+            // 128.0.0.0 -- silently changing what the user wrote (a
+            // NULL on the INT side) into a non-null IPv4 value.
+            execute("CREATE TABLE " + table + " (addr IPv4, ts TIMESTAMP) "
+                    + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                sender.table(table)
+                        .intColumn("addr", Integer.MIN_VALUE)   // INT_NULL
+                        .at(1_000_000, ChronoUnit.MICROS);
+                // Sanity row to confirm the TYPE_INT migration path
+                // still ingests real values correctly after the fix.
+                sender.table(table)
+                        .intColumn("addr", 0x0A000001)          // 10.0.0.1
+                        .at(2_000_000, ChronoUnit.MICROS);
+                sender.flush();
+            }
+
+            drainWalQueue();
+            assertQuery("SELECT coalesce(addr::string, 'null') v FROM " + table + " ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("""
+                            v
+                            null
+                            10.0.0.1
                             """);
         });
     }
@@ -4565,7 +4647,6 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (QwpWebSocketSender sender = connectWs(port)) {
-                sender.setGorillaEnabled(false);
                 // Row 1: sub-microsecond nanos get truncated
                 sender.table(table)
                         .timestampColumn("ts_col", 1_645_747_200_123_456_789L, ChronoUnit.NANOS)

@@ -39,6 +39,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
@@ -57,7 +58,7 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
     // factory does not own the chain, just keeps the reference to enable updating of the limits
     private LimitedSizeLongTreeChain chain;
     // initialization delayed to getCursor() because lo/hi need to be evaluated
-    private DelegatingRecordCursor cursor; // LimitedSizeSortedLightRecordCursor or SortedLightRecordCursor
+    private DelegatingRecordCursor cursor; // LimitedSizeSortedLightRecordCursor or LimitedSizePartiallySortedLightRecordCursor
     private boolean isFirstN;
     private long limit;
     private long skipFirst;
@@ -125,20 +126,25 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
      * 2. "limit L, H" means we need to keep :
      * L < 0          - last  L records (but skip last H records, if H >=0 then don't skip anything)
      * L >= 0, H >= 0 - first H records (but skip first L later, if H <= L then return empty set)
-     * L >= 0, H < 0  - we can't optimize this case (because it spans from record L-th from the beginning up to
-     * H-th from the end, and we don't) and need to revert to default behavior - produce the whole set and skip.
+     * L >= 0, H < 0  - the result spans from record L-th from the beginning up to H-th from the end, so the
+     * chain stays unbounded (limit -1) and the cursor skips L rows from the start and H from the end.
      * <p>
      * Similar to LimitRecordCursorFactory.LimitRecordCursor, but doesn't check the underlying count.
      */
     public void initializeLimitedSizeCursor(SqlExecutionContext executionContext, RecordCursor baseCursor) throws SqlException {
         computeLimits(baseCursor, executionContext);
+        // Lazy variant: the chain skeleton is constructed but the key/value heaps
+        // are not allocated until the first cursor's of() binds a MemoryTracker
+        // and calls reopen(). This keeps malloc/free symmetric on the per-query
+        // counter from the very first cursor.
         this.chain = new LimitedSizeLongTreeChain(
                 configuration.getSqlSortKeyPageSize(),
                 configuration.getSqlSortKeyMaxBytes(),
                 configuration.getSqlSortLightValuePageSize(),
                 configuration.getSqlSortLightValueMaxBytes(),
                 PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath(),
-                PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath()
+                PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath(),
+                false
         );
 
         if (timestampIndex == -1 || !isFirstN) {
@@ -179,17 +185,6 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
         return base.usesIndex();
     }
 
-    // Check if lo, hi is set and lo >=0 while hi < 0 (meaning - return whole result set except some rows at start and some at the end)
-    // because such case can't really be optimized by topN/bottomN
-    private boolean canBeOptimized(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
-        loFunction.init(baseCursor, executionContext);
-        if (hiFunction != null) {
-            hiFunction.init(baseCursor, executionContext);
-        }
-
-        return !(loFunction.getLong(null) >= 0 && hiFunction != null && hiFunction.getLong(null) < 0);
-    }
-
     private void computeLimits(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
         loFunction.init(baseCursor, executionContext);
         if (hiFunction != null) {
@@ -216,6 +211,10 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
         } else {
             // at this stage we also have 'hi'
             long hi = hiFunction.getLong(null);
+            // NULL lo with a non-NULL hi means "from the start"; NULL,NULL stays raw so lo == hi yields empty.
+            if (lo == Numbers.LONG_NULL && hi != Numbers.LONG_NULL) {
+                lo = 0;
+            }
             if (lo < 0) {
                 // right, here we are looking for something like -10,-5 five rows away from tail
                 if (lo == hi) {
@@ -227,11 +226,15 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
                 }
             } else { // lo >= 0
                 if (hi < 0) {
-                    // if lo>=0 but hi<0 then we fall back to standard algorithm because we can't estimate result size
-                    // (it's from lo up to end-hi so probably whole result anyway )
-                    this.limit = -1;
-                    this.skipFirst = lo;
-                    this.skipLast = -hi;
+                    // A NULL hi yields the empty result (limit stays 0); checking it here
+                    // also keeps skipLast = -hi from overflowing to Long.MIN_VALUE.
+                    if (hi != Numbers.LONG_NULL) {
+                        // if lo>=0 but hi<0 then we fall back to standard algorithm because we can't estimate result size
+                        // (it's from lo up to end-hi so probably whole result anyway )
+                        this.limit = -1;
+                        this.skipFirst = lo;
+                        this.skipLast = -hi;
+                    }
                 } else { // both lo and hi are positive
                     this.isFirstN = true;
                     this.limit = Math.max(hi, lo);
@@ -252,23 +255,7 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
             return;
         }
 
-        if (canBeOptimized(baseCursor, executionContext)) {
-            initializeLimitedSizeCursor(executionContext, baseCursor);
-        } else {
-            initializeUnlimitedSizeCursor();
-        }
-    }
-
-    private void initializeUnlimitedSizeCursor() {
-        LongTreeChain chain = new LongTreeChain(
-                configuration.getSqlSortKeyPageSize(),
-                configuration.getSqlSortKeyMaxBytes(),
-                configuration.getSqlSortLightValuePageSize(),
-                configuration.getSqlSortLightValueMaxBytes(),
-                PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath(),
-                PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath()
-        );
-        this.cursor = new SortedLightRecordCursor(chain, comparator, rankMaps);
+        initializeLimitedSizeCursor(executionContext, baseCursor);
     }
 
     private boolean isInitialized() {

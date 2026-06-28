@@ -42,6 +42,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -133,6 +134,8 @@ public class MatViewsFunctionFactory implements FunctionFactory {
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
+            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
+            cursor.circuitBreaker = executionContext.getCircuitBreaker();
             cursor.toTop();
             return cursor;
         }
@@ -159,6 +162,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
             private final BlockFileReader viewStateFileReader;
             private final MatViewStateReader viewStateReader = new MatViewStateReader();
             private final ObjList<TableToken> viewTokens = new ObjList<>();
+            private SqlExecutionCircuitBreaker circuitBreaker;
             private int viewIndex = 0;
 
             public ViewsListCursor(CairoEngine engine) {
@@ -186,6 +190,8 @@ public class MatViewsFunctionFactory implements FunctionFactory {
 
                 final int n = viewTokens.size();
                 for (; viewIndex < n; viewIndex++) {
+                    // reads a view state file per row, so observe the breaker each iteration
+                    circuitBreaker.statefulThrowExceptionIfTripped();
                     final TableToken viewToken = viewTokens.get(viewIndex);
                     if (engine.getTableTokenIfExists(viewToken.getTableName()) != null) {
                         final MatViewDefinition viewDefinition = engine.getMatViewGraph().getViewDefinition(viewToken);
@@ -242,6 +248,9 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         final long avgScanSampleNanos = state != null ? state.getAvgScanSampleNanos() : 0L;
                         final long avgScanRangeTsUnits = state != null ? state.getAvgScanRangeTsUnits() : 0L;
                         final long commitGapThresholdTsUnits = state != null ? state.getCommitGapThresholdTsUnits() : 0L;
+                        // A pending retry deadline (in-memory only) means an incremental refresh was
+                        // deferred after a transient "table busy" or out-of-memory error.
+                        final boolean retrying = state != null && state.getRefreshRetryAfterMicros() != Numbers.LONG_NULL;
 
                         record.of(
                                 viewDefinition,
@@ -263,7 +272,8 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                                 avgCommitNanos,
                                 avgScanSampleNanos,
                                 avgScanRangeTsUnits,
-                                commitGapThresholdTsUnits
+                                commitGapThresholdTsUnits,
+                                retrying
                         );
                         viewIndex++;
                         return true;
@@ -306,6 +316,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                 private int periodLength;
                 private char periodLengthUnit;
                 private int refreshLimitHoursOrMonths;
+                private boolean retrying;
                 private int timerInterval;
                 private char timerIntervalUnit;
                 private long timerStart;
@@ -398,7 +409,8 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         long avgCommitNanos,
                         long avgScanSampleNanos,
                         long avgScanRangeTsUnits,
-                        long commitGapThresholdTsUnits
+                        long commitGapThresholdTsUnits,
+                        boolean retrying
                 ) {
                     this.viewDefinition = viewDefinition;
                     this.lastRefreshStartTimestamp = lastRefreshStartTimestamp;
@@ -421,11 +433,15 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                     this.avgScanSampleNanos = avgScanSampleNanos;
                     this.avgScanRangeTsUnits = avgScanRangeTsUnits;
                     this.commitGapThresholdTsUnits = commitGapThresholdTsUnits;
+                    this.retrying = retrying;
                 }
 
                 private CharSequence getViewStatus() {
                     if (invalid) {
                         return "invalid";
+                    }
+                    if (retrying) {
+                        return "retrying";
                     }
                     return (lastRefreshStartTimestamp != Numbers.LONG_NULL && lastRefreshStartTimestamp > lastRefreshFinishTimestamp)
                             ? "refreshing"

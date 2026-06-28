@@ -124,7 +124,7 @@ public class CopyExportTest extends AbstractCairoTest {
             drainWalQueue();
 
             Thread insertThread = new Thread(() -> {
-                try {
+                try (SqlExecutionContext threadCtx = TestUtils.createSqlExecutionCtx(engine)) {
                     for (int batch = 0; batch < 50; batch++) {
                         StringBuilder batchInsert = new StringBuilder("insert into fuzz_table values (");
                         for (int i = 0; i < 100; i++) {
@@ -141,7 +141,7 @@ public class CopyExportTest extends AbstractCairoTest {
                         }
 
                         batchInsert.append(')');
-                        execute(batchInsert);
+                        engine.execute(batchInsert, threadCtx);
                         drainWalQueue();
 //                        Os.sleep(10);
                     }
@@ -903,8 +903,8 @@ public class CopyExportTest extends AbstractCairoTest {
                         assertQuery("select path, diskSizeHuman from export_files()  order by path")
                                 .noLeakCheck()
                                 .returns("path\tdiskSizeHuman\n" +
-                                        "price_1h" + File.separator + "2023-09.parquet\t918.0 B\n" +
-                                        "price_1h" + File.separator + "2023-11.parquet\t923.0 B\n");
+                                        "price_1h" + File.separator + "2023-09.parquet\t922.0 B\n" +
+                                        "price_1h" + File.separator + "2023-11.parquet\t927.0 B\n");
                     });
 
             testCopyExport(stmt, test);
@@ -3980,7 +3980,7 @@ public class CopyExportTest extends AbstractCairoTest {
         return new Thread(() -> {
             try {
                 while (!stop.get()) {
-                    if (job.run(workerId)) {
+                    if (job.run()) {
                         break;
                     }
                     Os.sleep(10);

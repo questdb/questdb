@@ -133,7 +133,8 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD("cairo.sql.parallel.work.stealing.threshold"),
     CAIRO_SQL_PARALLEL_WORK_STEALING_SPIN_TIMEOUT("cairo.sql.parallel.work.stealing.spin.timeout"),
     CAIRO_SQL_PARALLEL_READ_PARQUET_ENABLED("cairo.sql.parallel.read.parquet.enabled"),
-    CAIRO_SQL_PARQUET_FRAME_CACHE_CAPACITY("cairo.sql.parquet.frame.cache.capacity"),
+    CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE("cairo.sql.parquet.cache.memory.size"),
+    CAIRO_SQL_PARQUET_FRAME_CACHE_CAPACITY("cairo.sql.parquet.frame.cache.capacity"), // deprecated, use CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE
     CAIRO_SQL_PARQUET_ROW_GROUP_PRUNING_ENABLED("cairo.sql.parquet.row.group.pruning.enabled"),
     CAIRO_PAGE_FRAME_SHARD_COUNT("cairo.page.frame.shard.count"),
     CAIRO_PAGE_FRAME_TASK_POOL_CAPACITY("cairo.page.frame.task.pool.capacity"),
@@ -215,6 +216,12 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_MAT_VIEW_ENABLED("cairo.mat.view.enabled"),
     CAIRO_MAT_VIEW_MIN_REFRESH_INTERVAL("cairo.mat.view.min.refresh.interval"),
     CAIRO_MAT_VIEW_MAX_REFRESH_RETRIES("cairo.mat.view.max.refresh.retries"),
+    CAIRO_MAT_VIEW_REFRESH_BUSY_RETRY_TIMEOUT("cairo.mat.view.refresh.busy.retry.timeout"),
+    CAIRO_MAT_VIEW_REFRESH_BUSY_RETRY_LIMIT("cairo.mat.view.refresh.busy.retry.limit"),
+    CAIRO_MAT_VIEW_REFRESH_BLOCK_LIST("cairo.mat.view.refresh.block.list"),
+    // Deprecated no-op: superseded by cairo.mat.view.refresh.busy.retry.timeout. Retained so that an
+    // existing server.conf carrying this key still validates and starts, including under strict
+    // validation. See PropServerConfiguration.PropertyValidator.
     CAIRO_MAT_VIEW_REFRESH_OOM_RETRY_TIMEOUT("cairo.mat.view.refresh.oom.retry.timeout"),
     CAIRO_MAT_VIEW_INSERT_AS_SELECT_BATCH_SIZE("cairo.mat.view.insert.as.select.batch.size"),
     CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE("cairo.mat.view.rows.per.query.estimate"),
@@ -265,6 +272,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_ANALYTIC_TREE_MAX_PAGES("cairo.sql.analytic.tree.max.pages"), // deprecated, use CAIRO_SQL_WINDOW_TREE_MAX_BYTES
     CAIRO_SQL_WINDOW_TREE_MAX_PAGES("cairo.sql.window.tree.max.pages"), // deprecated, use CAIRO_SQL_WINDOW_TREE_MAX_BYTES
     CAIRO_SQL_WINDOW_TREE_MAX_BYTES("cairo.sql.window.tree.max.bytes"),
+    CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED("cairo.sql.window.cached.light.enabled"),
     CAIRO_SQL_INTERVAL_MAX_BRACKET_DEPTH("cairo.sql.interval.max.bracket.depth"),
     CAIRO_SQL_INTERVAL_MAX_INTERVALS_AFTER_MERGE("cairo.sql.interval.max.intervals.after.merge"),
     CAIRO_SQL_INTERVAL_INCREMENTAL_MERGE_THRESHOLD("cairo.sql.interval.incremental.merge.threshold"),
@@ -446,6 +454,8 @@ public enum PropertyKey implements ConfigPropertyKey {
     LINE_TCP_IO_AGGRESSIVE_RECV("line.tcp.io.aggressive.recv"),
     LINE_HTTP_HEADER_MAX_SIZE("line.http.header.max.size"),
     LINE_LOG_MESSAGE_ON_ERROR("line.log.message.on.error"),
+    MEMORY_USAGE_LOG_ENABLED("memory.usage.log.enabled"),
+    MEMORY_USAGE_LOG_INTERVAL("memory.usage.log.interval"),
     METRICS_ENABLED("metrics.enabled"),
     NET_TEST_CONNECTION_BUFFER_SIZE("net.test.connection.buffer.size"),
     PG_ENABLED("pg.enabled"),
@@ -584,6 +594,10 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_WAL_WRITER_POOL_MAX_SEGMENTS("cairo.wal.writer.pool.max.segments"),
     CAIRO_VIEW_WAL_WRITER_POOL_MAX_SEGMENTS("cairo.view.wal.writer.pool.max.segments"),
     CAIRO_WAL_APPLY_PARALLEL_SQL_ENABLED("cairo.wal.apply.parallel.sql.enabled"),
+    CAIRO_WAL_APPLY_SUSPENDED_TABLES("cairo.wal.apply.suspended.tables"),
+    CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED("cairo.wal.apply.suspended.write.denied"),
+    GRIFFIN_QUERY_CONTINUATION_WAKE_INTERVAL("griffin.query.continuation.wake.interval"),
+    CAIRO_TIMER_SHARDS("cairo.timer.shards"),
     READ_ONLY_INSTANCE("readonly"),
     CAIRO_TABLE_REGISTRY_AUTO_RELOAD_FREQUENCY("cairo.table.registry.auto.reload.frequency"),
     CAIRO_METADATA_CACHE_SNAPSHOT_ORDERED("cairo.metadata.cache.snapshot.ordered"),
@@ -690,7 +704,10 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_RESOURCE_POOL_TRACING_ENABLED("cairo.resource.pool.tracing.enabled"),
     CAIRO_TTL_USE_WALL_CLOCK("cairo.ttl.use.wall.clock"),
     DEBUG_CAIRO_POOL_SEGMENT_SIZE("debug.cairo.pool.segment.size", false, true),
-    DEBUG_MAT_VIEW_REFRESH_MISSING_WAL_FILES_FATAL("debug.mat.view.refresh.missing.wal.files.fatal", false, true);
+    DEBUG_MAT_VIEW_REFRESH_MISSING_WAL_FILES_FATAL("debug.mat.view.refresh.missing.wal.files.fatal", false, true),
+    CAIRO_QUERY_MEMORY_LIMIT_BYTES("cairo.query.memory.limit.bytes"),
+    CAIRO_MAT_VIEW_REFRESH_MEMORY_LIMIT_BYTES("cairo.mat.view.refresh.memory.limit.bytes"),
+    CAIRO_WAL_APPLY_MEMORY_LIMIT_BYTES("cairo.wal.apply.memory.limit.bytes");
 
     private static final Map<String, PropertyKey> nameMapping;
     private final boolean debug;

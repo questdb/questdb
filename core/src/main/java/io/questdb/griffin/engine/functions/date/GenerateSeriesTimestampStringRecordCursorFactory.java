@@ -38,13 +38,13 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
-import io.questdb.std.ThreadLocal;
+import io.questdb.std.CarrierLocal;
 
 
 public class GenerateSeriesTimestampStringRecordCursorFactory extends AbstractGenerateSeriesRecordCursorFactory {
     private static final RecordMetadata METADATA_MICROS;
     private static final RecordMetadata METADATA_NANOS;
-    private static final ThreadLocal<GenerateSeriesTimestampStringRecordCursor.GenerateSeriesPeriod> tlSampleByUnit = new ThreadLocal<>(GenerateSeriesTimestampStringRecordCursor.GenerateSeriesPeriod::new);
+    private static final CarrierLocal<GenerateSeriesTimestampStringRecordCursor.GenerateSeriesPeriod> tlSampleByUnit = new CarrierLocal<>(GenerateSeriesTimestampStringRecordCursor.GenerateSeriesPeriod::new);
     private final TimestampDriver timestampDriver;
     private GenerateSeriesTimestampStringRecordCursor cursor;
 
@@ -141,6 +141,7 @@ public class GenerateSeriesTimestampStringRecordCursorFactory extends AbstractGe
 
         @Override
         public boolean hasNext() {
+            circuitBreaker.statefulThrowExceptionIfTripped();
             recordA.of(adder.add(recordA.curr, stride));
             if (stride >= 0) {
                 return recordA.curr <= end;
@@ -200,18 +201,16 @@ public class GenerateSeriesTimestampStringRecordCursorFactory extends AbstractGe
         }
 
         @Override
-        public void skipRows(Counter rowCount) {
+        public void skipRows(Counter rowCount, long maxRowsAfterSkip) {
             if (supportsRandomAccess()) {
-                long currentRowId = recordA.getRowId()
-                        - 1 // one-indexed
-                        - 1 // we increment at the start of hasNext()
-                        ;
-                long rowsToSkip = Math.min(rowCount.get(), size() - currentRowId);
-                long newRowId = currentRowId + rowsToSkip;
-                recordAt(recordA, newRowId);
+                // curr is always on-grid at start + stride * (rowId - 1), so the signed offset
+                // maps the top sentinel to rowId 0 and makes skip-of-0 a positional no-op.
+                long currentRowId = (recordA.curr - start) / adjustStride() + 1;
+                long rowsToSkip = Math.max(0, Math.min(rowCount.get(), size() - currentRowId));
+                recordAt(recordA, currentRowId + rowsToSkip);
                 rowCount.dec(rowsToSkip);
             } else {
-                super.skipRows(rowCount);
+                super.skipRows(rowCount, maxRowsAfterSkip);
             }
         }
 

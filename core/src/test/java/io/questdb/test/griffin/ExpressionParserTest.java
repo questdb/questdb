@@ -297,6 +297,24 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCaseDanglingDotAfterEnd() {
+        assertFail(
+                "case x when 1 then 'a' when 2 then 'b' end.foo",
+                42,
+                "'.' is unexpected here"
+        );
+    }
+
+    @Test
+    public void testCaseDanglingDotAfterEndInExpression() {
+        assertFail(
+                "1 + case x when 1 then 'a' when 2 then 'b' end.foo",
+                46,
+                "'.' is unexpected here"
+        );
+    }
+
+    @Test
     public void testCaseDanglingOperatorAfterCase() {
         assertFail(
                 "1 + case *x when 1 then 'a' when 2 then 'b' end",
@@ -311,6 +329,24 @@ public class ExpressionParserTest extends AbstractCairoTest {
                 "1 + case x when 1 then 'a' when 2 then 'b' else * end",
                 48,
                 "too few arguments for '*' [found=0,expected=2]"
+        );
+    }
+
+    @Test
+    public void testCaseDanglingOperatorAfterEnd() {
+        assertFail(
+                "case x when 1 then 'a' when 2 then 'b' end &",
+                43,
+                "too few arguments for '&' [found=1,expected=2]"
+        );
+    }
+
+    @Test
+    public void testCaseDanglingOperatorAfterEndNested() {
+        assertFail(
+                "case x when 1 then case y when 2 then 'a' else 'b' end else 'c' end +",
+                68,
+                "too few arguments for '+' [found=1,expected=2]"
         );
     }
 
@@ -898,6 +934,18 @@ public class ExpressionParserTest extends AbstractCairoTest {
     @Test
     public void testDotDereferenceExpression() throws SqlException {
         x("u a.z c . =", "u = (a.z).c");
+    }
+
+    @Test
+    public void testDottedNameAfterOperatorFailsCleanly() {
+        // A dotted name whose qualifier is a pending operator (not an identifier) used to
+        // blow up with an internal ClassCastException, e.g. the demo-box scanner probes
+        // "tables()/.env" and "tables()/.git/HEAD" (parsed as the division tables() / .env).
+        // It must now fail with a clean SqlException instead.
+        assertFail("tables()/.env", 10, "'.' is unexpected here");
+        assertFail("tables()/.git/HEAD", 10, "'.' is unexpected here");
+        assertFail("tables() / .env", 12, "'.' is unexpected here");
+        assertFail("1/.env", 3, "'.' is unexpected here");
     }
 
     @Test

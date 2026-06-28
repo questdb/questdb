@@ -557,6 +557,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getMatViewRefreshBusyRetryLimit() {
+        return 10;
+    }
+
+    @Override
+    public long getMatViewRefreshBusyRetryTimeout() {
+        return 1000;
+    }
+
+    @Override
     public long getMatViewRefreshIntervalsUpdatePeriod() {
         return 15_000;
     }
@@ -567,8 +577,8 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public long getMatViewRefreshOomRetryTimeout() {
-        return 200;
+    public long getMatViewRefreshMemoryLimitBytes() {
+        return 0;
     }
 
     @Override
@@ -838,6 +848,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getQueryCacheEventQueueCapacity() {
         return 4;
+    }
+
+    @Override
+    public long getQueryContinuationWakeIntervalMillis() {
+        return 1_000L;
+    }
+
+    @Override
+    public long getQueryMemoryLimitBytes() {
+        return 0;
     }
 
     @Override
@@ -1168,8 +1188,8 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlParquetFrameCacheCapacity() {
-        return 8;
+    public long getSqlParquetCacheMemorySize() {
+        return 256L * Numbers.SIZE_1MB;
     }
 
     @Override
@@ -1364,6 +1384,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getTimerShardCount() {
+        return Math.min(4, Math.max(1, Runtime.getRuntime().availableProcessors() / 4));
+    }
+
+    @Override
     public int getTxnScoreboardEntryCount() {
         return 8192;
     }
@@ -1396,6 +1421,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getWalApplyLookAheadTransactionCount() {
         return 20;
+    }
+
+    @Override
+    public long getWalApplyMemoryLimitBytes() {
+        return 0;
     }
 
     @Override
@@ -1638,6 +1668,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlDistinctGroupByRewriteEnabled() {
+        return true;
+    }
+
+    @Override
     public boolean isSqlJitDebugEnabled() {
         return false;
     }
@@ -1679,6 +1714,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isSqlParquetRowGroupPruningEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isSqlWindowCachedLightEnabled() {
         return true;
     }
 

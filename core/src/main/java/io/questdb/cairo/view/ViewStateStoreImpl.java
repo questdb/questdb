@@ -32,7 +32,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.mp.ConcurrentQueue;
 import io.questdb.mp.Queue;
 import io.questdb.std.ConcurrentHashMap;
-import io.questdb.std.ThreadLocal;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.datetime.MicrosecondClock;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -42,7 +42,7 @@ public class ViewStateStoreImpl implements ViewStateStore {
     private final CairoEngine engine;
     private final MicrosecondClock microsecondClock;
     private final ConcurrentHashMap<ViewState> stateByTableDirName = new ConcurrentHashMap<>();
-    private final ThreadLocal<ViewCompilerTask> taskHolder = new ThreadLocal<>(ViewCompilerTask::new);
+    private final CarrierLocal<ViewCompilerTask> taskHolder = new CarrierLocal<>(ViewCompilerTask::new);
     // using unlimited concurrent queue to avoid dropping notifications when the queue is full,
     // generally not expecting too many view compile notifications, but if table schema changes
     // are very frequent, then the number of notifications can be high too

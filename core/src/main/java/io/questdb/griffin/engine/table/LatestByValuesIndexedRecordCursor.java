@@ -66,7 +66,15 @@ class LatestByValuesIndexedRecordCursor extends AbstractPageFrameRecordCursor {
     }
 
     @Override
+    public void close() {
+        // Free the shared rows list under the per-query tracker bound in of().
+        rows.close();
+        super.close();
+    }
+
+    @Override
     public boolean hasNext() {
+        circuitBreaker.statefulThrowExceptionIfTripped();
         buildTreeMapConditionally();
         if (index < rows.size()) {
             final long rowId = rows.get(index++);
@@ -86,11 +94,12 @@ class LatestByValuesIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         recordB.of(pageFrameCursor);
         circuitBreaker = executionContext.getCircuitBreaker();
         keyCount = -1;
-        rows.clear();
+        rows.setMemoryTracker(executionContext.getMemoryTracker());
+        rows.reopen();
         found.clear();
         isTreeMapBuilt = false;
         // prepare for page frame iteration
-        super.init();
+        super.init(executionContext.getMemoryTracker());
     }
 
     @Override

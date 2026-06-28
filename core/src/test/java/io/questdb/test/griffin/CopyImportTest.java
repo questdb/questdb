@@ -1181,7 +1181,7 @@ public class CopyImportTest extends AbstractCairoTest {
         return new Thread(() -> {
             try {
                 while (latch.getCount() > 0) {
-                    if (job.run(0)) {
+                    if (job.run()) {
                         latch.countDown();
                     }
                     Os.sleep(1);

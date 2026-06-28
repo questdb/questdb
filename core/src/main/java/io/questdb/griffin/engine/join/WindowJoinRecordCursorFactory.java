@@ -31,6 +31,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -183,10 +184,14 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         TimeFrameCursor slaveCursor = null;
         try {
             slaveCursor = slaveFactory.getTimeFrameCursor(executionContext);
+            slaveCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
             cursor.of(masterCursor, slaveCursor, executionContext);
         } catch (Throwable ex) {
             Misc.free(masterCursor);
             Misc.free(slaveCursor);
+            // of() binds the per-query tracker and reopens the allocator before it can throw;
+            // close() frees it under that tracker and resets isOpen so the factory stays reusable.
+            Misc.free(cursor);
             throw ex;
         }
         return cursor;
@@ -266,7 +271,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         private final ObjList<GroupByFunction> groupByFunctions;
         private final VirtualRecord groupByRecord;
         private final JoinRecord joinRecord;
-        private final WindowJoinSymbolTableSource joinSymbolTableSource;
+        private final JoinSymbolTableSource joinSymbolTableSource;
         private final Record record;
         protected SqlExecutionCircuitBreaker circuitBreaker;
         protected RecordCursor masterCursor;
@@ -289,13 +294,13 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             this.crossIndex = columnIndex;
             this.columnSplit = columnSplit;
             this.groupByFunctions = groupByFunctions;
-            this.allocator = GroupByAllocatorFactory.createAllocator(configuration);
+            this.allocator = GroupByAllocatorFactory.createAllocator(configuration, false);
             GroupByUtils.setAllocator(groupByFunctions, allocator);
             this.groupByFunctionsUpdater = groupByFunctionsUpdater;
             this.value = value;
             this.masterTimestampIndex = masterTimestampIndex;
             this.slaveTimestampIndex = slaveTimestampIndex;
-            isOpen = true;
+            isOpen = false;
             if (masterTimestampType == slaveTimestampType) {
                 masterTimestampScale = slaveTimestampScale = 1L;
             } else {
@@ -303,7 +308,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                 slaveTimestampScale = ColumnType.getTimestampDriver(slaveTimestampType).toNanosScale();
             }
             this.slaveTimeFrameHelper = new WindowJoinTimeFrameHelper(configuration.getSqlAsOfJoinLookAhead(), slaveTimestampScale);
-            this.joinSymbolTableSource = new WindowJoinSymbolTableSource(columnSplit);
+            this.joinSymbolTableSource = new JoinSymbolTableSource(columnSplit);
 
             this.internalJoinRecord = new JoinRecord(columnSplit);
             this.groupByRecord = new VirtualRecord(groupByFunctions);
@@ -325,9 +330,9 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public void close() {
-            Misc.free(allocator);
             if (isOpen) {
                 isOpen = false;
+                Misc.free(allocator);
                 Misc.clearObjList(groupByFunctions);
                 masterCursor = Misc.free(masterCursor);
                 slaveCursor = Misc.free(slaveCursor);
@@ -446,10 +451,9 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
             if (!isOpen) {
                 isOpen = true;
+                allocator.setMemoryTracker(sqlExecutionContext.getMemoryTracker());
                 allocator.reopen();
             }
-            this.masterCursor = masterCursor;
-            this.slaveCursor = slaveCursor;
             this.masterRecord = masterCursor.getRecord();
             joinRecord.of(masterRecord, groupByRecord);
             slaveTimeFrameHelper.of(slaveCursor);
@@ -466,6 +470,10 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             }
             Function.init(groupByFunctions, joinSymbolTableSource, sqlExecutionContext, null);
             circuitBreaker = sqlExecutionContext.getCircuitBreaker();
+
+            // Adopt master/slave last so an init() throw above can't double-free them via the getCursor() catch.
+            this.masterCursor = masterCursor;
+            this.slaveCursor = slaveCursor;
         }
     }
 

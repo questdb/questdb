@@ -50,6 +50,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.DefaultWalDirectoryPolicy;
 import io.questdb.cairo.wal.SymbolMapDiff;
 import io.questdb.cairo.wal.SymbolMapDiffEntry;
@@ -58,6 +59,7 @@ import io.questdb.cairo.wal.WalDataRecord;
 import io.questdb.cairo.wal.WalDirectoryPolicy;
 import io.questdb.cairo.wal.WalEventCursor;
 import io.questdb.cairo.wal.WalEventReader;
+import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalReader;
 import io.questdb.cairo.wal.WalTxnDetails;
 import io.questdb.cairo.wal.WalTxnType;
@@ -1923,7 +1925,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     throw new RuntimeException("Test failure");
                 } catch (Exception e) {
                     final StackTraceElement[] stackTrace = e.getStackTrace();
-                    if (stackTrace[1].getClassName().endsWith("TableSequencerImpl") && stackTrace[1].getMethodName().equals("createSequencerDir")) {
+                    if (stackTrace[1].getClassName().endsWith("TableSequencerImpl") && stackTrace[1].getMethodName().equals("createSequencerFiles")) {
                         return 1;
                     }
                 }
@@ -2009,6 +2011,93 @@ public class WalWriterTest extends AbstractCairoTest {
                 Assert.assertFalse(e.isTableDropped());
                 TestUtils.assertContains(e.getFlyweightMessage(), "could not open read-write");
             }
+        });
+    }
+
+    @Test
+    public void testFormatParquetBornParquetPartitionKeepsColumnTopValues() throws Exception {
+        // On a FORMAT PARQUET table, an earlier partition created by a single batched
+        // WAL apply is born parquet in one commit. Columns added after table creation
+        // must keep their values; the bug read them back as NULL once decoded to
+        // native. The split-apply variant below is the control.
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            execute("CREATE TABLE " + tableName + " (x LONG, s SYMBOL, ts TIMESTAMP) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            execute("INSERT INTO " + tableName + " (x, s, ts) SELECT x, rnd_symbol('a','b'), " +
+                    "timestamp_sequence('2022-02-25T05:00:00.000000Z', 1_000_000L) FROM long_sequence(1000)");
+            drainWalQueue();
+
+            // new_i/new_s get a columnTop on the existing 2022-02-25 partition.
+            execute("ALTER TABLE " + tableName + " ADD COLUMN new_i INT");
+            execute("ALTER TABLE " + tableName + " ADD COLUMN new_s SYMBOL");
+
+            execute("ALTER TABLE " + tableName + " SET FORMAT PARQUET");
+            execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET WHERE ts >= '2022-02-25T00:00:00.000000Z'");
+            drainWalQueue();
+
+            // No drain between the inserts so they apply as one block: the earlier
+            // 2022-02-24 partition is born parquet in a single commit.
+            execute("INSERT INTO " + tableName + " (x, s, new_i, new_s, ts) SELECT 100+x, 'b', x::int, 'z2', " +
+                    "timestamp_sequence('2022-02-24T17:54:46.000000Z', 1_000_000L) FROM long_sequence(523)");
+            execute("INSERT INTO " + tableName + " (x, s, new_i, new_s, ts) VALUES " +
+                    "(1, 'a', -607368144, 'z1', '2022-02-24T16:58:10.458430Z')");
+            execute("INSERT INTO " + tableName + " (x, s, new_i, new_s, ts) SELECT 1000+x, 'a', x::int, 'z3', " +
+                    "timestamp_sequence('2022-02-24T18:30:00.000000Z', 1_000_000L) FROM long_sequence(500)");
+            drainWalQueue();
+
+            execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO NATIVE WHERE ts < '2022-02-25T00:00:00.000000Z'");
+            drainWalQueue();
+
+            assertQuery("SELECT * FROM " + tableName + " WHERE ts = '2022-02-24T16:58:10.458430Z'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("x\ts\tts\tnew_i\tnew_s\n" +
+                            "1\ta\t2022-02-24T16:58:10.458430Z\t-607368144\tz1\n");
+        });
+    }
+
+    @Test
+    public void testFormatParquetSplitApplyKeepsColumnTopValues() throws Exception {
+        // Same as testFormatParquetBornParquetPartitionKeepsColumnTopValues, but the
+        // inserts are drained one at a time, so 2022-02-24 is created then O3-merged
+        // rather than born parquet in one block. This path was always correct;
+        // it isolates the trigger to the batched apply.
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            execute("CREATE TABLE " + tableName + " (x LONG, s SYMBOL, ts TIMESTAMP) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            execute("INSERT INTO " + tableName + " (x, s, ts) SELECT x, rnd_symbol('a','b'), " +
+                    "timestamp_sequence('2022-02-25T05:00:00.000000Z', 1_000_000L) FROM long_sequence(1000)");
+            drainWalQueue();
+
+            execute("ALTER TABLE " + tableName + " ADD COLUMN new_i INT");
+            execute("ALTER TABLE " + tableName + " ADD COLUMN new_s SYMBOL");
+
+            execute("ALTER TABLE " + tableName + " SET FORMAT PARQUET");
+            execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET WHERE ts >= '2022-02-25T00:00:00.000000Z'");
+            drainWalQueue();
+
+            execute("INSERT INTO " + tableName + " (x, s, new_i, new_s, ts) SELECT 100+x, 'b', x::int, 'z2', " +
+                    "timestamp_sequence('2022-02-24T17:54:46.000000Z', 1_000_000L) FROM long_sequence(523)");
+            drainWalQueue();
+            execute("INSERT INTO " + tableName + " (x, s, new_i, new_s, ts) VALUES " +
+                    "(1, 'a', -607368144, 'z1', '2022-02-24T16:58:10.458430Z')");
+            drainWalQueue();
+            execute("INSERT INTO " + tableName + " (x, s, new_i, new_s, ts) SELECT 1000+x, 'a', x::int, 'z3', " +
+                    "timestamp_sequence('2022-02-24T18:30:00.000000Z', 1_000_000L) FROM long_sequence(500)");
+            drainWalQueue();
+
+            execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO NATIVE WHERE ts < '2022-02-25T00:00:00.000000Z'");
+            drainWalQueue();
+
+            assertQuery("SELECT * FROM " + tableName + " WHERE ts = '2022-02-24T16:58:10.458430Z'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("x\ts\tts\tnew_i\tnew_s\n" +
+                            "1\ta\t2022-02-24T16:58:10.458430Z\t-607368144\tz1\n");
         });
     }
 
@@ -4804,6 +4893,613 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWalApplySuspendDeniesSequencerCommit() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x int) timestamp(ts) partition by day wal");
+            final TableToken tt = engine.verifyTableName("t");
+            // Acquire the writer first, then suspend: the commit must be denied at the sequencer.
+            try (WalWriter walWriter = engine.getWalWriter(tt)) {
+                execute("alter table t suspend wal");
+                TableWriter.Row row = walWriter.newRow(0);
+                row.putInt(1, 1);
+                row.append();
+                try {
+                    walWriter.commit();
+                    Assert.fail("expected the commit to be denied");
+                } catch (CairoException e) {
+                    Assert.assertTrue(e.isTableSuspended());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testWalApplySuspendDeniesWrites() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x int) timestamp(ts) partition by day wal");
+            execute("insert into t values ('2024-01-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n1\n");
+
+            // A suspended table denies WAL writes, like a dropped table but with a distinct error.
+            execute("alter table t suspend wal");
+            try {
+                execute("insert into t values ('2024-01-02T00:00:00.000000Z', 2)");
+                Assert.fail("expected the write to be denied");
+            } catch (CairoException e) {
+                Assert.assertTrue(e.isTableSuspended());
+                Assert.assertFalse(e.isTableDropped());
+                Assert.assertTrue(Chars.contains(e.getFlyweightMessage(), "table is suspended"));
+            }
+
+            // RESUME re-allows writes.
+            execute("alter table t resume wal");
+            execute("insert into t values ('2024-01-02T00:00:00.000000Z', 2)");
+            drainWalQueue();
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n2\n");
+        });
+    }
+
+    @Test
+    public void testWalApplySuspendExcludesPendingTxnFromApply() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x int) timestamp(ts) partition by day wal");
+            // Pending WAL exists before suspension; it must not be applied while suspended.
+            execute("insert into t values ('2024-01-01T00:00:00.000000Z', 1)");
+            execute("alter table t suspend wal");
+            Assert.assertTrue(engine.isWalApplySuspended(engine.verifyTableName("t")));
+
+            try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
+                walApplyJob.drain(0);
+            }
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
+
+            // RESUME lets the pending transaction apply.
+            execute("alter table t resume wal");
+            try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
+                walApplyJob.drain(0);
+            }
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n1\n");
+        });
+    }
+
+    @Test
+    public void testRebaseWalTableKeepsDataResetsSequencerAndStaysWritable() throws Exception {
+        // REBASE WAL requires suspension to block writes.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x int) timestamp(ts) partition by day wal");
+            execute("insert into t values" +
+                    " ('2024-01-01T00:00:00.000000Z', 1)," +
+                    " ('2024-01-02T00:00:00.000000Z', 2)," +
+                    " ('2024-01-03T00:00:00.000000Z', 3)");
+            drainWalQueue();
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n3\n");
+
+            final TableToken oldToken = engine.verifyTableName("t");
+            final int oldTableId = oldToken.getTableId();
+
+            // Rebase requires the table to be hard-suspended first.
+            execute("alter table t suspend wal");
+            execute("alter table t rebase wal");
+            drainWalQueue();
+
+            final TableToken newToken = engine.verifyTableName("t");
+            // New identity (dir + id), old dir dropped.
+            Assert.assertNotEquals(oldToken.getDirName(), newToken.getDirName());
+            Assert.assertNotEquals(oldTableId, newToken.getTableId());
+            Assert.assertNull(engine.getTableTokenByDirName(oldToken.getDirName()));
+
+            // Applied data is preserved (hard-linked), counter is reset to a fresh sequencer.
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n3\n");
+            Assert.assertTrue(engine.getTableSequencerAPI().getTxnTracker(newToken).getSeqTxn() <= 2);
+
+            // The rebased table is live and writable.
+            execute("insert into t values ('2024-01-04T00:00:00.000000Z', 4)");
+            drainWalQueue();
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n4\n");
+        });
+    }
+
+    @Test
+    public void testRebaseWalComplexTablePreservesDataAndIndexes() throws Exception {
+        // REBASE clones the applied table via hard-links. This exercises the clone over a table with
+        // column tops, several column-version ALTERs, multiple partitions (mixed native + parquet),
+        // symbol columns and all symbol index types, then verifies the rebased table returns the
+        // identical data and is still queryable by every index.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            // Designated ts, a default-indexed symbol plus one symbol per index type, a plain symbol
+            // (to add+drop an index), and varied scalar types including UUID.
+            execute("""
+                    create table t (
+                      ts timestamp,
+                      sym_def symbol index,
+                      sym_bmp symbol index type bitmap,
+                      sym_post symbol index type posting,
+                      sym_postd symbol index type posting delta,
+                      sym_poste symbol index type posting ef,
+                      sym_plain symbol,
+                      i int, l long, d double, str string, vch varchar, b boolean, ts2 timestamp, u uuid
+                    ) timestamp(ts) partition by day wal""");
+
+            // Day 1 + day 2, before the column top is added.
+            execute("""
+                    insert into t values
+                     ('2024-01-01T00:00:00.000000Z','A','A','A','A','A','P', 1, 10, 1.5, 's1', 'v1', true,  '2020-01-01T00:00:00.000000Z', '11111111-1111-1111-1111-111111111111'),
+                     ('2024-01-02T00:00:00.000000Z','B','B','B','B','B','P', 2, 20, 2.5, 's2', 'v2', false, '2020-01-02T00:00:00.000000Z', '22222222-2222-2222-2222-222222222222')""");
+            // Apply so day1/day2 exist and ADD COLUMN turns them into a genuine column top.
+            drainWalQueue();
+
+            // Column top: day1/day2 have no topcol; day3/day4 do.
+            execute("alter table t add column topcol int");
+            execute("""
+                    insert into t values
+                     ('2024-01-03T00:00:00.000000Z','A','C','A','C','A','P', 3, 30, 3.5, 's3', 'v3', true,  '2020-01-03T00:00:00.000000Z', '33333333-3333-3333-3333-333333333333', 300),
+                     ('2024-01-04T00:00:00.000000Z','B','C','B','C','B','P', 4, 40, 4.5, 's4', 'v4', false, '2020-01-04T00:00:00.000000Z', '44444444-4444-4444-4444-444444444444', 400)""");
+
+            // Column-version ALTERs: add+drop an index, change a symbol capacity (BITMAP only),
+            // rename a column, and drop a column.
+            execute("alter table t alter column sym_plain add index");
+            execute("alter table t alter column sym_plain drop index");
+            execute("alter table t alter column sym_bmp symbol capacity 2048");
+            execute("alter table t rename column str to str_renamed");
+            execute("alter table t drop column l");
+
+            // Convert the two earliest (historic) partitions to parquet; day3/day4 stay native.
+            execute("alter table t convert partition to parquet where ts < '2024-01-03'");
+
+            // Apply everything BEFORE suspend: REBASE discards any pending (unapplied) WAL txns.
+            drainWalQueue();
+
+            // The conversion really happened: day1/day2 are parquet, day3/day4 are still native.
+            assertQuery("select count() from table_partitions('t') where isParquet = true").noLeakCheck().expectSize().noRandomAccess().returns("count\n2\n");
+
+            // Capture the full dataset and the indexed-query results to diff against the rebased table.
+            final StringSink fullExpected = new StringSink();
+            printSql("select * from t order by ts", fullExpected);
+            final StringSink defExpected = new StringSink();
+            printSql("select ts, sym_def from t where sym_def = 'A' order by ts", defExpected);
+            final StringSink postExpected = new StringSink();
+            printSql("select ts, sym_post from t where sym_post = 'A' order by ts", postExpected);
+
+            final TableToken oldToken = engine.verifyTableName("t");
+            final int oldTableId = oldToken.getTableId();
+
+            execute("alter table t suspend wal");
+            execute("alter table t rebase wal");
+            drainWalQueue();
+
+            // New identity: different dir + table id, old dir dropped, fresh sequencer (empty seed).
+            final TableToken newToken = engine.verifyTableName("t");
+            Assert.assertNotEquals(oldToken.getDirName(), newToken.getDirName());
+            Assert.assertNotEquals(oldTableId, newToken.getTableId());
+            Assert.assertNull(engine.getTableTokenByDirName(oldToken.getDirName()));
+            Assert.assertTrue(engine.getTableSequencerAPI().getTxnTracker(newToken).getSeqTxn() <= 2);
+
+            // Identical full dataset: all columns, all rows, the column-top NULLs (day1/day2 topcol),
+            // and both parquet partitions reproduced exactly.
+            assertQuery("select * from t order by ts").noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns(fullExpected);
+
+            // Indexed queries return the same rows AND still use an index scan after the rebase.
+            assertQuery("select ts, sym_def from t where sym_def = 'A' order by ts").noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns(defExpected);
+            assertQuery("select ts, sym_post from t where sym_post = 'A' order by ts").noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns(postExpected);
+            assertIndexScan("select * from t where sym_def = 'A'", "sym_def");
+            assertIndexScan("select * from t where sym_bmp = 'C'", "sym_bmp");
+            assertIndexScan("select * from t where sym_post = 'A'", "sym_post");
+            assertIndexScan("select * from t where sym_postd = 'C'", "sym_postd");
+            assertIndexScan("select * from t where sym_poste = 'A'", "sym_poste");
+
+            // The clone preserved the parquet partitions: still 2 parquet after the rebase.
+            assertQuery("select count() from table_partitions('t') where isParquet = true").noLeakCheck().expectSize().noRandomAccess().returns("count\n2\n");
+
+            // The rebased table is still writable.
+            execute("""
+                    insert into t values
+                     ('2024-01-05T00:00:00.000000Z','A','C','A','C','A','P', 5, 5.5, 's5', 'v5', true, '2020-01-05T00:00:00.000000Z', '55555555-5555-5555-5555-555555555555', 500)""");
+            drainWalQueue();
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n5\n");
+        });
+    }
+
+    @Test
+    public void testRebaseWalDiscardsPendingStructuralChange() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x int) timestamp(ts) partition by day wal");
+            execute("insert into t values ('2024-01-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+
+            // Queue pending WAL transactions that never get applied: a data row and a STRUCTURAL change.
+            execute("insert into t values ('2024-01-02T00:00:00.000000Z', 2)");
+            execute("alter table t add column c int");
+            // Suspend before draining, so the two pending txns above stay unapplied.
+            execute("alter table t suspend wal");
+
+            execute("alter table t rebase wal");
+            drainWalQueue();
+
+            // Only the applied row survives; the pending insert AND the structural add-column are discarded.
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n1\n");
+            assertQuery("select count() from table_columns('t')").noLeakCheck().expectSize().noRandomAccess().returns("count\n2\n");
+        });
+    }
+
+    @Test
+    public void testRebaseWalReclaimsOldTableDirAfterPurge() throws Exception {
+        // Regression test for M1 [OSS]: REBASE WAL must NOT leak the old table dir. The teardown leaves the
+        // old dir's reverse-map entry in the dropped state rebaseSwap set (it does not purgeToken it), so
+        // WalPurgeJob - which enumerates tables solely via forAllWalTables (the reverse map) - still visits
+        // the dir and reclaims it like any dropped table. Before the fix the teardown called
+        // removeTableToken, which erased the entry, so the purge job never visited the dir and it leaked
+        // forever (txn_seq, _rebase_source marker, symbol maps) - exactly the oversized log the operator
+        // rebased to shed.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x int) timestamp(ts) partition by day wal");
+            execute("insert into t values" +
+                    " ('2024-01-01T00:00:00.000000Z', 1)," +
+                    " ('2024-01-02T00:00:00.000000Z', 2)," +
+                    " ('2024-01-03T00:00:00.000000Z', 3)");
+            drainWalQueue();
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n3\n");
+
+            final TableToken oldToken = engine.verifyTableName("t");
+
+            // Rebase requires the table to be hard-suspended first.
+            execute("alter table t suspend wal");
+            execute("alter table t rebase wal");
+            drainWalQueue();
+
+            // The rebase swapped to a fresh dir; the old dir's entry is kept but marked dropped (so it no
+            // longer resolves by dir name, yet WalPurgeJob can still enumerate it via includeDropped).
+            final TableToken newToken = engine.verifyTableName("t");
+            Assert.assertNotEquals(oldToken.getDirName(), newToken.getDirName());
+            Assert.assertNull(engine.getTableTokenByDirName(oldToken.getDirName()));
+            Assert.assertTrue("old dir entry must be kept as dropped, not purged", engine.isTableDropped(oldToken));
+
+            // Close inactive readers/writers/sequencers, drain the WAL queue, then run WalPurgeJob to
+            // completion - the reclamation path that deletes dropped table dirs.
+            engine.releaseInactive();
+            drainWalQueue();
+            try (WalPurgeJob job = new WalPurgeJob(
+                    engine,
+                    configuration.getFilesFacade(),
+                    configuration.getMicrosecondClock())
+            ) {
+                //noinspection StatementWithEmptyBody
+                while (job.run()) {
+                }
+            }
+
+            // The old table dir (with its _rebase_source marker and txn_seq log) is gone, and the purge job
+            // removed the reverse-map entry too - no permanent leak.
+            final FilesFacade ff = configuration.getFilesFacade();
+            try (Path p = new Path()) {
+                Assert.assertFalse(
+                        "M1: the old table dir must be reclaimed by WalPurgeJob",
+                        ff.exists(p.of(configuration.getDbRoot()).concat(oldToken.getDirName()).$())
+                );
+            }
+            Assert.assertFalse("old dir entry must be fully removed after purge", engine.isTableDropped(oldToken));
+
+            // The rebased table is unaffected: still queryable and writable.
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n3\n");
+            execute("insert into t values ('2024-01-04T00:00:00.000000Z', 4)");
+            drainWalQueue();
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n4\n");
+        });
+    }
+
+    @Test
+    public void testRebaseWalRejectedForNonWalTable() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x int) timestamp(ts) partition by day bypass wal");
+            try {
+                execute("alter table t rebase wal");
+                Assert.fail("expected rejection");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "is not a WAL table");
+            }
+        });
+    }
+
+    @Test
+    public void testRebaseWalRejectedWhenNotSuspended() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x int) timestamp(ts) partition by day wal");
+            try {
+                execute("alter table t rebase wal");
+                Assert.fail("expected rejection");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "requires the table to be suspended first");
+            }
+        });
+    }
+
+    @Test
+    public void testRebaseWalRejectedWhenWriteNotDenied() throws Exception {
+        // write-denial defaults to false; rebase requires it so suspension actually blocks writes.
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x int) timestamp(ts) partition by day wal");
+            execute("alter table t suspend wal");
+            try {
+                execute("alter table t rebase wal");
+                Assert.fail("expected rejection");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "cairo.wal.apply.suspended.write.denied=true");
+            }
+        });
+    }
+
+    @Test
+    public void testRebaseWalSucceedsWhenConfigSuspendsSameName() throws Exception {
+        // Regression: a cairo.wal.apply.suspended.tables entry that shares the table's logical name
+        // must not block REBASE WAL. The config list is matched by dir name, and the rebased table
+        // gets a fresh dir, so its seed commit (getWalWriter on the new dir) is not denied. Before the
+        // fix the config was matched by logical name, which the new dir shared, so the seed threw
+        // "table is suspended" and the rebase rolled back.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        // Logical name in the list; with dir-name matching this no longer suspends the table by itself.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, "t");
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x int) timestamp(ts) partition by day wal");
+            execute("insert into t values" +
+                    " ('2024-01-01T00:00:00.000000Z', 1)," +
+                    " ('2024-01-02T00:00:00.000000Z', 2)");
+            drainWalQueue();
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n2\n");
+
+            final TableToken oldToken = engine.verifyTableName("t");
+
+            // Hard-suspend to block writes (the rebase precondition), then rebase.
+            execute("alter table t suspend wal");
+            execute("alter table t rebase wal");
+            drainWalQueue();
+
+            final TableToken newToken = engine.verifyTableName("t");
+            Assert.assertNotEquals(oldToken.getDirName(), newToken.getDirName());
+            // The fresh dir is not in the config list, so the rebased table is live and writable.
+            Assert.assertFalse(engine.isWalApplySuspended(newToken));
+
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n2\n");
+            execute("insert into t values ('2024-01-03T00:00:00.000000Z', 3)");
+            drainWalQueue();
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n3\n");
+        });
+    }
+
+    @Test
+    public void testRebaseWalSeedFailureCommitsNewDirUnseeded() throws Exception {
+        // REBASE WAL commits the registry swap (drop old, register new) and only then seeds the new
+        // sequencer with empty transactions - the seed must follow the swap so the WAL apply job it wakes
+        // sees the table live under its new dir. That seed (getWalWriter on the new dir plus
+        // commitRebaseSeed) does real I/O and can fail on a full disk or a transient FS error. The swap is
+        // intentionally NOT rolled back on a seed failure: the table stays committed on the new dir, intact
+        // but unseeded - acceptable for this rare admin op. Crucially there is no data loss (the new dir
+        // hard-links the partitions), and a name-registry reload (what a restart does) still finds the table
+        // on the new dir. The failure is injected by refusing to open the new segment's _event file, which
+        // is the only _event file opened during a rebase and only after the swap has committed.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+
+        final AtomicBoolean failSeed = new AtomicBoolean(false);
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (failSeed.get() && Utf8s.endsWithAscii(name, EVENT_FILE_NAME)) {
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            execute("create table t (ts timestamp, x int) timestamp(ts) partition by day wal");
+            execute("insert into t values" +
+                    " ('2024-01-01T00:00:00.000000Z', 1)," +
+                    " ('2024-01-02T00:00:00.000000Z', 2)," +
+                    " ('2024-01-03T00:00:00.000000Z', 3)");
+            drainWalQueue();
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n3\n");
+
+            final TableToken oldToken = engine.verifyTableName("t");
+
+            // Rebase requires the table to be hard-suspended first.
+            execute("alter table t suspend wal");
+
+            // Arm the seed failure, then rebase: the swap commits, the empty-seed commit then throws.
+            failSeed.set(true);
+            try {
+                execute("alter table t rebase wal");
+                Assert.fail("expected the seed I/O failure to abort the rebase");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), EVENT_FILE_NAME);
+            } finally {
+                failSeed.set(false);
+            }
+
+            // The swap committed before the seed failed, so the name now resolves to the NEW dir (a fresh
+            // tableId), not the old one. The data survives via the new dir's hard-linked partitions.
+            final TableToken afterToken = engine.verifyTableName("t");
+            Assert.assertNotEquals(oldToken.getDirName(), afterToken.getDirName());
+            Assert.assertNotEquals(oldToken.getTableId(), afterToken.getTableId());
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n3\n");
+
+            // A name-registry reload (what a restart does) still finds the table on the new dir: registerName
+            // durably logged ADD(new) and dropTable logged DROP(old) to tables.d.
+            engine.releaseInactive();
+            engine.reloadTableNames();
+            engine.reconcileTableNameRegistryState();
+            final TableToken afterReload = engine.verifyTableName("t");
+            Assert.assertEquals(afterToken.getDirName(), afterReload.getDirName());
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n3\n");
+
+            // The rebased table is functional (not suspended - the rebase installed a fresh sequencer): keep
+            // ingesting on the new dir.
+            execute("insert into t values ('2024-01-04T00:00:00.000000Z', 4)");
+            drainWalQueue();
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n4\n");
+        });
+    }
+
+    @Test
+    public void testWalApplySuspendForcesAllNonStructuralAlters() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            // Every non-structural change must force-apply on a hard-suspended table (no tableSuspended).
+            final String[] nonStructural = {
+                    "alter table %s drop partition list '2024-01-01'",
+                    "alter table %s force drop partition list '2024-01-01'",
+                    "alter table %s detach partition list '2024-01-01'",
+                    "alter table %s squash partitions",
+                    "alter table %s alter column sym drop index",
+                    "alter table %s alter column sym2 add index",
+                    "alter table %s alter column sym nocache",
+                    "alter table %s alter column sym2 cache",
+                    "alter table %s alter column sym2 symbol capacity 1024",
+                    "alter table %s set param maxUncommittedRows = 1000",
+                    "alter table %s set param o3MaxLag = 10s",
+                    "alter table %s set ttl 4 weeks",
+                    "alter table %s convert partition to parquet list '2024-01-01'",
+            };
+            int n = 0;
+            for (String alter : nonStructural) {
+                final String table = "tns_" + (n++);
+                createSuspendableTable(table);
+                execute("alter table " + table + " suspend wal");
+                execute(String.format(alter, table)); // force-applied; must not throw
+            }
+
+            // CONVERT ... TO NATIVE needs a parquet partition first (done before suspending).
+            createSuspendableTable("tns_native");
+            execute("alter table tns_native convert partition to parquet list '2024-01-01'");
+            drainWalQueue();
+            execute("alter table tns_native suspend wal");
+            execute("alter table tns_native convert partition to native list '2024-01-01'"); // must not throw
+
+            // Every structural change stays denied on a hard-suspended table.
+            final String[] structural = {
+                    "alter table %s add column y int",
+                    "alter table %s drop column x",
+                    "alter table %s rename column x to z",
+                    "alter table %s alter column x type long",
+                    "alter table %s dedup enable upsert keys(ts)",
+            };
+            int s = 0;
+            for (String alter : structural) {
+                final String table = "ts_" + (s++);
+                createSuspendableTable(table);
+                execute("alter table " + table + " suspend wal");
+                try {
+                    execute(String.format(alter, table));
+                    Assert.fail("expected the structural change to be denied: " + alter);
+                } catch (CairoException e) {
+                    Assert.assertTrue(alter + " -> " + e.getMessage(), e.isTableSuspended());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testWalApplySuspendForcesNonStructuralAlter() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, sym symbol index, x int) timestamp(ts) partition by day wal");
+            execute("insert into t values ('2024-01-01T00:00:00.000000Z', 'A', 1)");
+            drainWalQueue();
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n1\n");
+
+            final TableToken tt = engine.verifyTableName("t");
+            try (TableReader reader = engine.getReader(tt)) {
+                Assert.assertTrue(reader.getMetadata().isColumnIndexed(reader.getMetadata().getColumnIndex("sym")));
+            }
+
+            execute("alter table t suspend wal");
+
+            // Non-structural change is force-applied directly to the suspended table (WAL bypass),
+            // even though WAL writes are denied.
+            execute("alter table t alter column sym drop index");
+            try (TableReader reader = engine.getReader(tt)) {
+                Assert.assertFalse(reader.getMetadata().isColumnIndexed(reader.getMetadata().getColumnIndex("sym")));
+            }
+
+            // A structural change is not forced; it stays denied on the hard-suspended table.
+            try {
+                execute("alter table t add column y int");
+                Assert.fail("expected the structural change to be denied");
+            } catch (CairoException e) {
+                Assert.assertTrue(e.isTableSuspended());
+            }
+        });
+    }
+
+    @Test
+    public void testWalApplySuspendViaConfigDeniesWrites() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x int) timestamp(ts) partition by day wal");
+            execute("insert into t values ('2024-01-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n1\n");
+
+            // The reloadable config list suspends the table and denies writes.
+            final String dirName = engine.verifyTableName("t").getDirName();
+            setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, dirName);
+            Assert.assertTrue(engine.isWalApplySuspended(engine.verifyTableName("t")));
+            try {
+                execute("insert into t values ('2024-01-02T00:00:00.000000Z', 2)");
+                Assert.fail("expected the write to be denied");
+            } catch (CairoException e) {
+                Assert.assertTrue(e.isTableSuspended());
+            }
+
+            // Removing it from the config (a reload) re-allows writes.
+            setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, null);
+            Assert.assertFalse(engine.isWalApplySuspended(engine.verifyTableName("t")));
+            execute("insert into t values ('2024-01-02T00:00:00.000000Z', 2)");
+            drainWalQueue();
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n2\n");
+        });
+    }
+
+    @Test
+    public void testWalApplySuspendWriteDeniedFlagIsReloadable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x int) timestamp(ts) partition by day wal");
+            execute("alter table t suspend wal");
+            Assert.assertTrue(engine.isWalApplySuspended(engine.verifyTableName("t")));
+
+            // Flag off (default): a suspended table still accepts writes (buffered for later apply).
+            Assert.assertFalse(engine.getConfiguration().isWalApplySuspendedWriteDenied());
+            execute("insert into t values ('2024-01-01T00:00:00.000000Z', 1)");
+
+            // Turn the flag on at runtime (reload): writes are now denied.
+            setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+            Assert.assertTrue(engine.getConfiguration().isWalApplySuspendedWriteDenied());
+            try {
+                execute("insert into t values ('2024-01-02T00:00:00.000000Z', 2)");
+                Assert.fail("expected the write to be denied");
+            } catch (CairoException e) {
+                Assert.assertTrue(e.isTableSuspended());
+            }
+
+            // Turn it back off (reload): writes are accepted again.
+            setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "false");
+            Assert.assertFalse(engine.getConfiguration().isWalApplySuspendedWriteDenied());
+            execute("insert into t values ('2024-01-03T00:00:00.000000Z', 3)");
+
+            // Resume and apply: the two accepted rows materialize, the denied one was never written.
+            execute("alter table t resume wal");
+            drainWalQueue();
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n2\n");
+        });
+    }
+
+    @Test
     public void testWalEventReaderConcurrentReadWrite() throws Exception {
         AtomicReference<TestUtils.LeakProneCode> eventFileLengthCallBack = new AtomicReference<>();
 
@@ -5349,6 +6045,13 @@ public class WalWriterTest extends AbstractCairoTest {
         assertNull(symbolMapDiff.nextEntry());
     }
 
+    // Asserts that the EXPLAIN plan for `sql` chooses an index scan on `column`. The "Index forward scan
+    // on: <col>" text is the stable contract across both BITMAP and POSTING index types and over both
+    // native and parquet partitions; the exact plan also embeds the integer symbol key, which is brittle.
+    private void assertIndexScan(String sql, String column) throws Exception {
+        assertQuery(sql).noLeakCheck().assertsPlanContaining("Index forward scan on: " + column);
+    }
+
     private void assertIsDropped(TableTransactionLogFile log, Path path, String dir) {
         log.addEntry(0, 1, 1, 1, 100, 0, 0, 0);
         assertFalse("should not be dropped after normal entry", log.isDropped());
@@ -5413,6 +6116,15 @@ public class WalWriterTest extends AbstractCairoTest {
             }
         }
         return tableToken;
+    }
+
+    private void createSuspendableTable(String table) throws Exception {
+        execute("create table " + table + " (ts timestamp, sym symbol index, sym2 symbol nocache, x int) timestamp(ts) partition by day wal");
+        execute("insert into " + table + " values" +
+                " ('2024-01-01T00:00:00.000000Z', 'A', 'a', 1)," +
+                " ('2024-01-02T00:00:00.000000Z', 'B', 'b', 2)," +
+                " ('2024-01-03T00:00:00.000000Z', 'C', 'c', 3)");
+        drainWalQueue();
     }
 
     private void generateRow(WalWriter writer, Rnd threadRnd, long timestamp) {

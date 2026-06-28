@@ -101,6 +101,35 @@ public class ParquetPartitionDecoder implements ParquetDecoder, QuietCloseable {
         );
     }
 
+    /**
+     * Decode a contiguous run of whole row groups [rowGroupLo, rowGroupHi] (both
+     * inclusive) into a single set of column buffers, as if they were one row group.
+     * Used by the O3 parquet merge to deduplicate row groups joined by a shared
+     * boundary timestamp together. Returns the total number of decoded rows.
+     */
+    public int decodeRowGroupRange(
+            RowGroupBuffers rowGroupBuffers,
+            DirectIntList columns,
+            int rowGroupLo,
+            int rowGroupHi
+    ) {
+        if (decodeContextPtr == 0) {
+            decodeContextPtr = ParquetFileDecoder.createDecodeContext(parquetAddr, parquetSize);
+        }
+        return decodeRowGroupRange(
+                allocator,
+                decodeContextPtr,
+                parquetAddr,
+                parquetSize,
+                parquetMetaReader.getOrCreateNativeReaderPtr(),
+                rowGroupBuffers.ptr(),
+                columns.getAddress(),
+                (int) (columns.size() >>> 1),
+                rowGroupLo,
+                rowGroupHi
+        );
+    }
+
     public void decodeRowGroupWithRowFilter(
             RowGroupBuffers rowGroupBuffers,
             int columnOffset,
@@ -131,6 +160,22 @@ public class ParquetPartitionDecoder implements ParquetDecoder, QuietCloseable {
             int rowHi,
             DirectLongList filteredRows
     ) {
+        decodeRowGroupWithRowFilterFillNulls(
+                rowGroupBuffers, columnOffset, columns, rowGroupIndex, rowLo, rowHi,
+                filteredRows.getAddress(), filteredRows.size()
+        );
+    }
+
+    public void decodeRowGroupWithRowFilterFillNulls(
+            RowGroupBuffers rowGroupBuffers,
+            int columnOffset,
+            DirectIntList columns,
+            int rowGroupIndex,
+            int rowLo,
+            int rowHi,
+            long filteredRowsAddr,
+            long filteredRowsCount
+    ) {
         if (decodeContextPtr == 0) {
             decodeContextPtr = ParquetFileDecoder.createDecodeContext(parquetAddr, parquetSize);
         }
@@ -139,7 +184,7 @@ public class ParquetPartitionDecoder implements ParquetDecoder, QuietCloseable {
                 parquetMetaReader.getOrCreateNativeReaderPtr(), rowGroupBuffers.ptr(), columnOffset,
                 columns.getAddress(), (int) (columns.size() >>> 1),
                 rowGroupIndex, rowLo, rowHi,
-                filteredRows.getAddress(), filteredRows.size()
+                filteredRowsAddr, filteredRowsCount
         );
     }
 
@@ -289,6 +334,19 @@ public class ParquetPartitionDecoder implements ParquetDecoder, QuietCloseable {
             int rowGroupIndex,
             int rowLo,
             int rowHi
+    ) throws CairoException;
+
+    private static native int decodeRowGroupRange(
+            long allocator,
+            long decodeContextPtr,
+            long parquetFilePtr,
+            long parquetFileSize,
+            long parquetMetaReaderPtr,
+            long rowGroupBufsPtr,
+            long columnsPtr,
+            int columnCount,
+            int rowGroupLo,
+            int rowGroupHi
     ) throws CairoException;
 
     private static native void decodeRowGroupWithRowFilter(

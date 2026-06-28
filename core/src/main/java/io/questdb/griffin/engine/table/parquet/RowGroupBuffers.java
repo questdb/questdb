@@ -25,9 +25,12 @@
 package io.questdb.griffin.engine.table.parquet;
 
 import io.questdb.cairo.Reopenable;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * Native output buffers for a decoded parquet row group.
@@ -47,19 +50,26 @@ public class RowGroupBuffers implements QuietCloseable, Reopenable {
     private static final long CHUNK_AUX_SIZE_OFFSET;
     private static final long CHUNK_DATA_PTR_OFFSET;
     private static final long CHUNK_DATA_SIZE_OFFSET;
+    private static final long CHUNK_PAGE_BUFFERS_SIZE_OFFSET;
     private static final long CHUNK_STRUCT_SIZE;
     private final int memoryTag;
+    // Per-query tracker, when set, charges the decoded column data against the
+    // owning workload's limit in addition to the global RSS counter. The native
+    // allocator is captured into the Rust RowGroupBuffers struct at create()
+    // time, so the tracker must be set before the (lazy) reopen() of a
+    // keepClosed instance.
+    private @Nullable MemoryTracker memoryTracker;
     private long ptr;
 
     public RowGroupBuffers(int memoryTag) {
         this.memoryTag = memoryTag;
-        this.ptr = create(Unsafe.getNativeAllocator(memoryTag));
+        this.ptr = create(Unsafe.getNativeAllocator(memoryTag, memoryTracker));
     }
 
     public RowGroupBuffers(int memoryTag, boolean keepClosed) {
         this.memoryTag = memoryTag;
         if (!keepClosed) {
-            this.ptr = create(Unsafe.getNativeAllocator(memoryTag));
+            this.ptr = create(Unsafe.getNativeAllocator(memoryTag, memoryTracker));
         }
     }
 
@@ -95,6 +105,20 @@ public class RowGroupBuffers implements QuietCloseable, Reopenable {
         return Unsafe.getLong(chunksPtr + columnIndex * CHUNK_STRUCT_SIZE + CHUNK_DATA_SIZE_OFFSET);
     }
 
+    /**
+     * Total bytes retained in the chunk's {@code page_buffers} (decompressed page/dict
+     * buffers that VARCHAR_SLICE aux pointers reference). Zero for non-VARCHAR_SLICE
+     * columns and for VARCHAR_SLICE chunks whose bytes are borrowed from the mmap or
+     * already counted by {@link #getChunkDataSize(int)} (the DeltaByteArray spill path).
+     * The decode-cache byte budget adds this so VARCHAR_SLICE frames are not undercounted.
+     */
+    @TestOnly
+    public long getChunkPageBuffersSize(int columnIndex) {
+        final long chunksPtr = Unsafe.getLong(ptr + CHUNKS_PTR_OFFSET);
+        assert chunksPtr != 0;
+        return Unsafe.getLong(chunksPtr + columnIndex * CHUNK_STRUCT_SIZE + CHUNK_PAGE_BUFFERS_SIZE_OFFSET);
+    }
+
     public long ptr() {
         return ptr;
     }
@@ -102,8 +126,31 @@ public class RowGroupBuffers implements QuietCloseable, Reopenable {
     @Override
     public void reopen() {
         if (ptr == 0) {
-            ptr = create(Unsafe.getNativeAllocator(memoryTag));
+            ptr = create(Unsafe.getNativeAllocator(memoryTag, memoryTracker));
         }
+    }
+
+    /**
+     * Binds the per-query memory tracker. Takes effect on the next (re)allocation
+     * of the native buffers: for a {@code keepClosed} instance the matching
+     * {@link #reopen()} captures it, so callers must set the tracker before
+     * reopening. A {@code null} tracker degrades to global-only accounting.
+     */
+    public void setMemoryTracker(@Nullable MemoryTracker memoryTracker) {
+        this.memoryTracker = memoryTracker;
+    }
+
+    public long sumChunkBytes(int startSlot, int slotCount) {
+        final long chunksPtr = Unsafe.getLong(ptr + CHUNKS_PTR_OFFSET);
+        assert chunksPtr != 0;
+        long total = 0;
+        for (int s = 0; s < slotCount; s++) {
+            final long base = chunksPtr + (startSlot + s) * CHUNK_STRUCT_SIZE;
+            total += Unsafe.getLong(base + CHUNK_DATA_SIZE_OFFSET)
+                    + Unsafe.getLong(base + CHUNK_AUX_SIZE_OFFSET)
+                    + Unsafe.getLong(base + CHUNK_PAGE_BUFFERS_SIZE_OFFSET);
+        }
+        return total;
     }
 
     private static native long chunkAuxPtrOffset();
@@ -113,6 +160,8 @@ public class RowGroupBuffers implements QuietCloseable, Reopenable {
     private static native long chunkDataPtrOffset();
 
     private static native long chunkDataSizeOffset();
+
+    private static native long chunkPageBuffersSizeOffset();
 
     private static native long columnBuffersPtrOffset();
 
@@ -129,6 +178,7 @@ public class RowGroupBuffers implements QuietCloseable, Reopenable {
         CHUNK_STRUCT_SIZE = columnChunkBuffersSize();
         CHUNK_DATA_PTR_OFFSET = chunkDataPtrOffset();
         CHUNK_DATA_SIZE_OFFSET = chunkDataSizeOffset();
+        CHUNK_PAGE_BUFFERS_SIZE_OFFSET = chunkPageBuffersSizeOffset();
         CHUNK_AUX_PTR_OFFSET = chunkAuxPtrOffset();
         CHUNK_AUX_SIZE_OFFSET = chunkAuxSizeOffset();
     }

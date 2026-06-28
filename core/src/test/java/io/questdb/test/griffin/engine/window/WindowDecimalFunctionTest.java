@@ -25,9 +25,16 @@
 package io.questdb.test.griffin.engine.window;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CursorPrinter;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
+
+import static io.questdb.test.tools.TestUtils.generateRandom;
 
 public class WindowDecimalFunctionTest extends AbstractCairoTest {
 
@@ -84,6 +91,19 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
                     "('2024-01-01T00:03:00', 'b', 0.2m, 2.0m, 2.000m, 2.00m, 2.000000m, 2m), " +
                     "('2024-01-01T00:04:00', 'a', 0.4m, 4.0m, 4.000m, 4.00m, 4.000000m, 4m), " +
                     "('2024-01-01T00:05:00', 'b', 0.6m, 6.0m, 6.000m, 6.00m, 6.000000m, 6m)";
+
+    private final boolean isCacheLightWindowEnabled;
+
+    public WindowDecimalFunctionTest() {
+        Rnd rnd = generateRandom(LOG);
+        this.isCacheLightWindowEnabled = rnd.nextBoolean();
+    }
+
+    @Override
+    public void setUp() {
+        setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, Boolean.toString(this.isCacheLightWindowEnabled));
+        super.setUp();
+    }
 
     @Test
     public void testAllSubTypesNullsInPartitionBoundary() throws Exception {
@@ -626,6 +646,31 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
                             a8\ta16\ta32\ta64\ta128\ta256
                             0.7\t7.0\t7.000\t7.00\t7.000000\t7
                             """);
+        });
+    }
+
+    @Test
+    public void testAvgDecimal256OverPartitionGenuineOverflow() throws Exception {
+        // Bug #1 from the query fuzzer (window shapes): avg() over a high-precision
+        // DECIMAL (Decimal256-backed) running over a partition raises an overflow.
+        // It is genuine, not a window defect: the running sum of two values near the
+        // DECIMAL(76, 3) maximum exceeds Decimal256's 256-bit capacity, and the plain
+        // group-by avg() produces the identical overflow on the same data. Pin both so
+        // the fuzzer's tolerance of this CairoException stays justified.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, g SYMBOL, d DECIMAL(76, 3)) TIMESTAMP(ts) PARTITION BY HOUR");
+            // 73 integer nines + 3 fractional nines == the DECIMAL(76, 3) maximum; two of
+            // them in one partition overflow the Decimal256 accumulator at add time.
+            String nearMax = "9".repeat(73) + ".999m";
+            execute("INSERT INTO t VALUES " +
+                    "('2024-01-01T00:00:00', 'a', " + nearMax + "), " +
+                    "('2024-01-01T00:01:00', 'a', " + nearMax + ")");
+            assertQuery("SELECT avg(d) OVER (PARTITION BY g ORDER BY ts) c FROM t")
+                    .noLeakCheck()
+                    .fails("SELECT avg(".length(), "avg aggregation failed");
+            assertQuery("SELECT g, avg(d) c FROM t")
+                    .noLeakCheck()
+                    .fails("SELECT g, ".length(), "avg aggregation failed");
         });
     }
 
@@ -2389,14 +2434,14 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
     @Test
     public void testExplainPlanAllFactoriesAllSubTypesCoverage() throws Exception {
         // Covers toPlan for every factory + every sub-type via EXPLAIN. Each call uses
-        // assertQuery(...).assertsPlan(...) with the exact expected plan string.
+        // assertPlanNoLeakCheck with the exact expected plan string.
         assertMemoryLeak(() -> {
             execute(CREATE_T);
             // ---- sum ----
             for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
                 assertQuery("SELECT sum(" + col + ") OVER () FROM t")
                         .noLeakCheck()
-                        .assertsPlan("CachedWindow\n  unorderedFunctions: [sum(" + col + ") over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                        .assertsPlan((this.isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") + "  unorderedFunctions: [sum(" + col + ") over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
                 assertQuery("SELECT sum(" + col + ") OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM t")
                         .noLeakCheck()
                         .assertsPlan("Window\n  functions: [sum(" + col + ") over ( rows between 1 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
@@ -2414,7 +2459,7 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
             for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
                 assertQuery("SELECT avg(" + col + ") OVER () FROM t")
                         .noLeakCheck()
-                        .assertsPlan("CachedWindow\n  unorderedFunctions: [avg(" + col + ") over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                        .assertsPlan((this.isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") + "  unorderedFunctions: [avg(" + col + ") over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
                 assertQuery("SELECT avg(" + col + ") OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM t")
                         .noLeakCheck()
                         .assertsPlan("Window\n  functions: [avg(" + col + ") over ( rows between 1 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
@@ -2432,7 +2477,7 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
             for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
                 assertQuery("SELECT max(" + col + ") OVER () FROM t")
                         .noLeakCheck()
-                        .assertsPlan("CachedWindow\n  unorderedFunctions: [max(" + col + ") over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                        .assertsPlan((this.isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") + "  unorderedFunctions: [max(" + col + ") over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
                 assertQuery("SELECT max(" + col + ") OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM t")
                         .noLeakCheck()
                         .assertsPlan("Window\n  functions: [max(" + col + ") over ( rows between 1 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
@@ -2450,7 +2495,7 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
             for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
                 assertQuery("SELECT min(" + col + ") OVER () FROM t")
                         .noLeakCheck()
-                        .assertsPlan("CachedWindow\n  unorderedFunctions: [min(" + col + ") over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                        .assertsPlan((this.isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") + "  unorderedFunctions: [min(" + col + ") over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
                 assertQuery("SELECT min(" + col + ") OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM t")
                         .noLeakCheck()
                         .assertsPlan("Window\n  functions: [min(" + col + ") over ( rows between 1 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
@@ -2465,7 +2510,7 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
                         .assertsPlan("Window\n  functions: [first_value(" + col + ") over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
                 assertQuery("SELECT last_value(" + col + ") OVER () FROM t")
                         .noLeakCheck()
-                        .assertsPlan("CachedWindow\n  unorderedFunctions: [last_value(" + col + ") over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                        .assertsPlan((this.isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") + "  unorderedFunctions: [last_value(" + col + ") over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
                 for (String fn : new String[]{"first_value", "last_value"}) {
                     assertQuery("SELECT " + fn + "(" + col + ") OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM t")
                             .noLeakCheck()
@@ -2479,7 +2524,7 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
             for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
                 assertQuery("SELECT nth_value(" + col + ", 1) OVER () FROM t")
                         .noLeakCheck()
-                        .assertsPlan("CachedWindow\n  unorderedFunctions: [nth_value(" + col + ",1) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                        .assertsPlan((this.isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") + "  unorderedFunctions: [nth_value(" + col + ",1) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
                 assertQuery("SELECT nth_value(" + col + ", 1) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM t")
                         .noLeakCheck()
                         .assertsPlan("Window\n  functions: [nth_value(" + col + ",1) over (partition by [grp] rows between 1 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
@@ -2493,22 +2538,22 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
             execute(CREATE_T);
             assertQuery("SELECT avg(v8) OVER () FROM t")
                     .noLeakCheck()
-                    .assertsPlan("CachedWindow\n  unorderedFunctions: [avg(v8) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                    .assertsPlan((this.isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") + "  unorderedFunctions: [avg(v8) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
             assertQuery("SELECT avg(v16) OVER () FROM t")
                     .noLeakCheck()
-                    .assertsPlan("CachedWindow\n  unorderedFunctions: [avg(v16) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                    .assertsPlan((this.isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") + "  unorderedFunctions: [avg(v16) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
             assertQuery("SELECT avg(v32) OVER () FROM t")
                     .noLeakCheck()
-                    .assertsPlan("CachedWindow\n  unorderedFunctions: [avg(v32) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                    .assertsPlan((this.isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") + "  unorderedFunctions: [avg(v32) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
             assertQuery("SELECT avg(v64) OVER () FROM t")
                     .noLeakCheck()
-                    .assertsPlan("CachedWindow\n  unorderedFunctions: [avg(v64) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                    .assertsPlan((this.isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") + "  unorderedFunctions: [avg(v64) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
             assertQuery("SELECT avg(v128) OVER () FROM t")
                     .noLeakCheck()
-                    .assertsPlan("CachedWindow\n  unorderedFunctions: [avg(v128) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                    .assertsPlan((this.isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") + "  unorderedFunctions: [avg(v128) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
             assertQuery("SELECT avg(v256) OVER () FROM t")
                     .noLeakCheck()
-                    .assertsPlan("CachedWindow\n  unorderedFunctions: [avg(v256) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                    .assertsPlan((this.isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") + "  unorderedFunctions: [avg(v256) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
         });
     }
 
@@ -2548,7 +2593,7 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
                 // OVER () -> OverWholeResultSet (TWO_PASS), inherits base toPlan
                 assertQuery("SELECT avg(" + col + ", 5) OVER () FROM t")
                         .noLeakCheck()
-                        .assertsPlan("CachedWindow\n  unorderedFunctions: [avg(" + col + ") over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                        .assertsPlan((this.isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") + "  unorderedFunctions: [avg(" + col + ") over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
                 // ORDER BY ts ROWS BETWEEN CURRENT ROW AND CURRENT ROW -> OverCurrentRow (ZERO_PASS),
                 // inherits base toPlan with "over ()" suffix
                 assertQuery("SELECT avg(" + col + ", 5) OVER (ORDER BY ts ROWS BETWEEN CURRENT ROW AND CURRENT ROW) FROM t")
@@ -2883,22 +2928,22 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
             execute(CREATE_T);
             assertQuery("SELECT sum(v8) OVER (PARTITION BY grp) FROM t")
                     .noLeakCheck()
-                    .assertsPlan("CachedWindow\n  unorderedFunctions: [sum(v8) over (partition by [grp])]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                    .assertsPlan((this.isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") + "  unorderedFunctions: [sum(v8) over (partition by [grp])]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
             assertQuery("SELECT sum(v16) OVER (PARTITION BY grp) FROM t")
                     .noLeakCheck()
-                    .assertsPlan("CachedWindow\n  unorderedFunctions: [sum(v16) over (partition by [grp])]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                    .assertsPlan((this.isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") + "  unorderedFunctions: [sum(v16) over (partition by [grp])]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
             assertQuery("SELECT sum(v32) OVER (PARTITION BY grp) FROM t")
                     .noLeakCheck()
-                    .assertsPlan("CachedWindow\n  unorderedFunctions: [sum(v32) over (partition by [grp])]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                    .assertsPlan((this.isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") + "  unorderedFunctions: [sum(v32) over (partition by [grp])]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
             assertQuery("SELECT sum(v64) OVER (PARTITION BY grp) FROM t")
                     .noLeakCheck()
-                    .assertsPlan("CachedWindow\n  unorderedFunctions: [sum(v64) over (partition by [grp])]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                    .assertsPlan((this.isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") + "  unorderedFunctions: [sum(v64) over (partition by [grp])]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
             assertQuery("SELECT sum(v128) OVER (PARTITION BY grp) FROM t")
                     .noLeakCheck()
-                    .assertsPlan("CachedWindow\n  unorderedFunctions: [sum(v128) over (partition by [grp])]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                    .assertsPlan((this.isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") + "  unorderedFunctions: [sum(v128) over (partition by [grp])]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
             assertQuery("SELECT sum(v256) OVER (PARTITION BY grp) FROM t")
                     .noLeakCheck()
-                    .assertsPlan("CachedWindow\n  unorderedFunctions: [sum(v256) over (partition by [grp])]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                    .assertsPlan((this.isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") + "  unorderedFunctions: [sum(v256) over (partition by [grp])]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
         });
     }
 
@@ -3019,22 +3064,22 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
             execute(CREATE_T);
             assertQuery("SELECT sum(v8) OVER () FROM t")
                     .noLeakCheck()
-                    .assertsPlan("CachedWindow\n  unorderedFunctions: [sum(v8) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                    .assertsPlan((this.isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") + "  unorderedFunctions: [sum(v8) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
             assertQuery("SELECT sum(v16) OVER () FROM t")
                     .noLeakCheck()
-                    .assertsPlan("CachedWindow\n  unorderedFunctions: [sum(v16) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                    .assertsPlan((this.isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") + "  unorderedFunctions: [sum(v16) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
             assertQuery("SELECT sum(v32) OVER () FROM t")
                     .noLeakCheck()
-                    .assertsPlan("CachedWindow\n  unorderedFunctions: [sum(v32) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                    .assertsPlan((this.isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") + "  unorderedFunctions: [sum(v32) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
             assertQuery("SELECT sum(v64) OVER () FROM t")
                     .noLeakCheck()
-                    .assertsPlan("CachedWindow\n  unorderedFunctions: [sum(v64) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                    .assertsPlan((this.isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") + "  unorderedFunctions: [sum(v64) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
             assertQuery("SELECT sum(v128) OVER () FROM t")
                     .noLeakCheck()
-                    .assertsPlan("CachedWindow\n  unorderedFunctions: [sum(v128) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                    .assertsPlan((this.isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") + "  unorderedFunctions: [sum(v128) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
             assertQuery("SELECT sum(v256) OVER () FROM t")
                     .noLeakCheck()
-                    .assertsPlan("CachedWindow\n  unorderedFunctions: [sum(v256) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                    .assertsPlan((this.isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") + "  unorderedFunctions: [sum(v256) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
         });
     }
 
@@ -3044,13 +3089,13 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
             execute(CREATE_T);
             assertQuery("SELECT sum(v256) OVER () FROM t")
                     .noLeakCheck()
-                    .assertsPlan("""
-                            CachedWindow
-                              unorderedFunctions: [sum(v256) over ()]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                            """);
+                    .assertsPlan((this.isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                            """
+                                      unorderedFunctions: [sum(v256) over ()]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                                    """);
         });
     }
 
@@ -5796,6 +5841,76 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
                             2024-01-01T00:02:00.000000Z\t0.2\t2.0\t2.000\t2.00\t2.000000\t2
                             2024-01-01T00:03:00.000000Z\t1.0\t10.0\t10.000\t10.00\t10.000000\t10
                             2024-01-01T00:04:00.000000Z\t9.0\t99.0\t999.000\t99.00\t999.000000\t999
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeadWideDecimalOverPartitionStreamingShape() throws Exception {
+        // lead() over a Decimal128/Decimal256 argument used to report ZERO_PASS, unlike every other
+        // lead variant. That routed a query whose only window functions were wide-decimal leads
+        // through the streaming window executor. lead reads ahead, so it cannot run in the forward
+        // streaming pass, and the wide-decimal lead exposed no Decimal128/Decimal256 read accessor
+        // there, so reading the result threw UnsupportedOperationException. Narrow-decimal columns in
+        // the earlier all-types tests masked this by forcing the cached path. The wide-decimal lead
+        // now behaves like the rest (cached, backward pass1) and reads back correctly.
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            execute(INSERT_6_PART);
+            // Decimal256 (precision 60 > 38) on its own -- the shape that used to crash on read.
+            assertQuery("SELECT ts, grp, lead(v256, 1) OVER (PARTITION BY grp ORDER BY ts) l256 FROM t")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlan((this.isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                            "  unorderedFunctions: [lead(v256, 1, NULL) over (partition by [grp])]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: t\n")
+                    .returns("""
+                            ts\tgrp\tl256
+                            2024-01-01T00:00:00.000000Z\ta\t8
+                            2024-01-01T00:01:00.000000Z\tb\t2
+                            2024-01-01T00:02:00.000000Z\ta\t4
+                            2024-01-01T00:03:00.000000Z\tb\t6
+                            2024-01-01T00:04:00.000000Z\ta\t
+                            2024-01-01T00:05:00.000000Z\tb\t
+                            """);
+            // Decimal128 (precision 38) on its own.
+            assertQuery("SELECT ts, grp, lead(v128, 1) OVER (PARTITION BY grp ORDER BY ts) l128 FROM t")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlan((this.isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                            "  unorderedFunctions: [lead(v128, 1, NULL) over (partition by [grp])]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: t\n")
+                    .returns("""
+                            ts\tgrp\tl128
+                            2024-01-01T00:00:00.000000Z\ta\t8.000000
+                            2024-01-01T00:01:00.000000Z\tb\t2.000000
+                            2024-01-01T00:02:00.000000Z\ta\t4.000000
+                            2024-01-01T00:03:00.000000Z\tb\t6.000000
+                            2024-01-01T00:04:00.000000Z\ta\t
+                            2024-01-01T00:05:00.000000Z\tb\t
+                            """);
+            // Both wide-decimal leads together, still no narrow-decimal column to force the cached path.
+            assertQuery("SELECT ts, grp, " +
+                    "lead(v128, 1) OVER (PARTITION BY grp ORDER BY ts) l128, " +
+                    "lead(v256, 1) OVER (PARTITION BY grp ORDER BY ts) l256 " +
+                    "FROM t")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tgrp\tl128\tl256
+                            2024-01-01T00:00:00.000000Z\ta\t8.000000\t8
+                            2024-01-01T00:01:00.000000Z\tb\t2.000000\t2
+                            2024-01-01T00:02:00.000000Z\ta\t4.000000\t4
+                            2024-01-01T00:03:00.000000Z\tb\t6.000000\t6
+                            2024-01-01T00:04:00.000000Z\ta\t\t
+                            2024-01-01T00:05:00.000000Z\tb\t\t
                             """);
         });
     }
@@ -8590,6 +8705,46 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSumAvgDecimal256SlidingFrameEviction() throws Exception {
+        // Query fuzzer (window shapes): sum()/avg() over a Decimal256-backed DECIMAL(76, 6) cast
+        // running over a sliding frame fed the running accumulator through a raw 256-bit add
+        // (Decimal256.uncheckedAdd) but evicted the oldest value through a scale-aware subtract.
+        // The accumulator's scale field stayed 0 while the cast set the value scale to 6, so the
+        // first eviction rescaled the accumulator by 10^6, inflating every later row of the run by
+        // a constant. The accumulator instance is shared across the cursor's forward passes, so the
+        // corruption only showed on the very first pass (scale 0) and vanished after toTop() left
+        // the scale at 6 - a result that changed under re-iteration. The cast is load-bearing: a
+        // plain DECIMAL column read leaves the value scale at 0 and hides the mismatch. Materialize
+        // the raw first pass and the toTop pass separately: both must equal the hand-computed sums
+        // for the rows, partition-rows, range and partition-range sum frames plus the avg.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, g SYMBOL, d DOUBLE) TIMESTAMP(ts) PARTITION BY HOUR");
+            execute("INSERT INTO t SELECT (x * 60_000_000)::TIMESTAMP, 'a', x::DOUBLE FROM long_sequence(10)");
+            final String expected = """
+                    ts\tsr\tspr\tsg\tspg\tapr
+                    1970-01-01T00:01:00.000000Z\t1.000000\t1.000000\t1.000000\t1.000000\t1.000000
+                    1970-01-01T00:02:00.000000Z\t3.000000\t3.000000\t3.000000\t3.000000\t1.500000
+                    1970-01-01T00:03:00.000000Z\t6.000000\t6.000000\t6.000000\t6.000000\t2.000000
+                    1970-01-01T00:04:00.000000Z\t10.000000\t10.000000\t10.000000\t10.000000\t2.500000
+                    1970-01-01T00:05:00.000000Z\t15.000000\t15.000000\t15.000000\t15.000000\t3.000000
+                    1970-01-01T00:06:00.000000Z\t21.000000\t21.000000\t21.000000\t21.000000\t3.500000
+                    1970-01-01T00:07:00.000000Z\t28.000000\t28.000000\t28.000000\t28.000000\t4.000000
+                    1970-01-01T00:08:00.000000Z\t36.000000\t36.000000\t36.000000\t36.000000\t4.500000
+                    1970-01-01T00:09:00.000000Z\t44.000000\t44.000000\t44.000000\t44.000000\t5.500000
+                    1970-01-01T00:10:00.000000Z\t52.000000\t52.000000\t52.000000\t52.000000\t6.500000
+                    """;
+            // Run each frame shape as its own single window function so the planner keeps it on the
+            // streaming executor, where the running accumulator is reused across the forward passes
+            // and the scale corruption surfaced on the very first pass.
+            assertSlidingFrameFirstPass("sum((d)::DECIMAL(76, 6)) OVER (ORDER BY ts ROWS BETWEEN 7 PRECEDING AND CURRENT ROW)", expected, 1);
+            assertSlidingFrameFirstPass("sum((d)::DECIMAL(76, 6)) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 7 PRECEDING AND CURRENT ROW)", expected, 2);
+            assertSlidingFrameFirstPass("sum((d)::DECIMAL(76, 6)) OVER (ORDER BY ts RANGE BETWEEN 7 minute PRECEDING AND CURRENT ROW)", expected, 3);
+            assertSlidingFrameFirstPass("sum((d)::DECIMAL(76, 6)) OVER (PARTITION BY g ORDER BY ts RANGE BETWEEN 7 minute PRECEDING AND CURRENT ROW)", expected, 4);
+            assertSlidingFrameFirstPass("avg((d)::DECIMAL(76, 6)) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 7 PRECEDING AND CURRENT ROW)", expected, 5);
+        });
+    }
+
+    @Test
     public void testSumDecimal128AccumulatorPromotion() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP, v decimal(18, 0)) TIMESTAMP(ts) PARTITION BY HOUR");
@@ -8638,6 +8793,26 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
             assertQuery("SELECT sum(v) OVER () AS sum_v FROM t LIMIT 1")
                     .noLeakCheck()
                     .returns("sum_v\n1000000000000000000000000000000000000000000000000000000000000000000001\n");
+        });
+    }
+
+    @Test
+    public void testSumDecimal256OverPartitionGenuineOverflow() throws Exception {
+        // Companion to testAvgDecimal256OverPartitionGenuineOverflow for sum(). The sum
+        // of two values near the DECIMAL(76, 3) maximum is genuinely unrepresentable, so
+        // both the window-over-partition form and the plain group-by form overflow.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, g SYMBOL, d DECIMAL(76, 3)) TIMESTAMP(ts) PARTITION BY HOUR");
+            String nearMax = "9".repeat(73) + ".999m";
+            execute("INSERT INTO t VALUES " +
+                    "('2024-01-01T00:00:00', 'a', " + nearMax + "), " +
+                    "('2024-01-01T00:01:00', 'a', " + nearMax + ")");
+            assertQuery("SELECT sum(d) OVER (PARTITION BY g ORDER BY ts) c FROM t")
+                    .noLeakCheck()
+                    .fails("SELECT sum(".length(), "sum aggregation failed");
+            assertQuery("SELECT g, sum(d) c FROM t")
+                    .noLeakCheck()
+                    .fails("SELECT g, ".length(), "sum aggregation failed");
         });
     }
 
@@ -10426,7 +10601,7 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
                 for (String fn : new String[]{"sum", "avg", "max", "min"}) {
                     assertQuery("SELECT " + fn + "(" + col + ") OVER (PARTITION BY grp) FROM t")
                             .noLeakCheck()
-                            .assertsPlan("CachedWindow\n  unorderedFunctions: [" + fn + "(" + col + ") over (partition by [grp])]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                            .assertsPlan((this.isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") + "  unorderedFunctions: [" + fn + "(" + col + ") over (partition by [grp])]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
                 }
             }
         });
@@ -10503,10 +10678,10 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
             execute(CREATE_T);
             assertQuery("SELECT avg(v8, 5) OVER () FROM t")
                     .noLeakCheck()
-                    .assertsPlan("CachedWindow\n  unorderedFunctions: [avg(v8) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                    .assertsPlan((this.isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") + "  unorderedFunctions: [avg(v8) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
             assertQuery("SELECT avg(v8, 5) OVER (PARTITION BY grp) FROM t")
                     .noLeakCheck()
-                    .assertsPlan("CachedWindow\n  unorderedFunctions: [avg(v8) over (partition by [grp])]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
+                    .assertsPlan((this.isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") + "  unorderedFunctions: [avg(v8) over (partition by [grp])]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
             assertQuery("SELECT avg(v8, 5) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t")
                     .noLeakCheck()
                     .assertsPlan("Window\n  functions: [avg(v8) over (partition by [grp])]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n");
@@ -11508,4 +11683,26 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
         });
     }
 
+    // Materializes the raw first forward pass of a single sliding-frame window function and the
+    // post-toTop pass, asserting both equal the expected column (selected by index from the shared
+    // expected table). The first pass is the one that exposed the scale-mismatch eviction.
+    private void assertSlidingFrameFirstPass(String windowExpr, String expectedTable, int expectedCol) throws Exception {
+        StringSink expected = new StringSink();
+        String[] lines = expectedTable.split("\n");
+        for (int i = 0; i < lines.length; i++) {
+            String[] cols = lines[i].split("\t");
+            expected.put(cols[0]).put('\t').put(i == 0 ? "w" : cols[expectedCol]).put('\n');
+        }
+        try (RecordCursorFactory factory = select("SELECT ts, " + windowExpr + " w FROM t")) {
+            StringSink firstPass = new StringSink();
+            StringSink secondPass = new StringSink();
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                CursorPrinter.println(cursor, factory.getMetadata(), firstPass, true, false);
+                cursor.toTop();
+                CursorPrinter.println(cursor, factory.getMetadata(), secondPass, true, false);
+            }
+            TestUtils.assertEquals(expected, firstPass);
+            TestUtils.assertEquals(firstPass, secondPass);
+        }
+    }
 }

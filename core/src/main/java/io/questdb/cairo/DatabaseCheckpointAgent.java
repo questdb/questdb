@@ -665,6 +665,11 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                 TableToken baseTableToken = engine.verifyTableName(baseTableName);
                 intervals.clear();
                 walTxnRangeLoader.load(engine, Path.PATH.get(), baseTableToken, intervals, mvLastRefreshTxn, checkpointBaseSeqTxn);
+                // Known gap (tracked follow-up): this path rewrites the checkpoint state with the base txn
+                // advanced to checkpointBaseSeqTxn without consulting walTxnRangeLoader.hasTruncate(). If the
+                // scanned gap holds a truncate, restoring from this checkpoint resumes the view past the
+                // truncate with stale pre-truncate rows. The barrier primitive this loader now exposes can
+                // wire this up the same way the refresh path does; it is left for a follow-up.
 
                 if (intervals.size() > 0) {
                     // Merge with existing intervals
@@ -920,7 +925,13 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             } catch (Throwable e) {
                 LOG.error().$("error during checkpoint recovery, aborting async tasks [error=").$(e).I$();
                 recoveryAgent.abortParallelTasks();
-                recoveryAgent.finalizeParallelTasks();
+                try {
+                    recoveryAgent.finalizeParallelTasks();
+                } catch (Throwable drainError) {
+                    // surface the original recovery failure; finalizeParallelTasks
+                    // has already logged every task error
+                    LOG.error().$("error finalizing parallel tasks during recovery abort [error=").$(drainError).I$();
+                }
                 throw e;
             }
 

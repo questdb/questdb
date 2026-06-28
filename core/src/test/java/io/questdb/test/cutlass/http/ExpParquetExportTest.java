@@ -691,19 +691,19 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     drainWalQueue(engine);
                     params.clear();
                     params.put("fmt", "parquet");
-                    testHttpClient.assertGetParquet("/exp", 41965, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 41973, params, "test_table");
                     params.put("row_group_size", "1000");
-                    testHttpClient.assertGetParquet("/exp", 47099, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 47177, params, "test_table");
                     params.put("row_group_size", "500");
-                    testHttpClient.assertGetParquet("/exp", 53744, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 53898, params, "test_table");
                     params.put("row_group_size", "999");
-                    testHttpClient.assertGetParquet("/exp", 48518, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 48604, params, "test_table");
                     params.put("row_group_size", "201");
-                    testHttpClient.assertGetParquet("/exp", 74267, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 74653, params, "test_table");
                     params.put("row_group_size", "2001");
-                    testHttpClient.assertGetParquet("/exp", 44625, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 44665, params, "test_table");
                     params.put("row_group_size", "10000");
-                    testHttpClient.assertGetParquet("/exp", 41965, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 41973, params, "test_table");
                     // Each round re-exports the full 10k-row table over the forced byte-level HTTP
                     // fragmentation from getExportTester(), slow on Mac/Windows. The assertGetParquet
                     // calls above already cover every row_group_size, so fewer rounds suffice.
@@ -2229,7 +2229,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                             ")", sqlExecutionContext);
 
 
-                    testHttpClient.assertGetParquet("/exp", 1968, tableName);
+                    testHttpClient.assertGetParquet("/exp", 1974, tableName);
                 });
     }
 
@@ -2242,19 +2242,26 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                             "(1, 10000, 'JAN'), (1, 400, 'JAN'), (2, 4500, 'JAN'), (2, 35000, 'JAN'), " +
                             "(1, 5000, 'FEB'), (1, 3000, 'FEB'), (2, 200, 'FEB'), (2, 90500, 'FEB'), " +
                             "(1, 6000, 'MAR'), (1, 5000, 'MAR'), (2, 2500, 'MAR'), (2, 9500, 'MAR')", sqlExecutionContext);
-                    testHttpClient.setKeepConnection(true);
-                    testHttpClient.assertGetParquet(
-                            "/exp",
-                            1105,
-                            "monthly_sales PIVOT (SUM(amount) FOR month IN (select distinct month from monthly_sales order by month) GROUP BY empid) ORDER BY empid"
-                    );
-                    engine.execute("INSERT INTO monthly_sales VALUES (3, 9000, 'APRIL')", sqlExecutionContext);
-                    testHttpClient.setKeepConnection(false);
-                    testHttpClient.assertGetParquet(
-                            "/exp",
-                            1370,
-                            "monthly_sales PIVOT (SUM(amount) FOR month IN (select distinct month from monthly_sales order by month) GROUP BY empid) ORDER BY empid"
-                    );
+                    // Keep-alive holds the connection open across the two requests, so use a local
+                    // client rather than the shared static testHttpClient -- as the other keep-alive
+                    // tests in this class do. Try-with-resources closes the local client even if an
+                    // assertion throws, so a failure here cannot strand keep-alive state and a socket
+                    // on the shared client and bleed a descriptor into another test's leak check.
+                    try (TestHttpClient client = new TestHttpClient()) {
+                        client.setKeepConnection(true);
+                        client.assertGetParquet(
+                                "/exp",
+                                1105,
+                                "monthly_sales PIVOT (SUM(amount) FOR month IN (select distinct month from monthly_sales order by month) GROUP BY empid) ORDER BY empid"
+                        );
+                        engine.execute("INSERT INTO monthly_sales VALUES (3, 9000, 'APRIL')", sqlExecutionContext);
+                        client.setKeepConnection(false);
+                        client.assertGetParquet(
+                                "/exp",
+                                1370,
+                                "monthly_sales PIVOT (SUM(amount) FOR month IN (select distinct month from monthly_sales order by month) GROUP BY empid) ORDER BY empid"
+                        );
+                    }
                 });
     }
 

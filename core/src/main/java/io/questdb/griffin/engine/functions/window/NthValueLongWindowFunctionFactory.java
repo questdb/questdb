@@ -49,10 +49,12 @@ import io.questdb.griffin.model.WindowExpression;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * nth_value(expr, n) window function.
@@ -721,6 +723,12 @@ public class NthValueLongWindowFunctionFactory extends AbstractWindowFunctionFac
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
             sink.val('(').val(arg).val(',').val(n).val(')');
@@ -1035,18 +1043,12 @@ public class NthValueLongWindowFunctionFactory extends AbstractWindowFunctionFac
             initialCapacity = configuration.getSqlWindowStorePageSize() / RECORD_SIZE;
 
             capacity = initialCapacity;
-            MemoryARW mem = Vm.getCARWInstance(
+            memory = Vm.getCARWInstance(
                     configuration.getSqlWindowStorePageSize(),
                     configuration.getSqlWindowStoreMaxPages(),
                     MemoryTag.NATIVE_CIRCULAR_BUFFER
             );
-            try {
-                startOffset = mem.appendAddressFor(capacity * RECORD_SIZE) - mem.getPageAddress(0);
-            } catch (Throwable t) {
-                Misc.free(mem);
-                throw t;
-            }
-            memory = mem;
+            // memory allocates lazily on reopen(), under the tracker bound by the cursor
             firstIdx = 0;
             frameSize = 0;
             frameIncludesCurrentValue = rangeHi == 0;
@@ -1176,6 +1178,11 @@ public class NthValueLongWindowFunctionFactory extends AbstractWindowFunctionFac
             super.reset();
             memory.close();
             freeList.clear();
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            memory.setMemoryTracker(tracker);
         }
 
         @Override

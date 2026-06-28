@@ -26,6 +26,7 @@ package io.questdb.griffin.engine;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -34,6 +35,7 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import org.jetbrains.annotations.Nullable;
@@ -177,7 +179,9 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                 sizeCounter.add(remaining);
             } else {
                 counter.set(remaining);
-                base.skipRows(counter);
+                // No further reads after the skip -- max=0 lets the base
+                // skip the landing-frame decode altogether.
+                base.skipRows(counter, 0);
                 sizeCounter.add(remaining - counter.get());
                 counter.clear();
             }
@@ -206,6 +210,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public boolean hasNext() {
+            circuitBreaker.statefulThrowExceptionIfTripped();
             ensureReadyToConsume();
             if (remaining <= 0) {
                 return false;
@@ -233,18 +238,34 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
+        public void setParentUsedColumns(@Nullable IntHashSet columnIndexes) {
+            base.setParentUsedColumns(columnIndexes);
+        }
+
+        @Override
+        public void setParquetDecodeHint(ParquetDecodeHint hint) {
+            base.setParquetDecodeHint(hint);
+        }
+
+        @Override
+        public void setRecordAtRows(@Nullable RowIdSource source) {
+            base.setRecordAtRows(source);
+        }
+
+        @Override
         public long size() {
             return size;
         }
 
         @Override
-        public void skipRows(Counter skipCounter) {
+        public void skipRows(Counter skipCounter, long maxRowsAfterSkip) {
             ensureReadyToConsume();
             long rowsToSkip = skipCounter.get();
             long excessCount = Math.max(0, rowsToSkip - remaining);
             rowsToSkip -= excessCount;
             skipCounter.dec(excessCount);
-            base.skipRows(skipCounter);
+            final long baseMax = Math.min(maxRowsAfterSkip, remaining - rowsToSkip);
+            base.skipRows(skipCounter, baseMax);
             long counterAfterSkip = skipCounter.get();
             if (counterAfterSkip > 0) {
                 remaining = 0;
@@ -265,9 +286,10 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             ensureBoundsResolved();
             base.toTop();
             counter.set(baseRowsToSkip);
-            if (counter.get() > 0) {
-                base.skipRows(counter);
-            }
+            // Unconditional call: even with baseRowsToSkip == 0, this pushes
+            // baseRowsToTake as the post-skip cap so the base can clamp
+            // decoding of the first frames.
+            base.skipRows(counter, baseRowsToTake);
             remaining = baseRowsToTake;
             counter.clear();
         }
