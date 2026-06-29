@@ -5692,7 +5692,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    /** Trims surrounding whitespace and one optional layer of double quotes from {@code s[lo, hi)}. */
+    /**
+     * Trims surrounding whitespace and one optional layer of double quotes from {@code s[lo, hi)}.
+     */
     private static CharSequence unquoteTrim(CharSequence s, int lo, int hi) {
         while (lo < hi && s.charAt(lo) <= ' ') {
             lo++;

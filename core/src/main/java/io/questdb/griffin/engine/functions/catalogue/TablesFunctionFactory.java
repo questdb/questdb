@@ -379,7 +379,8 @@ public class TablesFunctionFactory implements FunctionFactory {
                         case PARTITION_BY_COLUMN -> table.getPartitionByName();
                         case TTL_UNIT_COLUMN -> getTtlUnit(table.getTtlHoursOrMonths());
                         case EXPIRE_CLAUSE_COLUMN -> RowExpiryUtil.displayPredicate(table.getExpiryPredicate());
-                        case EXPIRE_CLEANUP_EVERY_COLUMN -> RowExpiryUtil.formatCleanupEvery(table.getExpiryCleanupIntervalMicros());
+                        case EXPIRE_CLEANUP_EVERY_COLUMN ->
+                                RowExpiryUtil.formatCleanupEvery(table.getExpiryCleanupIntervalMicros());
                         case DESIGNATED_TIMESTAMP_COLUMN -> table.getTimestampName();
                         case DIRECTORY_NAME_COLUMN -> {
                             if (table.isSoftLink()) {

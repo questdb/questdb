@@ -170,27 +170,37 @@ public final class RowExpiryUtil {
         return sink.toString();
     }
 
-    /** True if {@code stored} is an encoded KEEP [N] HIGHEST/LOWEST policy. */
+    /**
+     * True if {@code stored} is an encoded KEEP [N] HIGHEST/LOWEST policy.
+     */
     public static boolean isKeepBy(CharSequence stored) {
         return hasMode(stored, MODE_KEEP_BY);
     }
 
-    /** True if {@code stored} is an encoded KEEP LATEST policy. */
+    /**
+     * True if {@code stored} is an encoded KEEP LATEST policy.
+     */
     public static boolean isKeepLatest(CharSequence stored) {
         return hasMode(stored, MODE_KEEP_LATEST);
     }
 
-    /** True if {@code stored} is an encoded window-function WHEN policy. */
+    /**
+     * True if {@code stored} is an encoded window-function WHEN policy.
+     */
     public static boolean isWindow(CharSequence stored) {
         return hasMode(stored, MODE_WINDOW);
     }
 
-    /** The raw PARTITION BY column-list text of an encoded KEEP LATEST policy (check {@link #isKeepLatest}). */
+    /**
+     * The raw PARTITION BY column-list text of an encoded KEEP LATEST policy (check {@link #isKeepLatest}).
+     */
     public static CharSequence keepLatestKeys(CharSequence stored) {
         return stored.subSequence(sentinelIndex(stored, 2) + 1, stored.length());
     }
 
-    /** The explicit {@code ON <ts>} column of a KEEP LATEST policy, or empty when none was specified. */
+    /**
+     * The explicit {@code ON <ts>} column of a KEEP LATEST policy, or empty when none was specified.
+     */
     public static CharSequence keepLatestTs(CharSequence stored) {
         return stored.subSequence(2, sentinelIndex(stored, 2));
     }
@@ -322,7 +332,9 @@ public final class RowExpiryUtil {
         return stored.subSequence(2, stored.length());
     }
 
-    /** Decoded view of a KEEP [N] HIGHEST/LOWEST policy ({@code 0x1F 'N' n 0x1F dir 0x1F col 0x1F keys}). */
+    /**
+     * Decoded view of a KEEP [N] HIGHEST/LOWEST policy ({@code 0x1F 'N' n 0x1F dir 0x1F col 0x1F keys}).
+     */
     private static final class KeepBy {
         final String col;
         final boolean highest;

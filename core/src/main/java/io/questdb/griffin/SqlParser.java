@@ -6285,7 +6285,9 @@ public class SqlParser {
         return viewSql;
     }
 
-    /** Result of {@link #captureKeepColumnList}: the raw PARTITION BY column list and the trailing boundary. */
+    /**
+     * Result of {@link #captureKeepColumnList}: the raw PARTITION BY column list and the trailing boundary.
+     */
     private static final class ColumnListCapture {
         String csv;
         boolean foundCleanup;

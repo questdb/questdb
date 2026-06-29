@@ -96,6 +96,7 @@ public class MatViewTest extends AbstractCairoTest {
     private void assertSql(CharSequence expected, CharSequence sql) throws Exception {
         assertQuery(sql).noLeakCheck().returnsOnce(expected);
     }
+
     private final TestTimestampType timestampType;
 
     public MatViewTest() {

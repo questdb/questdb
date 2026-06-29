@@ -82,7 +82,9 @@ public interface CreateMatViewOperation extends TableStructure, Operation {
 
     boolean isDeferred();
 
-    /** True for a non-aggregating "passthrough" view (e.g. {@code SELECT * FROM base}, no SAMPLE BY). */
+    /**
+     * True for a non-aggregating "passthrough" view (e.g. {@code SELECT * FROM base}, no SAMPLE BY).
+     */
     boolean isPassthrough();
 
     void updateOperationFutureTableToken(TableToken tableToken);

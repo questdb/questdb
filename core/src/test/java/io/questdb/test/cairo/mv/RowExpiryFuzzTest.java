@@ -140,7 +140,9 @@ public class RowExpiryFuzzTest extends AbstractCairoTest {
         }
     }
 
-    /** Independent oracle: the ids the policy keeps, sorted, formatted as an {@code assertSql} block. */
+    /**
+     * Independent oracle: the ids the policy keeps, sorted, formatted as an {@code assertSql} block.
+     */
     private static String expectedIds(Mode mode, int[] id, String[] k, double[] v, boolean[] vNull, long[] ts) {
         // INDEPENDENT formulation for the keep-max/min/window modes: compute each group's extreme in a
         // SEPARATE precomputation pass (a plain max/min reduction over the non-null values per group), then

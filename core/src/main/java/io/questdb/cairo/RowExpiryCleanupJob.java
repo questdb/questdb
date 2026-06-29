@@ -634,7 +634,9 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         }
     }
 
-    /** Index into {@link #partitionFloors} (ascending) of the logical partition containing {@code ts}, or -1. */
+    /**
+     * Index into {@link #partitionFloors} (ascending) of the logical partition containing {@code ts}, or -1.
+     */
     private int partitionIndexFor(long ts) {
         int lo = 0;
         int hi = partitionFloors.size() - 1;
@@ -674,7 +676,9 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         sqlExecutionContext.initNow();
     }
 
-    /** Quoted, comma-separated base column list (for the window survivor query's outer projection). */
+    /**
+     * Quoted, comma-separated base column list (for the window survivor query's outer projection).
+     */
     private static String buildQuotedColumnList(TableReaderMetadata metadata) {
         final StringSink sink = new StringSink();
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
