@@ -17,7 +17,7 @@ worker) is **out of scope**: the refresh worker keeps reading base rows via the
 disk path (`WalSegmentPageFrameCursor`), exactly as today. **Everything else from
 the RFC's tiered-storage / flush / recovery design is in scope.**
 
-**STATUS: Steps 1-3 DONE (2026-06-29); Steps 4-6 not started.** Decision recorded
+**STATUS: Steps 1-4 DONE (2026-06-29); Steps 5-6 not started.** Decision recorded
 2026-06-29: adopt the RFC's in-RAM-lead model (defer the whole flush; lead lives
 in RAM; recover from the retained base WAL); no hand-off ring. This rewrite
 supersedes the earlier "Mode A via deferred apply" draft, which had diverged from
@@ -279,14 +279,29 @@ interning moves to **refresh time** (RFC "Symbol columns"):
 
 ### 1.6 O3 under deferred flush
 
-On O3 detection, **force-flush the lead** - commit the buffered uncommitted rows
-(do not roll them back; they are all in-order, the O3 row sits below them) so the
-on-disk tier is current, then run the existing `o3Replay` (REPLACE_RANGE) and
-`rebuildInMemoryTier` / `stageInMemoryWindowFromDisk`. The lead is pure-append
-above disk max and is never itself O3-contested; a reader pinned to a pre-O3 slot
-whose disk reader is post-O3 fails the fence -> disk-only. Preserve the
-`tierStale` both-slots-pinned skip. After replay the lead is empty (just flushed)
-and the rebuilt slot is stamped at the post-replay applied seqTxn.
+**Realised by discarding the in-RAM lead, not force-flushing it** (the 1.1
+decision; the force-flush sketch below is the original RFC plan, kept for
+context). On O3 detection during a lead refresh, `finishLeadRefresh` resets the
+lead counter to 0 and hands off to the existing `o3Replay` (REPLACE_RANGE) +
+`rebuildInMemoryTier` / `stageInMemoryWindowFromDisk`. `o3Replay` re-feeds the
+base table in ts order - the lead's base rows are still there because
+`lvConsumedSeqTxn == applied` retains the base WAL up to the applied point - so
+the formerly-RAM-only lead rows are recomputed onto disk by the replay, and the
+tier is rebuilt from the rewritten disk as a pure subset (`leadRowCount == 0`).
+A reader pinned to a pre-O3 slot whose disk reader is post-O3 fails the fence
+-> disk-only. The `tierStale` both-slots-pinned rebuild-skip is preserved. After
+replay the lead is empty and the rebuilt slot is stamped at the post-replay
+applied seqTxn. This works for both head-hit and head-miss: the head `.cp`'s
+`headMaxTs` reflects the last flush (it lags the lead), so a head-hit replay
+starts at `headMaxTs + 1` - below the lead - and re-reads the lead's rows from
+base; a head-miss recomputes the whole view from the lower bound.
+
+The original RFC plan was to **force-flush the lead** before `o3Replay` (commit
+the buffered uncommitted rows so the on-disk tier is current, then replay). 1.1
+supersedes it for V1: force-flush buys nothing while the recompute is correct -
+`o3Replay` reads from base regardless of whether the lead was flushed first - and
+it only adds a wasted flush. (The RFC's force-flush-before-replay stays a later
+optimization.)
 
 ### 1.7 ASOF JOIN as RHS / time-frame: disk-only for V1
 
@@ -512,15 +527,42 @@ distinct value that has ever passed through the lead - bounded like the symbol
 table itself, which is fine for SYMBOL's low-cardinality design intent but a real
 RAM cost for a very high cardinality column that should not be typed SYMBOL.
 
-### Step 4 - O3 under deferred flush
+### Step 4 - O3 under deferred flush - DONE (2026-06-29)
 
-- Force-flush the lead before `o3Replay`; rebuild the tier from disk; preserve
-  `tierStale`.
-- Tests: O3 (head-hit and head-miss) with a non-empty lead at detection; post-O3
-  cursor regains Mode A and matches recompute; oracle survives restart.
+**Realised by discarding the in-RAM lead and recomputing from base, not
+force-flushing** (1.1 / 1.6). The write-side path was already in place from
+Step 1 (`finishLeadRefresh`'s `o3Detected` branch: reset the lead counter,
+`o3Replay`, resume the refresh cursor at the applied point); Step 4 proves it
+correct for a non-empty lead with dedicated tests, no production change needed.
 
-Exit: O3 correct with a non-empty lead; flush-before-replay keeps the rebuild's
-"from disk" assumption intact.
+- DONE. On O3 during a lead refresh, `finishLeadRefresh` discards the RAM lead
+  (`setLeadRowCount(0)`) and hands off to `o3Replay`, which recomputes from the
+  base table (the lead's base rows are retained because `lvConsumedSeqTxn ==
+  applied`), rewrites disk via REPLACE_RANGE, and rebuilds the tier from the
+  rewritten disk (`rebuildInMemoryTier` / `stageInMemoryWindowFromDisk`,
+  `leadRowCount == 0`). The `tierStale` both-slots-pinned rebuild-skip is
+  preserved. Works for both branches: the head `.cp`'s `headMaxTs` reflects the
+  last flush (lags the lead), so head-hit replays from `headMaxTs + 1` (below the
+  lead) and re-reads the lead's rows from base; head-miss recomputes from the
+  lower bound. No force-flush - see 1.6 for why it buys nothing for V1.
+- DONE. Tests in `LiveViewInMemReadTest`: `testLeadO3HeadHitReplaysAboveHead`
+  (head-hit with a non-empty lead - first flush writes a head `.cp` at maxTs=03,
+  a lead at ts 10/11 is refreshed above it without flushing, an O3 row at ts=05
+  routes head-hit; post-O3 the lead is folded onto disk, the tier regains Mode A
+  serving the whole window, oracle match), `testLeadO3HeadMissRecomputesFromBase`
+  (head-miss with a non-empty lead - the back-dated row sits below `headMaxTs`),
+  and `testLeadO3OracleSurvivesRestart` (O3-with-lead then a simulated restart;
+  the re-read matches recompute across the boundary). `testSymbolLeadSurvivesO3`
+  (Step 3) already covers head-miss + lead + SYMBOL. Each asserts the lead is
+  non-empty at detection (so it cannot silently regress to a no-lead scenario),
+  that the post-O3 cursor regains routing with `leadRowsServed == 0`, and that
+  the read matches a from-scratch recompute and the forced disk-only path.
+
+Exit (met): O3 correct with a non-empty lead at detection on both branches; the
+discard-and-recompute keeps the rebuild's "from disk" assumption intact (the
+replay writes the lead's rows to disk before the rebuild reads them). Full LV
+suite green (`InMemRead` 31, plus `Smoke`, `Test`, `Fuzz`, `Concurrency`,
+`Checkpoint`, `InMemoryTier`).
 
 ### Step 5 - size()/LIMIT, time-frame/ASOF, EXPLAIN
 
@@ -552,7 +594,9 @@ tradeoff is quantified.
 ## 3. Decisions (resolved against the RFC)
 
 - **A. Apply/flush trigger:** FLUSH EVERY. The mechanism is decoupling refresh
-  cadence from flush cadence (not a footprint cap). O3 force-flushes.
+  cadence from flush cadence (not a footprint cap). On O3 the in-RAM lead is
+  **discarded** and `o3Replay` recomputes it from the retained base WAL (1.6) -
+  not force-flushed (the original RFC plan, deferred for V1).
 - **B. SYMBOL lead:** eager interning at refresh time, keeping a single LV-table
   id space. **Realised (Step 3) with a per-tier in-memory symbol cache** (the "b1"
   in-mem option), not the on-disk `SymbolMapWriter` this decision originally chose:

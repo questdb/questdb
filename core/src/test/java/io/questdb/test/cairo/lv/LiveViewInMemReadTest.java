@@ -40,6 +40,7 @@ import io.questdb.mp.Job;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -1145,6 +1146,226 @@ public class LiveViewInMemReadTest extends AbstractCairoTest {
                             "2026-05-12T00:00:02.000000Z\tbb\t2\n" +
                             "2026-05-12T00:00:03.000000Z\taa\t3\n" +
                             "2026-05-12T00:00:04.000000Z\tcc\t4\n");
+        });
+    }
+
+    @Test
+    public void testLeadO3HeadHitReplaysAboveHead() throws Exception {
+        // O3 detected with a non-empty un-flushed lead, routed to the head-hit
+        // branch. A first flush writes a head .cp at maxTs=03; a lead (ts 10,11)
+        // is then refreshed above it without flushing, so headMaxTs stays at 03
+        // while the lead leads disk in RAM. A back-dated row at ts=05 sits
+        // strictly above headMaxTs (03) and below latestSeenTs (11): it is O3 and
+        // head-hit eligible. finishLeadRefresh discards the RAM lead and o3Replay
+        // recomputes the tail from base (the lead's base rows are retained, since
+        // lvConsumedSeqTxn == applied), so the formerly-RAM-only lead rows land on
+        // disk via REPLACE_RANGE and the rebuilt tier regains Mode A.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Cycle 1: flush three in-order rows. The first flush always writes
+                // a head .cp; its maxTs is the batch maximum (03).
+                execute("INSERT INTO base (ts, x) VALUES " +
+                        "('2026-05-12T00:00:01.000000Z', 1), " +
+                        "('2026-05-12T00:00:02.000000Z', 2), " +
+                        "('2026-05-12T00:00:03.000000Z', 3)");
+                drainWalQueue();
+                drainJob(job); // clock 0: refresh + first flush -> disk holds 3 rows, head .cp maxTs=03
+                drainWalQueue();
+                Assert.assertNotEquals("first flush must write a head .cp",
+                        Numbers.LONG_NULL, instance.getHeadCheckpointLvSeqTxn());
+                Assert.assertEquals("head .cp sits at the flushed batch max",
+                        MicrosFormatUtils.parseUTCTimestamp("2026-05-12T00:00:03.000000Z"),
+                        instance.getHeadCheckpointMaxTs());
+
+                // Cycle 2: refresh a lead (ts 10,11) above the head without flushing.
+                execute("INSERT INTO base (ts, x) VALUES " +
+                        "('2026-05-12T00:00:10.000000Z', 10), " +
+                        "('2026-05-12T00:00:11.000000Z', 11)");
+                drainWalQueue();
+                drainJob(job); // clock still 0: within FLUSH EVERY 1s -> refresh only, lead in RAM
+
+                // Precondition: the lead is resident (2 rows) and the head .cp
+                // still sits at 03, so the next O3 row at 05 routes head-hit.
+                InnerRead beforeO3 = readInner("SELECT * FROM lv");
+                Assert.assertEquals("two un-flushed lead rows before O3", 2, beforeO3.leadRowsServed);
+                Assert.assertEquals("head still at the flushed batch max",
+                        MicrosFormatUtils.parseUTCTimestamp("2026-05-12T00:00:03.000000Z"),
+                        instance.getHeadCheckpointMaxTs());
+
+                // Cycle 3: a back-dated row at ts=05 (03 < 05 < 11) is O3 and
+                // head-hit eligible. The lead is discarded and recomputed from base.
+                execute("INSERT INTO base (ts, x) VALUES ('2026-05-12T00:00:05.000000Z', 5)");
+                drainWalQueue();
+                drainJob(job); // clock still 0: O3 in the lead drain -> o3Replay head-hit
+                drainWalQueue();
+            }
+
+            // Post-O3: the lead was absorbed into disk, the tier rebuilt from disk,
+            // and a fresh cursor regains Mode A serving the whole window from RAM.
+            InnerRead afterO3 = readInner("SELECT * FROM lv");
+            Assert.assertTrue("post-O3 cursor must regain Mode A", afterO3.routingEligible);
+            Assert.assertEquals("rebuilt tier serves the whole window", 6, afterO3.inMemRowsServed);
+            Assert.assertEquals("no un-flushed lead after the O3 recompute", 0, afterO3.leadRowsServed);
+
+            assertModeBMatchesDiskOnly("SELECT * FROM lv");
+            assertLvMatchesOracle("SELECT * FROM lv",
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tx\trn\n" +
+                            "2026-05-12T00:00:01.000000Z\t1\t1\n" +
+                            "2026-05-12T00:00:02.000000Z\t2\t2\n" +
+                            "2026-05-12T00:00:03.000000Z\t3\t3\n" +
+                            "2026-05-12T00:00:05.000000Z\t5\t4\n" +
+                            "2026-05-12T00:00:10.000000Z\t10\t5\n" +
+                            "2026-05-12T00:00:11.000000Z\t11\t6\n");
+        });
+    }
+
+    @Test
+    public void testLeadO3HeadMissRecomputesFromBase() throws Exception {
+        // O3 detected with a non-empty un-flushed lead, routed to the head-miss
+        // branch. The back-dated row sits at/below the head's maxTs, so head-hit
+        // is not eligible and the replay recomputes the whole view from the lower
+        // bound. The RAM-only lead is discarded and recomputed from base (retained
+        // because lvConsumedSeqTxn == applied); the rebuilt tier regains Mode A.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base (ts, x) VALUES " +
+                        "('2026-05-12T00:00:01.000000Z', 1), " +
+                        "('2026-05-12T00:00:02.000000Z', 2), " +
+                        "('2026-05-12T00:00:03.000000Z', 3)");
+                drainWalQueue();
+                drainJob(job); // cycle 1: refresh + first flush -> disk holds 3 rows
+                drainWalQueue();
+
+                execute("INSERT INTO base (ts, x) VALUES " +
+                        "('2026-05-12T00:00:10.000000Z', 10), " +
+                        "('2026-05-12T00:00:11.000000Z', 11)");
+                drainWalQueue();
+                drainJob(job); // cycle 2: refresh the lead, no flush
+
+                InnerRead beforeO3 = readInner("SELECT * FROM lv");
+                Assert.assertEquals("two un-flushed lead rows before O3", 2, beforeO3.leadRowsServed);
+
+                // Cycle 3: a row back-dated to ts=00 sits below headMaxTs=03, so
+                // the replay is head-miss (full recompute from the lower bound).
+                execute("INSERT INTO base (ts, x) VALUES ('2026-05-12T00:00:00.000000Z', 99)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            InnerRead afterO3 = readInner("SELECT * FROM lv");
+            Assert.assertTrue("post-O3 cursor must regain Mode A", afterO3.routingEligible);
+            Assert.assertEquals("rebuilt tier serves the whole window", 6, afterO3.inMemRowsServed);
+            Assert.assertEquals("no un-flushed lead after the O3 recompute", 0, afterO3.leadRowsServed);
+
+            assertModeBMatchesDiskOnly("SELECT * FROM lv");
+            assertLvMatchesOracle("SELECT * FROM lv",
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tx\trn\n" +
+                            "2026-05-12T00:00:00.000000Z\t99\t1\n" +
+                            "2026-05-12T00:00:01.000000Z\t1\t2\n" +
+                            "2026-05-12T00:00:02.000000Z\t2\t3\n" +
+                            "2026-05-12T00:00:03.000000Z\t3\t4\n" +
+                            "2026-05-12T00:00:10.000000Z\t10\t5\n" +
+                            "2026-05-12T00:00:11.000000Z\t11\t6\n");
+        });
+    }
+
+    @Test
+    public void testLeadO3OracleSurvivesRestart() throws Exception {
+        // O3 with a non-empty lead, then a simulated restart. The O3 replay folded
+        // the RAM-only lead onto disk (REPLACE_RANGE) and wrote a fresh post-O3
+        // head .cp, so after a restart that drops the in-memory tier the on-disk
+        // LV table still holds every row and the re-read matches a from-scratch
+        // recompute across the restart boundary.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base (ts, x) VALUES " +
+                        "('2026-05-12T00:00:01.000000Z', 1), " +
+                        "('2026-05-12T00:00:02.000000Z', 2), " +
+                        "('2026-05-12T00:00:03.000000Z', 3)");
+                drainWalQueue();
+                drainJob(job); // cycle 1: refresh + first flush
+                drainWalQueue();
+
+                execute("INSERT INTO base (ts, x) VALUES " +
+                        "('2026-05-12T00:00:10.000000Z', 10), " +
+                        "('2026-05-12T00:00:11.000000Z', 11)");
+                drainWalQueue();
+                drainJob(job); // cycle 2: refresh the lead, no flush
+
+                LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                Assert.assertEquals("lead is non-empty before O3", 2, instance.getLeadRowCount());
+
+                // Cycle 3: O3 head-miss folds the lead onto disk.
+                execute("INSERT INTO base (ts, x) VALUES ('2026-05-12T00:00:00.000000Z', 99)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            assertModeBMatchesDiskOnly("SELECT * FROM lv");
+
+            // Simulated restart: drop the in-memory registry (and its tier) and
+            // rebuild from on-disk state.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Settle the restored view (rehydrate from the post-O3 head .cp),
+                // then ingest one in-order row so the fresh tier repopulates
+                // through the normal publish path post-restart.
+                drainJob(job);
+                drainWalQueue();
+                LiveViewInstance restored = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(restored);
+                restored.setLastFlushTimeUs(Numbers.LONG_NULL);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-05-12T00:00:12.000000Z', 12)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            // Post-restart reads agree with disk-only across the restart boundary,
+            // and the LV's content reflects the O3 re-sequencing plus the new row.
+            assertModeBMatchesDiskOnly("SELECT * FROM lv");
+            assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tx\trn\n" +
+                            "2026-05-12T00:00:00.000000Z\t99\t1\n" +
+                            "2026-05-12T00:00:01.000000Z\t1\t2\n" +
+                            "2026-05-12T00:00:02.000000Z\t2\t3\n" +
+                            "2026-05-12T00:00:03.000000Z\t3\t4\n" +
+                            "2026-05-12T00:00:10.000000Z\t10\t5\n" +
+                            "2026-05-12T00:00:11.000000Z\t11\t6\n" +
+                            "2026-05-12T00:00:12.000000Z\t12\t7\n");
         });
     }
 
