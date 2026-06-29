@@ -66,12 +66,14 @@ import io.questdb.std.Misc;
 public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursorFactory base;
     private final CairoEngine engine;
-    // Static, query-shape eligibility for seam routing, surfaced as the
+    // Static, query-shape eligibility for lead routing, surfaced as the
     // EXPLAIN "inMemory" attribute. True when the read's shape permits the
-    // in-mem tier to serve the recent band (see isInMemRoutable). The runtime
-    // seqTxn fence, the tier's population state, and a timestamp-interval filter
-    // (not visible to a static plan) still make the final per-cursor call, so
-    // this is a capability indicator, not a guarantee. See LiveViewRecordCursor.
+    // in-mem tier to lead disk - serving the recent overlap band plus the
+    // un-flushed lead (rows not yet on the LV's on-disk tier) from RAM (see
+    // isInMemRoutable). The runtime seqTxn fence, the tier's population state,
+    // and a timestamp-interval filter (not visible to a static plan) still make
+    // the final per-cursor call, so this is a capability indicator, not a
+    // guarantee. See LiveViewRecordCursor.
     private final boolean inMemRoutable;
     private final TableToken liveViewToken;
     private final int timestampColumnIndex;
@@ -143,9 +145,10 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
     public void toPlan(PlanSink sink) {
         sink.type("LiveView");
         sink.optAttr("view", liveViewToken.getTableName());
-        // Surface whether the read's shape permits seam routing through
-        // the in-mem tier. A capability flag, not a guarantee - see the field
-        // doc and isInMemRoutable.
+        // Surface whether the read's shape permits lead routing through the
+        // in-mem tier - serving the un-flushed lead (and the overlap) from RAM.
+        // A capability flag, not a guarantee - see the field doc and
+        // isInMemRoutable.
         sink.attr("inMemory").val(inMemRoutable);
         sink.child(base);
     }
@@ -161,9 +164,10 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     /**
-     * Static, refresh-timing-independent eligibility for seam routing -
-     * the read-shape preconditions {@link LiveViewRecordCursor} checks before the
-     * runtime seqTxn fence. True only when:
+     * Static, refresh-timing-independent eligibility for lead routing - the
+     * read-shape preconditions {@link LiveViewRecordCursor} checks before the
+     * runtime seqTxn fence lets the in-mem tier lead disk (serve the un-flushed
+     * lead, plus the overlap, from RAM). True only when:
      * <ul>
      *   <li>the base scan is forward (ascending timestamp) - the seam split
      *   assumes ascending disk rows, so a backward / index scan routes

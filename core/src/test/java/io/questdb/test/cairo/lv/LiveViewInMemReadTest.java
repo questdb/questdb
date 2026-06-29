@@ -761,19 +761,134 @@ public class LiveViewInMemReadTest extends AbstractCairoTest {
     @Test
     public void testLeadSizeAndLimitPushdown() throws Exception {
         assertMemoryLeak(() -> {
-            buildFlushedPlusLead();
+            buildFlushedPlusLead(); // disk (applied): ts 01..03; lead (RAM): ts 04,05
 
             // Full scan: size() = disk.size() + leadRowCount = 5; the read serves
             // all five rows, matching the recompute.
             assertLvMatchesOracle("SELECT * FROM lv",
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            // A head LIMIT inside the overlap never reaches the lead.
+            assertLvMatchesOracle("SELECT * FROM lv LIMIT 2",
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base LIMIT 2");
+            // A head LIMIT exactly at the overlap/lead boundary.
+            assertLvMatchesOracle("SELECT * FROM lv LIMIT 3",
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base LIMIT 3");
+            // A head LIMIT crosses the overlap/lead boundary cleanly.
+            assertLvMatchesOracle("SELECT * FROM lv LIMIT 4",
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base LIMIT 4");
+            // A head LIMIT past size() returns every row, no over-read.
+            assertLvMatchesOracle("SELECT * FROM lv LIMIT 10",
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base LIMIT 10");
             // A tail LIMIT uses size() to find the offset, so it lands on the
             // un-flushed lead rows.
             assertLvMatchesOracle("SELECT * FROM lv LIMIT -2",
                     "SELECT ts, x, row_number() OVER () AS rn FROM base LIMIT -2");
-            // A head LIMIT crosses the overlap/lead boundary cleanly.
-            assertLvMatchesOracle("SELECT * FROM lv LIMIT 4",
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base LIMIT 4");
+            // A tail LIMIT that crosses the lead/overlap boundary back into disk.
+            assertLvMatchesOracle("SELECT * FROM lv LIMIT -4",
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base LIMIT -4");
+            // A bounded range LIMIT straddling the overlap/lead boundary.
+            assertLvMatchesOracle("SELECT * FROM lv LIMIT 2,5",
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base LIMIT 2,5");
+        });
+    }
+
+    @Test
+    public void testLeadSizeReportsDiskPlusLead() throws Exception {
+        // size() must fold the un-flushed lead on top of the disk (applied) row
+        // count so a LIMIT pushdown sees every served row. Asserts the raw value
+        // in both modes, the disk-only fallback (fence forced off) reporting only
+        // the applied prefix.
+        assertMemoryLeak(() -> {
+            buildFlushedPlusLead(); // disk (applied): 3 rows; lead (RAM): +2 rows
+
+            // Routing-eligible: size() = disk.size() (3) + leadRowCount (2) = 5.
+            try (
+                    RecordCursorFactory factory = select("SELECT * FROM lv");
+                    LiveViewRecordCursor cursor = openLvCursor(factory)
+            ) {
+                Assert.assertTrue("lead read must be routing-eligible", cursor.isRoutingEligible());
+                Assert.assertEquals("size() = applied rows on disk + un-flushed lead", 5, cursor.size());
+            }
+
+            // Disk-only (both slot stamps mismatched): size() reports only the
+            // applied prefix on disk - the lead is invisible.
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            LiveViewInMemoryTier tier = instance.getInMemoryTier();
+            Assert.assertNotNull(tier);
+            long s0 = tier.getSlot(0).lvSeqTxn();
+            long s1 = tier.getSlot(1).lvSeqTxn();
+            tier.getSlot(0).setLvSeqTxn(mismatch(s0));
+            tier.getSlot(1).setLvSeqTxn(mismatch(s1));
+            try (
+                    RecordCursorFactory factory = select("SELECT * FROM lv");
+                    LiveViewRecordCursor cursor = openLvCursor(factory)
+            ) {
+                Assert.assertFalse("stamp mismatch must fence disk-only", cursor.isRoutingEligible());
+                Assert.assertEquals("disk-only size() = applied prefix only", 3, cursor.size());
+            } finally {
+                tier.getSlot(0).setLvSeqTxn(s0);
+                tier.getSlot(1).setLvSeqTxn(s1);
+            }
+        });
+    }
+
+    @Test
+    public void testAsOfJoinRhsSeesAppliedPrefixNotLead() throws Exception {
+        // ASOF JOIN with the LV on the RHS consumes the LV's time-frame cursor,
+        // which is disk-only in V1 (handoff 1.7): it serves the applied prefix and
+        // trails the un-flushed lead by at most one flush cycle. A documented
+        // freshness limitation, not a correctness issue - a flush lands the lead
+        // on disk and the join catches up. Pin the disk-only ASOF path so it stays
+        // explicit (the record-cursor read at the same instant DOES serve the
+        // lead, proving the join deliberately ignores the live lead).
+        assertMemoryLeak(() -> {
+            buildFlushedPlusLead(); // disk (applied): ts 01..03 x=1..3; lead (RAM): ts 04,05 x=4,5
+
+            // The lead is live in the tier: a record-cursor read serves it from RAM.
+            InnerRead direct = readInner("SELECT * FROM lv");
+            Assert.assertEquals("two un-flushed lead rows live in the tier", 2, direct.leadRowsServed);
+
+            // Probe rows land at and after the lead's timestamps.
+            execute("CREATE TABLE probe (ts TIMESTAMP, id INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO probe (ts, id) VALUES " +
+                    "('2026-05-12T00:00:04.500000Z', 1), " +
+                    "('2026-05-12T00:00:06.000000Z', 2)");
+            drainWalQueue();
+
+            final String asofSql = "SELECT p.ts, p.id, lv.x FROM probe p ASOF JOIN lv";
+
+            // The plan confirms the disk-only fast (time-frame) ASOF path over the
+            // LV - never the record-cursor light path that would see the lead.
+            assertQuery(asofSql).noLeakCheck().assertsPlanContaining("AsOf Join Fast", "LiveView");
+
+            // Even though the lead (ts 04,05 / x=4,5) is live in RAM, the join
+            // matches each probe row to the last *applied* lv row (ts 03, x=3).
+            // printSql keeps the tier alive, so this proves the join ignores the
+            // live lead, not that the tier happened to be empty.
+            StringSink trailing = new StringSink();
+            printSql(asofSql, trailing);
+            Assert.assertEquals(
+                    "ts\tid\tx\n" +
+                            "2026-05-12T00:00:04.500000Z\t1\t3\n" +
+                            "2026-05-12T00:00:06.000000Z\t2\t3\n",
+                    trailing.toString());
+
+            // A flush lands the lead on disk; the disk-only ASOF then catches up -
+            // the freshness gap is bounded by one flush cycle, not a lost match.
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(1_000_000L);
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            StringSink caughtUp = new StringSink();
+            printSql(asofSql, caughtUp);
+            Assert.assertEquals(
+                    "ts\tid\tx\n" +
+                            "2026-05-12T00:00:04.500000Z\t1\t4\n" +
+                            "2026-05-12T00:00:06.000000Z\t2\t5\n",
+                    caughtUp.toString());
         });
     }
 

@@ -392,9 +392,10 @@ public class LiveViewRecordCursor implements RecordCursor {
      * column, and a read that prunes the timestamp leaves
      * {@code timestampColumnIndex < 0}, which would address the buffer and the
      * disk record out of bounds. Such reads serve from disk only, which is
-     * correct because the in-mem tier is a subset of disk in steady state. Only
-     * an identity projection (every output column, in declared order) may route
-     * through the tier; the type-by-type match below establishes that.
+     * correct because disk holds every applied row - they simply do not see the
+     * un-flushed lead, trailing it by at most one flush cycle. Only an identity
+     * projection (every output column, in declared order) may route through the
+     * tier; the type-by-type match below establishes that.
      * <p>
      * SYMBOL columns are routable: the tier stores LV-table-consistent symbol ids
      * (eager-interned by the refresh worker, see

@@ -17,7 +17,7 @@ worker) is **out of scope**: the refresh worker keeps reading base rows via the
 disk path (`WalSegmentPageFrameCursor`), exactly as today. **Everything else from
 the RFC's tiered-storage / flush / recovery design is in scope.**
 
-**STATUS: Steps 1-4 DONE (2026-06-29); Steps 5-6 not started.** Decision recorded
+**STATUS: Steps 1-5 DONE (2026-06-29); Step 6 not started.** Decision recorded
 2026-06-29: adopt the RFC's in-RAM-lead model (defer the whole flush; lead lives
 in RAM; recover from the retained base WAL); no hand-off ring. This rewrite
 supersedes the earlier "Mode A via deferred apply" draft, which had diverged from
@@ -564,15 +564,55 @@ replay writes the lead's rows to disk before the rebuild reads them). Full LV
 suite green (`InMemRead` 31, plus `Smoke`, `Test`, `Fuzz`, `Concurrency`,
 `Checkpoint`, `InMemoryTier`).
 
-### Step 5 - size()/LIMIT, time-frame/ASOF, EXPLAIN
+### Step 5 - size()/LIMIT, time-frame/ASOF, EXPLAIN - DONE (2026-06-29)
 
-- Lock down `size()` / LIMIT pushdown with dedicated tests.
-- Time-frame / ASOF-RHS disk-only (1.7); document and pin with a test
-  (ASOF-RHS over an LV with a non-empty lead sees the applied prefix).
-- EXPLAIN: keep the `inMemory` capability attribute; update its meaning to
-  "eligible for Mode A lead routing"; de-stale Mode-B-specific javadocs.
+Tests-and-docs only; no production logic moved (the write/read mechanics were all
+in place by Step 4). The read path's `size() = disk.size() + (rowCount - leadStart)`,
+the disk-only time-frame cursor, and the `inMemory` EXPLAIN attribute already
+shipped in Steps 1/0; Step 5 locks them down and de-stales the Mode-B wording.
 
-Exit: read-path observability and ASOF behavior are explicit and tested.
+- DONE. **`size()` / LIMIT pushdown locked down.** New
+  `testLeadSizeReportsDiskPlusLead` asserts the raw value directly: routing-eligible
+  -> `size() == disk.size() (3) + leadRowCount (2) == 5`; fence forced off (both
+  slot stamps mismatched) -> `size() == 3` (applied prefix only). Extended
+  `testLeadSizeAndLimitPushdown` with boundary LIMITs against the recompute oracle:
+  head `LIMIT 2` (inside overlap), `LIMIT 3` (at the overlap/lead boundary),
+  `LIMIT 4` (crossing it), `LIMIT 10` (past size, no over-read); tail `LIMIT -2`
+  (inside the lead), `LIMIT -4` (crossing back into the overlap); bounded range
+  `LIMIT 2,5` (straddling the boundary).
+- DONE. **Time-frame / ASOF-RHS disk-only pinned** (1.7). New
+  `testAsOfJoinRhsSeesAppliedPrefixNotLead`: an LV with a non-empty lead (disk
+  ts 01..03 x=1..3; RAM lead ts 04,05 x=4,5) on the RHS of a no-key ASOF JOIN.
+  The plan asserts the disk-only fast (time-frame) path is chosen
+  (`assertsPlanContaining("AsOf Join Fast", "LiveView")` - never the record-cursor
+  light path that would serve the lead). With the lead **live in the tier** (a
+  record-cursor read serves 2 lead rows from RAM at the same instant, asserted via
+  `readInner`), the join matches both probe rows (ts 04.5, 06) to the last *applied*
+  lv row (x=3) - proving it ignores the live lead, not that the tier was empty
+  (printSql keeps the tier alive; `assertsPlanContaining` with `.noLeakCheck()`
+  skips the `engine.clear()` that would wipe the lead). After a forced flush the
+  same join catches up (x=4,5), showing the gap is bounded by one FLUSH EVERY
+  cycle, not a lost match.
+- DONE. **EXPLAIN `inMemory` attribute kept; meaning updated** to lead routing
+  (the in-mem tier may *lead* disk, serving the un-flushed lead plus the overlap
+  from RAM), not just "serve the recent band". The attribute's static value
+  (forward + ts-bearing + all fixed-width-or-SYMBOL columns) is unchanged, so the
+  existing assertions in `LiveViewTest.testExplainLiveViewQueryShowsLiveViewPlan`
+  / `testOrderByTsDescElidesRedundantSort` still hold; only the surrounding doc /
+  comment wording moved off "Mode B".
+- DONE. **De-staled the Mode-B-specific read-path javadocs.**
+  `LiveViewRecordCursorFactory`: the `inMemRoutable` field doc, the `toPlan`
+  comment, and the `isInMemRoutable` javadoc now describe lead routing.
+  `LiveViewRecordCursor.isFullSchemaProjection`: dropped "the in-mem tier is a
+  subset of disk in steady state" (false under Mode A) for "disk holds every
+  applied row - pruned/reordered reads simply do not see the un-flushed lead".
+  The two EXPLAIN test comments ("permits Mode B routing", "Mode B assumes
+  ascending disk rows") were re-worded to "lead routing".
+
+Exit (met): read-path observability (`size()`/LIMIT) and ASOF-RHS behavior are
+explicit and tested; the EXPLAIN attribute's meaning is Mode-A-accurate. Full LV
+suite green (`InMemRead` 33, `Test` 30, `Smoke` 391, `Fuzz` 7, `Concurrency` 8,
+`Checkpoint` 12, `InMemoryTier` 9, `SnapshotKeyCodec` 7).
 
 ### Step 6 - fuzz, concurrency, benchmark gate
 
