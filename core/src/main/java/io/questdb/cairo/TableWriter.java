@@ -7519,12 +7519,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void linkPartitionIndexFiles(long partitionTimestamp, long partitionNameTxn, int partitionDirLen, int newPartitionDirLen) {
         try {
             final int columnCount = metadata.getColumnCount();
+            final long partitionSize = txWriter.getPartitionRowCountByTimestamp(partitionTimestamp);
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                 if (!ColumnType.isSymbol(metadata.getColumnType(columnIndex)) || !metadata.isIndexed(columnIndex)) {
                     continue;
                 }
-                // no data in partition for this column
-                if (columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex) == -1) {
+                // Absent (columnTop == -1) or row-less (columnTop >= partition size) columns
+                // have no index files in this partition. Same guard as copyOrRebuildColumnIndexes.
+                final long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
+                if (columnTop == -1 || columnTop >= partitionSize) {
                     continue;
                 }
                 linkColumnIndexFiles(
@@ -12371,6 +12374,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         path.trimTo(pathSize);
         setPathForNativePartition(path, timestampType, partitionBy, lastOpenPartitionTs, currentNameTxn);
         int plen = path.size();
+        long partitionSize = txWriter.getPartitionRowCountByTimestamp(lastOpenPartitionTs);
         try {
             for (int colIdx = 0; colIdx < columnCount; colIdx++) {
                 if (metadata.getColumnType(colIdx) <= 0 || !metadata.isColumnIndexed(colIdx)
@@ -12381,14 +12385,27 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (indexer == null) {
                     continue;
                 }
-                // columnTop == -1 means the column does not exist on this partition at
-                // all (no .pk file), so skip those.
-                long columnTop = columnVersionWriter.getColumnTopQuick(lastOpenPartitionTs, colIdx);
-                if (columnTop < 0) {
+                // Defensive: columnTop == -1 means the column is absent on this partition
+                // (no .pk). Normally unreachable on the last partition; kept as a guard.
+                long columnTop = columnVersionWriter.getColumnTop(lastOpenPartitionTs, colIdx);
+                if (columnTop == -1) {
                     continue;
                 }
                 CharSequence colName = metadata.getColumnName(colIdx);
                 long colNameTxn = columnVersionWriter.getColumnNameTxn(lastOpenPartitionTs, colIdx);
+                // A row-less column (columnTop >= partition size) has a .pk only if ADD COLUMN
+                // INDEX TYPE POSTING built one here on the active partition; a split tail whose
+                // seal never built one has none. Discriminate on the .pk's presence: skipping a
+                // present .pk strands the indexer on an older partition (silent index loss),
+                // while opening an absent one throws "index does not exist".
+                if (columnTop >= partitionSize) {
+                    boolean keyFileExists = ff.exists(
+                            keyFileName(metadata.getColumnIndexType(colIdx), path.trimTo(plen), colName, colNameTxn));
+                    path.trimTo(plen);
+                    if (!keyFileExists) {
+                        continue;
+                    }
+                }
                 indexer.configureFollowerAndWriter(
                         path.trimTo(plen), colName, colNameTxn,
                         getPrimaryColumn(colIdx), columnTop,

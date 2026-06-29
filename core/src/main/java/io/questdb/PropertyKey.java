@@ -217,6 +217,12 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_ROW_EXPIRY_ENABLED("cairo.row.expiry.enabled"),
     CAIRO_MAT_VIEW_MIN_REFRESH_INTERVAL("cairo.mat.view.min.refresh.interval"),
     CAIRO_MAT_VIEW_MAX_REFRESH_RETRIES("cairo.mat.view.max.refresh.retries"),
+    CAIRO_MAT_VIEW_REFRESH_BUSY_RETRY_TIMEOUT("cairo.mat.view.refresh.busy.retry.timeout"),
+    CAIRO_MAT_VIEW_REFRESH_BUSY_RETRY_LIMIT("cairo.mat.view.refresh.busy.retry.limit"),
+    CAIRO_MAT_VIEW_REFRESH_BLOCK_LIST("cairo.mat.view.refresh.block.list"),
+    // Deprecated no-op: superseded by cairo.mat.view.refresh.busy.retry.timeout. Retained so that an
+    // existing server.conf carrying this key still validates and starts, including under strict
+    // validation. See PropServerConfiguration.PropertyValidator.
     CAIRO_MAT_VIEW_REFRESH_OOM_RETRY_TIMEOUT("cairo.mat.view.refresh.oom.retry.timeout"),
     CAIRO_MAT_VIEW_INSERT_AS_SELECT_BATCH_SIZE("cairo.mat.view.insert.as.select.batch.size"),
     CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE("cairo.mat.view.rows.per.query.estimate"),
