@@ -429,6 +429,22 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         }
     }
 
+    public void setPartitionHasDelta(int partitionIndex, boolean hasDelta) {
+        setPartitionHasDeltaByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, hasDelta);
+    }
+
+    public void setPartitionHasDeltaByRawIndex(int indexRaw, boolean hasDelta) {
+        if (indexRaw < 0) {
+            throw CairoException.nonCritical().put("bad partition index -1");
+        }
+        final int offset = indexRaw + PARTITION_VERSION_OFFSET;
+        final long raw = attachedPartitions.getQuick(offset);
+        if (raw == -1L) {
+            throw CairoException.nonCritical().put("cannot set HAS_DELTA on partition without parquet");
+        }
+        attachedPartitions.setQuick(offset, hasDelta ? raw | PARTITION_HAS_DELTA_BIT : raw & ~PARTITION_HAS_DELTA_BIT);
+    }
+
     public void setPartitionNative(long timestamp, long seqTxn) {
         setPartitionFormat(timestamp, false, seqTxn);
     }
