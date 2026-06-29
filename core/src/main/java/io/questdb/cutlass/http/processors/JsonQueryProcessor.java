@@ -133,6 +133,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             this.queryExecutors.extendAndSet(CompiledQuery.TABLE_RESUME, sendConfirmation);
             this.queryExecutors.extendAndSet(CompiledQuery.TABLE_SUSPEND, sendConfirmation);
             this.queryExecutors.extendAndSet(CompiledQuery.TABLE_SET_TYPE, sendConfirmation);
+            this.queryExecutors.extendAndSet(CompiledQuery.TABLE_REBASE, sendConfirmation);
             this.queryExecutors.extendAndSet(CompiledQuery.CREATE_USER, sendConfirmation);
             this.queryExecutors.extendAndSet(CompiledQuery.ALTER_USER, sendConfirmation);
             this.queryExecutors.extendAndSet(CompiledQuery.CANCEL_QUERY, sendConfirmation);

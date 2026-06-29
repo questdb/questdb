@@ -371,6 +371,11 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         this.isExecutedAtParseTime = true;
     }
 
+    public void ofRebaseWal() {
+        type = TABLE_REBASE;
+        this.isExecutedAtParseTime = true;
+    }
+
     public void ofTableResume() {
         type = TABLE_RESUME;
         this.isExecutedAtParseTime = true;

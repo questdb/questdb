@@ -83,8 +83,7 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         if (cYY < 0) {
             cYY = 0;
         }
-        double denom = Math.sqrt(cXX * cYY);
-        return denom == 0.0 ? Double.NaN : cXY / denom;
+        return Numbers.corrFromSums(cXY, cXX, cYY);
     }
 
     // Welford's online algorithm result for correlation.
@@ -98,8 +97,7 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         if (sumYY < 0) {
             sumYY = 0;
         }
-        double denom = Math.sqrt(sumXX * sumYY);
-        return denom == 0.0 ? Double.NaN : sumXY / denom;
+        return Numbers.corrFromSums(sumXY, sumXX, sumYY);
     }
 
     // Naive sum-of-products formula for covariance, used by sliding-window (removable) frames.

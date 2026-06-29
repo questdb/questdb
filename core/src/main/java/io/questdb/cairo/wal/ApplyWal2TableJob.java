@@ -1159,6 +1159,11 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             return true;
         }
 
+        // Hard-suspended tables (config list or ALTER TABLE ... SUSPEND WAL) are excluded from apply.
+        if (engine.isWalApplySuspended(tableToken)) {
+            return true;
+        }
+
         applyWal(tableToken, engine, operationExecutor, workerContext);
         return true;
     }

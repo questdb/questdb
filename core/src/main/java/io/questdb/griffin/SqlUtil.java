@@ -1516,6 +1516,13 @@ public class SqlUtil {
             @NotNull IQueryModel model,
             @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> depMap
     ) {
+        // A sub-query embedded in an expression (e.g. WHERE col IN (SELECT ... FROM t),
+        // EXISTS (SELECT ... FROM t), or a scalar sub-select) carries its own table and
+        // column references, so descend into them here.
+        if (expr.queryModel != null) {
+            collectTableAndColumnReferences(engine, expr.queryModel, depMap);
+        }
+
         // Handle column literals (e.g., table.column or column)
         if (expr.type == ExpressionNode.LITERAL) {
             CharSequence token = expr.token;

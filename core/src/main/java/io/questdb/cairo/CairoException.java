@@ -74,6 +74,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     // version_unsupported rather than hiding it; distinct from structural
     // corruption so the two map to different operator-visible outcomes.
     public static final int LV_FILE_VERSION_UNSUPPORTED = LV_CHECKPOINT_FILE_VERSION_MISMATCH - 1;
+    private static final int TABLE_SUSPENDED = LV_FILE_VERSION_UNSUPPORTED - 1;
     public static final int NON_CRITICAL = -1;
     // Single source of truth for the write-refusal message a read-only node emits. Both a static
     // read-only OSS instance and an enterprise node acting as a read-only replica reach this
@@ -226,6 +227,13 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
                 .put(']');
     }
 
+    public static CairoException tableSuspended(TableToken tableToken) {
+        return critical(TABLE_SUSPENDED)
+                .put("table is suspended [dirName=").put(tableToken.getDirName())
+                .put(", tableName=").put(tableToken.getTableName())
+                .put(']');
+    }
+
     public static CairoException txnApplyBlockError(TableToken tableToken) {
         return critical(TXN_BLOCK_APPLY_FAILED)
                 .put("sorting transaction block failed, need to be re-run in 1 by 1 apply mode [dirName=").put(tableToken.getDirName())
@@ -294,6 +302,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
                 && errno != PARTITION_MANIPULATION_RECOVERABLE
                 && errno != METADATA_VALIDATION_RECOVERABLE
                 && errno != TABLE_DROPPED
+                && errno != TABLE_SUSPENDED
                 && errno != MAT_VIEW_DOES_NOT_EXIST
                 && errno != VIEW_DOES_NOT_EXIST
                 && errno != TABLE_DOES_NOT_EXIST;
@@ -343,6 +352,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
 
     public boolean isTableDropped() {
         return errno == TABLE_DROPPED;
+    }
+
+    public boolean isTableSuspended() {
+        return errno == TABLE_SUSPENDED;
     }
 
     // logged and skipped by WAL applying code

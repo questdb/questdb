@@ -63,13 +63,13 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
             } else {
                 dirNameToTableTokenMap.remove(token.getDirName(), reverseMapItem);
             }
-            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-                metadataRW.dropTable(token);
-            }
-
             // remove the token from the map and release the name.
             boolean removed = tableNameToTableTokenMap.remove(token.getTableName(), LOCKED_DROP_TOKEN);
             assert removed;
+
+            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                metadataRW.dropTable(token);
+            }
 
             return true;
         }
@@ -179,17 +179,17 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
             nameStore.logDropTable(oldToken);
             nameStore.logAddTable(newToken);
 
-            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-                // Save the new name in the table dir.
-                metadataRW.renameTable(oldToken, newToken);
-            }
-
             // Update the reverse map.
             dirNameToTableTokenMap.put(newToken.getDirName(), ReverseTableMapItem.of(newToken));
 
             // Release the new name in the map.
             boolean removed = tableNameToTableTokenMap.remove(oldToken.getTableName(), LOCKED_DROP_TOKEN);
             assert removed;
+
+            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                // Save the new name in the table dir.
+                metadataRW.renameTable(oldToken, newToken);
+            }
 
             return true;
         }
