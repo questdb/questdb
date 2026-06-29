@@ -59,6 +59,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     public static final int METADATA_VERSION_MISMATCH = TXN_BLOCK_APPLY_FAILED - 1;
     public static final int FILE_TOO_SMALL = METADATA_VERSION_MISMATCH - 1;
     public static final int SEQUENCER_METADATA_OPEN_FAILED = FILE_TOO_SMALL - 1;
+    private static final int TABLE_SUSPENDED = SEQUENCER_METADATA_OPEN_FAILED - 1;
     public static final int NON_CRITICAL = -1;
     // Single source of truth for the write-refusal message a read-only node emits. Both a static
     // read-only OSS instance and an enterprise node acting as a read-only replica reach this
@@ -211,6 +212,13 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
                 .put(']');
     }
 
+    public static CairoException tableSuspended(TableToken tableToken) {
+        return critical(TABLE_SUSPENDED)
+                .put("table is suspended [dirName=").put(tableToken.getDirName())
+                .put(", tableName=").put(tableToken.getTableName())
+                .put(']');
+    }
+
     public static CairoException txnApplyBlockError(TableToken tableToken) {
         return critical(TXN_BLOCK_APPLY_FAILED)
                 .put("sorting transaction block failed, need to be re-run in 1 by 1 apply mode [dirName=").put(tableToken.getDirName())
@@ -279,6 +287,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
                 && errno != PARTITION_MANIPULATION_RECOVERABLE
                 && errno != METADATA_VALIDATION_RECOVERABLE
                 && errno != TABLE_DROPPED
+                && errno != TABLE_SUSPENDED
                 && errno != MAT_VIEW_DOES_NOT_EXIST
                 && errno != VIEW_DOES_NOT_EXIST
                 && errno != TABLE_DOES_NOT_EXIST;
@@ -328,6 +337,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
 
     public boolean isTableDropped() {
         return errno == TABLE_DROPPED;
+    }
+
+    public boolean isTableSuspended() {
+        return errno == TABLE_SUSPENDED;
     }
 
     // logged and skipped by WAL applying code
@@ -464,6 +477,13 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         this.errno = errno;
         cacheable = false;
         interruption = false;
+        // clear() fully resets state so the instance starts from a clean slate. The base
+        // CairoException.instance() allocates a fresh object every call, so for it these flag resets
+        // are belt-and-suspenders. They are load-bearing for subclasses that still recycle a pooled
+        // flyweight through this method (e.g. LineProtocolException via ThreadLocal): without a full
+        // reset a stale flag would leak onto the next exception built on the same flyweight.
+        cancellation = false;
+        preferencesOutOfDateError = false;
         authorizationError = false;
         messagePosition = 0;
         outOfMemory = false;

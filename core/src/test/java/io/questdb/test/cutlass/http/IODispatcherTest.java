@@ -61,6 +61,8 @@ import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.HttpRequestProcessorSelector;
 import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.http.RescheduleContext;
+import io.questdb.cutlass.http.client.HttpClient;
+import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.cutlass.http.processors.JsonQueryProcessor;
 import io.questdb.cutlass.http.processors.StaticContentProcessorFactory;
 import io.questdb.cutlass.http.processors.TextImportProcessor;
@@ -122,6 +124,7 @@ import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 import io.questdb.tasks.TelemetryTask;
 import io.questdb.test.AbstractTest;
@@ -4557,6 +4560,88 @@ public class IODispatcherTest extends AbstractTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testPooledHttpContextParsesQuotedContentTypeParameter() throws Exception {
+        final String expectedResponse = """
+                HTTP/1.1 200 OK\r
+                Server: questDB/1.0\r
+                Date: Thu, 1 Jan 1970 00:00:00 GMT\r
+                Transfer-Encoding: chunked\r
+                Content-Type: text/plain\r
+                Connection: close\r
+                \r
+                0f\r
+                Status: Healthy\r
+                00\r
+                \r
+                """;
+        final String warmupRequest = """
+                GET /status HTTP/1.1\r
+                Host: localhost:9001\r
+                Connection: keep-alive\r
+                Accept: */*\r
+                \r
+                """;
+        final String quotedContentTypeRequest = """
+                GET /status HTTP/1.1\r
+                Host: localhost:9001\r
+                Connection: keep-alive\r
+                Content-Type: application/json; charset="utf-8"\r
+                Accept: */*\r
+                \r
+                """;
+
+        new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withServerKeepAlive(false))
+                .run((engine, sqlExecutionContext) -> {
+                    sendAndReceive(NetworkFacadeImpl.INSTANCE, warmupRequest, expectedResponse, 1, 0, false, true);
+                    sendAndReceive(NetworkFacadeImpl.INSTANCE, quotedContentTypeRequest, expectedResponse, 1, 0, false, true);
+                });
+    }
+
+    @Test
+    public void testResponseCompressionDoesNotLeakAcrossKeepAliveRequests() throws Exception {
+        final Utf8String contentEncodingHeader = new Utf8String("Content-Encoding");
+        final StringSink sink = new StringSink();
+
+        new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()
+                        .withAllowDeflateBeforeSend(true)
+                        .withServerKeepAlive(true)
+                )
+                .run((engine, sqlExecutionContext) -> {
+                    try (HttpClient client = HttpClientFactory.newPlainTextInstance()) {
+                        HttpClient.Request gzipRequest = client.newRequest("localhost", 9001);
+                        gzipRequest.GET()
+                                .url("/exec")
+                                .query("query", "select 1")
+                                .header("Accept-Encoding", "gzip");
+                        HttpClient.ResponseHeaders headers = gzipRequest.send();
+                        headers.await();
+                        TestUtils.assertEquals("gzip", headers.getHeader(contentEncodingHeader));
+                        headers.getResponse().discard();
+
+                        HttpClient.Request plainRequest = client.newRequest("localhost", 9001);
+                        plainRequest.GET()
+                                .url("/exec")
+                                .query("query", "select 2");
+                        headers = plainRequest.send();
+                        headers.await();
+                        Assert.assertNull(headers.getHeader(contentEncodingHeader));
+                        sink.clear();
+                        headers.getResponse().copyTextTo(sink);
+                        TestUtils.assertEquals(
+                                "{\"query\":\"select 2\",\"columns\":[{\"name\":\"2\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[2]],\"count\":1}",
+                                sink
+                        );
+                    }
+                });
     }
 
     @Test

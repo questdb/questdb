@@ -79,6 +79,17 @@ public class O3MaxLagFuzzTest extends AbstractO3Test {
         executeWithPool(0, this::testRollbackRegression2);
     }
 
+    @Test
+    public void testRollbackRegression3() throws Exception {
+        // Regression for a lag commit (ic) that spans a partition boundary recording the writer's
+        // maxTimestamp below the actual max committed timestamp on disk. A subsequent O3 commit then
+        // merged the last partition against a too-low boundary and reordered rows, leaving a single
+        // timestamp inversion in a designated-timestamp table (originally found by the randomized
+        // testRollbackFuzzParallel, CI build 243069, seeds 10956520017506302L/1781697443410L).
+        executeWithPool(2, (engine, compiler, sqlExecutionContext, timestampTypeName) ->
+                testRollbackFuzz0(engine, compiler, sqlExecutionContext, 57091, 151, 1545848L));
+    }
+
     private static void replayTransactions(Rnd rnd, CairoEngine engine, TableWriter w, ObjList<FuzzTransaction> transactions, int virtualTimestampIndex) {
         for (int i = 0, n = transactions.size(); i < n; i++) {
             FuzzTransaction tx = transactions.getQuick(i);

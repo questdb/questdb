@@ -373,6 +373,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private boolean o3FinishInFlight = false;
     private boolean o3InError = false;
     private long o3MasterRef = -1L;
+    // Max timestamp of committed data left on disk by o3MoveUncommitted() that is NOT part of the
+    // sorted O3 batch (set only when uncommitted rows span more than the active partition).
+    private long o3MoveUncommittedMaxTimestamp = Long.MIN_VALUE;
     private ObjList<MemoryCARW> o3MemColumns1;
     private ObjList<MemoryCARW> o3MemColumns2;
     private ObjList<Runnable> o3NullSetters1;
@@ -7584,6 +7587,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void linkPartitionIndexFiles(long partitionTimestamp, long partitionNameTxn, int partitionDirLen, int newPartitionDirLen) {
         try {
             final int columnCount = metadata.getColumnCount();
+            final long partitionSize = txWriter.getPartitionRowCountByTimestamp(partitionTimestamp);
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                 if (!ColumnType.isSymbol(metadata.getColumnType(columnIndex)) || !metadata.isIndexed(columnIndex)) {
                     continue;
@@ -7594,8 +7598,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (metadata.isColumnReplicaOnlyIndex(columnIndex) && configuration.skipReplicaOnlyIndexes()) {
                     continue;
                 }
-                // no data in partition for this column
-                if (columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex) == -1) {
+                // Absent (columnTop == -1) or row-less (columnTop >= partition size) columns
+                // have no index files in this partition. Same guard as copyOrRebuildColumnIndexes.
+                final long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
+                if (columnTop == -1 || columnTop >= partitionSize) {
                     continue;
                 }
                 final CharSequence columnName = metadata.getColumnName(columnIndex);
@@ -8048,7 +8054,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     o3TimestampMax,
                     true,
                     0L,
-                    TableWriterPressureControl.EMPTY
+                    TableWriterPressureControl.EMPTY,
+                    o3MoveUncommittedMaxTimestamp
             );
         } finally {
             finishO3Append(o3LagRowCount);
@@ -8666,6 +8673,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private long o3MoveUncommitted() {
+        o3MoveUncommittedMaxTimestamp = Long.MIN_VALUE;
         final long committedRowCount = txWriter.unsafeCommittedFixedRowCount() + txWriter.unsafeCommittedTransientRowCount();
         final long rowsAdded = txWriter.getRowCount() - committedRowCount;
         final long transientRowCount = txWriter.getTransientRowCount();
@@ -8676,6 +8684,30 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .$(", transientRowsAdded=").$(transientRowsAdded)
                     .I$();
             final long committedTransientRowCount = transientRowCount - transientRowsAdded;
+            // When the uncommitted rows span more than the active partition (rowsAdded > transientRowCount),
+            // o3MoveUncommitted only pulls the active partition's rows into O3 memory and empties it; the
+            // data left on disk in the previous (now last) partition stays committed but is NOT part of the
+            // sorted O3 batch. As a result o3TimestampMax (the O3 batch commit boundary) can be lower than
+            // the true max committed timestamp. Capture the previous partition's actual max timestamp so
+            // o3Commit keeps the writer's maxTimestamp correct; otherwise a later O3 commit merges the last
+            // partition against a too-low boundary and reorders rows (a single timestamp inversion).
+            if (rowsAdded > transientRowCount) {
+                final int prevIndex = txWriter.getPartitionCount() - 2;
+                if (prevIndex >= 0) {
+                    final long prevSize = txWriter.getPartitionSize(prevIndex);
+                    if (prevSize > 0) {
+                        final long prevTimestamp = txWriter.getPartitionTimestampByIndex(prevIndex);
+                        final long parquetFileSize = txWriter.getPartitionParquetFileSize(prevIndex);
+                        try {
+                            setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, prevTimestamp, txWriter.getPartitionNameTxn(prevIndex));
+                            readPartitionMinMaxTimestamps(prevTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), parquetFileSize, prevSize);
+                            o3MoveUncommittedMaxTimestamp = attachMaxTimestamp;
+                        } finally {
+                            path.trimTo(pathSize);
+                        }
+                    }
+                }
+            }
             dispatchColumnTasks(
                     committedTransientRowCount,
                     IGNORE,
@@ -9278,7 +9310,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final long o3TimestampMax,
             boolean flattenTimestamp,
             long rowLo,
-            TableWriterPressureControl pressureControl
+            TableWriterPressureControl pressureControl,
+            // Max timestamp of already-committed data that is not part of the sorted O3 batch (see
+            // o3MoveUncommitted). Long.MIN_VALUE when there is no such data.
+            long committedDataMaxTimestamp
     ) {
         o3ErrorCount.set(0);
         o3oomObserved = false;
@@ -9653,7 +9688,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // at this point we should know the last partition row count
             if (!isCommitReplaceMode()) {
                 partitionTimestampHi = Math.max(partitionTimestampHi, txWriter.getCurrentPartitionMaxTimestamp(o3TimestampMax));
-                txWriter.updateMaxTimestamp(Math.max(txWriter.getMaxTimestamp(), o3TimestampMax));
+                long committedMaxTimestamp = Math.max(txWriter.getMaxTimestamp(), o3TimestampMax);
+                // Committed data left on disk outside the O3 batch may have a higher timestamp than the
+                // O3 batch commit boundary; keep the writer's maxTimestamp consistent with what is on disk.
+                committedMaxTimestamp = Math.max(committedMaxTimestamp, committedDataMaxTimestamp);
+                txWriter.updateMaxTimestamp(committedMaxTimestamp);
             } else if (replaceMaxTimestamp != Long.MIN_VALUE) {
                 // Derive partitionTimestampHi from the actual highest written timestamp, not
                 // o3TimestampMax (the replace-range high boundary, which is Long.MAX_VALUE - 1 for
@@ -10926,7 +10965,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     commitMaxTimestamp,
                     copiedToMemory,
                     o3Lo,
-                    pressureControl
+                    pressureControl,
+                    Long.MIN_VALUE
             );
 
             finishO3Commit(initialPartitionTimestampHi);
@@ -11555,7 +11595,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // reads from _pm metadata - does NOT mmap the parquet file
     // returns the partition size
     private long readParquetMetaMinMaxTimestamps(Path filePath, long parquetFileSize) {
-        assert parquetFileSize > 0;
+        if (parquetFileSize < 0) {
+            throw CairoException.critical(ff.errno()).put("could not access parquet data file for _pm metadata [path=").put(filePath).put(']');
+        }
         try {
             int partitionDirLen = filePath.size() - PARQUET_METADATA_FILE_NAME.length() - 1;
             openParquetMetadataOrThrow(filePath, partitionDirLen, parquetFileSize);
@@ -11603,12 +11645,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void readPartitionMinMaxTimestamps(long partitionTimestamp, Path path, CharSequence columnName, long parquetFileSize, long partitionSize) {
         int partitionLen = path.size();
         try {
-            // Parquet partition with _pm file (data.parquet might be absent)
+            // Parquet partition with a _pm file.
             LPSZ filePath = path.concat(PARQUET_METADATA_FILE_NAME).$();
             if (ff.exists(filePath)) {
-                // When parquetFileSize is -1, use Long.MAX_VALUE to select the latest footer
-                if (parquetFileSize == -1) {
-                    parquetFileSize = Long.MAX_VALUE;
+                if (parquetFileSize < 0) {
+                    // No committed size to match on (attach, or a partition-drop
+                    // boundary recompute): derive the MVCC token from the on-disk
+                    // data.parquet length so resolveFooter skips any dead tail.
+                    parquetFileSize = ff.length(path.trimTo(partitionLen).concat(PARQUET_PARTITION_NAME).$());
+                    path.trimTo(partitionLen).concat(PARQUET_METADATA_FILE_NAME).$();
                 }
                 readParquetMetaMinMaxTimestamps(path, parquetFileSize);
             } else {
@@ -11647,10 +11692,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private long readPartitionSizeMinMaxTimestamps(long partitionTimestamp, Path path, CharSequence columnName) {
         int partitionLen = path.size();
         try {
-            // Parquet partition with _pm file (data.parquet might be absent)
+            // Parquet partition with a _pm file.
             LPSZ filePath = path.concat(PARQUET_METADATA_FILE_NAME).$();
             if (ff.exists(filePath)) {
-                return readParquetMetaMinMaxTimestamps(path, Long.MAX_VALUE);
+                // The partition is not in _txn here, so derive the MVCC token from
+                // the data.parquet length: resolveFooter then skips any dead tail.
+                final long parquetFileSize = ff.length(path.trimTo(partitionLen).concat(PARQUET_PARTITION_NAME).$());
+                path.trimTo(partitionLen).concat(PARQUET_METADATA_FILE_NAME).$();
+                return readParquetMetaMinMaxTimestamps(path, parquetFileSize);
             }
 
             // Parquet partition without _pm file
@@ -12630,6 +12679,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         path.trimTo(pathSize);
         setPathForNativePartition(path, timestampType, partitionBy, lastOpenPartitionTs, currentNameTxn);
         int plen = path.size();
+        long partitionSize = txWriter.getPartitionRowCountByTimestamp(lastOpenPartitionTs);
         try {
             for (int colIdx = 0; colIdx < columnCount; colIdx++) {
                 // On a skipping primary a replica-only POSTING column has no wired indexer,
@@ -12644,14 +12694,27 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (indexer == null) {
                     continue;
                 }
-                // columnTop == -1 means the column does not exist on this partition at
-                // all (no .pk file), so skip those.
-                long columnTop = columnVersionWriter.getColumnTopQuick(lastOpenPartitionTs, colIdx);
-                if (columnTop < 0) {
+                // Defensive: columnTop == -1 means the column is absent on this partition
+                // (no .pk). Normally unreachable on the last partition; kept as a guard.
+                long columnTop = columnVersionWriter.getColumnTop(lastOpenPartitionTs, colIdx);
+                if (columnTop == -1) {
                     continue;
                 }
                 CharSequence colName = metadata.getColumnName(colIdx);
                 long colNameTxn = columnVersionWriter.getColumnNameTxn(lastOpenPartitionTs, colIdx);
+                // A row-less column (columnTop >= partition size) has a .pk only if ADD COLUMN
+                // INDEX TYPE POSTING built one here on the active partition; a split tail whose
+                // seal never built one has none. Discriminate on the .pk's presence: skipping a
+                // present .pk strands the indexer on an older partition (silent index loss),
+                // while opening an absent one throws "index does not exist".
+                if (columnTop >= partitionSize) {
+                    boolean keyFileExists = ff.exists(
+                            keyFileName(metadata.getColumnIndexType(colIdx), path.trimTo(plen), colName, colNameTxn));
+                    path.trimTo(plen);
+                    if (!keyFileExists) {
+                        continue;
+                    }
+                }
                 indexer.configureFollowerAndWriter(
                         path.trimTo(plen), colName, colNameTxn,
                         getPrimaryColumn(colIdx), columnTop,
