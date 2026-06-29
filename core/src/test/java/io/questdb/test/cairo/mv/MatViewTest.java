@@ -8159,6 +8159,54 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMatViewBackfillPeriodViewSurvivesPeriodRefresh() throws Exception {
+        // R4 check (agent F2): a period mat view's timer range-refresh skips the frozen-boundary
+        // clamp, but its lower bound is lastPeriodHi (the high-water mark of completed periods, near
+        // now), never the frozen zone -- so a frozen backfill must survive a period refresh.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "insert into base_price(sym, price, ts) values" +
+                            " ('gbpusd', 1.0, '2023-09-10T12:00')" +
+                            ",('gbpusd', 2.0, '2023-12-31T12:00')"
+            );
+            drainWalQueue();
+            execute(
+                    "create materialized view price_1h refresh period(length 24h) as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+            execute("alter materialized view price_1h set refresh limit 2 months;");
+            currentMicros = parseFloorPartialTimestamp("2024-01-01T01:01:01.000000Z");
+            drainQueues();
+
+            // Backfill a frozen-zone row (well before the ~2023-11 boundary). Accepted.
+            execute("insert into price_1h values('gbpusd', 9.0, '2023-09-15T08:00')");
+            drainQueues();
+
+            // Advance the clock so a new period completes and fire another period refresh.
+            currentMicros = parseFloorPartialTimestamp("2024-01-03T01:01:01.000000Z");
+            execute("insert into base_price values('gbpusd', 3.0, '2024-01-02T12:00')");
+            drainQueues();
+
+            // The frozen backfill survives the period range refresh.
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            gbpusd\t9.0\t2023-09-15T08:00:00.000000Z
+                            """),
+                    "price_1h where price = 9.0",
+                    "ts",
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testMatViewBackfillTimeZoneAlignedMidnightDstRefreshLimit() throws Exception {
         // R4 regression: for a super-day view aligned to a DST zone whose transition is near LOCAL
         // MIDNIGHT (the day-bucket boundary), the refresh's TimeZoneIntervalIterator collapses the
