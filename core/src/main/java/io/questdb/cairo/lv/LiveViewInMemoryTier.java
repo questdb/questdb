@@ -82,6 +82,12 @@ public class LiveViewInMemoryTier implements QuietCloseable {
     private static final long REFCOUNTS_BYTES = 2L * Long.BYTES;
     private static final long RC_WRITER_SENTINEL = -1L;
     private final LiveViewInMemoryBuffer[] slots;
+    // Eager-interning symbol cache for the un-flushed lead, shared across both
+    // slots (symbol ids live in one LV-table id space, slot-independent). Holds
+    // the id -> string mapping cursors resolve the lead from, plus the refresh
+    // worker's window intern state. Empty (no symbol columns) for a non-SYMBOL
+    // output schema. Freed with the tier's native memory on the last pin release.
+    private final LiveViewSymbolCache symbolCache;
     // High bit = close requested; low 31 bits = active read-pin count. A
     // single atomic lets acquireRead reject post-close (and bound the close-
     // race window) while still freeing native memory eagerly when no cursor
@@ -103,6 +109,7 @@ public class LiveViewInMemoryTier implements QuietCloseable {
 
     public LiveViewInMemoryTier(IntList columnTypes, int timestampColumnIndex, long pageSize) {
         this.slots = new LiveViewInMemoryBuffer[2];
+        this.symbolCache = new LiveViewSymbolCache(columnTypes);
         try {
             this.slots[0] = new LiveViewInMemoryBuffer(columnTypes, timestampColumnIndex, pageSize);
             this.slots[1] = new LiveViewInMemoryBuffer(columnTypes, timestampColumnIndex, pageSize);
@@ -212,6 +219,16 @@ public class LiveViewInMemoryTier implements QuietCloseable {
      */
     public LiveViewInMemoryBuffer getSlot(int idx) {
         return slots[idx];
+    }
+
+    /**
+     * Returns the tier's eager-interning symbol cache. Holds the lead's
+     * {@code id -> string} mapping (read by cursors) plus the refresh worker's
+     * window intern state. Never null; {@link LiveViewSymbolCache#hasSymbolColumns()}
+     * is false for a non-SYMBOL output schema.
+     */
+    public LiveViewSymbolCache getSymbolCache() {
+        return symbolCache;
     }
 
     /**
@@ -331,6 +348,10 @@ public class LiveViewInMemoryTier implements QuietCloseable {
         Misc.free(slots[1]);
         slots[0] = null;
         slots[1] = null;
+        // No native memory of its own (pure Java structures), but clear the
+        // intern maps eagerly now that the last pin is gone and no cursor can
+        // still read the lead's id -> string mapping.
+        symbolCache.close();
         if (refCountsAddr != 0) {
             refCountsAddr = Unsafe.free(refCountsAddr, REFCOUNTS_BYTES, MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
         }

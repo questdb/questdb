@@ -13738,25 +13738,27 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
         // scanForLaggingViews, the worker processes exactly three commits
         // then yields; the next FLUSH-EVERY pass drains the remainder.
         //
-        // A SYMBOL output column keeps the view on the coupled refresh+flush
-        // cycle (not the lead path), so lastProcessedSeqTxn advances per cycle
-        // and the budget-bounded backlog drain is directly observable. The turn
-        // budget itself (in drainBaseWal) is shared by both paths.
+        // A var-length (VARCHAR) output column keeps the view off the in-mem tier
+        // entirely - so it stays on the coupled refresh+flush cycle (not the lead
+        // path) and lastProcessedSeqTxn advances per cycle, making the budget-bounded
+        // backlog drain directly observable. (A SYMBOL output column is now
+        // lead-eligible via eager interning, so it would advance at flush instead.)
+        // The turn budget itself (in drainBaseWal) is shared by both paths.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_REFRESH_TURN_MAX_COMMITS, 3);
         assertMemoryLeak(() -> {
             setCurrentMicros(0L);
-            execute("CREATE TABLE base (ts TIMESTAMP, x INT, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, s VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
-                    "SELECT ts, x, g, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, s, row_number() OVER () AS rn FROM base");
 
             // Six separate base WAL commits - one INSERT per row so each
             // becomes its own sequencer txn for the refresh worker to walk.
-            execute("INSERT INTO base (ts, x, g) VALUES ('2026-04-01T00:00:01.000000Z', 1, 'a')");
-            execute("INSERT INTO base (ts, x, g) VALUES ('2026-04-01T00:00:02.000000Z', 2, 'a')");
-            execute("INSERT INTO base (ts, x, g) VALUES ('2026-04-01T00:00:03.000000Z', 3, 'a')");
-            execute("INSERT INTO base (ts, x, g) VALUES ('2026-04-01T00:00:04.000000Z', 4, 'a')");
-            execute("INSERT INTO base (ts, x, g) VALUES ('2026-04-01T00:00:05.000000Z', 5, 'a')");
-            execute("INSERT INTO base (ts, x, g) VALUES ('2026-04-01T00:00:06.000000Z', 6, 'a')");
+            execute("INSERT INTO base (ts, x, s) VALUES ('2026-04-01T00:00:01.000000Z', 1, 'a')");
+            execute("INSERT INTO base (ts, x, s) VALUES ('2026-04-01T00:00:02.000000Z', 2, 'a')");
+            execute("INSERT INTO base (ts, x, s) VALUES ('2026-04-01T00:00:03.000000Z', 3, 'a')");
+            execute("INSERT INTO base (ts, x, s) VALUES ('2026-04-01T00:00:04.000000Z', 4, 'a')");
+            execute("INSERT INTO base (ts, x, s) VALUES ('2026-04-01T00:00:05.000000Z', 5, 'a')");
+            execute("INSERT INTO base (ts, x, s) VALUES ('2026-04-01T00:00:06.000000Z', 6, 'a')");
             drainWalQueue();
 
             LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");

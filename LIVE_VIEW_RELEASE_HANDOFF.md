@@ -17,7 +17,7 @@ worker) is **out of scope**: the refresh worker keeps reading base rows via the
 disk path (`WalSegmentPageFrameCursor`), exactly as today. **Everything else from
 the RFC's tiered-storage / flush / recovery design is in scope.**
 
-**STATUS: Steps 1-2 DONE (2026-06-29); Steps 3-6 not started.** Decision recorded
+**STATUS: Steps 1-3 DONE (2026-06-29); Steps 4-6 not started.** Decision recorded
 2026-06-29: adopt the RFC's in-RAM-lead model (defer the whole flush; lead lives
 in RAM; recover from the retained base WAL); no hand-off ring. This rewrite
 supersedes the earlier "Mode A via deferred apply" draft, which had diverged from
@@ -253,6 +253,13 @@ span the IN MEMORY window.
 
 ### 1.5 Symbols: eager interning at refresh time
 
+**Realised (Step 3, 2026-06-29) with a per-tier in-memory symbol cache, not the
+on-disk `SymbolMapWriter` this section sketches** - the on-disk path made a value
+new to the un-flushed lead invisible to a query reader until flush (`_txn`-bounded
+symbol count). The realisation keeps the same id space and resolution shape but
+holds the lead's new symbols in RAM; see Step 3 above. The sketch below is the
+original (superseded) plan.
+
 Mode B interns symbols at apply, then `translateStagingSymbolsToLvSpace` reads
 LV-space ids back from disk. Under Mode A the lead has no disk to read from, so
 interning moves to **refresh time** (RFC "Symbol columns"):
@@ -433,20 +440,77 @@ disk prefix; disk-only fallback proven for the gated shapes. Full LV suite green
 Exit (met): the in-RAM lead is recoverable; restart matches recompute including the
 `.cp`-to-applied gap.
 
-### Step 3 - eager symbol interning
+### Step 3 - eager symbol interning - DONE (2026-06-29)
 
-- Move interning to refresh time (`T` + LV `SymbolMapWriter`); tier holds
-  `lv_id`s; flush WAL carries symbol deltas; cursor resolves lead symbols via the
-  LV cache. Remove `translateStagingSymbolsToLvSpace`'s read-back.
-- Option (b) interaction: rows are written to the `WalWriter` at refresh time when
-  the `lv_id` is already known, so the LV WAL carries `lv_id`s directly (a
-  pre-resolved-symbol-id write path) plus the per-flush symbol deltas; apply uses
-  them without re-interning. SYMBOL-output LVs flip from Mode B to Mode A here and
-  now serve the lead.
-- Tests: SYMBOL LVs under symbol churn / re-interning across segments and O3;
-  restart rebuilds `T` and re-derives the same `lv_id`s.
+**Realised with a per-tier in-memory symbol cache, NOT decision B's on-disk
+`SymbolMapWriter`.** Decision B as written had a correctness hole: it interned
+into the LV's *on-disk* symbol table and resolved the lead "via the disk reader
+exactly as overlap rows today", but `SymbolMapReaderImpl.valueOf` bounds-checks
+`key < symbolCount` and `symbolCount` only advances when `_txn` is committed at
+apply - so a value *new to the un-flushed lead* would be invisible to a query
+reader (resolve to null) until flush. Since option (a) (per-flush writer) was
+already chosen, the flush re-interns via `putSym(string)` exactly like Mode B, so
+the on-disk eager-intern bought nothing at flush and only added risk (custom
+`_txn` symbol-count commits, two writers on the same files). The user confirmed
+the in-mem-cache realisation 2026-06-29.
 
-Exit: SYMBOL LVs serve the lead from RAM with correct id resolution.
+- DONE. **`ensureLeadEligible` drops the SYMBOL exclusion**: a fixed-width output
+  schema is lead-eligible whether or not it carries SYMBOL columns. SYMBOL-output
+  LVs flip from the coupled Mode-B cycle to the Mode A refresh/flush split and now
+  serve the lead. The only non-lead-eligible tier-populating shape left is
+  var-length output (no tier at all).
+- DONE. **`LiveViewSymbolCache`** (new, owned by `LiveViewInMemoryTier`, freed with
+  the tier): the lead drain eager-interns each SYMBOL output value into the LV
+  table's id space - a committed value resolves to its committed id via the LV
+  table's `SymbolMapReader.keyOf` (a `TableReader` opened for the drain), a value
+  new to the lead is assigned the next id at or above the committed symbol count
+  (`nextNewId`, re-anchored via `anchor(col, committedCount) = max(...)` each drain
+  so a flush/O3 that advanced the count moves assignment past it). The interned id
+  is stored in the tier (overwriting the segment-local id `copyRowFromRecord`
+  wrote). Because the drain processes base commits in the same order the flush's
+  apply re-interns them (in-order leads only; O3 is diverted to `o3Replay`), the
+  assigned id equals the one apply produces, so after flush the lead's overlap
+  agrees with disk. The cache holds an append-only `id -> string` list (read by
+  cursors) plus a per-window `value -> id` map (writer-side, cleared at flush /
+  O3 via `onFlush` / `onO3`).
+- DONE. **One LV-table id space, resolved by `LiveViewSymbolTable`** (new overlay):
+  `getSymbolTable(col)` / `newSymbolTable(col)` return an overlay that resolves a
+  committed id via the disk reader's symbol table and a lead-only id via the cache.
+  Keeping a single id space (not a separate tier-id space) is load-bearing: it
+  keeps raw-int-key consumers correct (WHERE filters, GROUP BY, static ORDER BY -
+  all path (b) `getSymbolTable().valueOf(getInt())`), not just the per-record
+  `getSymA` path (printing / HTTP / PGWire). `getSymbolCount()` folds in the lead's
+  max id so a static-symbol consumer sizes its key space to cover the lead.
+- DONE. **Flush re-serialises the lead's symbols** by resolving each stored id back
+  to its string through the same overlay (built over a pre-flush reader +
+  the cache) - `LiveViewBufferRecord.getSymA`/`getSymB` delegate to it - then
+  `putSym(string)` re-interns into the WAL, so apply / replication / recovery are
+  unchanged from Mode B. `translateStagingSymbolsToLvSpace`'s disk read-back is
+  removed.
+- DONE. **O3 / restart**: O3 rebuilds the tier from disk (committed ids, resolved
+  via the disk reader - no intern) and `onO3` drops the stale window map; the next
+  drain re-anchors `nextNewId` to the post-replay committed count. Restart loses
+  the RAM cache; the first post-restart drain re-interns the lead afresh (fresh
+  cache + the restored disk symbol table), re-deriving correct ids.
+- DONE. Tests in `LiveViewInMemReadTest`: `testSymbolLvIsLeadEligible`,
+  `testSymbolLvServesUnflushedLeadFromRam` (new + committed symbols in the lead,
+  differential oracle, disk-only = applied prefix), `testSymbolLvLeadFilterOnLeadOnlyValue`
+  (WHERE on a lead-only value + WHERE on a committed value + ORDER BY the symbol -
+  pins path (b)), `testSymbolLeadFlushPromotesToOverlap`, `testSymbolLeadRecoversFromBaseWalOnRestart`,
+  `testSymbolLeadSurvivesO3`. `testSymbolLvIsNotLeadEligible` removed/replaced.
+  `LiveViewSmokeTest.testWorkerYieldsAtTurnBudget` switched from a SYMBOL view to a
+  VARCHAR-output (still non-lead-eligible) view so the per-cycle
+  `lastProcessedSeqTxn` cadence it observes still holds.
+
+Exit (met): SYMBOL LVs serve the lead from RAM with correct id resolution. Full LV
+suite green (`InMemRead` 28, `Smoke` 391, `Test` 30, `Fuzz` 7, `Concurrency` 8,
+`Checkpoint` 12, `InMemoryTier` 9).
+
+Known V1 cost: the cache's `id -> string` list is append-only (never cleared, so a
+pinned cursor can keep resolving its slot), so it accumulates one string per
+distinct value that has ever passed through the lead - bounded like the symbol
+table itself, which is fine for SYMBOL's low-cardinality design intent but a real
+RAM cost for a very high cardinality column that should not be typed SYMBOL.
 
 ### Step 4 - O3 under deferred flush
 
@@ -489,9 +553,14 @@ tradeoff is quantified.
 
 - **A. Apply/flush trigger:** FLUSH EVERY. The mechanism is decoupling refresh
   cadence from flush cadence (not a footprint cap). O3 force-flushes.
-- **B. SYMBOL lead:** eager interning at refresh time into the LV's own symbol
-  table (`T` + LV `SymbolMapWriter`). Supersedes the earlier "in-mem symbol table
-  (b1) vs disk-only SYMBOL lead (b2)" framing.
+- **B. SYMBOL lead:** eager interning at refresh time, keeping a single LV-table
+  id space. **Realised (Step 3) with a per-tier in-memory symbol cache** (the "b1"
+  in-mem option), not the on-disk `SymbolMapWriter` this decision originally chose:
+  the on-disk path could not make a value new to the un-flushed lead visible to a
+  query reader before flush (the reader's symbol count is `_txn`-bounded). A
+  committed value still resolves to its LV-table id via the disk reader's
+  `keyOf`; a lead-only value is assigned the next id at/above the committed count
+  and held in RAM, resolved through the `LiveViewSymbolTable` overlay. See Step 3.
 - **C. Time-frame / ASOF-RHS:** disk-only for V1 (accepted RFC sharp edge; trails
   by <= FLUSH EVERY). Synthetic in-mem bridging frame deferred.
 - **D. Tier contents:** overlap + lead, served by the `seam_ts` cut. **Not**

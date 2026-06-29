@@ -243,9 +243,10 @@ public class LiveViewInMemReadTest extends AbstractCairoTest {
             Assert.assertNotNull(instance);
             Assert.assertNotNull("tier allocated for SYMBOL schemas", instance.getInMemoryTier());
 
-            // The refresh worker rewrote the tier's segment-local symbol ids with
-            // LV-table-space ids after apply, so Mode B engages and the in-mem
-            // branch resolves the SYMBOL against the disk reader's symbol table.
+            // The refresh worker eager-interned the symbols into the LV table's id
+            // space, and the first tick flushed them to disk, so the slot is a
+            // subset of disk and the in-mem branch resolves the SYMBOL through the
+            // overlay (committed ids via the disk reader's symbol table).
             InnerRead modeB = readInner("SELECT * FROM lv");
             Assert.assertTrue("SYMBOL output must be routing-eligible", modeB.routingEligible);
             Assert.assertEquals("every row served from the in-mem tier", 2, modeB.inMemRowsServed);
@@ -953,14 +954,14 @@ public class LiveViewInMemReadTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSymbolLvIsNotLeadEligible() throws Exception {
+    public void testSymbolLvIsLeadEligible() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, g SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
-            // SYMBOL output: stays a subset of disk (no lead) until eager interning.
+            // SYMBOL output is now lead-eligible: eager interning gives the lead's
+            // symbols LV-table-consistent ids the read path resolves from RAM.
             execute("CREATE LIVE VIEW lv_sym FLUSH EVERY 1s IN MEMORY 30m AS " +
                     "SELECT ts, g, row_number() OVER () AS rn FROM base");
-            // Non-SYMBOL output of the same base: lead-eligible.
             execute("CREATE LIVE VIEW lv_num FLUSH EVERY 1s IN MEMORY 30m AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
             execute("INSERT INTO base (ts, g, x) VALUES " +
@@ -977,16 +978,173 @@ public class LiveViewInMemReadTest extends AbstractCairoTest {
             Assert.assertNotNull(sym);
             Assert.assertNotNull(num);
             Assert.assertTrue("lead eligibility must be computed", sym.isLeadEligibilityComputed());
-            Assert.assertFalse("SYMBOL output is not lead-eligible", sym.isLeadEligible());
+            Assert.assertTrue("SYMBOL output is lead-eligible", sym.isLeadEligible());
             Assert.assertTrue("fixed-width output is lead-eligible", num.isLeadEligible());
 
-            // The SYMBOL view still reads correctly as a subset of disk.
             assertQuery("SELECT * FROM lv_sym")
                     .timestamp("ts")
                     .expectSize()
                     .returns("ts\tg\trn\n" +
                             "2026-05-12T00:00:01.000000Z\taa\t1\n" +
                             "2026-05-12T00:00:02.000000Z\tbb\t2\n");
+        });
+    }
+
+    @Test
+    public void testSymbolLvServesUnflushedLeadFromRam() throws Exception {
+        assertMemoryLeak(() -> {
+            buildSymbolFlushedPlusLead();
+
+            // The lead carries a SYMBOL value ('cc') that is new - not on disk - plus
+            // a re-occurring committed value ('bb'). Both resolve from RAM: 'cc' via
+            // the tier's symbol cache, 'bb' via the disk reader's committed table,
+            // through the one-id-space overlay.
+            InnerRead lead = readInner("SELECT * FROM lv");
+            Assert.assertTrue("lead read must be routing-eligible", lead.routingEligible);
+            Assert.assertEquals("all rows served from the tier", 5, lead.inMemRowsServed);
+            Assert.assertEquals("two un-flushed lead rows served from RAM", 2, lead.leadRowsServed);
+
+            // Differential oracle: the lead read equals a from-scratch recompute.
+            assertLvMatchesOracle("SELECT * FROM lv",
+                    "SELECT ts, g, row_number() OVER () AS rn FROM base");
+
+            // Forcing the tier off drops to the applied prefix (the 3 flushed rows);
+            // the lead-only 'cc' value is absent from that prefix.
+            assertDiskOnlyMatchesOracle("SELECT * FROM lv",
+                    "SELECT ts, g, row_number() OVER () AS rn FROM base LIMIT 3");
+        });
+    }
+
+    @Test
+    public void testSymbolLvLeadFilterOnLeadOnlyValue() throws Exception {
+        assertMemoryLeak(() -> {
+            buildSymbolFlushedPlusLead();
+
+            // A WHERE on the lead-only SYMBOL value resolves the constant through
+            // the same overlay (keyOf finds 'cc' in the cache), and the per-row int
+            // key matches, so the lead row is returned - not dropped or mismatched.
+            // This pins the raw-int-key (path b) resolution, not just getSymA. The
+            // oracle filters the LV's pre-computed row_number projection (a plain
+            // recompute would re-rank after the filter and disagree on rn).
+            assertLvMatchesOracle("SELECT * FROM lv WHERE g = 'cc'",
+                    "SELECT * FROM (SELECT ts, g, row_number() OVER () AS rn FROM base) WHERE g = 'cc'");
+            // A WHERE on a committed value spanning the overlap and the lead.
+            assertLvMatchesOracle("SELECT * FROM lv WHERE g = 'bb'",
+                    "SELECT * FROM (SELECT ts, g, row_number() OVER () AS rn FROM base) WHERE g = 'bb'");
+            // ORDER BY the SYMBOL column: the static-symbol sort ranks by the raw
+            // int key over the overlay's symbol count, which spans the lead's ids.
+            assertLvMatchesOracle("SELECT * FROM lv ORDER BY g, ts",
+                    "SELECT * FROM (SELECT ts, g, row_number() OVER () AS rn FROM base) ORDER BY g, ts");
+        });
+    }
+
+    @Test
+    public void testSymbolLeadFlushPromotesToOverlap() throws Exception {
+        assertMemoryLeak(() -> {
+            buildSymbolFlushedPlusLead();
+
+            InnerRead before = readInner("SELECT * FROM lv");
+            Assert.assertEquals("two lead rows before flush", 2, before.leadRowsServed);
+
+            // Flush: the lead's new symbol 'cc' becomes committed at the id the
+            // drain assigned, so the slot's ids still agree with disk.
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(1_000_000L);
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            InnerRead after = readInner("SELECT * FROM lv");
+            Assert.assertTrue("post-flush read must stay routing-eligible", after.routingEligible);
+            Assert.assertEquals("all rows still served from the tier", 5, after.inMemRowsServed);
+            Assert.assertEquals("no un-flushed lead after the flush", 0, after.leadRowsServed);
+
+            assertModeBMatchesDiskOnly("SELECT * FROM lv");
+            assertLvMatchesOracle("SELECT * FROM lv",
+                    "SELECT ts, g, row_number() OVER () AS rn FROM base");
+        });
+    }
+
+    @Test
+    public void testSymbolLeadRecoversFromBaseWalOnRestart() throws Exception {
+        assertMemoryLeak(() -> {
+            buildSymbolFlushedPlusLead(); // 3 flushed rows + 2 un-flushed lead rows (incl. new 'cc')
+
+            // Simulated crash + restart: the RAM lead (and its symbol cache) is gone.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            LiveViewInstance restored = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(restored);
+            restored.setLastFlushTimeUs(0L); // keep the rebuilt lead un-flushed (clock at 0)
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job); // drain the base WAL forward, re-interning the lead's symbols afresh
+            }
+
+            // The lead is back (2 rows) with correct symbol resolution: re-interning
+            // re-derives 'cc' (new) and 'bb' (committed) against a fresh cache + the
+            // restored disk symbol table. Only the rebuilt lead is resident.
+            InnerRead after = readInner("SELECT * FROM lv");
+            Assert.assertTrue("post-restart read must be routing-eligible", after.routingEligible);
+            Assert.assertEquals("only the rebuilt lead is resident after restart", 2, after.inMemRowsServed);
+            Assert.assertEquals("two un-flushed lead rows recovered", 2, after.leadRowsServed);
+            assertLvMatchesOracle("SELECT * FROM lv",
+                    "SELECT ts, g, row_number() OVER () AS rn FROM base");
+        });
+    }
+
+    @Test
+    public void testSymbolLeadSurvivesO3() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, g SYMBOL, keep INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 30m AS " +
+                    "SELECT ts, g, row_number() OVER () AS rn FROM base WHERE keep > 0");
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Cycle 1: flush an in-order batch (the dropped 'aa' reverses base vs
+                // LV symbol order, so the lead's interned ids are not identity).
+                execute("INSERT INTO base (ts, g, keep) VALUES " +
+                        "('2026-05-12T00:00:01.000000Z', 'aa', 0), " +
+                        "('2026-05-12T00:00:02.000000Z', 'bb', 1), " +
+                        "('2026-05-12T00:00:03.000000Z', 'aa', 1)");
+                drainWalQueue();
+                setCurrentMicros(250_000L);
+                drainJob(job);
+                drainWalQueue();
+
+                // Refresh a lead with a fresh symbol 'cc' but do NOT flush it.
+                execute("INSERT INTO base (ts, g, keep) VALUES ('2026-05-12T00:00:04.000000Z', 'cc', 1)");
+                drainWalQueue();
+                instance.setLastFlushTimeUs(250_000L); // within FLUSH EVERY 100ms: refresh only
+                drainJob(job);
+
+                // O3: a back-dated row carrying another new symbol 'dd' forces a
+                // head-miss replay that rewrites the LV table and rebuilds the tier
+                // from disk; the un-flushed 'cc' lead is recomputed from base.
+                instance.setLastFlushTimeUs(Numbers.LONG_NULL);
+                execute("INSERT INTO base (ts, g, keep) VALUES ('2026-05-12T00:00:00.000000Z', 'dd', 1)");
+                drainWalQueue();
+                setCurrentMicros(500_000L);
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            InnerRead modeA = readInner("SELECT * FROM lv");
+            Assert.assertTrue("post-O3 cursor must regain routing", modeA.routingEligible);
+            Assert.assertTrue("rebuilt tier serves in-mem rows", modeA.inMemRowsServed > 0);
+
+            assertModeBMatchesDiskOnly("SELECT * FROM lv");
+            assertQuery("SELECT ts, g, rn FROM lv ORDER BY ts")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tg\trn\n" +
+                            "2026-05-12T00:00:00.000000Z\tdd\t1\n" +
+                            "2026-05-12T00:00:02.000000Z\tbb\t2\n" +
+                            "2026-05-12T00:00:03.000000Z\taa\t3\n" +
+                            "2026-05-12T00:00:04.000000Z\tcc\t4\n");
         });
     }
 
@@ -1013,6 +1171,32 @@ public class LiveViewInMemReadTest extends AbstractCairoTest {
                     "('2026-05-12T00:00:05.000000Z', 5)");
             drainWalQueue();
             drainJob(job); // clock still 0: refresh B as the un-flushed lead, no flush
+        }
+    }
+
+    // SYMBOL variant of buildFlushedPlusLead: 3 flushed rows (symbols aa=0, bb=1 in
+    // LV id space) on disk, then a 2-row un-flushed lead where 'cc' is brand new
+    // (assigned id 2, resolvable only from the tier's symbol cache) and 'bb'
+    // re-occurs (committed id 1, resolvable via the disk reader). Exercises both
+    // overlay bands.
+    private void buildSymbolFlushedPlusLead() throws Exception {
+        execute("CREATE TABLE base (ts TIMESTAMP, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        setCurrentMicros(0L);
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m AS " +
+                "SELECT ts, g, row_number() OVER () AS rn FROM base");
+        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            execute("INSERT INTO base (ts, g) VALUES " +
+                    "('2026-05-12T00:00:01.000000Z', 'aa'), " +
+                    "('2026-05-12T00:00:02.000000Z', 'bb'), " +
+                    "('2026-05-12T00:00:03.000000Z', 'aa')");
+            drainWalQueue();
+            drainJob(job); // clock 0: first tick flushes the batch to disk (aa=0, bb=1)
+
+            execute("INSERT INTO base (ts, g) VALUES " +
+                    "('2026-05-12T00:00:04.000000Z', 'cc'), " +
+                    "('2026-05-12T00:00:05.000000Z', 'bb')");
+            drainWalQueue();
+            drainJob(job); // clock still 0: refresh the lead (cc new, bb committed), no flush
         }
     }
 

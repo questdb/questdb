@@ -181,14 +181,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // Memory-tagged NATIVE_LIVE_VIEW_IN_MEM via LiveViewInMemoryBuffer.
     private LiveViewInMemoryBuffer stagingBuffer;
     private final IntList stagingColumnTypes = new IntList();
-    // True when the current LV's output schema carries at least one SYMBOL
-    // column. The in-loop staging population stores the base WAL-segment-local
-    // symbol id (record.getInt), which the disk reader's symbol table cannot
-    // resolve; when this is set, the normal cycle rewrites those columns with
-    // LV-table-space ids read back from disk after apply (see
-    // translateStagingSymbolsToLvSpace). Recomputed each cycle in
-    // ensureStagingAndTier.
-    private boolean stagingHasSymbol;
+    // Output-column indexes of the current LV's SYMBOL columns. The lead drain
+    // eager-interns each into the tier's symbol cache (LV-table-consistent ids)
+    // and overwrites the staging buffer's segment-local id with the interned id,
+    // so the un-flushed lead resolves from RAM and agrees with disk after flush.
+    // Empty for a SYMBOL-free schema. Recomputed each cycle in ensureStagingAndTier.
+    private final IntList stagingSymbolColumnIndexes = new IntList();
     private int stagingTimestampColumnIndex = -1;
     private final LiveViewStateStore stateStore;
     // Reusable shape buffer for ensureStagingAndTier — alpha-ordered alongside
@@ -655,20 +653,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 persistState(instance);
             }
             if (lvConsumedPersisted && populateTier && appendedRows > 0) {
-                if (stagingHasSymbol) {
-                    // The staging buffer holds base WAL-segment-local symbol ids
-                    // (record.getInt during the row loop); rewrite the SYMBOL
-                    // columns with LV-table-space ids read back from the
-                    // just-applied disk rows so the read path can resolve them
-                    // against the disk reader's symbol table. Done before publish
-                    // so both the fast-path append and the slow-path swap copy
-                    // LV-space ids into the slot.
-                    translateStagingSymbolsToLvSpace(instance, appendedRows);
-                }
                 // Publish the just-applied rows into the tier as a subset of disk
                 // (leadRowCount = 0). Failure to acquire a write slot is a
                 // non-fatal stall: the on-disk tier still advanced, the in-mem
-                // tier just trails this cycle.
+                // tier just trails this cycle. A fixed-width output schema (the only
+                // tier-populating shape, SYMBOL included since eager interning) is
+                // lead-eligible and takes the refresh/flush split instead, so this
+                // disk-subset publish is effectively unreachable; kept defensively.
                 publishToInMemoryTier(instance, stagingMaxTs, lvAppliedSeqTxn, appendedRows, false);
             }
             if (lvConsumedPersisted && appendedRows > 0) {
@@ -725,7 +716,30 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
         final int turnMaxCommits = engine.getConfiguration().getLiveViewRefreshTurnMaxCommits();
         final long turnMaxDurationUs = engine.getConfiguration().getLiveViewRefreshTurnMaxDurationMicros();
-        try (TransactionLogCursor txnCursor = engine.getTableSequencerAPI().getCursor(baseToken, fromSeqTxn)) {
+
+        // Eager SYMBOL interning. When the tier holds SYMBOL columns, each output
+        // row's symbol string is interned into the LV table's id space so the
+        // un-flushed lead carries LV-table-consistent ids the read path resolves
+        // from RAM. A committed value resolves to its existing id via the LV
+        // table's symbol map (committedSymbolReader); a value new to the lead is
+        // assigned the next id at or above the committed count, matching the id the
+        // flush's apply will produce (in-order leads only - O3 is diverted to
+        // o3Replay). The reader reflects the applied state, which is stable for the
+        // duration of the drain (no apply runs on the lead path). Closed with the
+        // txnCursor via the resource list (no-op when null).
+        final LiveViewSymbolCache symbolCache = populateTier ? instance.getInMemoryTier().getSymbolCache() : null;
+        final boolean internSymbols = symbolCache != null && stagingSymbolColumnIndexes.size() > 0;
+        final TableReader committedSymbolReader = internSymbols ? engine.getReader(instance.getLiveViewToken()) : null;
+        try (TransactionLogCursor txnCursor = engine.getTableSequencerAPI().getCursor(baseToken, fromSeqTxn); committedSymbolReader) {
+            if (internSymbols) {
+                // Re-anchor each SYMBOL column's next-new-id to the committed symbol
+                // count, so a flush (or O3) that advanced the count moves new-id
+                // assignment past it while a within-window advance is preserved.
+                for (int si = 0, sn = stagingSymbolColumnIndexes.size(); si < sn; si++) {
+                    final int c = stagingSymbolColumnIndexes.getQuick(si);
+                    symbolCache.anchor(c, committedSymbolReader.getSymbolMapReader(c).getSymbolCount());
+                }
+            }
             while (txnCursor.hasNext()) {
                 long txn = txnCursor.getTxn();
                 if (txn > toSeqTxn) {
@@ -887,6 +901,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             // un-flushed lead; the disk-subset cycle publishes it
                             // after apply as a subset of disk.
                             stagingBuffer.copyRowFromRecord(outRecord, appendedRows);
+                            if (internSymbols) {
+                                // Overwrite the segment-local symbol ids
+                                // copyRowFromRecord stored with eager-interned,
+                                // LV-table-consistent ids so the lead resolves from
+                                // RAM and post-flush agrees with disk.
+                                for (int si = 0, sn = stagingSymbolColumnIndexes.size(); si < sn; si++) {
+                                    final int c = stagingSymbolColumnIndexes.getQuick(si);
+                                    stagingBuffer.putInt(appendedRows, c,
+                                            symbolCache.intern(c, outRecord.getSymA(c), committedSymbolReader.getSymbolMapReader(c)));
+                                }
+                            }
                             if (stagingMinTs == Numbers.LONG_NULL) {
                                 stagingMinTs = ts;
                             }
@@ -1028,12 +1053,24 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             return;
         }
 
-        final int tsColIdx = windowFactory.getMetadata().getTimestampIndex();
+        final RecordMetadata outMetadata = windowFactory.getMetadata();
+        final int tsColIdx = outMetadata.getTimestampIndex();
         final int publishedIdx = tier.getPublishedIdx();
         final LiveViewInMemoryBuffer pubSlot = tier.getSlot(publishedIdx);
         final long overlapCount = pubSlot.rowCount() - priorLead;
         long flushedMaxTs = Numbers.LONG_NULL;
-        try (WalWriter walWriter = engine.getWalWriter(token)) {
+        // For a SYMBOL output schema the copier reads each lead row's symbol as a
+        // string (getSymA) before re-interning it into the WAL, so the stored
+        // LV-table-consistent id must resolve back to its string. symbolReader (the
+        // pre-flush committed symbol map) plus the tier's symbol cache form the
+        // overlay that does this; bufferRecord delegates getSymA to it. Closed with
+        // the WalWriter (no-op when the schema has no SYMBOL column).
+        final boolean hasSymbols = tier.getSymbolCache().hasSymbolColumns();
+        try (WalWriter walWriter = engine.getWalWriter(token);
+             TableReader symbolReader = hasSymbols ? engine.getReader(token) : null) {
+            if (hasSymbols) {
+                bufferRecord.setSymbolResolvers(buildFlushSymbolResolvers(outMetadata, symbolReader, tier.getSymbolCache()));
+            }
             RecordToRowCopier copier = ensureCopier(instance, windowFactory, walWriter);
             int lvTimestampIndex = walWriter.getMetadata().getTimestampIndex();
             if (lvTimestampIndex < 0) {
@@ -1065,6 +1102,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 flushedMaxTs = ts;
             }
             walWriter.commitLiveView(advanceTo);
+        } finally {
+            // The overlays reference symbolReader, now closed; drop them so a later
+            // flush of a non-SYMBOL view cannot reuse a stale resolver.
+            bufferRecord.setSymbolResolvers(null);
         }
 
         instance.setLastProcessedSeqTxn(advanceTo);
@@ -1087,6 +1128,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // The lead is now on disk; reset the in-RAM lead count unconditionally.
         instance.setLeadRowCount(0);
         if (lvConsumedPersisted) {
+            // The just-flushed lead's new symbols are now committed at the ids the
+            // drain assigned, so the next window resolves them via the disk reader's
+            // keyOf; drop the per-window intern maps. The id -> string lists stay
+            // (a pinned pre-flush cursor still resolves its slot from them).
+            tier.getSymbolCache().onFlush();
             if (stagingRowsToInclude > 0) {
                 // Emergency flush: the published slot never received the staging
                 // rows (the publish that would have added them failed), so it is an
@@ -1102,6 +1148,29 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
             maybeWriteHeadCheckpoint(instance, windowFactory, advanceTo, flushedMaxTs, flushRows);
         }
+    }
+
+    /**
+     * Builds the per-column symbol resolvers the flush hands {@link #bufferRecord}
+     * so the copier can turn a lead row's stored LV-table-consistent symbol id back
+     * into its string before re-interning it into the WAL. Each SYMBOL column gets a
+     * {@link LiveViewSymbolTable} overlaying {@code symbolReader}'s committed symbol
+     * table (for already-flushed values) with {@code cache}'s lead symbols (for
+     * values new to the un-flushed lead). Non-SYMBOL columns are left null. The
+     * overlays borrow {@code symbolReader} (do not own it); the flush closes the
+     * reader and drops the resolvers.
+     */
+    private ObjList<LiveViewSymbolTable> buildFlushSymbolResolvers(RecordMetadata outMetadata, TableReader symbolReader, LiveViewSymbolCache cache) {
+        final int n = outMetadata.getColumnCount();
+        final ObjList<LiveViewSymbolTable> resolvers = new ObjList<>(n);
+        for (int c = 0; c < n; c++) {
+            if (ColumnType.tagOf(outMetadata.getColumnType(c)) == ColumnType.SYMBOL) {
+                resolvers.add(new LiveViewSymbolTable().of(symbolReader.getSymbolTable(c), cache, c, false));
+            } else {
+                resolvers.add(null);
+            }
+        }
+        return resolvers;
     }
 
     /**
@@ -2692,11 +2761,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     /**
      * Computes (once, then caches) whether the LV's in-mem tier may serve an
      * un-flushed lead ahead of disk. Eligible when the output schema has a
-     * designated timestamp, is fully fixed-width (so the tier can store it), and
-     * carries no SYMBOL column (whose tier ids would be segment-local until eager
-     * interning lands). Ineligible LVs keep the tier a strict subset of disk: the
-     * refresh worker applies every cycle for them. Compiles the SELECT on the
-     * first call if needed (cached for the LV's lifetime).
+     * designated timestamp and is fully fixed-width (so the tier can store it).
+     * SYMBOL columns are eligible: the lead drain eager-interns them into the
+     * tier's symbol cache (LV-table-consistent ids), so the read path resolves the
+     * lead's symbols from RAM. Ineligible LVs (var-length output, or no designated
+     * timestamp) keep the tier a strict subset of disk: the refresh worker applies
+     * every cycle for them. Compiles the SELECT on the first call if needed (cached
+     * for the LV's lifetime).
      */
     private boolean ensureLeadEligible(LiveViewInstance instance) throws SqlException {
         if (instance.isLeadEligibilityComputed()) {
@@ -2706,8 +2777,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         RecordMetadata outMetadata = windowFactory.getMetadata();
         boolean eligible = outMetadata.getTimestampIndex() >= 0;
         for (int i = 0, n = outMetadata.getColumnCount(); eligible && i < n; i++) {
-            int type = outMetadata.getColumnType(i);
-            if (!LiveViewInMemoryBuffer.isColumnTypeSupported(type) || ColumnType.tagOf(type) == ColumnType.SYMBOL) {
+            if (!LiveViewInMemoryBuffer.isColumnTypeSupported(outMetadata.getColumnType(i))) {
                 eligible = false;
             }
         }
@@ -2751,17 +2821,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         if (instance.getInMemoryTier() == null) {
             instance.setInMemoryTier(new LiveViewInMemoryTier(tierColumnTypes, tsColIdx, pageSize));
         }
-        // Note whether the schema carries a SYMBOL column. If so the normal
-        // cycle must translate the staging buffer's segment-local symbol ids to
-        // LV-table-space ids (read back from disk after apply) before publishing.
-        boolean hasSymbol = false;
+        // Capture the SYMBOL output-column indexes so the lead drain can
+        // eager-intern them into the tier's symbol cache.
+        stagingSymbolColumnIndexes.clear();
         for (int i = 0, n = tierColumnTypes.size(); i < n; i++) {
             if (ColumnType.tagOf(tierColumnTypes.getQuick(i)) == ColumnType.SYMBOL) {
-                hasSymbol = true;
-                break;
+                stagingSymbolColumnIndexes.add(i);
             }
         }
-        stagingHasSymbol = hasSymbol;
         return true;
     }
 
@@ -3023,6 +3090,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // Unsupported (var-length) output schema never allocates the tier.
             return;
         }
+        // The O3 replay re-sequenced the on-disk symbol ids; the failed in-order
+        // drain's window intern entries are now stale. Drop them - the next drain
+        // re-anchors nextNewId to the post-replay committed count, and the rebuilt
+        // slot stores disk-resolved committed ids that the overlay reads via the
+        // disk reader (no intern). The id -> string lists stay for any pinned
+        // pre-O3 cursor.
+        tier.getSymbolCache().onO3();
         // Stage the recent IN MEMORY window from the rewritten, applied LV table.
         // The reader's getSeqTxn() is the same coordinate a query's disk reader
         // reports, so stamping the slot with it makes the fence pass for an
@@ -3179,72 +3253,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     throw new UnsupportedOperationException(
                             "live view in-memory tier does not support column type: "
                                     + ColumnType.nameOf(stagingColumnTypes.getQuick(c)));
-            }
-        }
-    }
-
-    /**
-     * Rewrites the staging buffer's SYMBOL columns with LV-table-space symbol
-     * ids, read back from the just-applied disk rows.
-     * <p>
-     * The in-loop staging population stores {@code record.getInt(symCol)}, which
-     * is a <b>base WAL-segment-local</b> symbol id (the staging record reads the
-     * base table's WAL segment). The disk write path re-interns the value into
-     * the LV table's own symbol space, possibly assigning a different id (see
-     * {@code TableWriter.createWalSymbolMapping}). A query resolves SYMBOL ids
-     * against the disk reader's (LV-table) symbol table, so the segment-local id
-     * would be unresolvable. This translation makes the tier store LV-space ids,
-     * so the read path can resolve them and the differential oracle holds byte-for-byte.
-     * <p>
-     * The normal cycle is a pure append (O3 was diverted to {@code o3Replay},
-     * whose rebuild already stages LV-space ids from disk), and LV tables never
-     * dedup, so the {@code appendedRows} just-applied rows are exactly the last
-     * {@code appendedRows} rows of the LV table, in the same ts-ascending order
-     * the staging buffer holds them. Walks partitions, locates that global row
-     * range, and overwrites only the SYMBOL columns - the other staging columns
-     * already carry correct values.
-     */
-    private void translateStagingSymbolsToLvSpace(LiveViewInstance instance, long appendedRows) {
-        try (TableReader reader = engine.getReader(instance.getLiveViewToken())) {
-            final long total = reader.size();
-            final long firstApplied = total - appendedRows;
-            if (firstApplied < 0) {
-                // Defensive: the LV table holds fewer rows than this cycle
-                // staged. Cannot happen on the pure-append normal cycle, but if
-                // it ever did, leaving the segment-local ids in place is safe -
-                // the fence keeps the slot from routing until a clean cycle
-                // republishes with matching coordinates.
-                return;
-            }
-            final int pc = reader.getPartitionCount();
-            long globalBase = 0;
-            for (int p = 0; p < pc; p++) {
-                // Use the committed metadata row count so partitions entirely
-                // below the applied tail are skipped without mapping them; only
-                // the tail partition(s) that overlap the range get opened.
-                final long partSize = reader.getPartitionRowCountFromMetadata(p);
-                if (partSize <= 0) {
-                    continue;
-                }
-                final long partStart = globalBase;
-                globalBase += partSize;
-                if (globalBase <= firstApplied) {
-                    // Partition entirely below the just-applied range.
-                    continue;
-                }
-                reader.openPartition(p);
-                final long r0 = Math.max(0, firstApplied - partStart);
-                final int columnBase = reader.getColumnBase(p);
-                for (int c = 0, n = stagingColumnTypes.size(); c < n; c++) {
-                    if (ColumnType.tagOf(stagingColumnTypes.getQuick(c)) != ColumnType.SYMBOL) {
-                        continue;
-                    }
-                    final MemoryCR col = reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, c));
-                    for (long r = r0; r < partSize; r++) {
-                        final long stagingRow = (partStart + r) - firstApplied;
-                        stagingBuffer.putInt(stagingRow, c, col.getInt(r << 2));
-                    }
-                }
             }
         }
     }

@@ -25,6 +25,7 @@
 package io.questdb.cairo.lv;
 
 import io.questdb.cairo.sql.Record;
+import io.questdb.std.ObjList;
 
 /**
  * A flyweight {@link Record} view over one row of a {@link LiveViewInMemoryBuffer}.
@@ -44,6 +45,11 @@ import io.questdb.cairo.sql.Record;
 public class LiveViewBufferRecord implements Record {
     private LiveViewInMemoryBuffer buffer;
     private long row;
+    // Per-column symbol resolvers, set by the flush so getSymA/getSymB turn a
+    // stored LV-table-consistent symbol id back into its string before the copier
+    // re-interns it into the WAL. Null (or a null per-column entry) for non-SYMBOL
+    // columns; the copier only calls getSymA on a SYMBOL source column.
+    private ObjList<LiveViewSymbolTable> symbolResolvers;
 
     @Override
     public boolean getBool(int col) {
@@ -116,6 +122,18 @@ public class LiveViewBufferRecord implements Record {
     }
 
     @Override
+    public CharSequence getSymA(int col) {
+        final LiveViewSymbolTable resolver = symbolResolvers != null ? symbolResolvers.getQuick(col) : null;
+        return resolver != null ? resolver.valueOf(buffer.getInt(row, col)) : null;
+    }
+
+    @Override
+    public CharSequence getSymB(int col) {
+        final LiveViewSymbolTable resolver = symbolResolvers != null ? symbolResolvers.getQuick(col) : null;
+        return resolver != null ? resolver.valueBOf(buffer.getInt(row, col)) : null;
+    }
+
+    @Override
     public long getTimestamp(int col) {
         return buffer.getLong(row, col);
     }
@@ -123,5 +141,9 @@ public class LiveViewBufferRecord implements Record {
     public void of(LiveViewInMemoryBuffer buffer, long row) {
         this.buffer = buffer;
         this.row = row;
+    }
+
+    public void setSymbolResolvers(ObjList<LiveViewSymbolTable> symbolResolvers) {
+        this.symbolResolvers = symbolResolvers;
     }
 }
