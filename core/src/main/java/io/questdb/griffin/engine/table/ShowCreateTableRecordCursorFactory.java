@@ -89,6 +89,10 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
         }
     }
 
+    // Emits a stored view/mat-view body with surrounding whitespace removed. The body is always a
+    // complete SELECT, where leading/trailing whitespace is never significant, so this only normalizes
+    // the dump's indentation; a trailing string or identifier literal ends in a quote (> ' '), so no
+    // character inside a literal is ever stripped.
     public static void putTrimmed(Utf8Sink sink, CharSequence text) {
         int lo = 0;
         int hi = text.length();

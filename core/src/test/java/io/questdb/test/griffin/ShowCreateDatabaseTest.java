@@ -35,14 +35,17 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.table.ShowCreateDatabaseRecordCursorFactory;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.CountingSqlExecutionCircuitBreaker;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -517,6 +520,46 @@ public class ShowCreateDatabaseTest extends AbstractCairoTest {
 
             Assert.assertTrue("cancellation must propagate", thrown instanceof CairoException);
             Assert.assertTrue("cancellation must not be swallowed as a drop race", ((CairoException) thrown).isCancellation());
+        });
+    }
+
+    @Test
+    public void testDumpHonorsCircuitBreaker() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t1 (ts timestamp, v double) timestamp(ts) partition by day bypass wal");
+            execute("create table t2 (ts timestamp, v double) timestamp(ts) partition by day bypass wal");
+
+            // the whole dump is built eagerly, so it must consult the circuit breaker per object to stay
+            // cancellable even when no per-object factory happens to throw (e.g. a plain tables-only dump)
+            final SqlExecutionCircuitBreaker original = sqlExecutionContext.getCircuitBreaker();
+            final CountingSqlExecutionCircuitBreaker counting = new CountingSqlExecutionCircuitBreaker(original);
+            ((SqlExecutionContextImpl) sqlExecutionContext).with(counting);
+            try {
+                final ObjList<String> statements = dumpDatabase("SHOW CREATE DATABASE INCLUDE (TABLES)");
+                Assert.assertEquals(2, statements.size());
+                Assert.assertTrue("dump must consult the circuit breaker at least once per object", counting.getCheckCount() >= 2);
+            } finally {
+                ((SqlExecutionContextImpl) sqlExecutionContext).with(original);
+            }
+        });
+    }
+
+    @Test
+    public void testFilteredDumpEmitsDependentWithoutDependency() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, true);
+            execute("create table base (ts timestamp, s symbol, v double) timestamp(ts) partition by day wal");
+            execute("create materialized view mv as (select ts, s, avg(v) v from base sample by 1d) partition by day");
+            drainWalQueue();
+
+            // INCLUDE (MATERIALIZED_VIEWS) excludes the base table from the dump, but the mat view is still
+            // emitted and its DDL references the absent base - a deliberately partial dump. The factory logs a
+            // warning for this case; here we pin the observable contract: the dependent is present, the
+            // filtered-out dependency is not.
+            final String matViewsOnly = dump("SHOW CREATE DATABASE INCLUDE (MATERIALIZED_VIEWS)");
+            Assert.assertTrue(matViewsOnly, matViewsOnly.contains("CREATE MATERIALIZED VIEW 'mv'"));
+            Assert.assertTrue("mat view DDL still references its base table", matViewsOnly.contains("base"));
+            Assert.assertFalse("filtered-out base table must not be emitted", matViewsOnly.contains("CREATE TABLE 'base'"));
         });
     }
 

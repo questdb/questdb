@@ -206,6 +206,11 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
                 .$(token).$(", reason=").$safe(reason).I$();
     }
 
+    private static void logUnreplayableDependency(TableToken object, TableToken dependency) {
+        LOG.info().$("object depends on an object excluded from the database dump, its DDL may not replay as-is [object=")
+                .$(object).$(", dependency=").$(dependency).I$();
+    }
+
     // re-resolves the snapshotted name in the registry: a null or non-matching token means the
     // object was dropped, renamed or recreated between the token snapshot and this emit, so the
     // failing per-object SHOW CREATE is the vanish race rather than a real error to surface.
@@ -226,6 +231,7 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
             TableToken token,
             SqlExecutionContext executionContext
     ) throws SqlException {
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTripped();
         if (vanishedBetweenSnapshotAndEmit(token, executionContext)) {
             logSkippedObject(token, "object no longer present at emit time");
             return;
@@ -233,8 +239,11 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
         final RecordCursorFactory factory = objectFactory(token);
         try {
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
-                if (cursor.hasNext()) {
-                    out.add(cursor.getRecord().getVarcharA(N_DDL_COL).toString());
+                // per-object SHOW CREATE emits a single row today, but draining the cursor keeps the
+                // dump complete if any per-object factory ever splits its DDL across multiple rows
+                final Record record = cursor.getRecord();
+                while (cursor.hasNext()) {
+                    out.add(record.getVarcharA(N_DDL_COL).toString());
                 }
             }
         } catch (CairoException e) {
@@ -352,6 +361,11 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
                 }
                 // generate the factory from the already-compiled model (no second parse+optimise)
                 // and walk its plan to collect the physical base tables the mat view reads.
+                // NB: both walks are needed and neither subsumes the other. The model walk above sees
+                // referenced views (which the plan never shows, as they are inlined) but the model only
+                // exposes join/union/nested table names, missing tables referenced from sub-queries
+                // (e.g. WHERE x IN (SELECT ... FROM t)); the plan walk reaches those via nested cursor
+                // factories. So do not collapse this into a single collectAllTableAndViewNames(.., false).
                 try (RecordCursorFactory factory = SqlUtil.generateFactory(compiler, model, executionContext)) {
                     if (factory != null) {
                         tableTokenCollector.collect(factory, executionContext);
@@ -394,6 +408,9 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
         if (emitted.contains(token)) {
             return;
         }
+        // the whole dump is materialized eagerly, and resolving a mat view's dependencies compiles its
+        // query; honour cancellation/timeout per object so a large schema stays interruptible
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTripped();
         // mark before recursing so a malformed cycle cannot cause infinite recursion
         emitted.add(token);
         final ObjList<TableToken> dependencies = new ObjList<>();
@@ -402,9 +419,17 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
         dependencies.sort(TABLE_NAME_COMPARATOR);
         for (int i = 0, n = dependencies.size(); i < n; i++) {
             final TableToken dependency = dependencies.getQuick(i);
-            // only order against objects that are part of this dump (visible and non-system)
-            if (!dependency.equals(token) && visible.contains(dependency)) {
+            if (dependency.equals(token)) {
+                continue;
+            }
+            if (visible.contains(dependency)) {
+                // order against objects that are part of this dump
                 topoEmit(dependency, engine, executionContext, visible, emitted, ordered);
+            } else {
+                // the dependency was filtered out of this dump (a different INCLUDE/EXCLUDE category,
+                // a system object, or one the caller is not authorized to read), so this object's DDL
+                // references something the dump does not contain; warn that it may not replay as-is
+                logUnreplayableDependency(token, dependency);
             }
         }
         ordered.add(token);
@@ -433,14 +458,7 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
 
         @Override
         public PlanSink child(Plannable p) {
-            if (p instanceof RecordCursorFactory factory) {
-                addToken(factory.getTableToken());
-                factoryStack.push(factory);
-                p.toPlan(this);
-                factoryStack.pop();
-            } else {
-                p.toPlan(this);
-            }
+            walk(p);
             return this;
         }
 
@@ -529,7 +547,7 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
         public PlanSink val(ObjList<?> list, int from, int to) {
             for (int i = from; i < to; i++) {
                 if (list.getQuick(i) instanceof Plannable plannable) {
-                    plannable.toPlan(this);
+                    walk(plannable);
                 }
             }
             return this;
@@ -537,9 +555,7 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
 
         @Override
         public PlanSink val(Plannable s) {
-            if (s != null) {
-                s.toPlan(this);
-            }
+            walk(s);
             return this;
         }
 
@@ -596,6 +612,21 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
         private void addToken(TableToken token) {
             if (token != null) {
                 tables.add(token);
+            }
+        }
+
+        // Traverses a plan node, collecting the table token of any nested cursor factory regardless
+        // of whether it is reached via child(...) or val(...). Funnelling all three entry points
+        // through here means a factory exposed through val() rather than child() still contributes
+        // its base table to the dependency set, so the mat view never sorts ahead of a table it reads.
+        private void walk(Plannable p) {
+            if (p instanceof RecordCursorFactory factory) {
+                addToken(factory.getTableToken());
+                factoryStack.push(factory);
+                p.toPlan(this);
+                factoryStack.pop();
+            } else if (p != null) {
+                p.toPlan(this);
             }
         }
     }
