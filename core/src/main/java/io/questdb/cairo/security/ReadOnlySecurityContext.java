@@ -31,10 +31,14 @@ import io.questdb.griffin.engine.functions.catalogue.Constants;
  * The concrete read-only security context. The shared singletons ({@link #INSTANCE} /
  * {@link #SETTINGS_READ_ONLY}) are instances of this class, and {@code forPrincipal} derives further
  * instances of it, so a derived context reports the authenticated user while preserving the read-only
- * (and settings-read-only) behavior. It extends {@link AbstractReadOnlySecurityContext}, which leaves
- * {@code newPrincipalContext} abstract so every subclass must supply its own and is never silently
- * downgraded. Subclasses that need to allow more than plain read-only (e.g. the mat view refresh
- * context) can extend this concrete class instead of implementing the abstract base from scratch.
+ * (and settings-read-only) behavior.
+ * <p>
+ * A subclass that overrides an {@code authorize*} or identity method (e.g. the mat view refresh context,
+ * which lets writes through to its own view) MUST also override {@link #newPrincipalContext} to return
+ * its own type. This class's {@code newPrincipalContext} returns a plain {@code ReadOnlySecurityContext},
+ * so {@code forPrincipal} on a subclass that does not override it would silently drop the override and
+ * downgrade the context to plain read-only. No factory calls {@code forPrincipal} on a subclass today, so
+ * this is a latent trap rather than a live bug.
  */
 public class ReadOnlySecurityContext extends AbstractReadOnlySecurityContext {
     public static final ReadOnlySecurityContext INSTANCE = new ReadOnlySecurityContext(false, Constants.USER_NAME);
