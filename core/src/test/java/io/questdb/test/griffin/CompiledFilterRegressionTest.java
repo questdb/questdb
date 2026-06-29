@@ -556,6 +556,33 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConstantFoldIntNullCollision() throws Exception {
+        // An inner constant product that wraps to EXACTLY INT_NULL (-2^31)
+        // poisons the rest of an INT-width fold: the Java filter's
+        // MulInt/AddInt#getInt return INT_NULL once an operand is INT_NULL, so
+        // i8 > (65536 * 32768) * 2 collapses to i8 > NULL (no rows). The JIT I4
+        // fold did pure modular arithmetic (-2^31 * 2 = 0) and returned i8 > 0
+        // (rows). tryFoldConstantArithI4 now propagates INT_NULL like the
+        // runtime ops, so both paths agree.
+        assertMemoryLeak(() -> {
+            execute("create table x as (select timestamp_sequence(0, 1000000) k," +
+                    " cast(x - 2 as byte) i8," +
+                    " cast(x - 2 as short) i16," +
+                    " cast(x - 2 as int) i32," +
+                    " (x - 2) i64" +
+                    " from long_sequence(5)) timestamp(k)");
+            // INT-width comparisons: inner 65536 * 32768 wraps to INT_NULL, so
+            // the whole fold is NULL and no row matches.
+            assertJitMatchesJava("x where i8 > (65536 * 32768) * 2", true);
+            assertJitMatchesJava("x where i16 > (65536 * 32768) * 2", true);
+            assertJitMatchesJava("x where i32 > (65536 * 32768) * 2", true);
+            // LONG column promotes to long width: getLong() never wraps onto the
+            // sentinel, so the constant is the genuine 4294967296 on both paths.
+            assertJitMatchesJava("x where i64 > (65536 * 32768) * 2", true);
+        });
+    }
+
+    @Test
     public void testConstantFoldRootUnderLongWithFloat() throws Exception {
         // An overflowing constant product (258558 * -259815) nested under a LONG
         // add (c0 + ...) is read at long width by AddLong#getLong, so the Java
@@ -580,6 +607,39 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             assertJitMatchesJava("SELECT * FROM t WHERE c9 <= (258558 * -259815)", true);
             // Control: pure-INT arithmetic under a float wraps (no genuine LONG).
             assertJitMatchesJava("SELECT * FROM t WHERE c9 <= (c8 + (258558 * -259815))", true);
+        });
+    }
+
+    @Test
+    public void testConstantFoldWidthUnderBooleanEquality() throws Exception {
+        // A boolean equality of two comparisons -- (cmp) = (cmp) -- forms a
+        // SINGLE predicate context, so a predicate-global width signal applies
+        // one width to both comparisons. An overflowing INT fold then took the
+        // wrong width:
+        //   - I4-where-I8: (1000000 * 1000000 > i64) = (f32 > 0) -- the fold
+        //     feeds a LONG comparison and must read at long width, but the float
+        //     suppressed global widening and the fold root went unmarked, so the
+        //     JIT emitted a wrapped I4 (Java 2 rows, JIT 0).
+        //   - I8-where-I4: (ci > 1000000 * 1000000) = (cl > 0) -- the fold feeds
+        //     an INT comparison and must wrap, but the predicate-global
+        //     long-widening (driven by the sibling LONG comparison) forced it to
+        //     I8 (Java 3 rows, JIT 0).
+        // The fold width is now derived from the fold's own comparison context.
+        assertMemoryLeak(() -> {
+            execute("create table x as (select timestamp_sequence(0, 1000000) k, x id," +
+                    " (case when x = 1 then 0L when x = 2 then 5L else 2000000000000L end) i64," +
+                    " x::int ci, x::long cl, 1.0f f32" +
+                    " from long_sequence(3)) timestamp(k)");
+            // Previously diverging shapes, both directions.
+            assertJitMatchesJava("select id from x where (1000000 * 1000000 > i64) = (f32 > 0)", true);
+            assertJitMatchesJava("select id from x where (ci > 1000000 * 1000000) = (cl > 0)", true);
+            // Controls: single comparison, AND, OR each split into separate
+            // predicate contexts and were always correct.
+            assertJitMatchesJava("select id from x where ci > 1000000 * 1000000", true);
+            assertJitMatchesJava("select id from x where ci > 1000000 * 1000000 and cl > 0", true);
+            assertJitMatchesJava("select id from x where ci > 1000000 * 1000000 or cl > 0", true);
+            // Control: the LONG column reads the fold at long width on both paths.
+            assertJitMatchesJava("select id from x where i64 > 1000000 * 1000000", true);
         });
     }
 

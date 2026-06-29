@@ -138,16 +138,15 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private final LongObjHashMap<ExpressionNode> backfillNodes = new LongObjHashMap<>();
     // List to collect predicates from AND chains for reordering
     private final ObjList<ExpressionNode> collectedPredicates = new ObjList<>();
+    // Overflowing constant-arithmetic fold roots that the Java filter reads at
+    // long width (a genuine LONG leaf, or a LONG operand promoting the enclosing
+    // arithmetic op / comparison), so descend() must emit a full I8 IMM rather
+    // than a wrapped I4. Compared by identity. See markI64WidenFoldRoots.
+    private final ObjList<ExpressionNode> i64WidenFoldRoots = new ObjList<>();
     // Leaf nodes (column / bind variable / constant) the float-suppressed
     // narrow-i64 widening must sign-extend to i64 for the current predicate.
     // Holds node references, compared by identity. See markFloatI64WidenLeaves.
     private final ObjList<ExpressionNode> i64WidenLeaves = new ObjList<>();
-    // Overflowing constant-arithmetic fold roots that the Java filter reads at
-    // long width (a genuine LONG arithmetic ancestor reads them via getLong),
-    // so descend() must emit a full I8 IMM rather than a wrapped I4 even when a
-    // FLOAT suppresses the global narrow-i64 widening. Compared by identity. See
-    // markI64WidenFoldRoots.
-    private final ObjList<ExpressionNode> i64WidenFoldRoots = new ObjList<>();
     private final NarrowI64WidenDetector narrowI64WidenDetector = new NarrowI64WidenDetector();
     private final PredicateContext predicateContext = new PredicateContext();
     private final ScalarModeDetector scalarModeDetector = new ScalarModeDetector();
@@ -192,11 +191,13 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         // Constant integer arithmetic subtree that overflows INT. The Java
         // filter wraps a pure-INT subtree (getInt() mod 2^32) but evaluates a
         // LONG-typed subtree at full width (getLong(), never wraps). Mirror
-        // that: emit a full-width I8 IMM when the subtree is LONG-typed (any
-        // LONG leaf) or a LONG operand promotes the comparison
-        // (needsNarrowI64Widening), and a wrapped I4 IMM otherwise -- the
-        // I8-vs-I4 choice serializeUntypedNumber already makes for a plain
-        // constant.
+        // that: emit a full-width I8 IMM when the fold root is read at long
+        // width and a wrapped I4 IMM otherwise. markI64WidenFoldRoots tags the
+        // long-width roots up front from each fold's OWN comparison/arithmetic
+        // context (a LONG leaf, or a LONG operand promoting the enclosing
+        // comparison) -- a per-comparison signal, so a predicate that mixes
+        // widths across a boolean equality of two comparisons gets each fold
+        // right instead of forcing one width on all of them.
         if (predicateContext.isActive() && node.type == ExpressionNode.OPERATION) {
             try {
                 long longVal = tryFoldConstantArith(node);
@@ -204,7 +205,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     // Children are skipped, so flag the fold root as arithmetic
                     // and observe the emitted IMM (markFoldedI4Imm/I8Imm) for the
                     // scalar-mode forcer and getExecHint() mixed-size detection.
-                    if (predicateContext.needsNarrowI64Widening || isLongTypedConstArith(node) || isI64WidenFoldRoot(node)) {
+                    if (isI64WidenFoldRoot(node)) {
                         predicateContext.markFoldedI8Imm();
                         putOperand(IMM, I8_TYPE, longVal);
                     } else {
@@ -565,28 +566,6 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             case ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG -> true;
             default -> false;
         };
-    }
-
-    /**
-     * Reports whether a pure-constant integer arithmetic subtree is LONG-typed,
-     * i.e. has at least one LONG constant leaf (L/l suffix or a magnitude that
-     * overflows INT). The Java filter evaluates such a subtree at long width via
-     * getLong() and never wraps, so descend() must emit a full I8 IMM rather than
-     * a wrapped I4 even when no separate LONG operand triggers narrow-i64
-     * widening (e.g. a FLOAT in the predicate suppresses shouldWiden()). Assumes
-     * the subtree already folded via tryFoldConstantArith.
-     */
-    private static boolean isLongTypedConstArith(ExpressionNode node) {
-        if (node == null) {
-            return false;
-        }
-        if (node.type == ExpressionNode.CONSTANT) {
-            return longConstantTypeCode(node.token) == I8_TYPE;
-        }
-        if (node.type != ExpressionNode.OPERATION) {
-            return false;
-        }
-        return isLongTypedConstArith(node.lhs) || isLongTypedConstArith(node.rhs);
     }
 
     // Stands for PredicateType.NUMERIC
@@ -1163,38 +1142,50 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
     /**
      * Marks the overflowing constant-arithmetic fold roots that the Java filter
-     * reads at long width because a genuine LONG operand makes an enclosing
-     * arithmetic op long-typed (e.g. {@code c0_long + (258558 * -259815)}).
-     * {@link #descend} folds such a root to a single IMM; a wrapped I4 IMM would
-     * drop the high bits the AddLong reads via getLong(), so descend emits a full
-     * I8 IMM for a marked root. Only needed when a FLOAT in the predicate
-     * suppresses the global narrow-i64 widening; without a float,
-     * needsNarrowI64Widening already routes the root to I8.
+     * reads at long width, so {@link #descend} emits a full I8 IMM for them
+     * rather than a wrapped I4 (which would drop the high bits the getLong() path
+     * reads). A fold root is long-width when it is genuinely LONG-typed (a LONG
+     * leaf, e.g. {@code 2 * 5000000000L}) or when a LONG operand promotes an
+     * enclosing arithmetic op (e.g. {@code c0_long + (258558 * -259815)}) or
+     * comparison (e.g. {@code 1000000 * 1000000 > c0_long}) to long width.
      * <p>
-     * The walk resets the long context at every non-arithmetic (comparison /
-     * boolean / IN) boundary: a LONG operand there promotes the comparison per
-     * operand and never pulls a sibling int subtree to long width, and a float
-     * in the predicate already makes any mixed comparison DOUBLE-width, which
-     * reads a bare INT operand via getInt() and wraps.
+     * The decision is derived per fold from its OWN context, not from a
+     * predicate-global flag: a boolean equality of two comparisons --
+     * {@code (cmp) = (cmp)} -- is a single predicate that can mix an INT-width
+     * comparison with a LONG-width one, and each fold must take the width of the
+     * comparison it actually feeds.
+     * <p>
+     * At a non-arithmetic boundary (comparison / boolean / IN / NOT) the walk
+     * promotes the node's operand types: an integer comparison with a LONG
+     * operand reads all its operands at long width, while a FLOAT/DOUBLE operand
+     * promotes to floating point -- there a bare INT fold is read via getInt()
+     * and wraps (cmpLong stays false), but a genuinely LONG-typed operand is
+     * still read at long width and the arithmetic branch re-marks the folds
+     * beneath it via {@link #genuineArithType}.
      */
     private void markI64WidenFoldRoots(ExpressionNode node, boolean underGenuineLong) {
         if (node == null || node.type != ExpressionNode.OPERATION) {
             return;
         }
         if (isArithmeticOperation(node) || (node.paramCount == 1 && Chars.equals(node.token, '-'))) {
-            if (underGenuineLong && isFoldableOverflowConst(node)) {
+            boolean nodeGenuineLong = underGenuineLong || genuineArithType(node) == I8_TYPE;
+            if (nodeGenuineLong && isFoldableOverflowConst(node)) {
                 i64WidenFoldRoots.add(node);
                 return; // folds to one IMM; no deeper fold root to find
             }
-            boolean childUnderGenuineLong = underGenuineLong || genuineArithType(node) == I8_TYPE;
-            markI64WidenFoldRoots(node.lhs, childUnderGenuineLong);
-            markI64WidenFoldRoots(node.rhs, childUnderGenuineLong);
+            markI64WidenFoldRoots(node.lhs, nodeGenuineLong);
+            markI64WidenFoldRoots(node.rhs, nodeGenuineLong);
             return;
         }
-        markI64WidenFoldRoots(node.lhs, false);
-        markI64WidenFoldRoots(node.rhs, false);
+        int cmpType = promoteArithType(genuineArithType(node.lhs), genuineArithType(node.rhs));
         for (int i = 0, n = node.args.size(); i < n; i++) {
-            markI64WidenFoldRoots(node.args.getQuick(i), false);
+            cmpType = promoteArithType(cmpType, genuineArithType(node.args.getQuick(i)));
+        }
+        boolean cmpLong = cmpType == I8_TYPE;
+        markI64WidenFoldRoots(node.lhs, cmpLong);
+        markI64WidenFoldRoots(node.rhs, cmpLong);
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            markI64WidenFoldRoots(node.args.getQuick(i), cmpLong);
         }
     }
 
@@ -2031,12 +2022,22 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         if (node.type != ExpressionNode.OPERATION) {
             throw NumericException.INSTANCE;
         }
-        // Unary minus: parser builds OPERATION "-" with rhs only.
+        // Unary minus: parser builds OPERATION "-" with rhs only. NegInt#getInt
+        // propagates INT_NULL instead of negating the sentinel.
         if (Chars.equals(node.token, '-') && node.lhs == null) {
-            return -tryFoldConstantArithI4(node.rhs);
+            int operand = tryFoldConstantArithI4(node.rhs);
+            return operand == Numbers.INT_NULL ? Numbers.INT_NULL : -operand;
         }
         int left = tryFoldConstantArithI4(node.lhs);
         int right = tryFoldConstantArithI4(node.rhs);
+        // MulInt / AddInt / SubInt / DivInt#getInt return INT_NULL when either
+        // operand is INT_NULL, so an inner product that wraps exactly onto the
+        // -2^31 sentinel poisons the rest of the fold to NULL instead of feeding
+        // a wrapped value. Without this the JIT kept computing modular arithmetic
+        // (e.g. (65536 * 32768) * 2 = 0) while the Java filter collapsed to NULL.
+        if (left == Numbers.INT_NULL || right == Numbers.INT_NULL) {
+            return Numbers.INT_NULL;
+        }
         if (Chars.equals(node.token, '+')) {
             return left + right;
         }
@@ -2397,16 +2398,20 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                         needsNarrowI64Widening = false;
                         hasFloatInPredicate = false;
                     }
+                    // Tag the overflowing constant fold roots that the Java
+                    // filter reads at long width, so descend() emits a full I8
+                    // IMM for exactly those and a wrapped I4 for the rest. The
+                    // tag is per-comparison, so it is correct whether or not a
+                    // float is present and even when one predicate mixes INT- and
+                    // LONG-width comparisons across a boolean equality.
+                    markI64WidenFoldRoots(node, false);
                     // A float suppresses the global narrow-i64 widening, but a
                     // LONG-width arithmetic subtree still computes at 64 bits in
                     // the Java filter. Tag the narrow leaves under such subtrees
                     // so the IR sign-extends exactly them, keeping a nested INT
-                    // product from wrapping mod 2^32, and tag the overflowing
-                    // constant fold roots under them so descend() emits a full I8
-                    // IMM instead of a wrapped I4.
+                    // product from wrapping mod 2^32.
                     if (hasFloatInPredicate) {
                         markFloatI64WidenLeaves(node);
-                        markI64WidenFoldRoots(node, false);
                     }
                 }
                 if (topLevelBooleanColumn) {

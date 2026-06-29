@@ -75,6 +75,32 @@ public class IntArithmeticOverflowFoldingTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWiderCastsWidenWhenProductWrapsToIntNull() throws Exception {
+        // Boundary case: the wrapped INT product lands EXACTLY on the INT_NULL
+        // sentinel (-2^31). functionToConstant0 must not mistake that for a real
+        // null. Before the fix it folded the literal to IntConstant.NULL (the
+        // intConst == INT_NULL disjunct fired before the leave-unfolded branch),
+        // so a wider cast read NULL while the column path widened to the true
+        // value. The fold now keys off longConst == LONG_NULL, which only a
+        // genuine null has, so both paths widen alike.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE u (y INT)");
+            execute("INSERT INTO u VALUES (2147483647)");
+
+            // 2147483647 + 1 wraps to -2147483648 == INT_NULL; getLong() holds 2147483648.
+            assertQuery("SELECT (2147483647 + 1)::LONG AS v").expectSize().returns("v\n2147483648\n");
+            assertQuery("SELECT (y + 1)::LONG AS v FROM u").expectSize().returns("v\n2147483648\n");
+
+            // A different product that also wraps to exactly -2^31: 65536 * 32768.
+            assertQuery("SELECT (65536 * 32768)::LONG AS v").expectSize().returns("v\n2147483648\n");
+
+            // The plain INT projection still wraps mod 2^32 on both paths.
+            assertQuery("SELECT 2147483647 + 1 AS v").expectSize().returns("v\nnull\n");
+            assertQuery("SELECT y + 1 AS v FROM u").expectSize().returns("v\nnull\n");
+        });
+    }
+
+    @Test
     public void testRuntimeConstWidensLikeColumnAndLiteral() throws Exception {
         // A runtime-constant (but not compile-time-constant) overflowing INT arithmetic subtree --
         // here a string bind variable cast to INT -- gets memoized by IntRuntimeConstFunction. The
