@@ -31,7 +31,6 @@ import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Interval;
-import io.questdb.std.Numbers;
 
 class OffsetTimestampFunction extends TimestampFunction implements UnaryFunction, MonotonicTimestampFunction {
     private final long offset;
@@ -60,29 +59,7 @@ class OffsetTimestampFunction extends TimestampFunction implements UnaryFunction
 
     @Override
     public int invertTimestampInterval(Interval io) {
-        long lo = io.getLo();
-        long hi = io.getHi();
-        if (MonotonicTimestampFunction.shiftWrapsIntoRange(offset, lo, hi)) {
-            return NONE;
-        }
-        if (lo != Numbers.LONG_NULL) {
-            if ((offset > 0 && lo < Long.MIN_VALUE + offset) || (offset < 0 && lo > Long.MAX_VALUE + offset)) {
-                return NONE;
-            }
-            lo -= offset;
-        } else if (offset < 0) {
-            lo = Long.MIN_VALUE - offset;
-        }
-        if (hi != Long.MAX_VALUE) {
-            if ((offset > 0 && hi < Long.MIN_VALUE + offset) || (offset < 0 && hi > Long.MAX_VALUE + offset)) {
-                return NONE;
-            }
-            hi -= offset;
-        } else if (offset > 0) {
-            hi = Long.MAX_VALUE - offset;
-        }
-        io.of(lo, hi);
-        return EXACT;
+        return MonotonicTimestampFunction.invertConstantShift(io, offset);
     }
 
     @Override

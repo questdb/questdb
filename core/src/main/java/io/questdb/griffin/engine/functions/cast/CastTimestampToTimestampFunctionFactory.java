@@ -97,7 +97,7 @@ public class CastTimestampToTimestampFunctionFactory implements FunctionFactory 
             if (ColumnType.isTimestampNano(outType) && ColumnType.isTimestampMicro(leftTimestampType)) {
                 // widening micro -> nano is lossless; the bound is resolved at nano precision
                 if (lo != Numbers.LONG_NULL) {
-                    lo = ceilDiv(lo, NANOS_PER_MICRO);
+                    lo = Numbers.ceilDiv(lo, NANOS_PER_MICRO);
                 }
                 if (hi != Long.MAX_VALUE) {
                     hi = Math.floorDiv(hi, NANOS_PER_MICRO);
@@ -129,10 +129,6 @@ public class CastTimestampToTimestampFunctionFactory implements FunctionFactory 
             }
             io.of(lo, hi);
             return soundness;
-        }
-
-        private static long ceilDiv(long a, long b) {
-            return -Math.floorDiv(-a, b);
         }
     }
 }

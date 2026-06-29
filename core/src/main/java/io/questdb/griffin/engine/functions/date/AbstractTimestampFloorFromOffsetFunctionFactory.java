@@ -203,7 +203,7 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
     // 48h bounds any zone offset difference (e.g. Samoa's 2011 date-line shift); the
     // floor can drop the input by up to two buckets (DST-gap re-flooring).
     static int invertFloorSuperset(Interval io, TimestampDriver timestampDriver, char unit, int stride, long effectiveOffset) {
-        if (isNotFixedStrideUnit(unit)) {
+        if (!CommonUtils.isFixedAlignedUnit(unit)) {
             return MonotonicTimestampFunction.NONE;
         }
         final long margin = timestampDriver.fromDays(2);
@@ -446,18 +446,13 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
             int stride,
             long offset
     ) {
-        if (isNotFixedStrideUnit(unit)) {
+        if (!CommonUtils.isFixedAlignedUnit(unit)) {
             return false;
         }
         final char addUnit = unit == 'U' ? 'u' : unit;
         final long b0 = floorFunc.floor(offset, stride, offset);
         final long next = timestampDriver.add(b0, addUnit, stride);
         return next > b0 && floorFunc.floor(next, stride, offset) == next && floorFunc.floor(next - 1, stride, offset) == b0;
-    }
-
-    private static boolean isNotFixedStrideUnit(char unit) {
-        return unit != 's' && unit != 'm' && unit != 'h' && unit != 'd'
-                && unit != 'T' && unit != 'U' && unit != 'n';
     }
 
     private static boolean tryFloorNamedTzExact(

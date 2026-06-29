@@ -40,6 +40,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.CommonUtils;
 
 public class TimestampCeilFunctionFactory implements FunctionFactory {
     @Override
@@ -84,7 +85,7 @@ public class TimestampCeilFunctionFactory implements FunctionFactory {
             this.symbol = symbol;
             // Only fixed-size, epoch-aligned units have boundaries at integer
             // multiples of the bucket size, which the arithmetic inverse needs.
-            this.fixedSize = isFixedAlignedUnit(symbol) ? ceil.ceil(0) : 0;
+            this.fixedSize = CommonUtils.isFixedAlignedUnit(symbol) ? ceil.ceil(0) : 0;
         }
 
         @Override
@@ -111,7 +112,7 @@ public class TimestampCeilFunctionFactory implements FunctionFactory {
             long lo = io.getLo();
             long hi = io.getHi();
             if (lo != Numbers.LONG_NULL) {
-                final long ql = ceilDiv(lo, fixedSize) - 1;
+                final long ql = Numbers.ceilDiv(lo, fixedSize) - 1;
                 if (mulOverflows(ql, fixedSize)) {
                     return NONE;
                 }
@@ -140,15 +141,6 @@ public class TimestampCeilFunctionFactory implements FunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val("timestamp_ceil('").val(symbol).val("',").val(arg).val(')');
-        }
-
-        private static long ceilDiv(long a, long b) {
-            return -Math.floorDiv(-a, b);
-        }
-
-        private static boolean isFixedAlignedUnit(char symbol) {
-            return symbol == 's' || symbol == 'm' || symbol == 'h' || symbol == 'd'
-                    || symbol == 'T' || symbol == 'U' || symbol == 'n';
         }
 
         private static boolean mulOverflows(long a, long b) {

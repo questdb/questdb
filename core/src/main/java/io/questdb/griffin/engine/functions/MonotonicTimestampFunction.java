@@ -57,6 +57,40 @@ public interface MonotonicTimestampFunction {
     int EXACT = 2;
 
     /**
+     * Inverts {@code [lo, hi]} for a function whose result is {@code arg + shift}, a constant
+     * offset applied to every timestamp: the inverse subtracts {@code shift} back. Returns
+     * {@link #EXACT}, or {@link #NONE} when subtracting {@code shift} would overflow the long
+     * boundary or when the forward shift wraps part of the preimage out of a single interval.
+     */
+    static int invertConstantShift(Interval io, long shift) {
+        final long inLo = io.getLo();
+        final long inHi = io.getHi();
+        if (shiftWrapsIntoRange(shift, inLo, inHi)) {
+            return NONE;
+        }
+        long lo = inLo;
+        long hi = inHi;
+        if (lo != Numbers.LONG_NULL) {
+            if ((shift > 0 && lo < Long.MIN_VALUE + shift) || (shift < 0 && lo > Long.MAX_VALUE + shift)) {
+                return NONE;
+            }
+            lo -= shift;
+        } else if (shift < 0) {
+            lo = Long.MIN_VALUE - shift;
+        }
+        if (hi != Long.MAX_VALUE) {
+            if ((shift > 0 && hi < Long.MIN_VALUE + shift) || (shift < 0 && hi > Long.MAX_VALUE + shift)) {
+                return NONE;
+            }
+            hi -= shift;
+        } else if (shift > 0) {
+            hi = Long.MAX_VALUE - shift;
+        }
+        io.of(lo, hi);
+        return EXACT;
+    }
+
+    /**
      * Inverts {@code [lo, hi]} for a named-zone function whose result is
      * {@code arg + shiftSign * offset(arg)} ({@code to_timezone} uses {@code -1},
      * {@code to_utc} uses {@code +1}). Grades {@link #EXACT} when the zone offset is

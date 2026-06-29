@@ -1885,7 +1885,7 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
 
     private static long jitterBound(Rnd rnd, long base, boolean nano) {
         final long sec = nano ? 1_000_000_000L : 1_000_000L;
-        return switch (rnd.nextInt(9)) {
+        return switch (rnd.nextInt(10)) {
             case 0 -> base;
             case 1 -> base + 1;
             case 2 -> base - 1;
@@ -1894,6 +1894,10 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
             case 5 -> base + 3600 * sec;
             case 6 -> base + 24L * 3600 * sec;
             case 7 -> base + (rnd.nextLong(7L * 24 * 3600) - 3L * 24 * 3600) * sec;
+            // within ~1 year of the nano domain max, where the EXACT round-up inverse can wrap past
+            // Long.MAX; micro's overflow point lies beyond any literal, so only nano probes the edge
+            case 8 -> nano ? Long.MAX_VALUE - rnd.nextLong(366L * 24 * 3600) * sec - rnd.nextLong(sec)
+                    : base + (rnd.nextLong(400L * 24 * 3600) - 200L * 24 * 3600) * sec;
             default -> base + (rnd.nextLong(400L * 24 * 3600) - 200L * 24 * 3600) * sec; // far, often empty
         };
     }
@@ -1925,7 +1929,7 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
             return "@";
         }
         final String inner = randomTsExpr(rnd, depth - 1);
-        return switch (rnd.nextInt(9)) {
+        return switch (rnd.nextInt(10)) {
             case 0 -> "date_trunc('" + DATE_TRUNC_UNITS[rnd.nextInt(DATE_TRUNC_UNITS.length)] + "', " + inner + ")";
             case 1 -> "timestamp_floor('" + randomStride(rnd, STRIDE_UNITS_ALL) + "', " + inner + ")";
             case 2 -> "timestamp_floor('" + randomStride(rnd, STRIDE_UNITS_TIME) + "', " + inner
@@ -1941,6 +1945,10 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
                     + ", " + inner + ", '" + TZ_POOL[rnd.nextInt(TZ_POOL.length)] + "')";
             case 7 ->
                     (rnd.nextBoolean() ? "to_timezone(" : "to_utc(") + inner + ", '" + TZ_POOL[rnd.nextInt(TZ_POOL.length)] + "')";
+            case 8 -> {
+                final long shift = (1L + rnd.nextInt(1_000_000)) * 1_000_000L;
+                yield "(" + inner + (rnd.nextBoolean() ? " + " : " - ") + shift + ")";
+            }
             default -> {
                 final String castType = rnd.nextBoolean() ? "timestamp" : "timestamp_ns";
                 yield rnd.nextBoolean() ? "cast(" + inner + " AS " + castType + ")" : inner + "::" + castType;

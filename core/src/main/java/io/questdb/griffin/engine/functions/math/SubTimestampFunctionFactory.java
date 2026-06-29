@@ -103,29 +103,8 @@ public class SubTimestampFunctionFactory implements FunctionFactory {
             if (k == Numbers.LONG_NULL) {
                 return NONE;
             }
-            long lo = io.getLo();
-            long hi = io.getHi();
-            if (MonotonicTimestampFunction.shiftWrapsIntoRange(-k, lo, hi)) {
-                return NONE;
-            }
-            if (lo != Numbers.LONG_NULL) {
-                if ((k > 0 && lo > Long.MAX_VALUE - k) || (k < 0 && lo < Long.MIN_VALUE - k)) {
-                    return NONE;
-                }
-                lo += k;
-            } else if (k > 0) {
-                lo = Long.MIN_VALUE + k;
-            }
-            if (hi != Long.MAX_VALUE) {
-                if ((k > 0 && hi > Long.MAX_VALUE - k) || (k < 0 && hi < Long.MIN_VALUE - k)) {
-                    return NONE;
-                }
-                hi += k;
-            } else if (k < 0) {
-                hi = Long.MAX_VALUE + k;
-            }
-            io.of(lo, hi);
-            return EXACT;
+            // g(ts) = ts - k, so the constant shift is -k
+            return MonotonicTimestampFunction.invertConstantShift(io, -k);
         }
 
         @Override

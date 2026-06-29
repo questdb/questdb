@@ -43,6 +43,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.CommonUtils;
 
 /**
  * Factory for the dateadd function: dateadd(char period, int stride, timestamp).
@@ -171,31 +172,9 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
                 io.of(lo, hi);
                 return SUPERSET;
             }
-            if (isFixedDurationUnit(period)) {
-                // a fixed unit adds the same constant to every timestamp, so the inverse
-                // subtracts it back, bailing out when that would overflow
-                final long shift = periodAddFunction.add(0, stride);
-                if (MonotonicTimestampFunction.shiftWrapsIntoRange(shift, lo, hi)) {
-                    return NONE;
-                }
-                if (lo != Numbers.LONG_NULL) {
-                    if ((shift > 0 && lo < Long.MIN_VALUE + shift) || (shift < 0 && lo > Long.MAX_VALUE + shift)) {
-                        return NONE;
-                    }
-                    lo -= shift;
-                } else if (shift < 0) {
-                    lo = Long.MIN_VALUE - shift;
-                }
-                if (hi != Long.MAX_VALUE) {
-                    if ((shift > 0 && hi < Long.MIN_VALUE + shift) || (shift < 0 && hi > Long.MAX_VALUE + shift)) {
-                        return NONE;
-                    }
-                    hi -= shift;
-                } else if (shift > 0) {
-                    hi = Long.MAX_VALUE - shift;
-                }
-                io.of(lo, hi);
-                return EXACT;
+            if (CommonUtils.isFixedDurationUnit(period)) {
+                // a fixed unit adds the same constant to every timestamp
+                return MonotonicTimestampFunction.invertConstantShift(io, periodAddFunction.add(0, stride));
             }
             return NONE;
         }
@@ -207,11 +186,6 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
 
         private static boolean addOverflows(long base, long result, int units) {
             return units > 0 ? result <= base : units < 0 && result >= base;
-        }
-
-        private static boolean isFixedDurationUnit(char period) {
-            return period == 's' || period == 'm' || period == 'h' || period == 'd' || period == 'w'
-                    || period == 'T' || period == 'U' || period == 'n';
         }
     }
 
