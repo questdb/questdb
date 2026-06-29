@@ -77,6 +77,7 @@ public class ReadOnlyStatementGateMatrixTest extends AbstractCairoTest {
         EXPECTED_REFUSED.add("CREATE_MAT_VIEW");
         EXPECTED_REFUSED.add("REFRESH_MAT_VIEW");
         EXPECTED_REFUSED.add("CREATE_VIEW");
+        EXPECTED_REFUSED.add("CREATE_LIVE_VIEW");
         EXPECTED_REFUSED.add("ALTER_VIEW");
         EXPECTED_REFUSED.add("ALTER_STORAGE_POLICY");
         EXPECTED_REFUSED.add("DROP");

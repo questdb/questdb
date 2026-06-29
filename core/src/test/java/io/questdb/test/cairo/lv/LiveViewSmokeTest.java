@@ -1474,8 +1474,8 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             assertQuery("SELECT max(rn) FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("max\n40\n");
             // Full-schema read: tier eligible; content correct.
             assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts LIMIT 2").noLeakCheck().timestamp("ts").expectSize().returns("ts\tx\trn\n" +
-                            "2026-04-01T00:00:00.000000Z\t1\t1\n" +
-                            "2026-04-01T00:00:01.000000Z\t2\t2\n");
+                    "2026-04-01T00:00:00.000000Z\t1\t1\n" +
+                    "2026-04-01T00:00:01.000000Z\t2\t2\n");
             execute("DROP LIVE VIEW lv");
         });
     }
@@ -1562,11 +1562,11 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     engine.getLiveViewRegistry().getViewInstance("lv").getStateReader().getBackfillState()
             );
             assertQuery("SELECT ts, sym, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\tx\trn\n" +
-                            "2026-04-01T00:00:00.000000Z\ta\t1\t1\n" +
-                            "2026-04-01T00:00:01.000000Z\tb\t4\t1\n" +
-                            "2026-04-01T00:00:05.000000Z\ta\t2\t2\n" +
-                            "2026-04-02T00:00:00.000000Z\ta\t3\t1\n" +
-                            "2026-04-02T00:00:02.000000Z\tb\t5\t1\n");
+                    "2026-04-01T00:00:00.000000Z\ta\t1\t1\n" +
+                    "2026-04-01T00:00:01.000000Z\tb\t4\t1\n" +
+                    "2026-04-01T00:00:05.000000Z\ta\t2\t2\n" +
+                    "2026-04-02T00:00:00.000000Z\ta\t3\t1\n" +
+                    "2026-04-02T00:00:02.000000Z\tb\t5\t1\n");
             execute("DROP LIVE VIEW lv");
         });
     }
@@ -1770,10 +1770,10 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
             // Only x >= 5 survive the filter; rn is the filtered sweep order.
             assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tx\trn\n" +
-                            "2026-04-01T00:00:04.000000Z\t5\t1\n" +
-                            "2026-04-01T00:00:05.000000Z\t6\t2\n" +
-                            "2026-04-01T00:00:06.000000Z\t7\t3\n" +
-                            "2026-04-01T00:00:07.000000Z\t8\t4\n");
+                    "2026-04-01T00:00:04.000000Z\t5\t1\n" +
+                    "2026-04-01T00:00:05.000000Z\t6\t2\n" +
+                    "2026-04-01T00:00:06.000000Z\t7\t3\n" +
+                    "2026-04-01T00:00:07.000000Z\t8\t4\n");
             execute("DROP LIVE VIEW lv");
         });
     }
@@ -2035,7 +2035,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("SELECT view_status, backfill_target_seqtxn FROM live_views() WHERE view_name = 'lv'").noLeakCheck().noRandomAccess().returns("view_status\tbackfill_target_seqtxn\n" +
-                            "active\tnull\n");
+                    "active\tnull\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -2050,9 +2050,9 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             execute("CREATE LIVE VIEW lv FLUSH EVERY 200ms BACKFILL AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
             assertQuery("SHOW CREATE LIVE VIEW lv").noLeakCheck().noRandomAccess().returns("ddl\n" +
-                            "CREATE LIVE VIEW 'lv' FLUSH EVERY 200ms IN MEMORY 200ms PARTITION BY DAY BACKFILL AS (\n" +
-                            "SELECT ts, x, row_number() OVER () AS rn FROM base\n" +
-                            ");\n");
+                    "CREATE LIVE VIEW 'lv' FLUSH EVERY 200ms IN MEMORY 200ms PARTITION BY DAY BACKFILL AS (\n" +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base\n" +
+                    ");\n");
             execute("DROP LIVE VIEW lv");
         });
     }
@@ -2351,10 +2351,10 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
             // The view stays queryable from the on-disk tier and reports INVALID.
             assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
-                            "2026-11-01T00:00:10.000000Z\ta\t1.0\n" +
-                            "2026-11-01T00:00:20.000000Z\ta\t3.0\n");
+                    "2026-11-01T00:00:10.000000Z\ta\t1.0\n" +
+                    "2026-11-01T00:00:20.000000Z\ta\t3.0\n");
             assertQuery("SELECT view_status FROM live_views() WHERE view_name = 'lv'").noLeakCheck().noRandomAccess().returns("view_status\n" +
-                            "invalid\n");
+                    "invalid\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -3055,9 +3055,9 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
             // Reads still return correct results from disk.
             assertQuery("SELECT ts, sym, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\tx\trn\n" +
-                            "2026-05-12T00:00:00.000001Z\ta\t1\t1\n" +
-                            "2026-05-12T00:00:00.000002Z\tb\t2\t1\n" +
-                            "2026-05-12T00:00:00.000003Z\ta\t1\t2\n");
+                    "2026-05-12T00:00:00.000001Z\ta\t1\t1\n" +
+                    "2026-05-12T00:00:00.000002Z\tb\t2\t1\n" +
+                    "2026-05-12T00:00:00.000003Z\ta\t1\t2\n");
 
             // in_mem_bytes must read 0 since no tier was allocated.
             assertQuery("SELECT in_mem_bytes FROM live_views() WHERE view_name = 'lv'").noLeakCheck().noRandomAccess().returns("in_mem_bytes\n0\n");
@@ -3590,7 +3590,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             execute("INSERT INTO base (ts, x) VALUES ('2020-01-10T12:00:00.000000Z', 3)");
             drainWalQueue();
             assertQuery("SELECT ts, x FROM base").noLeakCheck().timestamp("ts").expectSize().returns("ts\tx\n" +
-                            "2020-01-10T12:00:00.000000Z\t3\n");
+                    "2020-01-10T12:00:00.000000Z\t3\n");
 
             // FLUSH EVERY 200ms would otherwise rate-limit the back-to-back refresh.
             instance.setLastFlushTimeUs(Numbers.LONG_NULL);
@@ -3607,9 +3607,9 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             // The TTL-evicted base partitions do not retract the already-derived LV
             // rows; the new row forward-appends with the next row number.
             assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tx\trn\n" +
-                            "2020-01-01T12:00:00.000000Z\t1\t1\n" +
-                            "2020-01-02T12:00:00.000000Z\t2\t2\n" +
-                            "2020-01-10T12:00:00.000000Z\t3\t3\n");
+                    "2020-01-01T12:00:00.000000Z\t1\t1\n" +
+                    "2020-01-02T12:00:00.000000Z\t2\t2\n" +
+                    "2020-01-10T12:00:00.000000Z\t3\t3\n");
 
             long postFloor = instance.getStateReader().getLvConsumedSeqTxn();
             Assert.assertTrue(
@@ -4044,9 +4044,9 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             // ASOF JOIN against the LV as RHS: each probe row should pick up the
             // latest LV row at or before the probe ts.
             assertQuery("SELECT probe.ts, probe.label, lv.x, lv.rn " +
-                            "FROM probe ASOF JOIN lv").noLeakCheck().timestamp("ts").noRandomAccess().expectSize().returns("ts\tlabel\tx\trn\n" +
-                            "2026-03-01T00:00:30.000000Z\ta\t10\t1\n" +
-                            "2026-03-01T00:01:30.000000Z\tb\t20\t2\n");
+                    "FROM probe ASOF JOIN lv").noLeakCheck().timestamp("ts").noRandomAccess().expectSize().returns("ts\tlabel\tx\trn\n" +
+                    "2026-03-01T00:00:30.000000Z\ta\t10\t1\n" +
+                    "2026-03-01T00:01:30.000000Z\tb\t20\t2\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -4517,10 +4517,10 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
-                            "2026-08-01T00:00:00.000000Z\ta\t10.0\n" +
-                            "2026-08-01T01:00:00.000000Z\ta\t30.0\n" +
-                            "2026-08-02T00:00:00.000000Z\ta\t5.0\n" +
-                            "2026-08-02T01:00:00.000000Z\ta\t20.0\n");
+                    "2026-08-01T00:00:00.000000Z\ta\t10.0\n" +
+                    "2026-08-01T01:00:00.000000Z\ta\t30.0\n" +
+                    "2026-08-02T00:00:00.000000Z\ta\t5.0\n" +
+                    "2026-08-02T01:00:00.000000Z\ta\t20.0\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -4549,10 +4549,10 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
-                            "2026-08-01T10:00:00.000000Z\ta\t10.0\n" +
-                            "2026-08-01T10:30:00.000000Z\ta\t30.0\n" +
-                            "2026-08-01T11:00:00.000000Z\ta\t5.0\n" +
-                            "2026-08-01T11:30:00.000000Z\ta\t20.0\n");
+                    "2026-08-01T10:00:00.000000Z\ta\t10.0\n" +
+                    "2026-08-01T10:30:00.000000Z\ta\t30.0\n" +
+                    "2026-08-01T11:00:00.000000Z\ta\t5.0\n" +
+                    "2026-08-01T11:30:00.000000Z\ta\t20.0\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -4580,10 +4580,10 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("SELECT ts, sym, a FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ta\n" +
-                            "2026-08-01T00:00:00.000000Z\ta\t10.0\n" +
-                            "2026-08-01T01:00:00.000000Z\ta\t15.0\n" +
-                            "2026-08-02T00:00:00.000000Z\ta\t100.0\n" +
-                            "2026-08-02T01:00:00.000000Z\ta\t150.0\n");
+                    "2026-08-01T00:00:00.000000Z\ta\t10.0\n" +
+                    "2026-08-01T01:00:00.000000Z\ta\t15.0\n" +
+                    "2026-08-02T00:00:00.000000Z\ta\t100.0\n" +
+                    "2026-08-02T01:00:00.000000Z\ta\t150.0\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -4649,9 +4649,9 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("SELECT ts, sym, a FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ta\n" +
-                            "2026-10-01T00:00:00.000000Z\t1\t10.000000\n" +
-                            "2026-10-01T01:00:00.000000Z\t1\t15.000000\n" +
-                            "2026-10-01T02:00:00.000000Z\t1\t30.000000\n");
+                    "2026-10-01T00:00:00.000000Z\t1\t10.000000\n" +
+                    "2026-10-01T01:00:00.000000Z\t1\t15.000000\n" +
+                    "2026-10-01T02:00:00.000000Z\t1\t30.000000\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -4683,10 +4683,10 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("SELECT ts, sym, a FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ta\n" +
-                            "2026-08-01T00:00:00.000000Z\ta\t10.000000\n" +
-                            "2026-08-01T01:00:00.000000Z\ta\t15.000000\n" +
-                            "2026-08-02T00:00:00.000000Z\ta\t100.000000\n" +
-                            "2026-08-02T01:00:00.000000Z\ta\t150.000000\n");
+                    "2026-08-01T00:00:00.000000Z\ta\t10.000000\n" +
+                    "2026-08-01T01:00:00.000000Z\ta\t15.000000\n" +
+                    "2026-08-02T00:00:00.000000Z\ta\t100.000000\n" +
+                    "2026-08-02T01:00:00.000000Z\ta\t150.000000\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -4715,10 +4715,10 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("SELECT ts, sym, a FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ta\n" +
-                            "2026-08-01T00:00:00.000000Z\ta\t10\n" +
-                            "2026-08-01T01:00:00.000000Z\ta\t15\n" +
-                            "2026-08-02T00:00:00.000000Z\ta\t100\n" +
-                            "2026-08-02T01:00:00.000000Z\ta\t150\n");
+                    "2026-08-01T00:00:00.000000Z\ta\t10\n" +
+                    "2026-08-01T01:00:00.000000Z\ta\t15\n" +
+                    "2026-08-02T00:00:00.000000Z\ta\t100\n" +
+                    "2026-08-02T01:00:00.000000Z\ta\t150\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -4747,10 +4747,10 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("SELECT ts, sym, a FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ta\n" +
-                            "2026-08-01T00:00:00.000000Z\ta\t2.000\n" +
-                            "2026-08-01T01:00:00.000000Z\ta\t4.000\n" +
-                            "2026-08-02T00:00:00.000000Z\ta\t10.000\n" +
-                            "2026-08-02T01:00:00.000000Z\ta\t20.000\n");
+                    "2026-08-01T00:00:00.000000Z\ta\t2.000\n" +
+                    "2026-08-01T01:00:00.000000Z\ta\t4.000\n" +
+                    "2026-08-02T00:00:00.000000Z\ta\t10.000\n" +
+                    "2026-08-02T01:00:00.000000Z\ta\t20.000\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -4778,10 +4778,10 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("SELECT ts, sym, a FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ta\n" +
-                            "2026-08-01T00:00:00.000000Z\ta\t2.00\n" +
-                            "2026-08-01T01:00:00.000000Z\ta\t4.00\n" +
-                            "2026-08-02T00:00:00.000000Z\ta\t10.00\n" +
-                            "2026-08-02T01:00:00.000000Z\ta\t20.00\n");
+                    "2026-08-01T00:00:00.000000Z\ta\t2.00\n" +
+                    "2026-08-01T01:00:00.000000Z\ta\t4.00\n" +
+                    "2026-08-02T00:00:00.000000Z\ta\t10.00\n" +
+                    "2026-08-02T01:00:00.000000Z\ta\t20.00\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -4824,9 +4824,9 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("SELECT ts, sym, a FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ta\n" +
-                            "2026-10-01T00:00:00.000000Z\t1\t2.000\n" +
-                            "2026-10-01T01:00:00.000000Z\t1\t4.000\n" +
-                            "2026-10-01T02:00:00.000000Z\t1\t8.000\n");
+                    "2026-10-01T00:00:00.000000Z\t1\t2.000\n" +
+                    "2026-10-01T01:00:00.000000Z\t1\t4.000\n" +
+                    "2026-10-01T02:00:00.000000Z\t1\t8.000\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -4868,9 +4868,9 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("SELECT ts, sym, a FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ta\n" +
-                            "2026-10-01T00:00:00.000000Z\t1\t2.00\n" +
-                            "2026-10-01T01:00:00.000000Z\t1\t4.00\n" +
-                            "2026-10-01T02:00:00.000000Z\t1\t8.00\n");
+                    "2026-10-01T00:00:00.000000Z\t1\t2.00\n" +
+                    "2026-10-01T01:00:00.000000Z\t1\t4.00\n" +
+                    "2026-10-01T02:00:00.000000Z\t1\t8.00\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -4916,9 +4916,9 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("SELECT ts, sym, c FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\tc\n" +
-                            "2026-10-01T00:00:00.000000Z\t1\t1\n" +
-                            "2026-10-01T01:00:00.000000Z\t1\t2\n" +
-                            "2026-10-01T02:00:00.000000Z\t1\t3\n");
+                    "2026-10-01T00:00:00.000000Z\t1\t1\n" +
+                    "2026-10-01T01:00:00.000000Z\t1\t2\n" +
+                    "2026-10-01T02:00:00.000000Z\t1\t3\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -4963,9 +4963,9 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("SELECT ts, sym, m FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\tm\n" +
-                            "2026-10-01T00:00:00.000000Z\t1\t10.000000\n" +
-                            "2026-10-01T01:00:00.000000Z\t1\t30.000000\n" +
-                            "2026-10-01T02:00:00.000000Z\t1\t30.000000\n");
+                    "2026-10-01T00:00:00.000000Z\t1\t10.000000\n" +
+                    "2026-10-01T01:00:00.000000Z\t1\t30.000000\n" +
+                    "2026-10-01T02:00:00.000000Z\t1\t30.000000\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -5009,9 +5009,9 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("SELECT ts, sym, m FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\tm\n" +
-                            "2026-10-01T00:00:00.000000Z\t1\t10\n" +
-                            "2026-10-01T01:00:00.000000Z\t1\t30\n" +
-                            "2026-10-01T02:00:00.000000Z\t1\t30\n");
+                    "2026-10-01T00:00:00.000000Z\t1\t10\n" +
+                    "2026-10-01T01:00:00.000000Z\t1\t30\n" +
+                    "2026-10-01T02:00:00.000000Z\t1\t30\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -5054,9 +5054,9 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("SELECT ts, sym, m FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\tm\n" +
-                            "2026-10-01T00:00:00.000000Z\t1\t10\n" +
-                            "2026-10-01T01:00:00.000000Z\t1\t30\n" +
-                            "2026-10-01T02:00:00.000000Z\t1\t30\n");
+                    "2026-10-01T00:00:00.000000Z\t1\t10\n" +
+                    "2026-10-01T01:00:00.000000Z\t1\t30\n" +
+                    "2026-10-01T02:00:00.000000Z\t1\t30\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -5100,9 +5100,9 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("SELECT ts, sym, m FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\tm\n" +
-                            "2026-10-01T00:00:00.000000Z\t1\t30.00\n" +
-                            "2026-10-01T01:00:00.000000Z\t1\t10.00\n" +
-                            "2026-10-01T02:00:00.000000Z\t1\t10.00\n");
+                    "2026-10-01T00:00:00.000000Z\t1\t30.00\n" +
+                    "2026-10-01T01:00:00.000000Z\t1\t10.00\n" +
+                    "2026-10-01T02:00:00.000000Z\t1\t10.00\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -5134,11 +5134,11 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("SELECT ts, sym, c FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\tc\n" +
-                            "2026-08-01T00:00:00.000000Z\ta\t1\n" +
-                            "2026-08-01T01:00:00.000000Z\ta\t1\n" +
-                            "2026-08-01T02:00:00.000000Z\ta\t2\n" +
-                            "2026-08-02T00:00:00.000000Z\ta\t1\n" +
-                            "2026-08-02T01:00:00.000000Z\ta\t2\n");
+                    "2026-08-01T00:00:00.000000Z\ta\t1\n" +
+                    "2026-08-01T01:00:00.000000Z\ta\t1\n" +
+                    "2026-08-01T02:00:00.000000Z\ta\t2\n" +
+                    "2026-08-02T00:00:00.000000Z\ta\t1\n" +
+                    "2026-08-02T01:00:00.000000Z\ta\t2\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -5171,12 +5171,12 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("SELECT ts, sym, m FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\tm\n" +
-                            "2026-08-01T00:00:00.000000Z\ta\t20.000000\n" +
-                            "2026-08-01T01:00:00.000000Z\ta\t20.000000\n" +
-                            "2026-08-01T02:00:00.000000Z\ta\t30.000000\n" +
-                            "2026-08-02T00:00:00.000000Z\ta\t15.000000\n" +
-                            "2026-08-02T01:00:00.000000Z\ta\t15.000000\n" +
-                            "2026-08-02T02:00:00.000000Z\ta\t25.000000\n");
+                    "2026-08-01T00:00:00.000000Z\ta\t20.000000\n" +
+                    "2026-08-01T01:00:00.000000Z\ta\t20.000000\n" +
+                    "2026-08-01T02:00:00.000000Z\ta\t30.000000\n" +
+                    "2026-08-02T00:00:00.000000Z\ta\t15.000000\n" +
+                    "2026-08-02T01:00:00.000000Z\ta\t15.000000\n" +
+                    "2026-08-02T02:00:00.000000Z\ta\t25.000000\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -5206,12 +5206,12 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("SELECT ts, sym, m FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\tm\n" +
-                            "2026-08-01T00:00:00.000000Z\ta\t20\n" +
-                            "2026-08-01T01:00:00.000000Z\ta\t20\n" +
-                            "2026-08-01T02:00:00.000000Z\ta\t30\n" +
-                            "2026-08-02T00:00:00.000000Z\ta\t15\n" +
-                            "2026-08-02T01:00:00.000000Z\ta\t15\n" +
-                            "2026-08-02T02:00:00.000000Z\ta\t25\n");
+                    "2026-08-01T00:00:00.000000Z\ta\t20\n" +
+                    "2026-08-01T01:00:00.000000Z\ta\t20\n" +
+                    "2026-08-01T02:00:00.000000Z\ta\t30\n" +
+                    "2026-08-02T00:00:00.000000Z\ta\t15\n" +
+                    "2026-08-02T01:00:00.000000Z\ta\t15\n" +
+                    "2026-08-02T02:00:00.000000Z\ta\t25\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -5241,12 +5241,12 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("SELECT ts, sym, m FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\tm\n" +
-                            "2026-08-01T00:00:00.000000Z\ta\t20\n" +
-                            "2026-08-01T01:00:00.000000Z\ta\t20\n" +
-                            "2026-08-01T02:00:00.000000Z\ta\t30\n" +
-                            "2026-08-02T00:00:00.000000Z\ta\t15\n" +
-                            "2026-08-02T01:00:00.000000Z\ta\t15\n" +
-                            "2026-08-02T02:00:00.000000Z\ta\t25\n");
+                    "2026-08-01T00:00:00.000000Z\ta\t20\n" +
+                    "2026-08-01T01:00:00.000000Z\ta\t20\n" +
+                    "2026-08-01T02:00:00.000000Z\ta\t30\n" +
+                    "2026-08-02T00:00:00.000000Z\ta\t15\n" +
+                    "2026-08-02T01:00:00.000000Z\ta\t15\n" +
+                    "2026-08-02T02:00:00.000000Z\ta\t25\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -5275,12 +5275,12 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("SELECT ts, sym, m FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\tm\n" +
-                            "2026-08-01T00:00:00.000000Z\ta\t20.000\n" +
-                            "2026-08-01T01:00:00.000000Z\ta\t20.000\n" +
-                            "2026-08-01T02:00:00.000000Z\ta\t30.000\n" +
-                            "2026-08-02T00:00:00.000000Z\ta\t15.000\n" +
-                            "2026-08-02T01:00:00.000000Z\ta\t15.000\n" +
-                            "2026-08-02T02:00:00.000000Z\ta\t25.000\n");
+                    "2026-08-01T00:00:00.000000Z\ta\t20.000\n" +
+                    "2026-08-01T01:00:00.000000Z\ta\t20.000\n" +
+                    "2026-08-01T02:00:00.000000Z\ta\t30.000\n" +
+                    "2026-08-02T00:00:00.000000Z\ta\t15.000\n" +
+                    "2026-08-02T01:00:00.000000Z\ta\t15.000\n" +
+                    "2026-08-02T02:00:00.000000Z\ta\t25.000\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -5309,12 +5309,12 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("SELECT ts, sym, m FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\tm\n" +
-                            "2026-08-01T00:00:00.000000Z\ta\t20.00\n" +
-                            "2026-08-01T01:00:00.000000Z\ta\t20.00\n" +
-                            "2026-08-01T02:00:00.000000Z\ta\t30.00\n" +
-                            "2026-08-02T00:00:00.000000Z\ta\t15.00\n" +
-                            "2026-08-02T01:00:00.000000Z\ta\t15.00\n" +
-                            "2026-08-02T02:00:00.000000Z\ta\t25.00\n");
+                    "2026-08-01T00:00:00.000000Z\ta\t20.00\n" +
+                    "2026-08-01T01:00:00.000000Z\ta\t20.00\n" +
+                    "2026-08-01T02:00:00.000000Z\ta\t30.00\n" +
+                    "2026-08-02T00:00:00.000000Z\ta\t15.00\n" +
+                    "2026-08-02T01:00:00.000000Z\ta\t15.00\n" +
+                    "2026-08-02T02:00:00.000000Z\ta\t25.00\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -5343,12 +5343,12 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("SELECT ts, sym, m FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\tm\n" +
-                            "2026-08-01T00:00:00.000000Z\ta\t20\n" +
-                            "2026-08-01T01:00:00.000000Z\ta\t20\n" +
-                            "2026-08-01T02:00:00.000000Z\ta\t30\n" +
-                            "2026-08-02T00:00:00.000000Z\ta\t15\n" +
-                            "2026-08-02T01:00:00.000000Z\ta\t15\n" +
-                            "2026-08-02T02:00:00.000000Z\ta\t25\n");
+                    "2026-08-01T00:00:00.000000Z\ta\t20\n" +
+                    "2026-08-01T01:00:00.000000Z\ta\t20\n" +
+                    "2026-08-01T02:00:00.000000Z\ta\t30\n" +
+                    "2026-08-02T00:00:00.000000Z\ta\t15\n" +
+                    "2026-08-02T01:00:00.000000Z\ta\t15\n" +
+                    "2026-08-02T02:00:00.000000Z\ta\t25\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -5379,12 +5379,12 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("SELECT ts, sym, m FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\tm\n" +
-                            "2026-08-01T00:00:00.000000Z\ta\t20.00\n" +
-                            "2026-08-01T01:00:00.000000Z\ta\t10.00\n" +
-                            "2026-08-01T02:00:00.000000Z\ta\t10.00\n" +
-                            "2026-08-02T00:00:00.000000Z\ta\t15.00\n" +
-                            "2026-08-02T01:00:00.000000Z\ta\t5.00\n" +
-                            "2026-08-02T02:00:00.000000Z\ta\t5.00\n");
+                    "2026-08-01T00:00:00.000000Z\ta\t20.00\n" +
+                    "2026-08-01T01:00:00.000000Z\ta\t10.00\n" +
+                    "2026-08-01T02:00:00.000000Z\ta\t10.00\n" +
+                    "2026-08-02T00:00:00.000000Z\ta\t15.00\n" +
+                    "2026-08-02T01:00:00.000000Z\ta\t5.00\n" +
+                    "2026-08-02T02:00:00.000000Z\ta\t5.00\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -5414,10 +5414,10 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
-                            "2026-08-01T00:00:00.000000Z\ta\t10.000000\n" +
-                            "2026-08-01T01:00:00.000000Z\ta\t30.000000\n" +
-                            "2026-08-02T00:00:00.000000Z\ta\t100.000000\n" +
-                            "2026-08-02T01:00:00.000000Z\ta\t300.000000\n");
+                    "2026-08-01T00:00:00.000000Z\ta\t10.000000\n" +
+                    "2026-08-01T01:00:00.000000Z\ta\t30.000000\n" +
+                    "2026-08-02T00:00:00.000000Z\ta\t100.000000\n" +
+                    "2026-08-02T01:00:00.000000Z\ta\t300.000000\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -5445,10 +5445,10 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
-                            "2026-08-01T00:00:00.000000Z\ta\t10\n" +
-                            "2026-08-01T01:00:00.000000Z\ta\t30\n" +
-                            "2026-08-02T00:00:00.000000Z\ta\t100\n" +
-                            "2026-08-02T01:00:00.000000Z\ta\t300\n");
+                    "2026-08-01T00:00:00.000000Z\ta\t10\n" +
+                    "2026-08-01T01:00:00.000000Z\ta\t30\n" +
+                    "2026-08-02T00:00:00.000000Z\ta\t100\n" +
+                    "2026-08-02T01:00:00.000000Z\ta\t300\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -5476,10 +5476,10 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
-                            "2026-08-01T00:00:00.000000Z\ta\t10\n" +
-                            "2026-08-01T01:00:00.000000Z\ta\t30\n" +
-                            "2026-08-02T00:00:00.000000Z\ta\t100\n" +
-                            "2026-08-02T01:00:00.000000Z\ta\t300\n");
+                    "2026-08-01T00:00:00.000000Z\ta\t10\n" +
+                    "2026-08-01T01:00:00.000000Z\ta\t30\n" +
+                    "2026-08-02T00:00:00.000000Z\ta\t100\n" +
+                    "2026-08-02T01:00:00.000000Z\ta\t300\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -5507,10 +5507,10 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
-                            "2026-08-01T00:00:00.000000Z\ta\t2.000\n" +
-                            "2026-08-01T01:00:00.000000Z\ta\t8.000\n" +
-                            "2026-08-02T00:00:00.000000Z\ta\t10.000\n" +
-                            "2026-08-02T01:00:00.000000Z\ta\t40.000\n");
+                    "2026-08-01T00:00:00.000000Z\ta\t2.000\n" +
+                    "2026-08-01T01:00:00.000000Z\ta\t8.000\n" +
+                    "2026-08-02T00:00:00.000000Z\ta\t10.000\n" +
+                    "2026-08-02T01:00:00.000000Z\ta\t40.000\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -5538,10 +5538,10 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
-                            "2026-08-01T00:00:00.000000Z\ta\t2.00\n" +
-                            "2026-08-01T01:00:00.000000Z\ta\t8.00\n" +
-                            "2026-08-02T00:00:00.000000Z\ta\t10.00\n" +
-                            "2026-08-02T01:00:00.000000Z\ta\t40.00\n");
+                    "2026-08-01T00:00:00.000000Z\ta\t2.00\n" +
+                    "2026-08-01T01:00:00.000000Z\ta\t8.00\n" +
+                    "2026-08-02T00:00:00.000000Z\ta\t10.00\n" +
+                    "2026-08-02T01:00:00.000000Z\ta\t40.00\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -5569,10 +5569,10 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
-                            "2026-08-01T00:00:00.000000Z\ta\t10\n" +
-                            "2026-08-01T01:00:00.000000Z\ta\t30\n" +
-                            "2026-08-02T00:00:00.000000Z\ta\t40\n" +
-                            "2026-08-02T01:00:00.000000Z\ta\t90\n");
+                    "2026-08-01T00:00:00.000000Z\ta\t10\n" +
+                    "2026-08-01T01:00:00.000000Z\ta\t30\n" +
+                    "2026-08-02T00:00:00.000000Z\ta\t40\n" +
+                    "2026-08-02T01:00:00.000000Z\ta\t90\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -5618,9 +5618,9 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
-                            "2026-10-01T00:00:00.000000Z\t1\t10.000000\n" +
-                            "2026-10-01T01:00:00.000000Z\t1\t30.000000\n" +
-                            "2026-10-01T02:00:00.000000Z\t1\t90.000000\n");
+                    "2026-10-01T00:00:00.000000Z\t1\t10.000000\n" +
+                    "2026-10-01T01:00:00.000000Z\t1\t30.000000\n" +
+                    "2026-10-01T02:00:00.000000Z\t1\t90.000000\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -5663,9 +5663,9 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
-                            "2026-10-01T00:00:00.000000Z\t1\t10\n" +
-                            "2026-10-01T01:00:00.000000Z\t1\t30\n" +
-                            "2026-10-01T02:00:00.000000Z\t1\t60\n");
+                    "2026-10-01T00:00:00.000000Z\t1\t10\n" +
+                    "2026-10-01T01:00:00.000000Z\t1\t30\n" +
+                    "2026-10-01T02:00:00.000000Z\t1\t60\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -5707,9 +5707,9 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
-                            "2026-10-01T00:00:00.000000Z\t1\t2.00\n" +
-                            "2026-10-01T01:00:00.000000Z\t1\t8.00\n" +
-                            "2026-10-01T02:00:00.000000Z\t1\t24.00\n");
+                    "2026-10-01T00:00:00.000000Z\t1\t2.00\n" +
+                    "2026-10-01T01:00:00.000000Z\t1\t8.00\n" +
+                    "2026-10-01T02:00:00.000000Z\t1\t24.00\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -7767,11 +7767,11 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("SELECT ts, sym, c FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\tc\n" +
-                            "2026-08-01T00:00:00.000000Z\ta\t1\n" +
-                            "2026-08-01T01:00:00.000000Z\ta\t2\n" +
-                            "2026-08-01T02:00:00.000000Z\ta\t3\n" +
-                            "2026-08-02T00:00:00.000000Z\ta\t1\n" +
-                            "2026-08-02T01:00:00.000000Z\ta\t2\n");
+                    "2026-08-01T00:00:00.000000Z\ta\t1\n" +
+                    "2026-08-01T01:00:00.000000Z\ta\t2\n" +
+                    "2026-08-01T02:00:00.000000Z\ta\t3\n" +
+                    "2026-08-02T00:00:00.000000Z\ta\t1\n" +
+                    "2026-08-02T01:00:00.000000Z\ta\t2\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -7797,10 +7797,10 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("SELECT ts, sym, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\trn\n" +
-                            "2026-08-01T00:00:00.000000Z\ta\t1\n" +
-                            "2026-08-01T01:00:00.000000Z\ta\t2\n" +
-                            "2026-08-02T00:00:00.000000Z\ta\t1\n" +
-                            "2026-08-02T01:00:00.000000Z\ta\t2\n");
+                    "2026-08-01T00:00:00.000000Z\ta\t1\n" +
+                    "2026-08-01T01:00:00.000000Z\ta\t2\n" +
+                    "2026-08-02T00:00:00.000000Z\ta\t1\n" +
+                    "2026-08-02T01:00:00.000000Z\ta\t2\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -7830,11 +7830,11 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("SELECT ts, sym, m FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\tm\n" +
-                            "2026-08-01T00:00:00.000000Z\ta\t5.0\n" +
-                            "2026-08-01T01:00:00.000000Z\ta\t50.0\n" +
-                            "2026-08-01T02:00:00.000000Z\ta\t50.0\n" +
-                            "2026-08-02T00:00:00.000000Z\ta\t3.0\n" +
-                            "2026-08-02T01:00:00.000000Z\ta\t7.0\n");
+                    "2026-08-01T00:00:00.000000Z\ta\t5.0\n" +
+                    "2026-08-01T01:00:00.000000Z\ta\t50.0\n" +
+                    "2026-08-01T02:00:00.000000Z\ta\t50.0\n" +
+                    "2026-08-02T00:00:00.000000Z\ta\t3.0\n" +
+                    "2026-08-02T01:00:00.000000Z\ta\t7.0\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -7864,11 +7864,11 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("SELECT ts, sym, f FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\tf\n" +
-                            "2026-08-01T00:00:00.000000Z\ta\t10.0\n" +
-                            "2026-08-01T01:00:00.000000Z\ta\t10.0\n" +
-                            "2026-08-01T02:00:00.000000Z\ta\t10.0\n" +
-                            "2026-08-02T00:00:00.000000Z\ta\t100.0\n" +
-                            "2026-08-02T01:00:00.000000Z\ta\t100.0\n");
+                    "2026-08-01T00:00:00.000000Z\ta\t10.0\n" +
+                    "2026-08-01T01:00:00.000000Z\ta\t10.0\n" +
+                    "2026-08-01T02:00:00.000000Z\ta\t10.0\n" +
+                    "2026-08-02T00:00:00.000000Z\ta\t100.0\n" +
+                    "2026-08-02T01:00:00.000000Z\ta\t100.0\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -7898,11 +7898,11 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("SELECT ts, sym, f FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\tf\n" +
-                            "2026-08-01T00:00:00.000000Z\ta\tnull\n" +
-                            "2026-08-01T01:00:00.000000Z\ta\t20.0\n" +
-                            "2026-08-01T02:00:00.000000Z\ta\t20.0\n" +
-                            "2026-08-02T00:00:00.000000Z\ta\tnull\n" +
-                            "2026-08-02T01:00:00.000000Z\ta\t100.0\n");
+                    "2026-08-01T00:00:00.000000Z\ta\tnull\n" +
+                    "2026-08-01T01:00:00.000000Z\ta\t20.0\n" +
+                    "2026-08-01T02:00:00.000000Z\ta\t20.0\n" +
+                    "2026-08-02T00:00:00.000000Z\ta\tnull\n" +
+                    "2026-08-02T01:00:00.000000Z\ta\t100.0\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -7932,11 +7932,11 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("SELECT ts, sym, f FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\tf\n" +
-                            "2026-08-01T00:00:00.000000Z\ta\tnull\n" +
-                            "2026-08-01T01:00:00.000000Z\ta\t20\n" +
-                            "2026-08-01T02:00:00.000000Z\ta\t20\n" +
-                            "2026-08-02T00:00:00.000000Z\ta\tnull\n" +
-                            "2026-08-02T01:00:00.000000Z\ta\t100\n");
+                    "2026-08-01T00:00:00.000000Z\ta\tnull\n" +
+                    "2026-08-01T01:00:00.000000Z\ta\t20\n" +
+                    "2026-08-01T02:00:00.000000Z\ta\t20\n" +
+                    "2026-08-02T00:00:00.000000Z\ta\tnull\n" +
+                    "2026-08-02T01:00:00.000000Z\ta\t100\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -7979,9 +7979,9 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("SELECT ts, sym, f FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\tf\n" +
-                            "2026-10-01T00:00:00.000000Z\t1\t10.000000\n" +
-                            "2026-10-01T01:00:00.000000Z\t1\t10.000000\n" +
-                            "2026-10-01T02:00:00.000000Z\t1\t10.000000\n");
+                    "2026-10-01T00:00:00.000000Z\t1\t10.000000\n" +
+                    "2026-10-01T01:00:00.000000Z\t1\t10.000000\n" +
+                    "2026-10-01T02:00:00.000000Z\t1\t10.000000\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -8008,10 +8008,10 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("SELECT ts, sym, f FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\tf\n" +
-                            "2026-08-01T00:00:00.000000Z\ta\t10.000000\n" +
-                            "2026-08-01T01:00:00.000000Z\ta\t10.000000\n" +
-                            "2026-08-02T00:00:00.000000Z\ta\t100.000000\n" +
-                            "2026-08-02T01:00:00.000000Z\ta\t100.000000\n");
+                    "2026-08-01T00:00:00.000000Z\ta\t10.000000\n" +
+                    "2026-08-01T01:00:00.000000Z\ta\t10.000000\n" +
+                    "2026-08-02T00:00:00.000000Z\ta\t100.000000\n" +
+                    "2026-08-02T01:00:00.000000Z\ta\t100.000000\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -8041,11 +8041,11 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("SELECT ts, sym, f FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\tf\n" +
-                            "2026-08-01T00:00:00.000000Z\ta\t10.00\n" +
-                            "2026-08-01T01:00:00.000000Z\ta\t10.00\n" +
-                            "2026-08-01T02:00:00.000000Z\ta\t10.00\n" +
-                            "2026-08-02T00:00:00.000000Z\ta\t100.00\n" +
-                            "2026-08-02T01:00:00.000000Z\ta\t100.00\n");
+                    "2026-08-01T00:00:00.000000Z\ta\t10.00\n" +
+                    "2026-08-01T01:00:00.000000Z\ta\t10.00\n" +
+                    "2026-08-01T02:00:00.000000Z\ta\t10.00\n" +
+                    "2026-08-02T00:00:00.000000Z\ta\t100.00\n" +
+                    "2026-08-02T01:00:00.000000Z\ta\t100.00\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -8075,11 +8075,11 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("SELECT ts, sym, f FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\tf\n" +
-                            "2026-08-01T00:00:00.000000Z\ta\t\n" +
-                            "2026-08-01T01:00:00.000000Z\ta\t20.00\n" +
-                            "2026-08-01T02:00:00.000000Z\ta\t20.00\n" +
-                            "2026-08-02T00:00:00.000000Z\ta\t\n" +
-                            "2026-08-02T01:00:00.000000Z\ta\t100.00\n");
+                    "2026-08-01T00:00:00.000000Z\ta\t\n" +
+                    "2026-08-01T01:00:00.000000Z\ta\t20.00\n" +
+                    "2026-08-01T02:00:00.000000Z\ta\t20.00\n" +
+                    "2026-08-02T00:00:00.000000Z\ta\t\n" +
+                    "2026-08-02T01:00:00.000000Z\ta\t100.00\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -8623,12 +8623,12 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("SELECT ts, sym, r FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\tr\n" +
-                            "2026-08-01T00:00:00.000000Z\ta\t1\n" +
-                            "2026-08-01T01:00:00.000000Z\ta\t2\n" +
-                            "2026-08-01T02:00:00.000000Z\ta\t3\n" +
-                            "2026-08-02T00:00:00.000000Z\ta\t1\n" +
-                            "2026-08-02T01:00:00.000000Z\ta\t2\n" +
-                            "2026-08-02T02:00:00.000000Z\ta\t3\n");
+                    "2026-08-01T00:00:00.000000Z\ta\t1\n" +
+                    "2026-08-01T01:00:00.000000Z\ta\t2\n" +
+                    "2026-08-01T02:00:00.000000Z\ta\t3\n" +
+                    "2026-08-02T00:00:00.000000Z\ta\t1\n" +
+                    "2026-08-02T01:00:00.000000Z\ta\t2\n" +
+                    "2026-08-02T02:00:00.000000Z\ta\t3\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -8663,12 +8663,12 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             // Day 1: a = 10, then 30 (10+20); b = 100, then 300 (100+200).
             // Day 2: both a and b reset to first-row value (a=30, b=300).
             assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
-                            "2026-08-01T00:00:00.000000Z\ta\t10.0\n" +
-                            "2026-08-01T00:30:00.000000Z\tb\t100.0\n" +
-                            "2026-08-01T01:00:00.000000Z\ta\t30.0\n" +
-                            "2026-08-01T01:30:00.000000Z\tb\t300.0\n" +
-                            "2026-08-02T00:00:00.000000Z\ta\t30.0\n" +
-                            "2026-08-02T00:30:00.000000Z\tb\t300.0\n");
+                    "2026-08-01T00:00:00.000000Z\ta\t10.0\n" +
+                    "2026-08-01T00:30:00.000000Z\tb\t100.0\n" +
+                    "2026-08-01T01:00:00.000000Z\ta\t30.0\n" +
+                    "2026-08-01T01:30:00.000000Z\tb\t300.0\n" +
+                    "2026-08-02T00:00:00.000000Z\ta\t30.0\n" +
+                    "2026-08-02T00:30:00.000000Z\tb\t300.0\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -8728,8 +8728,8 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 drainWalQueue();
 
                 assertQuery("SELECT ts, sym, s FROM lv WHERE sym = 1 AND ts >= '2026-08-02' ORDER BY ts").noLeakCheck().timestamp("ts").returns("ts\tsym\ts\n" +
-                                "2026-08-02T00:00:00.000000Z\t1\t11.0\n" +
-                                "2026-08-02T03:00:00.000000Z\t1\t16.0\n");
+                        "2026-08-02T00:00:00.000000Z\t1\t11.0\n" +
+                        "2026-08-02T03:00:00.000000Z\t1\t16.0\n");
             }
 
             execute("DROP LIVE VIEW lv");
@@ -8780,12 +8780,12 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 );
 
                 assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts, sym").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
-                                "2026-08-01T00:00:00.000000Z\t1\t10.0\n" +
-                                "2026-08-01T01:00:00.000000Z\t2\t20.0\n" +
-                                "2026-08-01T02:00:00.000000Z\t3\t30.0\n" +
-                                "2026-08-02T00:00:00.000000Z\t1\t11.0\n" +
-                                "2026-08-02T01:00:00.000000Z\t2\t22.0\n" +
-                                "2026-08-02T02:00:00.000000Z\t3\t33.0\n");
+                        "2026-08-01T00:00:00.000000Z\t1\t10.0\n" +
+                        "2026-08-01T01:00:00.000000Z\t2\t20.0\n" +
+                        "2026-08-01T02:00:00.000000Z\t3\t30.0\n" +
+                        "2026-08-02T00:00:00.000000Z\t1\t11.0\n" +
+                        "2026-08-02T01:00:00.000000Z\t2\t22.0\n" +
+                        "2026-08-02T02:00:00.000000Z\t3\t33.0\n");
             }
 
             execute("DROP LIVE VIEW lv");
@@ -8852,12 +8852,12 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 drainWalQueue();
 
                 assertQuery("SELECT ts, sym, s FROM lv WHERE ts >= '2026-08-02' ORDER BY ts, sym").noLeakCheck().timestamp("ts").returns("ts\tsym\ts\n" +
-                                "2026-08-02T00:00:00.000000Z\t1\t11.0\n" +
-                                "2026-08-02T01:00:00.000000Z\t2\t22.0\n" +
-                                "2026-08-02T02:00:00.000000Z\t3\t33.0\n" +
-                                "2026-08-02T03:00:00.000000Z\t1\t16.0\n" +
-                                "2026-08-02T04:00:00.000000Z\t2\t28.0\n" +
-                                "2026-08-02T05:00:00.000000Z\t3\t40.0\n");
+                        "2026-08-02T00:00:00.000000Z\t1\t11.0\n" +
+                        "2026-08-02T01:00:00.000000Z\t2\t22.0\n" +
+                        "2026-08-02T02:00:00.000000Z\t3\t33.0\n" +
+                        "2026-08-02T03:00:00.000000Z\t1\t16.0\n" +
+                        "2026-08-02T04:00:00.000000Z\t2\t28.0\n" +
+                        "2026-08-02T05:00:00.000000Z\t3\t40.0\n");
 
                 // Day-3 row for sym 1 starts a fresh bucket (correct reset).
                 setCurrentMicros(400_000L);
@@ -8866,7 +8866,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 drainJob(job);
                 drainWalQueue();
                 assertQuery("SELECT ts, sym, s FROM lv WHERE ts >= '2026-08-03' ORDER BY ts").noLeakCheck().timestamp("ts").returns("ts\tsym\ts\n" +
-                                "2026-08-03T00:00:00.000000Z\t1\t9.0\n");
+                        "2026-08-03T00:00:00.000000Z\t1\t9.0\n");
             }
 
             execute("DROP LIVE VIEW lv");
@@ -8939,12 +8939,12 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 drainWalQueue();
 
                 assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts, sym").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
-                                "2026-08-01T00:00:00.000000Z\t1\t10.0\n" +
-                                "2026-08-01T01:00:00.000000Z\t2\t20.0\n" +
-                                "2026-08-01T02:00:00.000000Z\t3\t30.0\n" +
-                                "2026-08-02T00:00:00.000000Z\t1\t11.0\n" +
-                                "2026-08-03T00:00:00.000000Z\t1\t12.0\n" +
-                                "2026-08-03T01:00:00.000000Z\t2\t99.0\n");
+                        "2026-08-01T00:00:00.000000Z\t1\t10.0\n" +
+                        "2026-08-01T01:00:00.000000Z\t2\t20.0\n" +
+                        "2026-08-01T02:00:00.000000Z\t3\t30.0\n" +
+                        "2026-08-02T00:00:00.000000Z\t1\t11.0\n" +
+                        "2026-08-03T00:00:00.000000Z\t1\t12.0\n" +
+                        "2026-08-03T01:00:00.000000Z\t2\t99.0\n");
             }
 
             execute("DROP LIVE VIEW lv");
@@ -9010,9 +9010,9 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                         lv.getAnchorWindow().getTombstoneCount()
                 );
                 assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
-                                "2026-10-01T00:00:00.000000Z\t1\t10.0\n" +
-                                "2026-10-01T01:00:00.000000Z\t2\t20.0\n" +
-                                "2026-10-01T02:00:00.000000Z\t3\t30.0\n");
+                        "2026-10-01T00:00:00.000000Z\t1\t10.0\n" +
+                        "2026-10-01T01:00:00.000000Z\t2\t20.0\n" +
+                        "2026-10-01T02:00:00.000000Z\t3\t30.0\n");
             }
 
             execute("DROP LIVE VIEW lv");
@@ -9171,11 +9171,11 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 //   sym 1: 10 -> 21 (10+11) -> 23 (11+12)
                 //   sym 2: 100 -> 210 (100+110)
                 assertQuery("SELECT ts, sym, rn, s FROM lv ORDER BY ts, sym").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\trn\ts\n" +
-                                "2026-09-01T00:00:00.000000Z\t1\t1\t10.0\n" +
-                                "2026-09-01T01:00:00.000000Z\t2\t1\t100.0\n" +
-                                "2026-09-02T00:00:00.000000Z\t1\t1\t21.0\n" +
-                                "2026-09-02T01:00:00.000000Z\t2\t1\t210.0\n" +
-                                "2026-09-02T02:00:00.000000Z\t1\t2\t23.0\n");
+                        "2026-09-01T00:00:00.000000Z\t1\t1\t10.0\n" +
+                        "2026-09-01T01:00:00.000000Z\t2\t1\t100.0\n" +
+                        "2026-09-02T00:00:00.000000Z\t1\t1\t21.0\n" +
+                        "2026-09-02T01:00:00.000000Z\t2\t1\t210.0\n" +
+                        "2026-09-02T02:00:00.000000Z\t1\t2\t23.0\n");
             }
 
             execute("DROP LIVE VIEW lv");
@@ -9237,10 +9237,10 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 // a single entry, not split into a cycle-1 and cycle-2 entry
                 // by segment-local index collision.
                 assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
-                                "2026-11-01T00:00:00.000000Z\ta\t10.0\n" +
-                                "2026-11-01T01:00:00.000000Z\tb\t20.0\n" +
-                                "2026-11-01T02:00:00.000000Z\ta\t40.0\n" +
-                                "2026-11-01T03:00:00.000000Z\tc\t40.0\n");
+                        "2026-11-01T00:00:00.000000Z\ta\t10.0\n" +
+                        "2026-11-01T01:00:00.000000Z\tb\t20.0\n" +
+                        "2026-11-01T02:00:00.000000Z\ta\t40.0\n" +
+                        "2026-11-01T03:00:00.000000Z\tc\t40.0\n");
 
                 // Day boundary in cycle 3 anchor-crosses 'a' so its running
                 // sum resets. The anchor reset must reach the per-function
@@ -9254,7 +9254,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 drainWalQueue();
 
                 assertQuery("SELECT ts, sym, s FROM lv WHERE ts >= '2026-11-02' ORDER BY ts").noLeakCheck().timestamp("ts").returns("ts\tsym\ts\n" +
-                                "2026-11-02T00:00:00.000000Z\ta\t7.0\n");
+                        "2026-11-02T00:00:00.000000Z\ta\t7.0\n");
             }
 
             execute("DROP LIVE VIEW lv");
@@ -9284,10 +9284,10 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("SELECT ts, sym, e FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\te\n" +
-                            "2026-08-01T00:00:00.000000Z\ta\t10.0\n" +
-                            "2026-08-01T01:00:00.000000Z\ta\t15.0\n" +
-                            "2026-08-02T00:00:00.000000Z\ta\t5.0\n" +
-                            "2026-08-02T01:00:00.000000Z\ta\t10.0\n");
+                    "2026-08-01T00:00:00.000000Z\ta\t10.0\n" +
+                    "2026-08-01T01:00:00.000000Z\ta\t15.0\n" +
+                    "2026-08-02T00:00:00.000000Z\ta\t5.0\n" +
+                    "2026-08-02T01:00:00.000000Z\ta\t10.0\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -9314,10 +9314,10 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
             // Day 1 cumulative: 10, 30. Day 2 reset cumulative: 5, 20.
             assertQuery("SELECT ts, sym, k FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\tk\n" +
-                            "2026-08-01T00:00:00.000000Z\ta\t10.0\n" +
-                            "2026-08-01T01:00:00.000000Z\ta\t30.0\n" +
-                            "2026-08-02T00:00:00.000000Z\ta\t5.0\n" +
-                            "2026-08-02T01:00:00.000000Z\ta\t20.0\n");
+                    "2026-08-01T00:00:00.000000Z\ta\t10.0\n" +
+                    "2026-08-01T01:00:00.000000Z\ta\t30.0\n" +
+                    "2026-08-02T00:00:00.000000Z\ta\t5.0\n" +
+                    "2026-08-02T01:00:00.000000Z\ta\t20.0\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -9346,10 +9346,10 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             // Day 2 anchor reset: row 1 lag is null again (state cleared); row 2 lag is 5.
             // Without the lag migration, day 2 row 1 would lag the last day-1 value (20).
             assertQuery("SELECT ts, sym, l FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\tl\n" +
-                            "2026-08-01T00:00:00.000000Z\ta\tnull\n" +
-                            "2026-08-01T01:00:00.000000Z\ta\t10\n" +
-                            "2026-08-02T00:00:00.000000Z\ta\tnull\n" +
-                            "2026-08-02T01:00:00.000000Z\ta\t5\n");
+                    "2026-08-01T00:00:00.000000Z\ta\tnull\n" +
+                    "2026-08-01T01:00:00.000000Z\ta\t10\n" +
+                    "2026-08-02T00:00:00.000000Z\ta\tnull\n" +
+                    "2026-08-02T01:00:00.000000Z\ta\t5\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -9378,10 +9378,10 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
-                            "2026-08-01T00:00:00.000000Z\ta\t0.0\n" +
-                            "2026-08-01T01:00:00.000000Z\ta\t5.0\n" +
-                            "2026-08-02T00:00:00.000000Z\ta\t0.0\n" +
-                            "2026-08-02T01:00:00.000000Z\ta\t10.0\n");
+                    "2026-08-01T00:00:00.000000Z\ta\t0.0\n" +
+                    "2026-08-01T01:00:00.000000Z\ta\t5.0\n" +
+                    "2026-08-02T00:00:00.000000Z\ta\t0.0\n" +
+                    "2026-08-02T01:00:00.000000Z\ta\t10.0\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -9411,10 +9411,10 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("SELECT ts, sym, r FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\tr\n" +
-                            "2026-08-01T00:00:00.000000Z\ta\t1\n" +
-                            "2026-08-01T01:00:00.000000Z\ta\t2\n" +
-                            "2026-08-02T00:00:00.000000Z\ta\t1\n" +
-                            "2026-08-02T01:00:00.000000Z\ta\t2\n");
+                    "2026-08-01T00:00:00.000000Z\ta\t1\n" +
+                    "2026-08-01T01:00:00.000000Z\ta\t2\n" +
+                    "2026-08-02T00:00:00.000000Z\ta\t1\n" +
+                    "2026-08-02T01:00:00.000000Z\ta\t2\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -9446,11 +9446,11 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("SELECT ts, sym, m FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\tm\n" +
-                            "2026-08-01T00:00:00.000000Z\ta\t50.0\n" +
-                            "2026-08-01T01:00:00.000000Z\ta\t5.0\n" +
-                            "2026-08-01T02:00:00.000000Z\ta\t5.0\n" +
-                            "2026-08-02T00:00:00.000000Z\ta\t30.0\n" +
-                            "2026-08-02T01:00:00.000000Z\ta\t7.0\n");
+                    "2026-08-01T00:00:00.000000Z\ta\t50.0\n" +
+                    "2026-08-01T01:00:00.000000Z\ta\t5.0\n" +
+                    "2026-08-01T02:00:00.000000Z\ta\t5.0\n" +
+                    "2026-08-02T00:00:00.000000Z\ta\t30.0\n" +
+                    "2026-08-02T01:00:00.000000Z\ta\t7.0\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -9482,10 +9482,10 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("SELECT ts, sym, v FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\tv\n" +
-                            "2026-08-01T00:00:00.000000Z\ta\t0.0\n" +
-                            "2026-08-01T01:00:00.000000Z\ta\t25.0\n" +
-                            "2026-08-02T00:00:00.000000Z\ta\t0.0\n" +
-                            "2026-08-02T01:00:00.000000Z\ta\t100.0\n");
+                    "2026-08-01T00:00:00.000000Z\ta\t0.0\n" +
+                    "2026-08-01T01:00:00.000000Z\ta\t25.0\n" +
+                    "2026-08-02T00:00:00.000000Z\ta\t0.0\n" +
+                    "2026-08-02T01:00:00.000000Z\ta\t100.0\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -9517,10 +9517,10 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("SELECT ts, sym, c FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\tc\n" +
-                            "2026-08-01T00:00:00.000000Z\ta\t0.0\n" +
-                            "2026-08-01T01:00:00.000000Z\ta\t50.0\n" +
-                            "2026-08-02T00:00:00.000000Z\ta\t0.0\n" +
-                            "2026-08-02T01:00:00.000000Z\ta\t200.0\n");
+                    "2026-08-01T00:00:00.000000Z\ta\t0.0\n" +
+                    "2026-08-01T01:00:00.000000Z\ta\t50.0\n" +
+                    "2026-08-02T00:00:00.000000Z\ta\t0.0\n" +
+                    "2026-08-02T01:00:00.000000Z\ta\t200.0\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -9619,11 +9619,11 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("SELECT ts, sym, n FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\tn\n" +
-                            "2026-08-01T00:00:00.000000Z\ta\tnull\n" +
-                            "2026-08-01T01:00:00.000000Z\ta\t20.0\n" +
-                            "2026-08-01T02:00:00.000000Z\ta\t20.0\n" +
-                            "2026-08-02T00:00:00.000000Z\ta\tnull\n" +
-                            "2026-08-02T01:00:00.000000Z\ta\t200.0\n");
+                    "2026-08-01T00:00:00.000000Z\ta\tnull\n" +
+                    "2026-08-01T01:00:00.000000Z\ta\t20.0\n" +
+                    "2026-08-01T02:00:00.000000Z\ta\t20.0\n" +
+                    "2026-08-02T00:00:00.000000Z\ta\tnull\n" +
+                    "2026-08-02T01:00:00.000000Z\ta\t200.0\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -9658,10 +9658,10 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             // Bucket 2026-03-29 (London local): rows at 00:30Z, 01:30Z -> sums 5, 20.
             // (The DST spring-forward at 01:00 UTC does not split a London local day.)
             assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
-                            "2026-03-28T23:00:00.000000Z\ta\t10.0\n" +
-                            "2026-03-28T23:30:00.000000Z\ta\t30.0\n" +
-                            "2026-03-29T00:30:00.000000Z\ta\t5.0\n" +
-                            "2026-03-29T01:30:00.000000Z\ta\t20.0\n");
+                    "2026-03-28T23:00:00.000000Z\ta\t10.0\n" +
+                    "2026-03-28T23:30:00.000000Z\ta\t30.0\n" +
+                    "2026-03-29T00:30:00.000000Z\ta\t5.0\n" +
+                    "2026-03-29T01:30:00.000000Z\ta\t20.0\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -9689,10 +9689,10 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
-                            "2026-08-01T00:00:00.000000Z\ta\t10.0\n" +
-                            "2026-08-01T01:00:00.000000Z\ta\t30.0\n" +
-                            "2026-08-02T00:00:00.000000Z\ta\t5.0\n" +
-                            "2026-08-02T01:00:00.000000Z\ta\t20.0\n");
+                    "2026-08-01T00:00:00.000000Z\ta\t10.0\n" +
+                    "2026-08-01T01:00:00.000000Z\ta\t30.0\n" +
+                    "2026-08-02T00:00:00.000000Z\ta\t5.0\n" +
+                    "2026-08-02T01:00:00.000000Z\ta\t20.0\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -9723,11 +9723,11 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
-                            "2026-08-01T09:30:00.000000Z\ta\t10.0\n" +
-                            "2026-08-01T18:00:00.000000Z\ta\t30.0\n" +
-                            "2026-08-02T08:00:00.000000Z\ta\t37.0\n" +
-                            "2026-08-02T09:30:00.000000Z\ta\t5.0\n" +
-                            "2026-08-02T18:00:00.000000Z\ta\t20.0\n");
+                    "2026-08-01T09:30:00.000000Z\ta\t10.0\n" +
+                    "2026-08-01T18:00:00.000000Z\ta\t30.0\n" +
+                    "2026-08-02T08:00:00.000000Z\ta\t37.0\n" +
+                    "2026-08-02T09:30:00.000000Z\ta\t5.0\n" +
+                    "2026-08-02T18:00:00.000000Z\ta\t20.0\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -9801,8 +9801,8 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             Assert.assertNotNull(instance);
             Assert.assertFalse("LV must start valid", instance.isInvalid());
             assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tx\trn\n" +
-                            "2026-05-01T00:00:00.000000Z\t1\t1\n" +
-                            "2026-05-02T00:00:00.000000Z\t2\t2\n");
+                    "2026-05-01T00:00:00.000000Z\t1\t1\n" +
+                    "2026-05-02T00:00:00.000000Z\t2\t2\n");
 
             // Rename the base. The LV flips INVALID immediately.
             execute("RENAME TABLE base TO base2");
@@ -9815,13 +9815,13 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     instance.getInvalidationReason().toString()
             );
             assertQuery("SELECT view_status, invalidation_reason FROM live_views() WHERE view_name = 'lv'").noLeakCheck().noRandomAccess().returns("view_status\tinvalidation_reason\n" +
-                            "invalid\tbase table rename\n");
+                    "invalid\tbase table rename\n");
 
             // The invalid view stays queryable from its own on-disk tier - the
             // base rename does not touch the LV's materialized data.
             assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tx\trn\n" +
-                            "2026-05-01T00:00:00.000000Z\t1\t1\n" +
-                            "2026-05-02T00:00:00.000000Z\t2\t2\n");
+                    "2026-05-01T00:00:00.000000Z\t1\t1\n" +
+                    "2026-05-02T00:00:00.000000Z\t2\t2\n");
 
             // The invalidation round-trips through _lv.s across a restart.
             engine.getLiveViewRegistry().clear();
@@ -9854,12 +9854,12 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
             try {
                 assertQuery("SELECT * FROM live_views() WHERE 1 = 0").noLeakCheck().returns("view_name\tview_table_dir_name\tbase_table_name\tview_sql\tview_status\t"
-                                + "invalidation_reason\tflush_every_interval\tflush_every_interval_unit\t"
-                                + "in_memory_interval\tin_memory_interval_unit\tin_mem_bytes\t"
-                                + "o3_rejected_count\tlag_seqtxn\tlag_micros\t"
-                                + "last_processed_seqtxn\tapplied_watermark\tlv_consumed_seqtxn\t"
-                                + "view_lower_bound_timestamp\twriter_stall_micros\tbackfill_target_seqtxn\t"
-                                + "head_checkpoint_lv_seqtxn\thead_checkpoint_max_ts\thead_checkpoint_state_bytes\n");
+                        + "invalidation_reason\tflush_every_interval\tflush_every_interval_unit\t"
+                        + "in_memory_interval\tin_memory_interval_unit\tin_mem_bytes\t"
+                        + "o3_rejected_count\tlag_seqtxn\tlag_micros\t"
+                        + "last_processed_seqtxn\tapplied_watermark\tlv_consumed_seqtxn\t"
+                        + "view_lower_bound_timestamp\twriter_stall_micros\tbackfill_target_seqtxn\t"
+                        + "head_checkpoint_lv_seqtxn\thead_checkpoint_max_ts\thead_checkpoint_state_bytes\n");
             } finally {
                 execute("DROP LIVE VIEW lv");
             }
@@ -9874,8 +9874,8 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
 
             assertQuery("SELECT view_name, base_table_name, view_status, flush_every_interval, flush_every_interval_unit, " +
-                            "in_memory_interval, in_memory_interval_unit FROM live_views()").noLeakCheck().noRandomAccess().returns("view_name\tbase_table_name\tview_status\tflush_every_interval\tflush_every_interval_unit\tin_memory_interval\tin_memory_interval_unit\n" +
-                            "lv\tbase\tactive\t5\tSECOND\t30\tSECOND\n");
+                    "in_memory_interval, in_memory_interval_unit FROM live_views()").noLeakCheck().noRandomAccess().returns("view_name\tbase_table_name\tview_status\tflush_every_interval\tflush_every_interval_unit\tin_memory_interval\tin_memory_interval_unit\n" +
+                    "lv\tbase\tactive\t5\tSECOND\t30\tSECOND\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -9893,7 +9893,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
 
             assertQuery("SELECT view_name, flush_every_interval, flush_every_interval_unit, in_memory_interval, in_memory_interval_unit FROM live_views()").noLeakCheck().noRandomAccess().returns("view_name\tflush_every_interval\tflush_every_interval_unit\tin_memory_interval\tin_memory_interval_unit\n" +
-                            "lv\t200\tMILLISECOND\t500\tMILLISECOND\n");
+                    "lv\t200\tMILLISECOND\t500\tMILLISECOND\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -9910,7 +9910,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
 
             assertQuery("SELECT view_name, view_lower_bound_timestamp FROM live_views()").noLeakCheck().noRandomAccess().returns("view_name\tview_lower_bound_timestamp\n" +
-                            "lv\t2023-11-14T22:13:20.000000Z\n");
+                    "lv\t2023-11-14T22:13:20.000000Z\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -9965,7 +9965,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             // Catalogue column commits to TIMESTAMP_MICRO; toMicros rounds NS back
             // to the MICRO grid (lossless here since the source is wall-clock micros).
             assertQuery("SELECT view_name, view_lower_bound_timestamp FROM live_views()").noLeakCheck().noRandomAccess().returns("view_name\tview_lower_bound_timestamp\n" +
-                            "lv\t2023-11-14T22:13:20.000000Z\n");
+                    "lv\t2023-11-14T22:13:20.000000Z\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -9990,7 +9990,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
 
             assertQuery("SELECT view_name, view_lower_bound_timestamp FROM live_views()").noLeakCheck().noRandomAccess().returns("view_name\tview_lower_bound_timestamp\n" +
-                            "lv\t2023-01-01T00:00:00.000000Z\n");
+                    "lv\t2023-01-01T00:00:00.000000Z\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -10008,7 +10008,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
 
             assertQuery("SELECT view_name, view_lower_bound_timestamp FROM live_views()").noLeakCheck().noRandomAccess().returns("view_name\tview_lower_bound_timestamp\n" +
-                            "lv\t2023-11-14T22:13:20.000000Z\n");
+                    "lv\t2023-11-14T22:13:20.000000Z\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -10059,7 +10059,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     instance.getO3RejectedCount()
             );
             assertQuery("SELECT view_name, o3_rejected_count FROM live_views() WHERE view_name = 'lv'").noLeakCheck().noRandomAccess().returns("view_name\to3_rejected_count\n" +
-                            "lv\t1\n");
+                    "lv\t1\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -10180,8 +10180,8 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             // view_name and view_status surface; definition/state columns are NULL
             // (string columns render empty, long columns render "null").
             assertQuery("SELECT view_name, view_status, view_sql, base_table_name, lv_consumed_seqtxn, " +
-                            "view_lower_bound_timestamp FROM live_views() WHERE view_name = 'lv'").noLeakCheck().noRandomAccess().returns("view_name\tview_status\tview_sql\tbase_table_name\tlv_consumed_seqtxn\tview_lower_bound_timestamp\n" +
-                            "lv\tversion_unsupported\t\t\tnull\t\n");
+                    "view_lower_bound_timestamp FROM live_views() WHERE view_name = 'lv'").noLeakCheck().noRandomAccess().returns("view_name\tview_status\tview_sql\tbase_table_name\tlv_consumed_seqtxn\tview_lower_bound_timestamp\n" +
+                    "lv\tversion_unsupported\t\t\tnull\t\n");
 
             // DROP works on the stub (best-effort recovery path).
             execute("DROP LIVE VIEW lv");
@@ -10211,7 +10211,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             Assert.assertNotNull(stub);
             Assert.assertTrue(stub.isVersionUnsupported());
             assertQuery("SELECT view_name, view_status FROM live_views() WHERE view_name = 'lv'").noLeakCheck().noRandomAccess().returns("view_name\tview_status\n" +
-                            "lv\tversion_unsupported\n");
+                    "lv\tversion_unsupported\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -10261,7 +10261,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             // lag_micros = 3_000_000 - lastFlushTimeUs. lastFlushTimeUs was set to 1_000_000
             // (the clock at refresh), so lag_micros = 2_000_000.
             assertQuery("SELECT view_name, view_table_dir_name, lag_micros, writer_stall_micros FROM live_views()").noLeakCheck().noRandomAccess().returns("view_name\tview_table_dir_name\tlag_micros\twriter_stall_micros\n" +
-                            "lv\t" + expectedDir + "\t2000000\t0\n");
+                    "lv\t" + expectedDir + "\t2000000\t0\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -11548,7 +11548,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 // here closes the end-to-end loop: write hook -> instance
                 // setter -> LiveViewsFunctionFactory -> SQL.
                 assertQuery("SELECT view_name, head_checkpoint_lv_seqtxn, head_checkpoint_state_bytes FROM live_views()").noLeakCheck().noRandomAccess().returns("view_name\thead_checkpoint_lv_seqtxn\thead_checkpoint_state_bytes\n" +
-                                "lv\t" + lv.getHeadCheckpointLvSeqTxn() + '\t' + lv.getHeadCheckpointStateBytes() + '\n');
+                        "lv\t" + lv.getHeadCheckpointLvSeqTxn() + '\t' + lv.getHeadCheckpointStateBytes() + '\n');
             }
 
             execute("DROP LIVE VIEW lv");
@@ -11864,8 +11864,8 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             // The LV has already materialised the cumulative sums to its
             // on-disk tier before any corruption.
             assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
-                            "2026-06-01T00:00:00.000000Z\ta\t1.0\n" +
-                            "2026-06-01T01:00:00.000000Z\ta\t3.0\n");
+                    "2026-06-01T00:00:00.000000Z\ta\t1.0\n" +
+                    "2026-06-01T01:00:00.000000Z\ta\t3.0\n");
 
             // Replace the head .cp: same lvSeqTxn, valid prelude, but a
             // FUNCTION_SNAPSHOT payload whose partitionKeyColumnCount is bogus
@@ -11928,8 +11928,8 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             // The failed restore left the on-disk tier untouched: the LV still
             // reads the same cumulative sums it computed before the corruption.
             assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
-                            "2026-06-01T00:00:00.000000Z\ta\t1.0\n" +
-                            "2026-06-01T01:00:00.000000Z\ta\t3.0\n");
+                    "2026-06-01T00:00:00.000000Z\ta\t1.0\n" +
+                    "2026-06-01T01:00:00.000000Z\ta\t3.0\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -12900,9 +12900,9 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 // Post-replay LV output is the cumulative sum across all three
                 // rows in ts-ascending order: 3 -> 3+1=4 -> 4+2=6.
                 assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
-                                "2026-11-01T00:00:05.000000Z\ta\t3.0\n" +
-                                "2026-11-01T00:00:10.000000Z\ta\t4.0\n" +
-                                "2026-11-01T00:00:20.000000Z\ta\t6.0\n");
+                        "2026-11-01T00:00:05.000000Z\ta\t3.0\n" +
+                        "2026-11-01T00:00:10.000000Z\ta\t4.0\n" +
+                        "2026-11-01T00:00:20.000000Z\ta\t6.0\n");
 
                 // A fresh head has landed at a new lvSeqTxn, the prior one is
                 // gone on disk.
@@ -12953,8 +12953,8 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 // The buggy in-WAL-order path computes the reverse (ts=10 carries
                 // sum=3.0/rn=2 because it was processed second).
                 assertQuery("SELECT ts, sym, s, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\trn\n" +
-                                "2026-11-01T00:00:10.000000Z\ta\t1.0\t1\n" +
-                                "2026-11-01T00:00:20.000000Z\ta\t3.0\t2\n");
+                        "2026-11-01T00:00:10.000000Z\ta\t1.0\t1\n" +
+                        "2026-11-01T00:00:20.000000Z\ta\t3.0\t2\n");
             }
 
             execute("DROP LIVE VIEW lv");
@@ -12987,8 +12987,8 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 drainWalQueue();
 
                 assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
-                                "2026-11-01T00:00:10.000000Z\ta\t200.0\n" +
-                                "2026-11-01T00:00:20.000000Z\ta\t500.0\n");
+                        "2026-11-01T00:00:10.000000Z\ta\t200.0\n" +
+                        "2026-11-01T00:00:20.000000Z\ta\t500.0\n");
 
                 // O3 row at ts=05 that fails the filter (x <= 100). The WAL
                 // path still detects O3 by min(ts) < latestSeenTs; head-miss
@@ -13004,8 +13004,8 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 drainWalQueue();
 
                 assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
-                                "2026-11-01T00:00:10.000000Z\ta\t200.0\n" +
-                                "2026-11-01T00:00:20.000000Z\ta\t500.0\n");
+                        "2026-11-01T00:00:10.000000Z\ta\t200.0\n" +
+                        "2026-11-01T00:00:20.000000Z\ta\t500.0\n");
             }
 
             execute("DROP LIVE VIEW lv");
@@ -13049,12 +13049,12 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 Assert.assertNotEquals(Numbers.LONG_NULL, lv.getHeadCheckpointLvSeqTxn());
                 // Per-day cumulative sum (the anchor resets each day).
                 assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
-                                "2026-11-01T00:00:10.000000Z\ta\t1.0\n" +
-                                "2026-11-01T00:00:20.000000Z\ta\t3.0\n" +
-                                "2026-11-02T00:00:10.000000Z\ta\t10.0\n" +
-                                "2026-11-02T00:00:20.000000Z\ta\t30.0\n" +
-                                "2026-11-03T00:00:10.000000Z\ta\t100.0\n" +
-                                "2026-11-03T00:00:20.000000Z\ta\t300.0\n");
+                        "2026-11-01T00:00:10.000000Z\ta\t1.0\n" +
+                        "2026-11-01T00:00:20.000000Z\ta\t3.0\n" +
+                        "2026-11-02T00:00:10.000000Z\ta\t10.0\n" +
+                        "2026-11-02T00:00:20.000000Z\ta\t30.0\n" +
+                        "2026-11-03T00:00:10.000000Z\ta\t100.0\n" +
+                        "2026-11-03T00:00:20.000000Z\ta\t300.0\n");
 
                 // Base drops its oldest partition; the LV walks past it
                 // (transparent) and stays ACTIVE with its derived rows intact.
@@ -13081,13 +13081,13 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 // day-2 is rewritten with the merged O3 row; day-3 is unchanged.
                 // Without the clamp, the day-1 rows would be gone.
                 assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
-                                "2026-11-01T00:00:10.000000Z\ta\t1.0\n" +
-                                "2026-11-01T00:00:20.000000Z\ta\t3.0\n" +
-                                "2026-11-02T00:00:05.000000Z\ta\t5.0\n" +
-                                "2026-11-02T00:00:10.000000Z\ta\t15.0\n" +
-                                "2026-11-02T00:00:20.000000Z\ta\t35.0\n" +
-                                "2026-11-03T00:00:10.000000Z\ta\t100.0\n" +
-                                "2026-11-03T00:00:20.000000Z\ta\t300.0\n");
+                        "2026-11-01T00:00:10.000000Z\ta\t1.0\n" +
+                        "2026-11-01T00:00:20.000000Z\ta\t3.0\n" +
+                        "2026-11-02T00:00:05.000000Z\ta\t5.0\n" +
+                        "2026-11-02T00:00:10.000000Z\ta\t15.0\n" +
+                        "2026-11-02T00:00:20.000000Z\ta\t35.0\n" +
+                        "2026-11-03T00:00:10.000000Z\ta\t100.0\n" +
+                        "2026-11-03T00:00:20.000000Z\ta\t300.0\n");
             }
 
             execute("DROP LIVE VIEW lv");
@@ -13162,11 +13162,11 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 // Post-replay output: cumulative sum across all five rows
                 // ordered by ts.
                 assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
-                                "2026-11-01T00:00:10.000000Z\ta\t1.0\n" +
-                                "2026-11-01T00:00:20.000000Z\ta\t3.0\n" +
-                                "2026-11-01T00:00:25.000000Z\ta\t8.0\n" +
-                                "2026-11-01T00:00:30.000000Z\ta\t11.0\n" +
-                                "2026-11-01T00:00:40.000000Z\ta\t15.0\n");
+                        "2026-11-01T00:00:10.000000Z\ta\t1.0\n" +
+                        "2026-11-01T00:00:20.000000Z\ta\t3.0\n" +
+                        "2026-11-01T00:00:25.000000Z\ta\t8.0\n" +
+                        "2026-11-01T00:00:30.000000Z\ta\t11.0\n" +
+                        "2026-11-01T00:00:40.000000Z\ta\t15.0\n");
 
                 Assert.assertNotEquals(preO3HeadLvSeqTxn, lv.getHeadCheckpointLvSeqTxn());
                 Assert.assertNotEquals(Numbers.LONG_NULL, lv.getHeadCheckpointLvSeqTxn());
@@ -13250,11 +13250,11 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 // Reads are correct post-O3 (served from the rewritten on-disk
                 // tier): cumulative sum across all five rows in ts order.
                 assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
-                                "2026-11-01T00:00:10.000000Z\ta\t1.0\n" +
-                                "2026-11-01T00:00:20.000000Z\ta\t3.0\n" +
-                                "2026-11-01T00:00:25.000000Z\ta\t8.0\n" +
-                                "2026-11-01T00:00:30.000000Z\ta\t11.0\n" +
-                                "2026-11-01T00:00:40.000000Z\ta\t15.0\n");
+                        "2026-11-01T00:00:10.000000Z\ta\t1.0\n" +
+                        "2026-11-01T00:00:20.000000Z\ta\t3.0\n" +
+                        "2026-11-01T00:00:25.000000Z\ta\t8.0\n" +
+                        "2026-11-01T00:00:30.000000Z\ta\t11.0\n" +
+                        "2026-11-01T00:00:40.000000Z\ta\t15.0\n");
 
                 // A subsequent in-order commit appends onto the rebuilt tier.
                 setCurrentMicros(600_000L);
@@ -13346,11 +13346,11 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 // The pre-fix head-hit path replays from 21 and drops the O3 row
                 // entirely, yielding 10->1, 20->3, 30->7, 40->15 (four rows).
                 assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts, s").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
-                                "2026-11-01T00:00:10.000000Z\ta\t1.0\n" +
-                                "2026-11-01T00:00:20.000000Z\ta\t3.0\n" +
-                                "2026-11-01T00:00:20.000000Z\ta\t103.0\n" +
-                                "2026-11-01T00:00:30.000000Z\ta\t107.0\n" +
-                                "2026-11-01T00:00:40.000000Z\ta\t115.0\n");
+                        "2026-11-01T00:00:10.000000Z\ta\t1.0\n" +
+                        "2026-11-01T00:00:20.000000Z\ta\t3.0\n" +
+                        "2026-11-01T00:00:20.000000Z\ta\t103.0\n" +
+                        "2026-11-01T00:00:30.000000Z\ta\t107.0\n" +
+                        "2026-11-01T00:00:40.000000Z\ta\t115.0\n");
             }
 
             execute("DROP LIVE VIEW lv");
@@ -13406,10 +13406,10 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 // Final LV output covers all four rows in ts order with the
                 // cumulative sum across the day-anchored bucket.
                 assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
-                                "2026-11-01T00:00:05.000000Z\ta\t2.0\n" +
-                                "2026-11-01T00:00:06.000000Z\ta\t5.0\n" +
-                                "2026-11-01T00:00:07.000000Z\ta\t9.0\n" +
-                                "2026-11-01T00:00:50.000000Z\ta\t10.0\n");
+                        "2026-11-01T00:00:05.000000Z\ta\t2.0\n" +
+                        "2026-11-01T00:00:06.000000Z\ta\t5.0\n" +
+                        "2026-11-01T00:00:07.000000Z\ta\t9.0\n" +
+                        "2026-11-01T00:00:50.000000Z\ta\t10.0\n");
             }
 
             execute("DROP LIVE VIEW lv");
@@ -13817,7 +13817,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
             try {
                 assertQuery("SELECT view_name, head_checkpoint_lv_seqtxn, head_checkpoint_max_ts, head_checkpoint_state_bytes FROM live_views()").noLeakCheck().noRandomAccess().returns("view_name\thead_checkpoint_lv_seqtxn\thead_checkpoint_max_ts\thead_checkpoint_state_bytes\n" +
-                                "lv\tnull\t\t0\n");
+                        "lv\tnull\t\t0\n");
 
                 // Direct mutation via the setter (the 2a.4 write hook will call this).
                 LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
@@ -13825,7 +13825,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 lv.setHeadCheckpoint(42L, 1_700_000_000_000_000L, 4096L, 0L);
 
                 assertQuery("SELECT view_name, head_checkpoint_lv_seqtxn, head_checkpoint_max_ts, head_checkpoint_state_bytes FROM live_views()").noLeakCheck().noRandomAccess().returns("view_name\thead_checkpoint_lv_seqtxn\thead_checkpoint_max_ts\thead_checkpoint_state_bytes\n" +
-                                "lv\t42\t2023-11-14T22:13:20.000000Z\t4096\n");
+                        "lv\t42\t2023-11-14T22:13:20.000000Z\t4096\n");
             } finally {
                 execute("DROP LIVE VIEW lv");
             }
@@ -13840,7 +13840,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
             // tables() emits 'L' in the table_type column for live views.
             assertQuery("SELECT table_name, table_type FROM tables() WHERE table_name = 'lv'").noLeakCheck().noRandomAccess().returns("table_name\ttable_type\n" +
-                            "lv\tL\n");
+                    "lv\tL\n");
             execute("DROP LIVE VIEW lv");
         });
     }
@@ -13852,9 +13852,9 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             execute("CREATE LIVE VIEW lv FLUSH EVERY 200ms IN MEMORY 5s PARTITION BY DAY AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
             assertQuery("SHOW CREATE LIVE VIEW lv").noLeakCheck().noRandomAccess().returns("ddl\n" +
-                            "CREATE LIVE VIEW 'lv' FLUSH EVERY 200ms IN MEMORY 5s PARTITION BY DAY AS (\n" +
-                            "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0\n" +
-                            ");\n");
+                    "CREATE LIVE VIEW 'lv' FLUSH EVERY 200ms IN MEMORY 5s PARTITION BY DAY AS (\n" +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0\n" +
+                    ");\n");
             execute("DROP LIVE VIEW lv");
         });
     }
@@ -13973,9 +13973,9 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             );
 
             assertQuery("SHOW CREATE LIVE VIEW lv").noLeakCheck().noRandomAccess().returns("ddl\n" +
-                            "CREATE LIVE VIEW 'lv' FLUSH EVERY 1s IN MEMORY 1s PARTITION BY DAY AS (\n" +
-                            "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0\n" +
-                            ");\n");
+                    "CREATE LIVE VIEW 'lv' FLUSH EVERY 1s IN MEMORY 1s PARTITION BY DAY AS (\n" +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0\n" +
+                    ");\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -14867,10 +14867,10 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     "SELECT ts, x, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR DAILY '00:00' 'UTC')");
             assertQuery("SHOW CREATE LIVE VIEW lv").noLeakCheck().noRandomAccess().returns("ddl\n" +
-                            "CREATE LIVE VIEW 'lv' FLUSH EVERY 1s IN MEMORY 1s PARTITION BY DAY AS (\n" +
-                            "SELECT ts, x, sum(x) OVER w AS s FROM base " +
-                            "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR DAILY '00:00' 'UTC')\n" +
-                            ");\n");
+                    "CREATE LIVE VIEW 'lv' FLUSH EVERY 1s IN MEMORY 1s PARTITION BY DAY AS (\n" +
+                    "SELECT ts, x, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR DAILY '00:00' 'UTC')\n" +
+                    ");\n");
             execute("DROP LIVE VIEW lv");
         });
     }

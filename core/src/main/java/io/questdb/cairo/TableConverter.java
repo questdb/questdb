@@ -107,8 +107,8 @@ public class TableConverter {
                                 boolean isPublic = tableFlagResolver.isPublic(tableName);
                                 TableToken.Type type = isLiveViewDefinitionFileExists(configuration, path, dirName) ? TableToken.Type.LIVE_VIEW
                                         : isMatViewDefinitionFileExists(configuration, path, dirName) ? TableToken.Type.MAT_VIEW
-                                        : isViewDefinitionFileExists(configuration, path, dirName) ? TableToken.Type.VIEW
-                                        : TableToken.Type.TABLE;
+                                          : isViewDefinitionFileExists(configuration, path, dirName) ? TableToken.Type.VIEW
+                                            : TableToken.Type.TABLE;
                                 boolean isWal = walEnabled || type == TableToken.Type.VIEW || type == TableToken.Type.MAT_VIEW;
                                 final TableToken token = new TableToken(tableName, dirName, engine.getConfiguration().getDbLogName(), tableId, type, isWal, isSystem, isProtected, isPublic);
 

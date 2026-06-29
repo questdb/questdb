@@ -808,8 +808,8 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             return mapValueTypes != null
                     ? mapValueTypes.getColumnCount()
                     : (frameLoBounded
-                    ? MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES
-                    : MAX_OVER_PARTITION_RANGE_COLUMN_TYPES).getColumnCount();
+                       ? MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES
+                       : MAX_OVER_PARTITION_RANGE_COLUMN_TYPES).getColumnCount();
         }
 
         @Override
@@ -1277,8 +1277,8 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             return mapValueTypes != null
                     ? mapValueTypes.getColumnCount()
                     : (frameLoBounded
-                    ? MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES
-                    : MAX_OVER_PARTITION_ROWS_COLUMN_TYPES).getColumnCount();
+                       ? MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES
+                       : MAX_OVER_PARTITION_ROWS_COLUMN_TYPES).getColumnCount();
         }
 
         @Override

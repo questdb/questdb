@@ -1677,7 +1677,7 @@ public class SqlParser {
             }
             if (orderBy.size() > 1) {
                 throw SqlException.$(orderBy.getQuick(1).position,
-                        "live view named WINDOW must ORDER BY a single column (")
+                                "live view named WINDOW must ORDER BY a single column (")
                         .put(designatedTsName).put(')');
             }
             ExpressionNode tsNode = orderBy.getQuick(0);

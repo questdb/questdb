@@ -386,8 +386,8 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                             boolean isPublic = tableFlagResolver.isPublic(tableName);
                             TableToken.Type type = isLiveViewDefinitionFileExists(configuration, path, dirName) ? TableToken.Type.LIVE_VIEW
                                     : isMatViewDefinitionFileExists(configuration, path, dirName) ? TableToken.Type.MAT_VIEW
-                                    : isViewDefinitionFileExists(configuration, path, dirName) ? TableToken.Type.VIEW
-                                    : TableToken.Type.TABLE;
+                                      : isViewDefinitionFileExists(configuration, path, dirName) ? TableToken.Type.VIEW
+                                        : TableToken.Type.TABLE;
                             boolean isWal = isWalTable || type.isImplicitlyWal();
                             String dbLogName = configuration.getDbLogName();
                             TableToken token = new TableToken(tableName, dirName, dbLogName, tableId, type, isWal, isSystem, isProtected, isPublic);

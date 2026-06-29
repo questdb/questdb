@@ -32,9 +32,13 @@ package io.questdb.cairo.lv;
  * {@code _lv.s.backfillState} uniquely determines the state.
  */
 public enum LiveViewLifecycleState {
-    /** Registry entry is locked but not yet committed. View is not visible to readers. */
+    /**
+     * Registry entry is locked but not yet committed. View is not visible to readers.
+     */
     CREATING,
-    /** Registry committed, refresh worker running, queryable. */
+    /**
+     * Registry committed, refresh worker running, queryable.
+     */
     ACTIVE,
     /**
      * Registry committed, {@code _lv.s.backfillState=BACKFILLING}; the backfill
@@ -43,9 +47,13 @@ public enum LiveViewLifecycleState {
      * completes and flips to ACTIVE.
      */
     BACKFILLING,
-    /** Registry committed, {@code _lv.s.invalid=true}; refresh stopped, last persisted state remains queryable. */
+    /**
+     * Registry committed, {@code _lv.s.invalid=true}; refresh stopped, last persisted state remains queryable.
+     */
     INVALID,
-    /** Registry entry marked-dropped; draining, not visible to new readers. */
+    /**
+     * Registry entry marked-dropped; draining, not visible to new readers.
+     */
     DROPPING,
     /**
      * Restart load saw an on-disk format version this build cannot read.
@@ -85,7 +93,9 @@ public enum LiveViewLifecycleState {
         return backfilling ? BACKFILLING : ACTIVE;
     }
 
-    /** Lower-case label suitable for {@code live_views().view_status}. */
+    /**
+     * Lower-case label suitable for {@code live_views().view_status}.
+     */
     public String catalogueName() {
         return switch (this) {
             case CREATING -> "creating";

@@ -255,9 +255,9 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                         }
                         case COLUMN_HEAD_CHECKPOINT_STATE_BYTES -> instance.getHeadCheckpointStateBytes();
                         case COLUMN_VIEW_LOWER_BOUND_TIMESTAMP ->
-                                // Persisted in base-table units; convert back to
-                                // TIMESTAMP_MICRO per the catalogue column's declared type. Identity for
-                                // MICRO bases; rounds NS bases down to the MICRO grid.
+                            // Persisted in base-table units; convert back to
+                            // TIMESTAMP_MICRO per the catalogue column's declared type. Identity for
+                            // MICRO bases; rounds NS bases down to the MICRO grid.
                                 ColumnType
                                         .getTimestampDriver(definition.getBaseTimestampType())
                                         .toMicros(definition.getViewLowerBoundTimestamp());
@@ -302,7 +302,8 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                         case COLUMN_VIEW_TABLE_DIR_NAME -> instance.getLiveViewToken().getDirName();
                         case COLUMN_BASE_TABLE_NAME -> definition.getBaseTableName();
                         case COLUMN_VIEW_STATUS -> instance.getLifecycleState().catalogueName();
-                        case COLUMN_FLUSH_EVERY_INTERVAL_UNIT -> getIntervalUnit(definition.getFlushEveryIntervalUnit());
+                        case COLUMN_FLUSH_EVERY_INTERVAL_UNIT ->
+                                getIntervalUnit(definition.getFlushEveryIntervalUnit());
                         case COLUMN_IN_MEMORY_INTERVAL_UNIT -> getIntervalUnit(definition.getInMemoryIntervalUnit());
                         case COLUMN_VIEW_SQL -> definition.getViewSql();
                         case COLUMN_INVALIDATION_REASON -> instance.getInvalidationReason();

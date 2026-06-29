@@ -1500,8 +1500,8 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             return mapValueTypes != null
                     ? mapValueTypes.getColumnCount()
                     : (frameLoBounded
-                    ? MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES
-                    : MAX_DECIMAL128_OVER_PARTITION_RANGE_TYPES).getColumnCount();
+                       ? MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES
+                       : MAX_DECIMAL128_OVER_PARTITION_RANGE_TYPES).getColumnCount();
         }
 
         @Override
@@ -1947,8 +1947,8 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             return mapValueTypes != null
                     ? mapValueTypes.getColumnCount()
                     : (frameLoBounded
-                    ? MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES
-                    : MAX_DECIMAL128_OVER_PARTITION_ROWS_TYPES).getColumnCount();
+                       ? MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES
+                       : MAX_DECIMAL128_OVER_PARTITION_ROWS_TYPES).getColumnCount();
         }
 
         @Override
@@ -3369,8 +3369,8 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             return mapValueTypes != null
                     ? mapValueTypes.getColumnCount()
                     : (frameLoBounded
-                    ? MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES
-                    : MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES).getColumnCount();
+                       ? MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES
+                       : MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES).getColumnCount();
         }
 
         @Override
@@ -3783,8 +3783,8 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             return mapValueTypes != null
                     ? mapValueTypes.getColumnCount()
                     : (frameLoBounded
-                    ? MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES
-                    : MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES).getColumnCount();
+                       ? MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES
+                       : MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES).getColumnCount();
         }
 
         @Override
@@ -5155,8 +5155,8 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             return mapValueTypes != null
                     ? mapValueTypes.getColumnCount()
                     : (frameLoBounded
-                    ? MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES
-                    : MAX_DECIMAL256_OVER_PARTITION_RANGE_TYPES).getColumnCount();
+                       ? MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES
+                       : MAX_DECIMAL256_OVER_PARTITION_RANGE_TYPES).getColumnCount();
         }
 
         @Override
@@ -5604,8 +5604,8 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             return mapValueTypes != null
                     ? mapValueTypes.getColumnCount()
                     : (frameLoBounded
-                    ? MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES
-                    : MAX_DECIMAL256_OVER_PARTITION_ROWS_TYPES).getColumnCount();
+                       ? MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES
+                       : MAX_DECIMAL256_OVER_PARTITION_ROWS_TYPES).getColumnCount();
         }
 
         @Override
@@ -7038,8 +7038,8 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             return mapValueTypes != null
                     ? mapValueTypes.getColumnCount()
                     : (frameLoBounded
-                    ? MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES
-                    : MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES).getColumnCount();
+                       ? MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES
+                       : MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES).getColumnCount();
         }
 
         @Override
@@ -7452,8 +7452,8 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             return mapValueTypes != null
                     ? mapValueTypes.getColumnCount()
                     : (frameLoBounded
-                    ? MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES
-                    : MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES).getColumnCount();
+                       ? MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES
+                       : MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES).getColumnCount();
         }
 
         @Override
@@ -8790,8 +8790,8 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             return mapValueTypes != null
                     ? mapValueTypes.getColumnCount()
                     : (frameLoBounded
-                    ? MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES
-                    : MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES).getColumnCount();
+                       ? MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES
+                       : MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES).getColumnCount();
         }
 
         @Override
@@ -9205,8 +9205,8 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             return mapValueTypes != null
                     ? mapValueTypes.getColumnCount()
                     : (frameLoBounded
-                    ? MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES
-                    : MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES).getColumnCount();
+                       ? MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES
+                       : MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES).getColumnCount();
         }
 
         @Override
@@ -10546,8 +10546,8 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             return mapValueTypes != null
                     ? mapValueTypes.getColumnCount()
                     : (frameLoBounded
-                    ? MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES
-                    : MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES).getColumnCount();
+                       ? MAX_DECIMAL64_OVER_PARTITION_RANGE_BOUNDED_TYPES
+                       : MAX_DECIMAL64_OVER_PARTITION_RANGE_TYPES).getColumnCount();
         }
 
         @Override
@@ -10961,8 +10961,8 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             return mapValueTypes != null
                     ? mapValueTypes.getColumnCount()
                     : (frameLoBounded
-                    ? MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES
-                    : MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES).getColumnCount();
+                       ? MAX_DECIMAL64_OVER_PARTITION_ROWS_BOUNDED_TYPES
+                       : MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES).getColumnCount();
         }
 
         @Override
