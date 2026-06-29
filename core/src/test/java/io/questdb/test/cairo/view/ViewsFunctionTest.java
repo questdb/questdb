@@ -39,11 +39,11 @@ public class ViewsFunctionTest extends AbstractViewTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
-                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t
-                            k\tSYMBOL\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
-                            doubleV\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
-                            avg\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\tindexReplicaOnly
+                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t\tfalse
+                            k\tSYMBOL\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\tfalse
+                            doubleV\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\tfalse
+                            avg\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\tfalse
                             """);
         });
     }

@@ -298,6 +298,12 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
                             sink.putAscii(')');
                         }
                     }
+                    // Re-emit the schema-level REPLICA ONLY modifier after the full
+                    // index clause (CAPACITY / TYPE ... INCLUDE(...)). Sourced from the
+                    // raw _meta flag so the DDL round-trips regardless of node role.
+                    if (column.isReplicaOnlyIndex()) {
+                        sink.putAscii(" REPLICA ONLY");
+                    }
                 }
             }
 

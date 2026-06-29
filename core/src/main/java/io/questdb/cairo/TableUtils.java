@@ -234,6 +234,7 @@ public final class TableUtils {
     //   bit 4: POSTING_VARIANT low     (2-bit variant selector, bits 4-5)
     //   bit 5: POSTING_VARIANT high
     //   bit 6: COVERING
+    //   bit 7: REPLICA_ONLY
     //
     // Posting variant encoding (bits 4-5, valid only when IS_POSTING=1):
     //   00 = POSTING (adaptive)
@@ -247,6 +248,7 @@ public final class TableUtils {
     static final int META_FLAG_BIT_POSTING_VARIANT_LO = 1 << 4;
     static final int META_FLAG_BIT_POSTING_VARIANT_HI = 1 << 5;
     static final int META_FLAG_BIT_COVERING = 1 << 6;
+    static final int META_FLAG_BIT_REPLICA_ONLY = 1 << 7;
     static final int META_FLAG_POSTING_VARIANT_MASK = META_FLAG_BIT_POSTING_VARIANT_LO | META_FLAG_BIT_POSTING_VARIANT_HI;
     static final byte TODO_RESTORE_META = 2;
     static final byte TODO_TRUNCATE = 1;
@@ -2618,6 +2620,10 @@ public final class TableUtils {
                 flags |= META_FLAG_BIT_COVERING;
             }
 
+            if (tableStruct.isReplicaOnlyIndex(i)) {
+                flags |= META_FLAG_BIT_REPLICA_ONLY;
+            }
+
             mem.putLong(flags);
             mem.putInt(tableStruct.getIndexBlockCapacity(i));
             mem.putInt(tableStruct.getSymbolCapacity(i));
@@ -2826,6 +2832,10 @@ public final class TableUtils {
 
     static boolean isColumnCovering(MemoryR metaMem, int columnIndex) {
         return (getColumnFlags(metaMem, columnIndex) & META_FLAG_BIT_COVERING) != 0;
+    }
+
+    static boolean isColumnReplicaOnlyIndex(MemoryR metaMem, int columnIndex) {
+        return (getColumnFlags(metaMem, columnIndex) & META_FLAG_BIT_REPLICA_ONLY) != 0;
     }
 
     static boolean isColumnDedupKey(MemoryR metaMem, int columnIndex) {

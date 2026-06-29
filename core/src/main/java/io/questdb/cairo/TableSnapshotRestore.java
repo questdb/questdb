@@ -1246,6 +1246,9 @@ public class TableSnapshotRestore implements QuietCloseable {
                 if (!tableMetadata.isColumnIndexed(colIdx) || !ColumnType.isSymbol(tableMetadata.getColumnType(colIdx))) {
                     continue;
                 }
+                if (tableMetadata.isColumnReplicaOnlyIndex(colIdx) && configuration.skipReplicaOnlyIndexes()) {
+                    continue; // skipping node (primary): do not materialize replica-only indexes during restore
+                }
                 final int writerIndex = tableMetadata.getWriterIndex(colIdx);
                 final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, writerIndex);
                 // -1 means the column is absent in this partition,
@@ -1577,6 +1580,9 @@ public class TableSnapshotRestore implements QuietCloseable {
             if (getIndexedParquetColumnIndex(metadata, parquetMetadata, columnVersionReader, columnIndex, partitionTimestamp, partitionRowCount) == -1) {
                 continue;
             }
+            if (metadata.isColumnReplicaOnlyIndex(columnIndex) && configuration.skipReplicaOnlyIndexes()) {
+                continue; // skipping node (primary): do not materialize replica-only indexes during restore
+            }
 
             // Collect column names for logging
             if (!columnNamesSink.isEmpty()) {
@@ -1600,6 +1606,9 @@ public class TableSnapshotRestore implements QuietCloseable {
                 int parquetColumnIndex = getIndexedParquetColumnIndex(metadata, parquetMetadata, columnVersionReader, columnIndex, partitionTimestamp, partitionRowCount);
                 if (parquetColumnIndex == -1) {
                     continue;
+                }
+                if (metadata.isColumnReplicaOnlyIndex(columnIndex) && configuration.skipReplicaOnlyIndexes()) {
+                    continue; // skipping node (primary): do not materialize replica-only indexes during restore
                 }
 
                 final int writerIndex = metadata.getWriterIndex(columnIndex);
@@ -1652,6 +1661,9 @@ public class TableSnapshotRestore implements QuietCloseable {
             for (int columnIndex = 0; columnIndex < columnCount && columnTops.size() < indexedColumnCount; columnIndex++) {
                 if (getIndexedParquetColumnIndex(metadata, parquetMetadata, columnVersionReader, columnIndex, partitionTimestamp, partitionRowCount) == -1) {
                     continue;
+                }
+                if (metadata.isColumnReplicaOnlyIndex(columnIndex) && configuration.skipReplicaOnlyIndexes()) {
+                    continue; // skipping node (primary): do not materialize replica-only indexes during restore
                 }
 
                 final int writerIndex = metadata.getWriterIndex(columnIndex);

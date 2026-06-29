@@ -31,4 +31,14 @@ import io.questdb.cairo.TableStructure;
  * table-level metadata.
  */
 public interface TableMetadata extends TableRecordMetadata, TableStructure {
+
+    /**
+     * For existing tables the replica-only index flag lives on the column metadata
+     * (loaded from {@code _meta}), so resolve the {@link TableStructure} view of it from
+     * there rather than using the structure default, which always returns false.
+     */
+    @Override
+    default boolean isReplicaOnlyIndex(int columnIndex) {
+        return isColumnReplicaOnlyIndex(columnIndex);
+    }
 }

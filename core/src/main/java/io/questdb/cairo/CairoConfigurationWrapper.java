@@ -1759,6 +1759,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean skipReplicaOnlyIndexes() {
+        return getDelegate().skipReplicaOnlyIndexes();
+    }
+
+    @Override
     public boolean isWalApplyEnabled() {
         return getDelegate().isWalApplyEnabled();
     }

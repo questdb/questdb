@@ -3308,7 +3308,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 }
 
                 final CharSequence columnName = metadata.getColumnName(i);
-                final boolean isIndexed = metadata.isColumnIndexed(i);
+                // Use the ACTIVE-index guard, not raw isColumnIndexed: on a skipping primary a
+                // REPLICA ONLY index is not materialized, so the writer's denseIndexers/indexCount
+                // (and therefore the O3Basket's indexer slot count) exclude it. Counting it as
+                // indexed here would call o3Basket.nextIndexer() once more than the basket was sized
+                // for, overrunning indexerTypes/indexers (an AssertionError in O3Basket.nextIndexer).
+                final boolean isIndexed = metadata.isColumnIndexActive(i, tableWriter.getConfiguration().skipReplicaOnlyIndexes());
                 final int indexBlockCapacity = isIndexed ? metadata.getIndexValueBlockCapacity(i) : -1;
                 final byte indexType = metadata.getColumnIndexType(i);
                 if (openColumnMode == OPEN_LAST_PARTITION_FOR_APPEND || openColumnMode == OPEN_LAST_PARTITION_FOR_MERGE) {
@@ -3545,7 +3550,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             IndexWriter indexWriter;
             final int columnCount = tableWriterMetadata.getColumnCount();
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-                if (tableWriterMetadata.getColumnType(columnIndex) == ColumnType.SYMBOL && tableWriterMetadata.isColumnIndexed(columnIndex)) {
+                // Active-index guard (not raw isColumnIndexed): a REPLICA ONLY index on a skipping
+                // primary is not materialized, so it must not be wired into the parquet O3 indexer
+                // path either (it would overrun the O3Basket indexer slots, like the native path).
+                if (tableWriterMetadata.getColumnType(columnIndex) == ColumnType.SYMBOL
+                        && tableWriterMetadata.isColumnIndexActive(columnIndex, tableWriter.getConfiguration().skipReplicaOnlyIndexes())) {
                     final int indexBlockCapacity = tableWriterMetadata.getIndexValueBlockCapacity(columnIndex);
                     if (indexBlockCapacity < 0) {
                         continue;

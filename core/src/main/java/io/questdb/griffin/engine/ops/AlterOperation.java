@@ -476,15 +476,23 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         final CharSequence columnName = activeExtraStrInfo.getStrA(0);
         try {
             byte indexType = extraInfo.size() > 1 ? (byte) extraInfo.get(1) : IndexType.BITMAP;
+            // Layout (new, slot 2 = coverCount, slot 3 = replicaOnly):
+            //   [blockSize, indexType, coverCount, replicaOnly, ...]
+            // Old binary produced only [blockSize, indexType, coverCount] (3 slots, no replicaOnly).
+            // Reading slot 2 as coverCount is correct in both layouts.
+            // Reading slot 3 with a size>3 guard yields false for old (3-slot) events — backward compat.
             int coverCount = extraInfo.size() > 2 ? (int) extraInfo.get(2) : 0;
+            boolean replicaOnly = extraInfo.size() > 3 && extraInfo.get(3) != 0;
             ObjList<CharSequence> coveringColumnNames = null;
             if (coverCount > 0) {
                 coveringColumnNames = new ObjList<>(coverCount);
                 for (int i = 0; i < coverCount; i++) {
+                    // Covering names live in extraStrInfo after the column name (index 0),
+                    // independent of the replicaOnly slot in extraInfo.
                     coveringColumnNames.add(activeExtraStrInfo.getStrA(1 + i));
                 }
             }
-            svc.addIndex(columnName, (int) extraInfo.get(0), indexType, coveringColumnNames);
+            svc.addIndex(columnName, (int) extraInfo.get(0), indexType, coveringColumnNames, replicaOnly);
         } catch (CairoException e) {
             // augment exception with table position
             e.position(tableNamePosition);

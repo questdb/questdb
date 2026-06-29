@@ -100,13 +100,14 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         structureVersion.incrementAndGet();
     }
 
-    public void addIndex(CharSequence columnName, int indexValueBlockSize, byte indexType, ObjList<CharSequence> coveringColumnNames) {
+    public void addIndex(CharSequence columnName, int indexValueBlockSize, byte indexType, ObjList<CharSequence> coveringColumnNames, boolean replicaOnly) {
         int colIdx = columnNameIndexMap.get(columnName);
         if (colIdx < 0) {
             throw CairoException.critical(0).put("column not found for addIndex [name=").put(columnName).put(']');
         }
         TableColumnMetadata colMeta = columnMetadata.getQuick(colIdx);
         colMeta.setIndexType(indexType);
+        colMeta.setReplicaOnlyIndex(replicaOnly);
         colMeta.setIndexValueBlockCapacity(indexValueBlockSize);
 
         if (coveringColumnNames != null && coveringColumnNames.size() > 0) {
@@ -360,6 +361,10 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
             if (coveringIndices != null && coveringIndices.size() > 0) {
                 columnMetadata.getQuick(columnMetadata.size() - 1).setCoveringColumnIndices(new IntList(coveringIndices));
             }
+            // Propagate the replica-only index flag so the sequencer's on-disk format carries it.
+            if (tableStruct.isReplicaOnlyIndex(i)) {
+                columnMetadata.getQuick(columnMetadata.size() - 1).setReplicaOnlyIndex(true);
+            }
             readColumnOrder.add(i);
         }
 
@@ -495,6 +500,26 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
                             }
                             columnMetadata.getQuick(colIdx).setCoveringColumnIndices(indices);
                         }
+                    }
+                }
+            }
+
+            // Optional section: replica-only index flags (backward compatible), mirrors the index-types section.
+            if (memSize > offset + 8 + 4) {
+                long replicaOnlyCheckSum = checkSum * 31 + SEQ_META_REPLICA_ONLY_CHECKSUM_SALT;
+                long storedCheckSum = metaMem.getLong(offset);
+                offset += Long.BYTES;
+                if (storedCheckSum == replicaOnlyCheckSum) {
+                    int replicaOnlyCount = metaMem.getInt(offset);
+                    offset += Integer.BYTES;
+                    if (replicaOnlyCount == columnCount && memSize - offset >= columnCount) {
+                        for (int i = 0; i < columnCount; i++) {
+                            byte b = metaMem.getByte(offset);
+                            offset += Byte.BYTES;
+                            columnMetadata.getQuick(i).setReplicaOnlyIndex(b != 0);
+                        }
+                    } else if (memSize - offset >= replicaOnlyCount) {
+                        offset += replicaOnlyCount;
                     }
                 }
             }

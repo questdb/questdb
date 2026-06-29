@@ -394,6 +394,24 @@ public class TableReader implements Closeable, SymbolTableSource {
                             columnVersionReader,
                             partitionTimestamp
                     );
+                } catch (CairoException e) {
+                    // Mirror the fresh-create path (createIndexReaderAt): refreshing a CACHED index
+                    // reader onto a partition whose replica-only index sidecars are absent on this
+                    // node (purged on a role flip to a skipping primary, or never materialized for an
+                    // older partition that was written during a skip window) is NOT corruption -- it
+                    // just means "not materialized here yet". Convert the critical file-not-found open
+                    // failure into the same recoverable (non-critical) error so the query degrades
+                    // gracefully instead of crashing. Normal indexed columns are left untouched: a
+                    // missing index file there remains genuine corruption (critical), as does any
+                    // non-file-not-found failure on a replica-only column.
+                    if (metadata.isColumnReplicaOnlyIndex(columnIndex) && Files.isErrnoFileDoesNotExist(e.getErrno())) {
+                        throw CairoException.nonCritical()
+                                .put("replica-only index not materialized on this node [column=")
+                                .put(metadata.getColumnName(columnIndex))
+                                .put(", partitionTimestamp=").put(partitionTimestamp)
+                                .put("]; transient during restore/promote, retry shortly");
+                    }
+                    throw e;
                 } finally {
                     path.trimTo(plen);
                 }
@@ -1051,23 +1069,61 @@ public class TableReader implements Closeable, SymbolTableSource {
         } else {
             int partitionIndex = getPartitionIndex(columnBase);
             Path path = pathGenNativePartition(partitionIndex, partitionTxn);
+            final int partitionPathLen = path.size();
             try {
                 final byte indexType = metadata.getColumnIndexType(columnIndex);
                 final long partitionTimestamp = txFile.getPartitionTimestampByIndex(partitionIndex);
-                reader = IndexFactory.createReader(
-                        indexType,
-                        direction,
-                        configuration,
-                        path,
-                        metadata.getColumnName(columnIndex),
-                        columnNameTxn,
-                        partitionTxn,
-                        getColumnTop(columnBase, columnIndex),
-                        metadata,
-                        columnVersionReader,
-                        partitionTimestamp,
-                        txn
-                );
+                // For a replica-only indexed column on a non-skipping node (replica/standalone),
+                // the column is treated as active by the planner, so an index scan may be chosen.
+                // There is a transient window (e.g. right after restoring from a primary's backup
+                // that lacks index files, before reconcile rebuilds them) where the column is flagged
+                // indexed but its key/value files are absent. For a replica-only column a missing index
+                // file is NOT corruption — it just means "not materialized here yet" — so degrade
+                // gracefully with a recoverable (non-critical) error instead of the critical corruption
+                // error that the reader ctor would otherwise throw. Normal indexed columns are left
+                // untouched: a missing index file there remains genuine corruption (critical).
+                if (metadata.isColumnReplicaOnlyIndex(columnIndex)
+                        && !ff.exists(IndexFactory.keyFileName(indexType, path, metadata.getColumnName(columnIndex), columnNameTxn))) {
+                    throw CairoException.nonCritical()
+                            .put("replica-only index not materialized on this node [column=")
+                            .put(metadata.getColumnName(columnIndex))
+                            .put(", partitionTimestamp=").put(partitionTimestamp)
+                            .put("]; transient during restore/promote, retry shortly");
+                }
+                path.trimTo(partitionPathLen);
+                try {
+                    reader = IndexFactory.createReader(
+                            indexType,
+                            direction,
+                            configuration,
+                            path,
+                            metadata.getColumnName(columnIndex),
+                            columnNameTxn,
+                            partitionTxn,
+                            getColumnTop(columnBase, columnIndex),
+                            metadata,
+                            columnVersionReader,
+                            partitionTimestamp,
+                            txn
+                    );
+                } catch (CairoException e) {
+                    // Race backstop for the pre-check above: the key file can pass ff.exists() and
+                    // then be unlinked (by a concurrent reconcile-purge on promote) before the reader
+                    // ctor opens it, in which case the open fails with a critical "file does not exist"
+                    // error. For a replica-only column that is NOT corruption, just "not materialized
+                    // here yet", so convert the file-not-found open failure to the same recoverable
+                    // (non-critical) error as the pre-check. Normal indexed columns are left untouched:
+                    // a missing index file there remains genuine corruption (critical), as does any
+                    // non-file-not-found failure (e.g. unknown format) on a replica-only column.
+                    if (metadata.isColumnReplicaOnlyIndex(columnIndex) && Files.isErrnoFileDoesNotExist(e.getErrno())) {
+                        throw CairoException.nonCritical()
+                                .put("replica-only index not materialized on this node [column=")
+                                .put(metadata.getColumnName(columnIndex))
+                                .put(", partitionTimestamp=").put(partitionTimestamp)
+                                .put("]; transient during restore/promote, retry shortly");
+                    }
+                    throw e;
+                }
                 if (direction == IndexReader.DIR_BACKWARD) {
                     indexes.setQuick(globalIndex, reader);
                 } else {
@@ -1861,7 +1917,24 @@ public class TableReader implements Closeable, SymbolTableSource {
                 if (metadata.isColumnIndexed(columnIndex)) {
                     IndexReader indexReader = indexReaders.getQuick(primaryIndex);
                     if (indexReader != null) {
-                        indexReader.of(configuration, path.trimTo(plen), name, columnTxn, partitionTxn, columnTop, metadata, columnVersionReader, partitionTimestamp);
+                        try {
+                            indexReader.of(configuration, path.trimTo(plen), name, columnTxn, partitionTxn, columnTop, metadata, columnVersionReader, partitionTimestamp);
+                        } catch (CairoException e) {
+                            // Re-opening a CACHED index reader onto a partition whose replica-only
+                            // index sidecars are absent on this node (purged on a hot promote to a
+                            // skipping primary, or not yet materialized after restore) is NOT
+                            // corruption -- mirror the getIndexReader()/createIndexReaderAt()
+                            // tolerance. Drop the stale cached reader so the column reads as "not
+                            // materialized here"; a later getIndexReader() then surfaces the
+                            // recoverable non-critical error if a query still tries to use the index.
+                            // Normal indexed columns keep the critical-corruption behaviour, as do
+                            // non-file-not-found failures on replica-only columns.
+                            if (metadata.isColumnReplicaOnlyIndex(columnIndex) && Files.isErrnoFileDoesNotExist(e.getErrno())) {
+                                Misc.free(indexReaders.getAndSetQuick(primaryIndex, null));
+                            } else {
+                                throw e;
+                            }
+                        }
                     }
                 } else {
                     Misc.free(indexReaders.getAndSetQuick(primaryIndex, null));

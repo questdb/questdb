@@ -1645,6 +1645,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     columnMetadata.setParquetEncodingConfig(
                             metadata.getColumnMetadata(columnIndex).getParquetEncodingConfig()
                     );
+                    // preserve the replica-only-index flag so the planner's index-eligibility
+                    // guards (isColumnIndexActive) can correctly treat a skipped replica-only
+                    // index as un-indexed on a skipping primary.
+                    columnMetadata.setReplicaOnlyIndex(metadata.isColumnReplicaOnlyIndex(columnIndex));
                     queryMeta.add(columnMetadata);
 
                     if (columnIndex == readerTimestampIndex) {
@@ -5059,7 +5063,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             SymbolJoinKeyMapping symbolJoinKeyMapping = (SymbolJoinKeyMapping) symbolShortCircuit;
                             int slaveSymbolColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
                             boolean hasIndexHint = SqlHints.hasAsOfIndexHint(model, masterAlias, slaveAlias);
-                            if (hasIndexHint && slaveMetadata.isColumnIndexed(slaveSymbolColumnIndex)) {
+                            if (hasIndexHint && slaveMetadata.isColumnIndexActive(slaveSymbolColumnIndex, configuration.skipReplicaOnlyIndexes())) {
                                 return new AsOfJoinIndexedRecordCursorFactory(
                                         configuration,
                                         joinMetadata,
@@ -6515,6 +6519,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final ExpressionNode latestByNode = latestBy.get(0);
             final int latestByIndex = metadata.getColumnIndexQuiet(latestByNode.token);
             final boolean indexed = IndexType.isIndexed(metadata.getColumnIndexType(latestByIndex))
+                    && metadata.isColumnIndexActive(latestByIndex, configuration.skipReplicaOnlyIndexes())
                     && !SqlHints.hasNoIndexHint(model);
 
             // 'latest by' clause takes over the filter and the latest by nodes,
@@ -8450,6 +8455,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 aliasedColumn.setParquetEncodingConfig(
                         metadata.getColumnMetadata(index).getParquetEncodingConfig()
                 );
+                // preserve the replica-only-index flag so the planner's index-eligibility
+                // guards (isColumnIndexActive) treat a skipped replica-only index as un-indexed
+                // on a skipping primary even when the column is referenced via an alias.
+                aliasedColumn.setReplicaOnlyIndex(metadata.isColumnReplicaOnlyIndex(index));
                 queryMetadata.add(aliasedColumn);
             }
 
@@ -8479,6 +8488,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     metadata
             );
             implicitTs.setParquetEncodingConfig(colMetadata.getParquetEncodingConfig());
+            implicitTs.setReplicaOnlyIndex(metadata.isColumnReplicaOnlyIndex(timestampIndex));
             queryMetadata.add(implicitTs);
             queryMetadata.setTimestampIndex(queryMetadata.getColumnCount() - 1);
             columnCrossIndex.add(timestampIndex);
@@ -8580,7 +8590,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             TableRecordMetadata tableMeta = reader.getMetadata();
                             int colIdx = tableMeta.getColumnIndexQuiet(colName);
                             if (colIdx >= 0 && ColumnType.tagOf(tableMeta.getColumnType(colIdx)) == ColumnType.SYMBOL
-                                    && IndexType.isPosting(tableMeta.getColumnIndexType(colIdx))) {
+                                    && IndexType.isPosting(tableMeta.getColumnIndexType(colIdx))
+                                    && tableMeta.isColumnIndexActive(colIdx, configuration.skipReplicaOnlyIndexes())) {
 
                                 // Check if the WHERE clause is absent or contains only interval filters.
                                 // If there's a remaining filter (non-interval, non-key predicate), we can't
@@ -9568,15 +9579,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     if (Chars.equalsIgnoreCase(qc.getAst().token, qc.getAlias())) {
                         factoryMetadata.add(i, m);
                     } else { // keep alias
-                        factoryMetadata.add(i, new TableColumnMetadata(
-                                        Chars.toString(qc.getAlias()),
-                                        m.getColumnType(),
-                                        m.getIndexType(),
-                                        m.getIndexValueBlockCapacity(),
-                                        m.isSymbolTableStatic(),
-                                        baseMetadata
-                                )
+                        TableColumnMetadata aliased = new TableColumnMetadata(
+                                Chars.toString(qc.getAlias()),
+                                m.getColumnType(),
+                                m.getIndexType(),
+                                m.getIndexValueBlockCapacity(),
+                                m.isSymbolTableStatic(),
+                                baseMetadata
                         );
+                        // defense-in-depth: carry the replica-only-index flag through the alias copy
+                        aliased.setReplicaOnlyIndex(m.isReplicaOnlyIndex());
+                        factoryMetadata.add(i, aliased);
                     }
                 }
             }
@@ -9624,15 +9637,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     if (Chars.equalsIgnoreCase(qc.getAst().token, qc.getAlias())) {
                         factoryMetadata.add(i, m);
                     } else { // keep alias
-                        factoryMetadata.add(i, new TableColumnMetadata(
-                                        Chars.toString(qc.getAlias()),
-                                        m.getColumnType(),
-                                        m.getIndexType(),
-                                        m.getIndexValueBlockCapacity(),
-                                        m.isSymbolTableStatic(),
-                                        baseMetadata
-                                )
+                        TableColumnMetadata aliased = new TableColumnMetadata(
+                                Chars.toString(qc.getAlias()),
+                                m.getColumnType(),
+                                m.getIndexType(),
+                                m.getIndexValueBlockCapacity(),
+                                m.isSymbolTableStatic(),
+                                baseMetadata
                         );
+                        // defense-in-depth: carry the replica-only-index flag through the alias copy
+                        aliased.setReplicaOnlyIndex(m.isReplicaOnlyIndex());
+                        factoryMetadata.add(i, aliased);
                     }
                     chainTypes.add(i, m.getColumnType());
                     listColumnFilterA.extendAndSet(i, i + 1);
@@ -10192,7 +10207,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (prefixes.size() > 0) {
                 for (int i = 0; i < latestByColumnCount; i++) {
                     int idx = listColumnFilterA.getColumnIndexFactored(i);
-                    if (!isSymbol(queryMeta.getColumnType(idx)) || !queryMeta.isColumnIndexed(idx)) {
+                    if (!isSymbol(queryMeta.getColumnType(idx)) || !queryMeta.isColumnIndexActive(idx, configuration.skipReplicaOnlyIndexes())) {
                         allSymbolsAreIndexed = false;
                     }
                 }
@@ -10691,6 +10706,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                         // this is our kind of column — bitmap only (native scanner)
                         if (queryMeta.getColumnIndexType(columnIndex) == IndexType.BITMAP
+                                && queryMeta.isColumnIndexActive(columnIndex, configuration.skipReplicaOnlyIndexes())
                                 && !SqlHints.hasNoIndexHint(model)) {
                             boolean orderByKeyColumn = false;
                             int indexDirection = IndexReader.DIR_FORWARD;
@@ -10783,6 +10799,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (latestByColumnCount == 1) {
             int latestByColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
             if (queryMeta.getColumnIndexType(latestByColumnIndex) == IndexType.BITMAP
+                    && queryMeta.isColumnIndexActive(latestByColumnIndex, configuration.skipReplicaOnlyIndexes())
                     && !SqlHints.hasNoIndexHint(model)) {
                 return new LatestByAllIndexedRecordCursorFactory(
                         executionContext.getCairoEngine(),

@@ -222,6 +222,10 @@ public class CairoEngine implements Closeable, WriterSource {
     // a single static volatile read with no side effect when no test installed a hook.
     @TestOnly
     private static volatile Runnable roleSwitchMintObserver;
+    // Node-local role generation. Bumped by the enterprise role-switch (hot promote/demote)
+    // so that already-open TableWriters can self-heal replica-only indexes on their next
+    // WAL apply (see TableWriter.reconcileReplicaOnlyIndexes).
+    private final AtomicLong roleGeneration = new AtomicLong();
     private final ReentrantReadWriteLock roleSwitchLock = new ReentrantReadWriteLock();
     private final SqlExecutionContext rootExecutionContext;
     private final TxnScoreboardPool scoreboardPool;
@@ -482,6 +486,15 @@ public class CairoEngine implements Closeable, WriterSource {
                 .put("txn timed out [table=").put(tableName)
                 .put(", expectedTxn=").put(seqTxn)
                 .put(", writerTxn=").put(writerTxn);
+    }
+
+    /**
+     * Bumps the node-local role generation. Called by the enterprise role-switch on each
+     * hot promote/demote so that already-open TableWriters reconcile replica-only indexes
+     * on their next WAL apply.
+     */
+    public long bumpRoleGeneration() {
+        return roleGeneration.incrementAndGet();
     }
 
     public void buildViewGraphs() {
@@ -1147,6 +1160,10 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public RecentWriteTracker getRecentWriteTracker() {
         return recentWriteTracker;
+    }
+
+    public long getRoleGeneration() {
+        return roleGeneration.get();
     }
 
     public Lock getRoleSwitchReadLock() {

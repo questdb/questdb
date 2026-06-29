@@ -1,0 +1,617 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.test.cairo;
+
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
+import io.questdb.test.AbstractCairoTest;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.BeforeClass;
+import org.junit.Test;
+
+/**
+ * Verifies the write-path behaviour of Task 11: on a "skipping primary" node (one where
+ * {@link io.questdb.cairo.CairoConfiguration#skipReplicaOnlyIndexes()} returns true), a SYMBOL column
+ * whose index is flagged REPLICA ONLY has no bitmap/posting index built or maintained -- no
+ * {@code k./v.} (or posting {@code .pk/.pv}) files are created and no per-row index work runs -- while
+ * the metadata still records the {@code indexed} + {@code replicaOnly} flags so a replica or a promoted
+ * node can build the index later.
+ * <p>
+ * Note: full-scan query correctness on a skipping primary is gated on the planner index-eligibility
+ * guard (Task 12, {@link io.questdb.cairo.sql.RecordMetadata#isColumnIndexActive}). Until that lands,
+ * the planner still keys off {@code isColumnIndexed} and emits an index scan over the (absent) index,
+ * so this test asserts the write-path invariants only.
+ */
+public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
+
+    // Default true so the legacy skipping-primary tests are unaffected; the convert-partition
+    // regression below flips this at runtime to drive a role change (skip true -> false).
+    private static volatile boolean skip = true;
+
+    @BeforeClass
+    public static void setUpStatic() throws Exception {
+        skip = true;
+        configurationFactory = (root, telemetry, overrides) ->
+                new CairoTestConfiguration(root, telemetry, overrides) {
+                    @Override
+                    public boolean skipReplicaOnlyIndexes() {
+                        return skip;
+                    }
+                };
+        AbstractCairoTest.setUpStatic();
+    }
+
+    @Before
+    public void resetSkip() {
+        // Every legacy test in this class expects a skipping primary; restore the default before each
+        // test so the convert-partition regression (which flips skip to false) cannot leak state.
+        skip = true;
+    }
+
+    @Test
+    public void testAlterAddIndexReplicaOnlySkipsBuild() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (s symbol capacity 256, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into x values ('a', 0), ('b', 1000000), ('a', 2000000)");
+            drainWalQueue();
+
+            execute("alter table x alter column s add index replica only");
+            drainWalQueue();
+
+            Assert.assertFalse(
+                    "no index files expected on skipping primary after ALTER ADD INDEX REPLICA ONLY",
+                    indexFilesExist("x", "s")
+            );
+            assertMetadataFlags("x", "s");
+        });
+    }
+
+    // Regression: replica-only POSTING index + reconcile-rebuild + CONVERT PARTITION TO PARQUET must
+    // not suspend the table, even when the index is UNMATERIALIZED at convert time.
+    //
+    // Reproduces the fuzz seed 0xABCD convert-suspend: a replica-only POSTING index is added while
+    // skipping (so nothing is materialized), the role flips to NON-skipping (bumpRoleGeneration) with
+    // NO intervening insert -- so reconcile (which only runs on a WAL insert apply) has NOT rebuilt the
+    // index -- and then CONVERT PARTITION TO PARQUET runs. The convert/link path used to hard-link the
+    // absent .pk/.pv.<sealTxn> and throw "index files do not exist", suspending the table. The fix in
+    // TableWriter.copyOrRebuildColumnIndexes / linkPartitionIndexFiles tolerates the absence and skips
+    // the column; a later insert-apply reconcile materializes the index over the now-parquet partition.
+    @Test
+    public void testReplicaOnlyPostingConvertToParquetUnmaterializedNoSuspend() throws Exception {
+        assertMemoryLeak(() -> {
+            skip = true; // ADD INDEX REPLICA ONLY does not materialize while skipping
+            execute("create table x (" +
+                    "c symbol capacity 256 index type posting replica only, " +
+                    "v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into x values ('a', 1.0, 0), ('b', 2.0, 1000000), ('a', 3.0, 2000000)");
+            drainWalQueue();
+            Assert.assertFalse("posting index must NOT exist while skipping", indexFilesExist("x", "c"));
+
+            // Flip to NON-skipping with a role bump but NO intervening insert: reconcile has not run, so
+            // the replica-only posting index is still unmaterialized on disk.
+            skip = false;
+            engine.bumpRoleGeneration();
+
+            // Convert to parquet must NOT suspend despite the absent .pk/.pv.
+            execute("alter table x convert partition to parquet where ts >= 0");
+            drainWalQueue();
+
+            final TableToken token = engine.verifyTableName("x");
+            Assert.assertFalse(
+                    "table must not be suspended after CONVERT PARTITION on unmaterialized replica-only posting index",
+                    engine.getTableSequencerAPI().isSuspended(token)
+            );
+
+            // count(*) stays correct.
+            assertSql("count\n3\n", "select count() from x");
+
+            // An insert now triggers reconcile, which materializes the posting index over the parquet
+            // partition (indexHistoricPartitions/indexParquetPartition) -- correctness on a non-skipping
+            // node: covered-value counts match a full-scan reference.
+            execute("insert into x values ('a', 4.0, 3000000)");
+            drainWalQueue();
+            Assert.assertFalse(
+                    "table must not be suspended after reconcile build over the parquet partition",
+                    engine.getTableSequencerAPI().isSuspended(token)
+            );
+
+            // c='a' has 3 rows (rows 0,2 from native-then-parquet partition + the new native row).
+            assertSql("count\n3\n", "select count() from x where c = 'a'");
+            // Full distribution as an independent oracle.
+            assertSql("c\tcount\na\t3\nb\t1\n", "select c, count() from x order by c");
+        });
+    }
+
+    private void assertSql(String expected, String query) throws Exception {
+        sink.clear();
+        printSql(query, sink);
+        io.questdb.test.tools.TestUtils.assertEquals(expected, sink);
+    }
+
+    // Regression for an O3 crash: out-of-order rows spanning multiple partitions drive the O3 open-
+    // column path (O3PartitionJob.publishOpenColumnTasks), which counts indexed columns to allocate
+    // O3Basket indexer slots. The basket is sized from the writer's denseIndexers/indexCount, which
+    // EXCLUDE a skipped REPLICA ONLY index; if the open-column loop still treats the column as indexed
+    // (raw isColumnIndexed) it calls O3Basket.nextIndexer() one time too many and overruns the slot
+    // list (an AssertionError in O3Basket.nextIndexer). The fix gates both on isColumnIndexActive().
+    @Test
+    public void testPrimarySkipsReplicaOnlyIndexBuildO3MultiPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (s symbol index capacity 256 replica only, v double, ts timestamp) timestamp(ts) partition by day wal");
+            // Out-of-order rows across two partitions (1970-01-01 and 1970-01-02): forces the O3 path.
+            execute("insert into x values" +
+                    " ('a', 1, 0)," +
+                    " ('c', 4, 86400000000)," +     // 1970-01-02
+                    " ('b', 2, 1000000)," +
+                    " ('a', 5, 86401000000)," +     // 1970-01-02
+                    " ('a', 3, 2000000)");
+            drainWalQueue();
+
+            Assert.assertFalse("no index files expected on skipping primary after O3 multi-partition insert",
+                    indexFilesExist("x", "s"));
+            assertMetadataFlags("x", "s");
+            // Full-scan correctness: the skipped index must not change query results.
+            sink.clear();
+            printSql("select s, v, ts from x where s = 'a'", sink);
+            io.questdb.test.tools.TestUtils.assertEquals(
+                    "s\tv\tts\n" +
+                            "a\t1.0\t1970-01-01T00:00:00.000000Z\n" +
+                            "a\t3.0\t1970-01-01T00:00:02.000000Z\n" +
+                            "a\t5.0\t1970-01-02T00:00:01.000000Z\n",
+                    sink);
+        });
+    }
+
+    // parquet -> native conversion rebuilds the per-partition bitmap index for indexed symbol
+    // columns (TableWriter.rebuildPartitionIndexFiles). On a skipping primary a REPLICA ONLY
+    // index must NOT be rebuilt during the conversion back to native, otherwise the offload
+    // invariant is violated for any partition that was round-tripped through parquet.
+    @Test
+    public void testPrimarySkipsReplicaOnlyIndexBuildOnParquetToNativeConversion() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (s symbol index capacity 256 replica only, ts timestamp) timestamp(ts) partition by day wal");
+            // Spread several rows across one day partition.
+            execute("insert into x values ('a', 0), ('b', 1000000), ('a', 2000000), ('c', 3000000)");
+            drainWalQueue();
+
+            // No index built on the skipping primary at insert time.
+            Assert.assertFalse("no index files expected on skipping primary after insert", indexFilesExist("x", "s"));
+
+            // Round-trip the partition through parquet and back to native.
+            execute("alter table x convert partition to parquet where ts >= 0");
+            drainWalQueue();
+            execute("alter table x convert partition to native where ts >= 0");
+            drainWalQueue();
+
+            // The conversion back to native must not have rebuilt the replica-only index.
+            Assert.assertFalse(
+                    "no index files expected on skipping primary after parquet->native conversion",
+                    indexFilesExist("x", "s")
+            );
+            assertMetadataFlags("x", "s");
+
+            // Full-scan correctness: the skipped index must not change query results.
+            sink.clear();
+            printSql("select s, ts from x where s = 'a'", sink);
+            io.questdb.test.tools.TestUtils.assertEquals(
+                    "s\tts\n" +
+                            "a\t1970-01-01T00:00:00.000000Z\n" +
+                            "a\t1970-01-01T00:00:02.000000Z\n",
+                    sink);
+        });
+    }
+
+    // native -> parquet conversion (TableWriter.copyOrRebuildColumnIndexes, reached from
+    // convertPartitionNativeToParquet) copies/rebuilds the per-partition bitmap index for indexed
+    // symbol columns: it hard-links the existing .k/.v trio when columnTop==0, and rebuilds the
+    // index (synthesizing the NULL prefix) when columnTop>0. On a skipping primary a REPLICA ONLY
+    // index was never built, so BOTH branches must be skipped -- otherwise the colTop==0 link branch
+    // throws "index files do not exist" and the colTop>0 branch wrongly materializes the index.
+    // This test exercises both branches in one partition: column s exists for the whole partition
+    // (colTop==0) while column s2 is added via ALTER after rows already exist (colTop>0).
+    @Test
+    public void testPrimarySkipsReplicaOnlyIndexBuildOnNativeToParquetConversion() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (s symbol index capacity 256 replica only, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into x values ('a', 0), ('b', 1000000), ('a', 2000000), ('c', 3000000)");
+            drainWalQueue();
+
+            // Add a SECOND symbol column AFTER rows exist, then flag it replica-only-indexed, so its
+            // column top in the already-populated partition is > 0 (exercises the rebuild branch of
+            // the loop, while s exercises the hard-link branch with columnTop == 0).
+            execute("alter table x add column s2 symbol capacity 256");
+            drainWalQueue();
+            execute("alter table x alter column s2 add index replica only");
+            drainWalQueue();
+            execute("insert into x (s, ts, s2) values ('a', 4000000, 'x'), ('b', 5000000, 'y')");
+            drainWalQueue();
+
+            final TableToken token = engine.verifyTableName("x");
+
+            // No index files for either replica-only column on the skipping primary before conversion.
+            Assert.assertFalse("no s index files expected before conversion", indexFilesExist("x", "s"));
+            Assert.assertFalse("no s2 index files expected before conversion", indexFilesExist("x", "s2"));
+
+            // Convert the populated partition native -> parquet. Without the guard in
+            // copyOrRebuildColumnIndexes the link branch (colTop==0, column s) throws
+            // "index files do not exist", suspending the WAL table.
+            execute("alter table x convert partition to parquet where ts >= 0");
+            drainWalQueue();
+
+            // The conversion must have succeeded (table not suspended) and built no index files.
+            Assert.assertFalse(
+                    "WAL table must not be suspended by native->parquet conversion of replica-only index",
+                    engine.getTableSequencerAPI().isSuspended(token)
+            );
+            Assert.assertFalse(
+                    "no s index files expected after native->parquet conversion",
+                    indexFilesExist("x", "s")
+            );
+            Assert.assertFalse(
+                    "no s2 index files expected after native->parquet conversion",
+                    indexFilesExist("x", "s2")
+            );
+            assertMetadataFlags("x", "s");
+            assertMetadataFlags("x", "s2");
+
+            // Full-scan correctness over the parquet partition: results must be unaffected.
+            sink.clear();
+            printSql("select s, s2, ts from x where s = 'a'", sink);
+            io.questdb.test.tools.TestUtils.assertEquals(
+                    "s\ts2\tts\n" +
+                            "a\t\t1970-01-01T00:00:00.000000Z\n" +
+                            "a\t\t1970-01-01T00:00:02.000000Z\n" +
+                            "a\tx\t1970-01-01T00:00:04.000000Z\n",
+                    sink);
+        });
+    }
+
+    @Test
+    public void testPrimarySkipsReplicaOnlyIndexBuild() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (s symbol index capacity 256 replica only, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into x values ('a', 0), ('b', 1000000), ('a', 2000000)");
+            drainWalQueue();
+
+            Assert.assertFalse("no index files expected on skipping primary", indexFilesExist("x", "s"));
+            assertMetadataFlags("x", "s");
+            // symbol dictionary must still be built (only the bitmap index is skipped):
+            // the per-column symbol map files (s.o/s.c/s.k/s.v at the table root) are always present.
+            assertSymbolDictExists("x", "s");
+        });
+    }
+
+    // REINDEX (IndexBuilder.isSupportedColumn) rebuilds the bitmap index for every indexed symbol
+    // column. On a skipping primary a REPLICA ONLY index must be excluded, otherwise an operator
+    // running REINDEX would materialise the very index the node is meant to offload to replicas.
+    // With the gate, a table whose only indexed column is replica-only has no reindexable column,
+    // so a whole-table REINDEX reports "Table does not have any indexes" and builds nothing -- the
+    // same outcome as a table with no indexes at all. The observable invariant is: no index files.
+    @Test
+    public void testReindexSkipsReplicaOnlyIndexOnSkippingPrimary() throws Exception {
+        assertMemoryLeak(() -> {
+            // BYPASS WAL: REINDEX TABLE ... LOCK EXCLUSIVE operates on the table directly.
+            execute("create table x (s symbol index capacity 256 replica only, ts timestamp) timestamp(ts) partition by day bypass wal");
+            execute("insert into x values ('a', 0), ('b', 1000000), ('a', 2000000)");
+            engine.releaseAllWriters();
+
+            // Nothing built at insert time on the skipping primary.
+            Assert.assertFalse("no index files expected on skipping primary before REINDEX", indexFilesExist("x", "s"));
+
+            // The replica-only column is excluded by the IndexBuilder gate, so the whole-table
+            // REINDEX finds no reindexable column and reports it as un-indexed (instead of building).
+            try {
+                execute("REINDEX TABLE x LOCK EXCLUSIVE");
+                Assert.fail("REINDEX should find no reindexable column on a skipping primary");
+            } catch (io.questdb.cairo.CairoException e) {
+                io.questdb.test.tools.TestUtils.assertContains(e.getFlyweightMessage(), "Table does not have any indexes");
+            }
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+
+            // REINDEX must not have built the replica-only index on the skipping primary.
+            Assert.assertFalse("no index files expected on skipping primary after REINDEX", indexFilesExist("x", "s"));
+            assertMetadataFlags("x", "s");
+        });
+    }
+
+    // ALTER COLUMN ... SYMBOL CAPACITY rebuilds the column metadata and rebinds the indexer. On a
+    // skipping primary the replica-only column has NO wired indexer, so the indexer-rebind block in
+    // TableWriter.changeSymbolCapacity would assert/NPE and distress the writer. The capacity change
+    // also rebuilds TableColumnMetadata via updateColumnSymbolCapacity, which must carry the
+    // replicaOnly flag over, otherwise rewriteAndSwapMetadata persists replicaOnly=false.
+    @Test
+    public void testChangeSymbolCapacityPreservesReplicaOnlyFlagAndDoesNotDistress() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (s symbol index capacity 256 replica only, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into x values ('a', 0), ('b', 1000000), ('a', 2000000)");
+            drainWalQueue();
+
+            final TableToken token = engine.verifyTableName("x");
+
+            execute("alter table x alter column s symbol capacity 512");
+            drainWalQueue();
+
+            // (1) the writer must not be distressed / the table must not be suspended
+            Assert.assertFalse(
+                    "WAL table must not be suspended by ALTER COLUMN SYMBOL CAPACITY on a replica-only index",
+                    engine.getTableSequencerAPI().isSuspended(token)
+            );
+
+            // (2) the indexed + replicaOnly flags must SURVIVE the capacity change
+            assertMetadataFlags("x", "s");
+
+            // (3) no index files materialised on the skipping primary
+            Assert.assertFalse(
+                    "no index files expected on skipping primary after SYMBOL CAPACITY change",
+                    indexFilesExist("x", "s")
+            );
+
+            // table remains queryable; the skipped index must not change results
+            sink.clear();
+            printSql("select s, ts from x where s = 'a'", sink);
+            io.questdb.test.tools.TestUtils.assertEquals(
+                    "s\tts\n" +
+                            "a\t1970-01-01T00:00:00.000000Z\n" +
+                            "a\t1970-01-01T00:00:02.000000Z\n",
+                    sink);
+        });
+    }
+
+    // TRUNCATE on a NON-partitioned table reaches TableWriter.truncateColumns, which resets the
+    // indexer column top for indexed columns. On a skipping primary the replica-only column has no
+    // wired indexer, so a raw indexers.get(i).resetColumnTop() would NPE. (Partitioned TRUNCATE goes
+    // through releaseIndexerWriters, which is already null-safe.) Non-partitioned tables cannot use
+    // WAL, so this exercises the direct (BYPASS WAL) writer path where truncateColumns runs.
+    @Test
+    public void testTruncateNonPartitionedReplicaOnlyIndexDoesNotCrash() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (s symbol index capacity 256 replica only, ts timestamp) timestamp(ts) partition by none bypass wal");
+            execute("insert into x values ('a', 0), ('b', 1000000), ('a', 2000000)");
+            engine.releaseAllWriters();
+
+            // TRUNCATE on the non-partitioned table must not NPE on the absent indexer.
+            execute("truncate table x");
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+
+            assertMetadataFlags("x", "s");
+
+            // empty + queryable
+            sink.clear();
+            printSql("select count() from x", sink);
+            io.questdb.test.tools.TestUtils.assertEquals("count\n0\n", sink);
+        });
+    }
+
+    // DROP INDEX on a replica-only-indexed column reaches TableWriter.removeIndex, which unwires the
+    // indexer via indexers.getQuick(columnIndex). On a skipping primary the replica-only column has NO
+    // wired indexer, so indexers can be shorter than columnCount: a raw getQuick(columnIndex) is an
+    // out-of-bounds access (AssertionError under -ea / stale read in prod). The fix uses the bounds-
+    // and null-safe getQuiet. BYPASS WAL: DROP INDEX runs on the writer directly.
+    @Test
+    public void testDropIndexOnReplicaOnlyIndexDoesNotCrash() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (s symbol index capacity 256 replica only, ts timestamp) timestamp(ts) partition by day bypass wal");
+            execute("insert into x values ('a', 0), ('b', 1000000), ('a', 2000000)");
+            engine.releaseAllWriters();
+
+            // Nothing built on the skipping primary at insert time.
+            Assert.assertFalse("no index files expected on skipping primary before DROP INDEX", indexFilesExist("x", "s"));
+
+            // DROP INDEX must not OOB on the absent indexer slot.
+            execute("alter table x alter column s drop index");
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+
+            // The index is gone: column flagged un-indexed AND the replica-only flag cleared.
+            final TableToken token = engine.verifyTableName("x");
+            try (TableReader reader = engine.getReader(token)) {
+                final int colIdx = reader.getMetadata().getColumnIndex("s");
+                Assert.assertFalse("column should no longer be indexed after DROP INDEX",
+                        reader.getMetadata().isColumnIndexed(colIdx));
+                Assert.assertFalse("replica-only flag should be cleared after DROP INDEX",
+                        reader.getMetadata().isColumnReplicaOnlyIndex(colIdx));
+            }
+            Assert.assertFalse("no index files expected after DROP INDEX", indexFilesExist("x", "s"));
+
+            // table remains queryable
+            sink.clear();
+            printSql("select s, ts from x where s = 'a'", sink);
+            io.questdb.test.tools.TestUtils.assertEquals(
+                    "s\tts\n" +
+                            "a\t1970-01-01T00:00:00.000000Z\n" +
+                            "a\t1970-01-01T00:00:02.000000Z\n",
+                    sink);
+        });
+    }
+
+    // O3 commit on a table with a replica-only POSTING index drives the posting-seal housekeeping
+    // sweep (TableWriter.sealPostingIndexesForO3Partitions -> sealPostingIndexForPartition ->
+    // restorePostingIndexersToLastPartition). hasPostingIndex() keys off raw isColumnIndexed, so the
+    // sweep DOES run on a skipping primary, and its per-column loop calls indexers.getQuick(colIdx)
+    // over columnCount. The skipped replica-only column has no wired indexer, so that get is an
+    // out-of-bounds access (AssertionError under -ea). The fix bounds-guards each posting loop with
+    // colIdx >= indexers.size(), mirroring the fast-lag posting path.
+    @Test
+    public void testO3PostingSealSweepReplicaOnlyDoesNotCrash() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (s symbol index type posting replica only, v double, ts timestamp) timestamp(ts) partition by day wal");
+            // In-order seed in two partitions.
+            execute("insert into x values ('a', 1, 0), ('b', 2, 1000000), ('c', 3, 86400000000)");
+            drainWalQueue();
+
+            // Out-of-order insert into an already-committed partition: forces the O3 path and the
+            // subsequent posting-seal sweep over the (un-wired) replica-only posting column.
+            execute("insert into x values ('a', 4, 500000), ('b', 5, 1500000), ('a', 6, 86400500000)");
+            drainWalQueue();
+
+            final TableToken token = engine.verifyTableName("x");
+            Assert.assertFalse(
+                    "WAL table must not be suspended by O3 posting-seal sweep over a replica-only index",
+                    engine.getTableSequencerAPI().isSuspended(token)
+            );
+            Assert.assertFalse("no posting index files expected on skipping primary after O3", indexFilesExist("x", "s"));
+            assertMetadataFlags("x", "s");
+
+            // Full-scan correctness across both partitions.
+            sink.clear();
+            printSql("select s, v, ts from x where s = 'a' order by ts", sink);
+            io.questdb.test.tools.TestUtils.assertEquals(
+                    "s\tv\tts\n" +
+                            "a\t1.0\t1970-01-01T00:00:00.000000Z\n" +
+                            "a\t4.0\t1970-01-01T00:00:00.500000Z\n" +
+                            "a\t6.0\t1970-01-02T00:00:00.500000Z\n",
+                    sink);
+        });
+    }
+
+    // Covering POSTING reseal over a parquet partition (TableWriter.resealParquetCoveringForPartition,
+    // reached when sealPostingIndexForPartition sees a parquet partition) also loops every indexed
+    // posting column and calls indexers.getQuick(colIdx). A replica-only covering-posting column on a
+    // skipping primary has no wired indexer -> out-of-bounds get without the bounds guard.
+    @Test
+    public void testParquetCoveringPostingResealReplicaOnlyDoesNotCrash() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (s symbol index type posting include (v) replica only, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into x values ('a', 1, 0), ('b', 2, 1000000), ('c', 3, 2000000)");
+            drainWalQueue();
+
+            // Round-trip the partition through parquet so a later O3 seal hits the parquet covering path.
+            execute("alter table x convert partition to parquet where ts >= 0");
+            drainWalQueue();
+
+            // O3 insert into the (now parquet) partition: drives the covering-posting reseal sweep.
+            execute("insert into x values ('a', 4, 500000), ('b', 5, 1500000)");
+            drainWalQueue();
+
+            final TableToken token = engine.verifyTableName("x");
+            Assert.assertFalse(
+                    "WAL table must not be suspended by parquet covering-posting reseal over a replica-only index",
+                    engine.getTableSequencerAPI().isSuspended(token)
+            );
+            Assert.assertFalse("no posting index files expected on skipping primary", indexFilesExist("x", "s"));
+            assertMetadataFlags("x", "s");
+
+            sink.clear();
+            printSql("select s, v, ts from x where s = 'a' order by ts", sink);
+            io.questdb.test.tools.TestUtils.assertEquals(
+                    "s\tv\tts\n" +
+                            "a\t1.0\t1970-01-01T00:00:00.000000Z\n" +
+                            "a\t4.0\t1970-01-01T00:00:00.500000Z\n",
+                    sink);
+        });
+    }
+
+    // The metadata must still record indexed=true and replicaOnly=true so a replica or a promoted
+    // node (skipReplicaOnlyIndexes()==false) can build the bitmap index later.
+    private void assertMetadataFlags(String table, String col) {
+        final TableToken token = engine.verifyTableName(table);
+        try (TableReader reader = engine.getReader(token)) {
+            final int colIdx = reader.getMetadata().getColumnIndex(col);
+            Assert.assertTrue("column should be flagged indexed in metadata", reader.getMetadata().isColumnIndexed(colIdx));
+            Assert.assertTrue("column should be flagged replicaOnly in metadata", reader.getMetadata().isColumnReplicaOnlyIndex(colIdx));
+        }
+    }
+
+    // The symbol dictionary lives at the table root as "<col>.o" (offsets) and "<col>.c" (chars).
+    // These must exist even when the bitmap index is skipped.
+    private void assertSymbolDictExists(String table, String col) {
+        final TableToken token = engine.verifyTableName(table);
+        final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+        try (Path path = new Path()) {
+            path.of(engine.getConfiguration().getDbRoot()).concat(token.getDirName()).concat(col).put(".o");
+            Assert.assertTrue("symbol offset file (" + col + ".o) should exist", ff.exists(path.$()));
+            path.of(engine.getConfiguration().getDbRoot()).concat(token.getDirName()).concat(col).put(".c");
+            Assert.assertTrue("symbol char file (" + col + ".c) should exist", ff.exists(path.$()));
+        }
+    }
+
+    // Scans every partition directory under the table root for any bitmap key file
+    // ("<col>.k.*"), bitmap value file ("<col>.v.*"), or posting index file
+    // ("<col>.pk.*" / "<col>.pv.*") for the given column. Returns true if any exist.
+    // Note: per-column index files are named "<col>.k"/"<col>.v" in the PARTITION dir; the symbol
+    // dictionary's own "<col>.k"/"<col>.v" live at the TABLE ROOT and are deliberately not scanned here.
+    private boolean indexFilesExist(String table, String col) {
+        final TableToken token = engine.verifyTableName(table);
+        final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+        final boolean[] found = {false};
+        final StringSink fileName = new StringSink();
+        final String keyPrefix = col + ".k";
+        final String valPrefix = col + ".v";
+        final String postingKeyPrefix = col + ".pk";
+        final String postingValPrefix = col + ".pv";
+        try (Path tablePath = new Path(); Path partPath = new Path()) {
+            tablePath.of(engine.getConfiguration().getDbRoot()).concat(token.getDirName());
+            ff.iterateDir(tablePath.$(), (pUtf8NameZ, type) -> {
+                if (type != Files.DT_DIR) {
+                    return;
+                }
+                fileName.clear();
+                Utf8s.utf8ToUtf16Z(pUtf8NameZ, fileName);
+                // skip "." and ".." plus non-partition dirs (wal*, txn_seq, etc.)
+                if (Chars.equals(fileName, '.') || Chars.equals(fileName, "..") || Chars.startsWith(fileName, "wal") || Chars.startsWith(fileName, "txn_seq")) {
+                    return;
+                }
+                partPath.of(engine.getConfiguration().getDbRoot()).concat(token.getDirName()).concat(fileName);
+                final StringSink inner = new StringSink();
+                ff.iterateDir(partPath.$(), (pInnerZ, innerType) -> {
+                    if (innerType != Files.DT_FILE && innerType != Files.DT_UNKNOWN) {
+                        return;
+                    }
+                    inner.clear();
+                    Utf8s.utf8ToUtf16Z(pInnerZ, inner);
+                    // exact "<col>.k" / "<col>.v" or with a columnNameTxn suffix "<col>.k.N"
+                    if (matchesIndexFile(inner, postingKeyPrefix)
+                            || matchesIndexFile(inner, postingValPrefix)
+                            || matchesIndexFile(inner, keyPrefix)
+                            || matchesIndexFile(inner, valPrefix)) {
+                        found[0] = true;
+                    }
+                });
+            });
+        }
+        return found[0];
+    }
+
+    // True if name == prefix, or name == prefix + "." + <digits> (the columnNameTxn-suffixed form).
+    private boolean matchesIndexFile(CharSequence name, String prefix) {
+        if (!Chars.startsWith(name, prefix)) {
+            return false;
+        }
+        if (name.length() == prefix.length()) {
+            return true;
+        }
+        // next char after the prefix must be '.' (txn suffix) to avoid matching e.g. "s.kx"
+        return name.charAt(prefix.length()) == '.';
+    }
+}

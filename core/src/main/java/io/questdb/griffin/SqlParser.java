@@ -2114,6 +2114,17 @@ public class SqlParser {
         expectTok(lexer, ')');
     }
 
+    // Consumes an optional trailing "REPLICA ONLY" modifier on an index definition and sets the model flag.
+    // Returns the token to continue with (or null if input ended).
+    private CharSequence parseOptReplicaOnly(GenericLexer lexer, CreateTableColumnModel model, CharSequence tok) throws SqlException {
+        if (tok != null && SqlKeywords.isReplicaKeyword(tok)) {
+            expectTok(lexer, "only");
+            model.setReplicaOnlyIndex(true);
+            return optTok(lexer);
+        }
+        return tok;
+    }
+
     private CharSequence parseCreateTableInlineIndexDef(GenericLexer lexer, CreateTableColumnModel model) throws SqlException {
         CharSequence tok = tok(lexer, "')', 'index' or 'parquet'");
 
@@ -2128,6 +2139,16 @@ public class SqlParser {
         if (isFieldTerm(tok = tok(lexer, ") | , expected")) || isParquetKeyword(tok)) {
             model.setIndexType(configuration.getDefaultSymbolIndexType(), indexColumnPosition, configuration.getIndexValueBlockSize());
             return tok;
+        }
+
+        // INDEX REPLICA ONLY (default symbol index type, no TYPE/INCLUDE/CAPACITY clause)
+        if (SqlKeywords.isReplicaKeyword(tok)) {
+            model.setIndexType(configuration.getDefaultSymbolIndexType(), indexColumnPosition, configuration.getIndexValueBlockSize());
+            CharSequence next = parseOptReplicaOnly(lexer, model, tok);
+            if (next == null || isFieldTerm(next) || isParquetKeyword(next)) {
+                return next;
+            }
+            throw SqlException.position(lexer.lastTokenPosition()).put("',' or ')' expected after REPLICA ONLY");
         }
 
         // Parse optional index type: INDEX TYPE POSTING
@@ -2156,6 +2177,15 @@ public class SqlParser {
                 model.setIndexType(indexType, indexColumnPosition, configuration.getIndexValueBlockSize());
                 return tok;
             }
+            // INDEX TYPE POSTING REPLICA ONLY (no INCLUDE clause)
+            if (SqlKeywords.isReplicaKeyword(tok)) {
+                model.setIndexType(indexType, indexColumnPosition, configuration.getIndexValueBlockSize());
+                CharSequence next = parseOptReplicaOnly(lexer, model, tok);
+                if (next == null || isFieldTerm(next) || isParquetKeyword(next)) {
+                    return next;
+                }
+                throw SqlException.position(lexer.lastTokenPosition()).put("',' or ')' expected after REPLICA ONLY");
+            }
         }
 
         if (SqlKeywords.isIncludeKeyword(tok)) {
@@ -2179,6 +2209,7 @@ public class SqlParser {
             } while (!Chars.equals(tok, ')'));
             model.setIndexType(indexType, indexColumnPosition, configuration.getIndexValueBlockSize());
             tok = optTok(lexer);
+            tok = parseOptReplicaOnly(lexer, model, tok);
             if (tok == null || isFieldTerm(tok) || isParquetKeyword(tok)) {
                 return tok;
             }
@@ -2196,6 +2227,12 @@ public class SqlParser {
         int indexValueBlockSize = expectInt(lexer);
         TableUtils.validateIndexValueBlockSize(errorPosition, indexValueBlockSize);
         model.setIndexType(indexType, indexColumnPosition, Numbers.ceilPow2(indexValueBlockSize));
+        // optional trailing CAPACITY <n> REPLICA ONLY
+        CharSequence after = parseOptReplicaOnly(lexer, model, optTok(lexer));
+        if (after == null || isFieldTerm(after) || isParquetKeyword(after)) {
+            return after;
+        }
+        lexer.unparseLast();
         return null;
     }
 

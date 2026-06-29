@@ -208,6 +208,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                     model.getIndexValueBlockSize(),
                     model.isDedupKey(),
                     hasCovering,
+                    model.isReplicaOnlyIndex(),
                     model.getParquetEncodingConfig()
             );
         }
@@ -543,6 +544,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                     symbolCapacity
             );
             columnMetadata.setParquetEncodingConfig(model.getParquetEncodingConfig());
+            columnMetadata.setReplicaOnlyIndex(model.isReplicaOnlyIndex());
             ObjList<CharSequence> coverNames = model.getCoveringColumnNames();
             if (coverNames.size() > 0) {
                 ObjList<CharSequence> copy = new ObjList<>(coverNames.size());
@@ -563,6 +565,11 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     @Override
     public boolean isDedupKey(int index) {
         return (getLowAt(index * 2 + 1) & COLUMN_FLAG_DEDUP_KEY) != 0;
+    }
+
+    @Override
+    public boolean isReplicaOnlyIndex(int index) {
+        return (getLowAt(index * 2 + 1) & COLUMN_FLAG_REPLICA_ONLY) != 0;
     }
 
     @Override
@@ -627,6 +634,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                     colMeta.getIndexValueBlockCapacity(),
                     colMeta.isDedupKeyFlag(),
                     colMeta.isCovering(),
+                    colMeta.isReplicaOnlyIndex(),
                     colMeta.getParquetEncodingConfig()
             );
             coveringColumnIndicesList.add(colMeta.getCoveringColumnIndices());
@@ -737,6 +745,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             boolean isDedupKey;
             int indexBlockCapacity;
             int parquetEncodingConfig;
+            boolean replicaOnlyIndex;
             if (augMeta != null) {
                 final int fromType = metadata.getColumnType(i);
                 columnType = augMeta.getColumnType();
@@ -752,6 +761,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                 isDedupKey = augMeta.isDedupKeyFlag();
                 indexBlockCapacity = augMeta.getIndexValueBlockCapacity();
                 parquetEncodingConfig = augMeta.getParquetEncodingConfig();
+                replicaOnlyIndex = augMeta.isReplicaOnlyIndex();
             } else {
                 columnType = metadata.getColumnType(i);
                 if (ColumnType.isNull(columnType)) {
@@ -765,6 +775,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                 isDedupKey = false;
                 indexBlockCapacity = 0;
                 parquetEncodingConfig = 0;
+                replicaOnlyIndex = false;
             }
 
             if (!ColumnType.isSymbol(columnType) && IndexType.isIndexed(indexType)) {
@@ -791,6 +802,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                     indexBlockCapacity,
                     isDedupKey,
                     hasCovering,
+                    replicaOnlyIndex,
                     parquetEncodingConfig
             );
         }
@@ -823,12 +835,14 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             int indexBlockCapacity,
             boolean dedupFlag,
             boolean coveringFlag,
+            boolean replicaOnlyFlag,
             int parquetEncodingConfig
     ) {
         int flags = (symbolCacheFlag ? COLUMN_FLAG_CACHED : 0)
                 | ((indexType & 0x07) << COLUMN_FLAG_INDEX_TYPE_SHIFT)
                 | (dedupFlag ? COLUMN_FLAG_DEDUP_KEY : 0)
-                | (coveringFlag ? COLUMN_FLAG_COVERING : 0);
+                | (coveringFlag ? COLUMN_FLAG_COVERING : 0)
+                | (replicaOnlyFlag ? COLUMN_FLAG_REPLICA_ONLY : 0);
         columnBits.add(
                 Numbers.encodeLowHighInts(columnType, symbolCapacity),
                 Numbers.encodeLowHighInts(flags, indexBlockCapacity)

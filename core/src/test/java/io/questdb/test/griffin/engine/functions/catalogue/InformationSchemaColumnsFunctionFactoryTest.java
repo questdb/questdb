@@ -124,9 +124,9 @@ public class InformationSchemaColumnsFunctionFactoryTest extends AbstractCairoTe
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
-                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t
-                            x\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\tindexReplicaOnly
+                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t\tfalse
+                            x\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\tfalse
                             """);
 
             assertQuery("information_schema.columns()")
@@ -145,9 +145,9 @@ public class InformationSchemaColumnsFunctionFactoryTest extends AbstractCairoTe
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
-                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t
-                            x\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\tindexReplicaOnly
+                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t\tfalse
+                            x\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\tfalse
                             """);
 
             assertQuery("information_schema.columns()")

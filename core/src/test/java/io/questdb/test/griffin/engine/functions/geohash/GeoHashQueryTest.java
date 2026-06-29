@@ -90,9 +90,9 @@ public class GeoHashQueryTest extends AbstractCairoTest {
                         .noLeakCheck()
                         .noRandomAccess()
                         .returns(
-                                "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\n" +
-                                        "x\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
-                                        String.format("hash\tGEOHASH(%s)\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n", columnType)
+                                "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\tindexReplicaOnly\n" +
+                                        "x\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\tfalse\n" +
+                                        String.format("hash\tGEOHASH(%s)\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\tfalse\n", columnType)
                         );
             }
         });
@@ -199,9 +199,9 @@ public class GeoHashQueryTest extends AbstractCairoTest {
                         .noLeakCheck()
                         .noRandomAccess()
                         .returns(
-                                "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\n" +
-                                        "x\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
-                                        String.format("hash\tGEOHASH(%sc)\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n", l)
+                                "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\tindexReplicaOnly\n" +
+                                        "x\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\tfalse\n" +
+                                        String.format("hash\tGEOHASH(%sc)\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\tfalse\n", l)
                         );
             }
         });

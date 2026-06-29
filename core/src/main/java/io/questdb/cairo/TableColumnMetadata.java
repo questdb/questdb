@@ -45,6 +45,7 @@ public class TableColumnMetadata implements Plannable {
     private int parquetEncodingConfig;
     private boolean symbolCacheFlag;
     private byte indexType;
+    private boolean replicaOnlyIndex;
 
     public TableColumnMetadata(String columnName, int columnType) {
         this(columnName, columnType, null);
@@ -204,6 +205,10 @@ public class TableColumnMetadata implements Plannable {
         return IndexType.isIndexed(indexType);
     }
 
+    public boolean isReplicaOnlyIndex() {
+        return replicaOnlyIndex;
+    }
+
     public boolean isSymbolTableStatic() {
         return symbolTableStatic;
     }
@@ -234,6 +239,10 @@ public class TableColumnMetadata implements Plannable {
 
     public void setParquetEncodingConfig(int parquetEncodingConfig) {
         this.parquetEncodingConfig = parquetEncodingConfig;
+    }
+
+    public void setReplicaOnlyIndex(boolean replicaOnlyIndex) {
+        this.replicaOnlyIndex = replicaOnlyIndex;
     }
 
     public void setSymbolCacheFlag(boolean cache) {

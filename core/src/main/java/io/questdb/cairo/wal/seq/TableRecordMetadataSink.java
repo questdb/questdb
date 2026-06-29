@@ -41,7 +41,8 @@ public interface TableRecordMetadataSink extends Mutable {
             boolean isDedupKey,
             boolean symbolIsCached,
             int symbolCapacity,
-            @Transient IntList coveringColumnIndices
+            @Transient IntList coveringColumnIndices,
+            boolean replicaOnlyIndex
     );
 
     default boolean requiresFullReadColumnOrder() {

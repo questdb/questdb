@@ -42,17 +42,17 @@ public class KeywordAsTableNameTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
-                            a\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\tindexReplicaOnly
+                            a\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\tfalse
                             """);
             execute("alter table \"table\" add column b float");
             assertQuery("table_columns('table')")
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
-                            a\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
-                            b\tFLOAT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\tindexReplicaOnly
+                            a\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\tfalse
+                            b\tFLOAT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\tfalse
                             """);
         });
     }
@@ -67,8 +67,8 @@ public class KeywordAsTableNameTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
-                            a\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\tindexReplicaOnly
+                            a\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\tfalse
                             """);
         });
     }
@@ -83,8 +83,8 @@ public class KeywordAsTableNameTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
-                            from\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\tindexReplicaOnly
+                            from\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\tfalse
                             """);
         });
     }

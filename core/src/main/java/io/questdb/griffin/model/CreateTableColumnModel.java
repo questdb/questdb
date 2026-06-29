@@ -49,6 +49,7 @@ public class CreateTableColumnModel implements Mutable {
     private int parquetCompression = -1;
     private int parquetCompressionLevel = -1;
     private int parquetEncoding = -1;
+    private boolean replicaOnlyFlag;
     private boolean symbolCacheFlag;
     private int symbolCapacity = -1;
 
@@ -73,6 +74,7 @@ public class CreateTableColumnModel implements Mutable {
         parquetCompression = -1;
         parquetCompressionLevel = -1;
         parquetEncoding = -1;
+        replicaOnlyFlag = false;
         symbolCacheFlag = false;
         symbolCapacity = -1;
     }
@@ -172,6 +174,10 @@ public class CreateTableColumnModel implements Mutable {
         return IndexType.isIndexed(indexType);
     }
 
+    public boolean isReplicaOnlyIndex() {
+        return replicaOnlyFlag;
+    }
+
     public void setCastType(int columnType, int columnTypePos) {
         this.isCast = true;
         this.columnType = columnType;
@@ -226,6 +232,10 @@ public class CreateTableColumnModel implements Mutable {
         int lvl = TableUtils.getParquetConfigCompressionLevel(packed);
         this.parquetCompressionLevel = lvl > 0 ? lvl - 1 : -1;
         this.parquetBloomFilter = TableUtils.isParquetConfigBloomFilter(packed);
+    }
+
+    public void setReplicaOnlyIndex(boolean replicaOnlyFlag) {
+        this.replicaOnlyFlag = replicaOnlyFlag;
     }
 
     public void setSymbolCacheFlag(boolean symbolCacheFlag) {

@@ -1165,7 +1165,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             int indexValueBlockSize,
             byte indexType,
             @Nullable ObjList<CharSequence> coveringColumnNames,
-            @Nullable IntList coveringColumnPositions
+            @Nullable IntList coveringColumnPositions,
+            boolean replicaOnly
     ) throws SqlException {
         final int columnIndex = metadata.getColumnIndexQuiet(columnName);
         if (columnIndex == -1) {
@@ -1234,7 +1235,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 columnName,
                 Numbers.ceilPow2(indexValueBlockSize),
                 indexType,
-                coveringColumnNames
+                coveringColumnNames,
+                replicaOnly
         );
         // Authorize against the indexed column only. Covering INCLUDE columns
         // are not part of the ADD INDEX privilege; passing them here would let
@@ -2098,7 +2100,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             indexValueBlockSize,
                             indexType,
                             null,
-                            null
+                            null,
+                            false
                     );
                 } else if (SqlKeywords.isDropKeyword(tok)) {
                     expectKeyword(lexer, "index");
@@ -2430,6 +2433,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         int indexValueCapacity = -1;
                         byte indexType = configuration.getDefaultSymbolIndexType();
                         boolean indexTypeExplicit = false;
+                        boolean replicaOnly = false;
                         ObjList<CharSequence> coveringColumnNames = null;
                         IntList coveringColumnPositions = null;
 
@@ -2485,10 +2489,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 }
                                 tok = SqlUtil.fetchNext(lexer);
                             }
-                            if (tok != null && !isSemicolon(tok)) {
-                                if (!isCapacityKeyword(tok)) {
-                                    throw SqlException.$(lexer.lastTokenPosition(), "'capacity' expected");
-                                }
+                            // Optional CAPACITY clause (BITMAP only).
+                            if (tok != null && !isSemicolon(tok) && isCapacityKeyword(tok)) {
                                 if (!indexTypeExplicit) {
                                     indexType = IndexType.BITMAP;
                                 } else if (indexType != IndexType.BITMAP) {
@@ -2503,6 +2505,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 } catch (NumericException e) {
                                     throw SqlException.$(lexer.lastTokenPosition(), "positive integer literal expected as index capacity");
                                 }
+                                tok = SqlUtil.fetchNext(lexer);
+                            }
+                            // Optional trailing REPLICA ONLY modifier.
+                            if (tok != null && !isSemicolon(tok) && SqlKeywords.isReplicaKeyword(tok)) {
+                                expectKeyword(lexer, "only");
+                                replicaOnly = true;
+                                tok = SqlUtil.fetchNext(lexer);
+                            }
+                            if (tok != null && !isSemicolon(tok)) {
+                                throw SqlException.$(lexer.lastTokenPosition(), "'capacity' or 'replica only' expected");
                             }
                         }
 
@@ -2516,7 +2528,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 indexValueCapacity,
                                 indexType,
                                 coveringColumnNames,
-                                coveringColumnPositions
+                                coveringColumnPositions,
+                                replicaOnly
                         );
                     } else if (isDropKeyword(tok)) {
                         tok = expectToken(lexer, "'index'");
