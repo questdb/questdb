@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.mv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.mv.MatViewTimerJob;
 import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
@@ -110,8 +111,10 @@ public class MatViewRefreshRetryTest extends AbstractCairoTest {
     }
 
     private void testOom(boolean enableParallelSql) throws Exception {
-        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_OOM_RETRY_TIMEOUT, 1);
         setProperty(PropertyKey.CAIRO_MAT_VIEW_PARALLEL_SQL_ENABLED, String.valueOf(enableParallelSql));
+        // Defer OOM refreshes without backoff and cap them low, so a few re-drives exhaust the limit.
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_BUSY_RETRY_TIMEOUT, 0);
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_BUSY_RETRY_LIMIT, 2);
         assertMemoryLeak(() -> {
             CharSequence sqlText = "create table base_price (" +
                     "sym varchar, price double, ts #TIMESTAMP" +
@@ -139,6 +142,24 @@ public class MatViewRefreshRetryTest extends AbstractCairoTest {
             Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + 500 * 1024); // 500KB gap
             try {
                 drainWalAndMatViewQueues();
+                // OOM no longer invalidates immediately: the incremental refresh is deferred and the
+                // view reports "retrying" while it backs off.
+                assertQuery("select view_name, view_status from materialized_views")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("""
+                                view_name\tview_status
+                                price_1h\tretrying
+                                """);
+
+                // Keep re-driving the deferred refresh. Once the retry limit is exceeded the view is
+                // invalidated, which releases base-table WAL retention. Extra re-drives are no-ops once
+                // the view is invalid.
+                final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
+                for (int i = 0; i < 5; i++) {
+                    drainMatViewTimerQueue(timerJob);
+                    drainWalAndMatViewQueues();
+                }
                 assertQuery("select view_name, view_status from materialized_views")
                         .noLeakCheck()
                         .noRandomAccess()
@@ -147,7 +168,7 @@ public class MatViewRefreshRetryTest extends AbstractCairoTest {
                                 price_1h\tinvalid
                                 """);
             } finally {
-                // Always clear the global RSS limit, even if the assertion above throws, so a failure
+                // Always clear the global RSS limit, even if the assertions above throw, so a failure
                 // here cannot leak the tight limit into later tests that share this JVM fork.
                 Unsafe.setRssMemLimit(0);
             }

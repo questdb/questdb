@@ -115,6 +115,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         totalBytesSent = 0;
         headersSent = false;
         chunkedRequestDone = false;
+        deflateBeforeSend = false;
         simpleResponse.clear();
         resetZip();
     }
