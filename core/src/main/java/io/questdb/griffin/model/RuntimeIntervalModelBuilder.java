@@ -273,9 +273,16 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
         if (dynamicRangeList.size() != 0) {
             // The builder's own dynamic predicates encode staticIntervals in 4-long form, so the union
-            // path cannot append plain intervals. Fall back to per-interval intersect. NOTE: this only
-            // unions correctly for a single master interval, but the WINDOW JOIN slave is a plain table
-            // with no designated-timestamp filter, so the builder is static in practice.
+            // path cannot append plain intervals. Fall back to per-interval intersect. This only unions
+            // correctly for a single master interval (dynamicStart == 2): for >= 2 master intervals the
+            // per-interval intersect would compute their intersection (often empty) instead of the union,
+            // collapsing the slave frame. In practice the WINDOW JOIN slave is a plain table with no
+            // designated-timestamp filter, so the builder is static and this branch carries a single
+            // interval, but guard the multi-interval case rather than rely on that invariant: leaving the
+            // slave unconstrained is always a safe superset.
+            if (dynamicStart > 2) {
+                return;
+            }
             for (int i = 0; i < dynamicStart; i += 2) {
                 final long lo = offsetIntervalLo(modelIntervals.getQuick(i), loOffset, driver);
                 final long hi = offsetIntervalHi(modelIntervals.getQuick(i + 1), hiOffset, driver);

@@ -276,14 +276,27 @@ public class QueryFuzzTest extends AbstractCairoTest {
             // The reported parallel storage divergence (~32x FLOAT epsilon, identical
             // row set) is now tolerated; the pre-fix bottom-of-binade ulp * 32 bound
             // rejected it (374.98 sits low in the [256, 512) binade, where the bare ulp
-            // runs ~1.5x tight), the relative FLOAT epsilon * 64 bound covers it.
+            // runs ~1.5x tight), the relative FLOAT epsilon * 64 bound covers it. The
+            // single-column mask marks the cell FP-typed, so the tolerance applies.
+            final boolean[] fpMask = {true};
+            final boolean[] exactMask = {false};
             Assert.assertTrue("reported FLOAT-sum reduction-order drift must be tolerated",
-                    QueryRunner.rowEqualsWithFpTolerance("374.97897", "374.98038"));
+                    QueryRunner.rowEqualsWithFpTolerance("374.97897", "374.98038", fpMask));
             // A real row-set divergence -- e.g. one storage dropped a whole FLOAT term --
             // shifts the sum by thousands of FLOAT epsilons, far beyond reduction noise,
             // and must still be flagged.
             Assert.assertFalse("a real FLOAT-sum divergence must still be flagged",
-                    QueryRunner.rowEqualsWithFpTolerance("374.97897", "375.51"));
+                    QueryRunner.rowEqualsWithFpTolerance("374.97897", "375.51", fpMask));
+            // An integer COUNT/SUM column must compare exactly: a one-unit divergence
+            // at scale (1000000 vs 1000001) is within the relative FLOAT tolerance
+            // (floatEps ~ 7.6 at this magnitude) and would be masked if the tolerance
+            // applied. Gating to FP columns flags it instead.
+            Assert.assertFalse("an integer-column divergence at scale must be flagged",
+                    QueryRunner.rowEqualsWithFpTolerance("1000000", "1000001", exactMask));
+            // The same drift on an FP-typed column is still tolerated, confirming the
+            // gate keys on column type rather than magnitude.
+            Assert.assertTrue("FP-column reduction drift at scale stays tolerated",
+                    QueryRunner.rowEqualsWithFpTolerance("1000000", "1000001", fpMask));
         });
     }
 
@@ -601,13 +614,18 @@ public class QueryFuzzTest extends AbstractCairoTest {
         writerPool.halt();
 
         QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, config.isDiffJitEnabled(), config.isDiffShadowEnabled(), config.isVerifyCursorEnabled(), tables, queryWorkerNamePrefix);
-        // Snapshot the four parallel-execution flags so the per-query serial
+        // Snapshot the parallel-execution flags so the per-query serial
         // override can restore them. Snapshotting once outside the loop also
         // preserves any global override the user passed via system properties.
+        // HORIZON JOIN and WINDOW JOIN must be included: without them the
+        // serial control arm still runs those joins in parallel, defeating the
+        // determinism the serial arm exists to provide.
         final boolean savedParallelFilter = sqlExecutionContext.isParallelFilterEnabled();
         final boolean savedParallelGroupBy = sqlExecutionContext.isParallelGroupByEnabled();
+        final boolean savedParallelHorizonJoin = sqlExecutionContext.isParallelHorizonJoinEnabled();
         final boolean savedParallelReadParquet = sqlExecutionContext.isParallelReadParquetEnabled();
         final boolean savedParallelTopK = sqlExecutionContext.isParallelTopKEnabled();
+        final boolean savedParallelWindowJoin = sqlExecutionContext.isParallelWindowJoinEnabled();
         int bindGen = 0;
         int faultGen = 0;
         int skipped = 0;
@@ -646,8 +664,10 @@ public class QueryFuzzTest extends AbstractCairoTest {
                     if (!runFaultParallel) {
                         sqlExecutionContext.setParallelFilterEnabled(false);
                         sqlExecutionContext.setParallelGroupByEnabled(false);
+                        sqlExecutionContext.setParallelHorizonJoinEnabled(false);
                         sqlExecutionContext.setParallelReadParquetEnabled(false);
                         sqlExecutionContext.setParallelTopKEnabled(false);
+                        sqlExecutionContext.setParallelWindowJoinEnabled(false);
                     }
                     try {
                         result = runner.runFault(query, faultType, rnd, runFaultParallel);
@@ -655,8 +675,10 @@ public class QueryFuzzTest extends AbstractCairoTest {
                         if (!runFaultParallel) {
                             sqlExecutionContext.setParallelFilterEnabled(savedParallelFilter);
                             sqlExecutionContext.setParallelGroupByEnabled(savedParallelGroupBy);
+                            sqlExecutionContext.setParallelHorizonJoinEnabled(savedParallelHorizonJoin);
                             sqlExecutionContext.setParallelReadParquetEnabled(savedParallelReadParquet);
                             sqlExecutionContext.setParallelTopKEnabled(savedParallelTopK);
+                            sqlExecutionContext.setParallelWindowJoinEnabled(savedParallelWindowJoin);
                         }
                     }
                 } else {
@@ -696,8 +718,10 @@ public class QueryFuzzTest extends AbstractCairoTest {
                         serial++;
                         sqlExecutionContext.setParallelFilterEnabled(false);
                         sqlExecutionContext.setParallelGroupByEnabled(false);
+                        sqlExecutionContext.setParallelHorizonJoinEnabled(false);
                         sqlExecutionContext.setParallelReadParquetEnabled(false);
                         sqlExecutionContext.setParallelTopKEnabled(false);
+                        sqlExecutionContext.setParallelWindowJoinEnabled(false);
                         LOG.info().$("fuzz serial: ").$safe(query.sql()).$();
                     }
                     try {
@@ -706,8 +730,10 @@ public class QueryFuzzTest extends AbstractCairoTest {
                         if (disableParallel) {
                             sqlExecutionContext.setParallelFilterEnabled(savedParallelFilter);
                             sqlExecutionContext.setParallelGroupByEnabled(savedParallelGroupBy);
+                            sqlExecutionContext.setParallelHorizonJoinEnabled(savedParallelHorizonJoin);
                             sqlExecutionContext.setParallelReadParquetEnabled(savedParallelReadParquet);
                             sqlExecutionContext.setParallelTopKEnabled(savedParallelTopK);
+                            sqlExecutionContext.setParallelWindowJoinEnabled(savedParallelWindowJoin);
                         }
                     }
                 }

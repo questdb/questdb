@@ -5803,6 +5803,45 @@ public class WindowJoinTest extends AbstractCairoTest {
 
                             TestUtils.assertEquals(query, expectedSink, actualSink);
                         }
+
+                        // Independent oracle for the EXCLUDE PREVAILING case: a plain LEFT JOIN over the
+                        // same [M-5s, M+5s] window computes count(p.n) through a different code path than
+                        // the WINDOW JOIN reduce, so a miscompute shared by the single-threaded and parallel
+                        // window-join paths (which the cross-check above would not catch) is caught here.
+                        // Only count is checked: first/last over LONG256 are order-dependent and have no
+                        // simple plain-SQL oracle. INCLUDE PREVAILING adds the carried prevailing row and
+                        // has no plain-SQL oracle either, so it relies on the cross-check above.
+                        if (!includePrevailing) {
+                            final String[] oracleJoinKeys = {"", "t.sym = p.sym AND "};
+                            final String[] windowJoinOn = {"", " ON (t.sym = p.sym)"};
+                            for (int i = 0; i < oracleJoinKeys.length; i++) {
+                                expectedSink.clear();
+                                TestUtils.printSql(
+                                        compiler,
+                                        sqlExecutionContext,
+                                        "SELECT t.sym, t.ts, count(p.n) AS a0 " +
+                                                "FROM trades t LEFT JOIN prices p " +
+                                                "ON " + oracleJoinKeys[i] +
+                                                "p.ts >= dateadd('s', -5, t.ts) AND p.ts <= dateadd('s', 5, t.ts) " +
+                                                "GROUP BY t.sym, t.ts ORDER BY 1, 2",
+                                        expectedSink
+                                );
+                                for (boolean parallel : new boolean[]{false, true}) {
+                                    sqlExecutionContext.setParallelWindowJoinEnabled(parallel);
+                                    final String q = "SELECT t.sym, t.ts, count(p.n) AS a0 " +
+                                            "FROM trades t WINDOW JOIN prices p" + windowJoinOn[i] + " " +
+                                            "RANGE BETWEEN 5 SECONDS PRECEDING AND 5 SECONDS FOLLOWING EXCLUDE PREVAILING " +
+                                            "ORDER BY 1, 2";
+                                    actualSink.clear();
+                                    TestUtils.printSql(compiler, sqlExecutionContext, q, actualSink);
+                                    TestUtils.assertEquals(
+                                            "count oracle parallel=" + parallel + " keyed=" + (i == 1),
+                                            expectedSink,
+                                            actualSink
+                                    );
+                                }
+                            }
+                        }
                     },
                     configuration,
                     LOG

@@ -26,6 +26,7 @@ package io.questdb.test.griffin.fuzz;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.ImplicitCastException;
@@ -190,6 +191,13 @@ public final class QueryRunner {
     private int faultsFired;
     // Per-type count of faults that actually fired, indexed by FaultType.ordinal().
     private final int[] faultsFiredByType = new int[FaultType.values().length];
+    // Per-output-column FLOAT/DOUBLE mask of the most recent runOnce projection.
+    // Gates the floating-point reduction-order tolerance to FP-typed columns so a
+    // genuine integer COUNT/SUM divergence is never absorbed as FP drift. Refreshed
+    // on every runOnce; all compared variants of one query share a projection, so a
+    // single mask serves both sides of a reconcile. Empty until the first runOnce,
+    // which leaves the tolerance disabled (every differing cell compared exactly).
+    private boolean[] fpColumnMask = new boolean[0];
     // Reused per parseFunction call. Stateful (metadataStack, function stacks)
     // but parseFunction is contractually re-entrant: it pushes/pops its own
     // state in try/finally, so a single instance is safe across the runner's
@@ -927,14 +935,32 @@ public final class QueryRunner {
     }
 
     /**
-     * Returns true iff every cell in {@code a} either matches the
-     * corresponding cell in {@code b} exactly or both parse as finite
-     * doubles within a small relative tolerance. Used as a fallback for
-     * floating-point aggregates whose last-digit value depends on the
-     * order of summation, which legitimately differs between an indexed
-     * scan and a full scan or between parquet and native partitions.
+     * Builds the per-output-column FLOAT/DOUBLE mask for a projection. Cell
+     * {@code i} of a materialized row is FP-typed iff {@code mask[i]} is true;
+     * only those cells get the floating-point reduction-order tolerance, so an
+     * exact (integer / non-FP) column always compares bit for bit.
      */
-    static boolean rowEqualsWithFpTolerance(String a, String b) {
+    private static boolean[] buildFpColumnMask(RecordMetadata metadata, int columnCount) {
+        boolean[] mask = new boolean[columnCount];
+        for (int i = 0; i < columnCount; i++) {
+            int type = metadata.getColumnType(i);
+            mask[i] = type == ColumnType.FLOAT || type == ColumnType.DOUBLE;
+        }
+        return mask;
+    }
+
+    /**
+     * Returns true iff every cell in {@code a} either matches the
+     * corresponding cell in {@code b} exactly or, for a FLOAT/DOUBLE-typed
+     * column (per {@code fpColumnMask}), both parse as finite doubles within
+     * a small relative tolerance. Used as a fallback for floating-point
+     * aggregates whose last-digit value depends on the order of summation,
+     * which legitimately differs between an indexed scan and a full scan or
+     * between parquet and native partitions. Cells in non-FP columns are
+     * compared exactly even when both parse as doubles, so a genuine integer
+     * COUNT/SUM divergence is never absorbed as FP drift.
+     */
+    static boolean rowEqualsWithFpTolerance(String a, String b, boolean[] fpColumnMask) {
         if (a.equals(b)) {
             return true;
         }
@@ -946,6 +972,14 @@ public final class QueryRunner {
         for (int i = 0; i < tokensA.length; i++) {
             if (tokensA[i].equals(tokensB[i])) {
                 continue;
+            }
+            // A differing cell in a non-FP column is a real divergence: only
+            // FLOAT/DOUBLE columns carry reduction-order drift, so everything
+            // else must match exactly. The trailing empty token (materialize
+            // appends a tab after the last column) has no mask entry but is
+            // always equal on both sides, so it never reaches here.
+            if (i >= fpColumnMask.length || !fpColumnMask[i]) {
+                return false;
             }
             double da;
             double db;
@@ -979,8 +1013,10 @@ public final class QueryRunner {
             // and a parquet shadow -- so allow 64x to cover the tail with
             // margin. This stays far below the shift a real row-set error
             // produces (dropping or adding even one FLOAT term moves the sum
-            // by thousands of FLOAT epsilons), and integer/exact columns are
-            // still compared bit for bit, so a genuine divergence is flagged.
+            // by thousands of FLOAT epsilons). The mask check above already
+            // restricted this tolerance to FLOAT/DOUBLE columns, so an integer
+            // COUNT or LONG SUM that diverges by even one unit is flagged
+            // regardless of magnitude.
             //
             // scale * Math.ulp(1f) is the relative ulp at the magnitude;
             // unlike Math.ulp((float) scale) it does not quantize to the
@@ -1084,7 +1120,7 @@ public final class QueryRunner {
      * on the access path the planner picks. Greedy matching is O(n^2);
      * fuzz queries produce small row sets so this is fine.
      */
-    private static boolean rowsetEqualsWithFpTolerance(StringSink a, StringSink b) {
+    private static boolean rowsetEqualsWithFpTolerance(StringSink a, StringSink b, boolean[] fpColumnMask) {
         String[] linesA = a.toString().split("\n", -1);
         String[] linesB = b.toString().split("\n", -1);
         if (linesA.length != linesB.length) {
@@ -1094,7 +1130,7 @@ public final class QueryRunner {
         for (String lineA : linesA) {
             boolean matched = false;
             for (int j = 0; j < linesB.length; j++) {
-                if (!usedB[j] && rowEqualsWithFpTolerance(lineA, linesB[j])) {
+                if (!usedB[j] && rowEqualsWithFpTolerance(lineA, linesB[j], fpColumnMask)) {
                     usedB[j] = true;
                     matched = true;
                     break;
@@ -1392,7 +1428,7 @@ public final class QueryRunner {
             // index/parquet access paths and across JIT modes. The
             // tolerance is tight enough to flag a real arithmetic
             // divergence while absorbing reduction-order noise.
-            if (a.rowsRead == b.rowsRead && rowsetEqualsWithFpTolerance(rowsA, rowsB)) {
+            if (a.rowsRead == b.rowsRead && rowsetEqualsWithFpTolerance(rowsA, rowsB, fpColumnMask)) {
                 return Result.skipped("rowset matches with floating-point tolerance");
             }
             // Literal-vs-bind diff where every differing cell is the INT
@@ -1597,6 +1633,11 @@ public final class QueryRunner {
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
                 RecordMetadata metadata = factory.getMetadata();
                 int columnCount = metadata.getColumnCount();
+                // Refresh the FP-column mask for this projection so the reconcile
+                // tolerance only fires on FLOAT/DOUBLE cells. Both compared
+                // variants of a query share a projection, so the mask the last
+                // runOnce leaves is correct for the pending reconcile.
+                fpColumnMask = buildFpColumnMask(metadata, columnCount);
                 rowsRead = materialize(cursor, metadata, columnCount, rows);
                 // toTop() must rewind without re-executing, and size() /
                 // calculateSize() must agree with the materialized row count.
