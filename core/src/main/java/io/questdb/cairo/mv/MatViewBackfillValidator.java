@@ -256,6 +256,15 @@ public final class MatViewBackfillValidator implements WalPreCommitValidator {
      * exercised by the frozen-zone callers; the rest delegate to the wrapped local sampler or are
      * unused. The iterator sets the sampler offset on every {@code of()}, so no pre-configuration is
      * needed.
+     * <p>
+     * Consistency contract: {@code round}/{@code nextTimestamp} are exact at bucket-boundary inputs
+     * (the boundary anchor and a bucket floor), which is all the frozen-zone callers use. They are
+     * NOT a faithful general per-row bucketizer: for a mid-bucket row in the bucket immediately after
+     * a DST fall-back collapse, {@code round} can snap to the collapsed bucket's floor (a bucket low).
+     * That is safe for the validator because the boundary floor snaps the SAME way, so the accept
+     * comparison ({@code rowBucketEnd <= boundaryFloor}) stays consistent and never accepts a row the
+     * refresh REPLACE_RANGE then wipes. Do not reuse {@code round} as a "which bucket is this row in"
+     * helper outside the boundary-comparison context.
      */
     private static final class RefreshGridSampler implements TimestampSampler {
         private final TimestampSampler base;
