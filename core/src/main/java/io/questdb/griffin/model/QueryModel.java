@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.OrderByMnemonic;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.table.ShowCreateDatabaseRecordCursorFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntIntHashMap;
@@ -180,6 +181,7 @@ public class QueryModel implements IQueryModel {
     private int selectModelType = SELECT_MODEL_NONE;
     private int setOperationType;
     private int sharedRefByParentCount = 0;
+    private int showCreateDatabaseInclude = ShowCreateDatabaseRecordCursorFactory.INCLUDE_ALL;
     private int showKind = -1;
     private boolean skipped;
     private boolean standaloneUnnest;
@@ -464,6 +466,7 @@ public class QueryModel implements IQueryModel {
         setOperationType = SET_OPERATION_UNION_ALL;
         artificialStar = false;
         explicitTimestamp = false;
+        showCreateDatabaseInclude = ShowCreateDatabaseRecordCursorFactory.INCLUDE_ALL;
         showKind = -1;
         sampleByOffset = ZERO_OFFSET;
         sampleByTo = null;
@@ -1059,6 +1062,11 @@ public class QueryModel implements IQueryModel {
     @Override
     public ObjList<QueryModelWrapper> getSharedRefs() {
         return sharedRefs;
+    }
+
+    @Override
+    public int getShowCreateDatabaseInclude() {
+        return showCreateDatabaseInclude;
     }
 
     @Override
@@ -1859,6 +1867,11 @@ public class QueryModel implements IQueryModel {
 
     public void setSharedRefByParentCount(int sharedRefByParentCount) {
         this.sharedRefByParentCount = sharedRefByParentCount;
+    }
+
+    @Override
+    public void setShowCreateDatabaseInclude(int includeMask) {
+        this.showCreateDatabaseInclude = includeMask;
     }
 
     @Override

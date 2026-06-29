@@ -6291,6 +6291,9 @@ public class SqlOptimiser implements Mutable {
                 case IQueryModel.SHOW_SERVER_VERSION_NUM:
                     tableFactory = new ShowServerVersionNumCursorFactory();
                     break;
+                case IQueryModel.SHOW_CREATE_DATABASE:
+                    tableFactory = sqlParserCallback.generateShowCreateDatabaseFactory(model, executionContext, path);
+                    break;
                 case IQueryModel.SHOW_CREATE_TABLE:
                     tableFactory = sqlParserCallback.generateShowCreateTableFactory(model, executionContext, path);
                     break;

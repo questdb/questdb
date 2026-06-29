@@ -642,6 +642,11 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public int getShowCreateDatabaseInclude() {
+        return delegate.getShowCreateDatabaseInclude();
+    }
+
+    @Override
     public int getShowKind() {
         return delegate.getShowKind();
     }
@@ -1234,6 +1239,11 @@ public class QueryModelWrapper implements IQueryModel {
 
     @Override
     public void setSetOperationType(int setOperationType) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void setShowCreateDatabaseInclude(int includeMask) {
         throw new UnsupportedOperationException();
     }
 

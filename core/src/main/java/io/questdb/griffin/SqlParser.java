@@ -45,6 +45,7 @@ import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilderImpl;
 import io.questdb.griffin.engine.ops.CreateViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateViewOperationBuilderImpl;
+import io.questdb.griffin.engine.table.ShowCreateDatabaseRecordCursorFactory;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.model.CompileViewModel;
 import io.questdb.griffin.model.CreateTableColumnModel;
@@ -2598,8 +2599,11 @@ public class SqlParser {
                     } else if (tok != null && isViewKeyword(tok)) {
                         parseTableName(lexer, model);
                         showKind = IQueryModel.SHOW_CREATE_VIEW;
+                    } else if (tok != null && isDatabaseKeyword(tok)) {
+                        showKind = IQueryModel.SHOW_CREATE_DATABASE;
+                        model.setShowCreateDatabaseInclude(parseShowCreateDatabaseInclude(lexer));
                     } else {
-                        throw SqlException.position(lexer.lastTokenPosition()).put("expected 'TABLE' or 'VIEW' or 'MATERIALIZED VIEW'");
+                        throw SqlException.position(lexer.lastTokenPosition()).put("expected 'TABLE' or 'VIEW' or 'MATERIALIZED VIEW' or 'DATABASE'");
                     }
                 } else {
                     showKind = sqlParserCallback.parseShowSql(lexer, model, tok, expressionNodePool);
@@ -5201,6 +5205,75 @@ public class SqlParser {
             return parseDecimalColumnType(lexer);
         }
         return columnType;
+    }
+
+    private int parseShowCreateDatabaseInclude(GenericLexer lexer) throws SqlException {
+        CharSequence tok = optTok(lexer);
+        if (tok == null) {
+            return ShowCreateDatabaseRecordCursorFactory.INCLUDE_ALL;
+        }
+        final boolean exclude;
+        if (isIncludeKeyword(tok)) {
+            exclude = false;
+        } else if (isExcludeKeyword(tok)) {
+            exclude = true;
+        } else {
+            // no INCLUDE/EXCLUDE clause; leave the token for the trailing-token check
+            lexer.unparseLast();
+            return ShowCreateDatabaseRecordCursorFactory.INCLUDE_ALL;
+        }
+        tok = tok(lexer, "'ALL' or '('");
+        if (isAllKeyword(tok)) {
+            return exclude ? 0 : ShowCreateDatabaseRecordCursorFactory.INCLUDE_ALL;
+        }
+        if (!Chars.equals(tok, '(')) {
+            throw SqlException.position(lexer.lastTokenPosition()).put("'ALL' or '(' expected");
+        }
+        int mask = 0;
+        do {
+            tok = tok(lexer, "category");
+            mask |= showCreateDatabaseCategory(lexer, tok);
+            tok = tok(lexer, "',' or ')'");
+        } while (Chars.equals(tok, ','));
+        if (!Chars.equals(tok, ')')) {
+            throw SqlException.position(lexer.lastTokenPosition()).put("',' or ')' expected");
+        }
+        return exclude ? (ShowCreateDatabaseRecordCursorFactory.INCLUDE_ALL & ~mask) : mask;
+    }
+
+    private int showCreateDatabaseCategory(GenericLexer lexer, CharSequence tok) throws SqlException {
+        if (Chars.equalsIgnoreCase(tok, "tables")) {
+            return ShowCreateDatabaseRecordCursorFactory.INCLUDE_TABLES;
+        }
+        if (Chars.equalsIgnoreCase(tok, "views")) {
+            return ShowCreateDatabaseRecordCursorFactory.INCLUDE_VIEWS;
+        }
+        if (Chars.equalsIgnoreCase(tok, "materialized_views")) {
+            return ShowCreateDatabaseRecordCursorFactory.INCLUDE_MATERIALIZED_VIEWS;
+        }
+        if (Chars.equalsIgnoreCase(tok, "users")) {
+            return ShowCreateDatabaseRecordCursorFactory.INCLUDE_USERS;
+        }
+        if (Chars.equalsIgnoreCase(tok, "groups")) {
+            return ShowCreateDatabaseRecordCursorFactory.INCLUDE_GROUPS;
+        }
+        if (Chars.equalsIgnoreCase(tok, "service_accounts")) {
+            return ShowCreateDatabaseRecordCursorFactory.INCLUDE_SERVICE_ACCOUNTS;
+        }
+        if (Chars.equalsIgnoreCase(tok, "permissions")) {
+            return ShowCreateDatabaseRecordCursorFactory.INCLUDE_PERMISSIONS;
+        }
+        if (Chars.equalsIgnoreCase(tok, "schema")) {
+            return ShowCreateDatabaseRecordCursorFactory.INCLUDE_SCHEMA;
+        }
+        if (Chars.equalsIgnoreCase(tok, "acl")) {
+            return ShowCreateDatabaseRecordCursorFactory.INCLUDE_ACL;
+        }
+        if (isAllKeyword(tok)) {
+            return ShowCreateDatabaseRecordCursorFactory.INCLUDE_ALL;
+        }
+        throw SqlException.position(lexer.lastTokenPosition()).put("unexpected category [category=").put(tok)
+                .put("], expected one of TABLES, VIEWS, MATERIALIZED_VIEWS, USERS, GROUPS, SERVICE_ACCOUNTS, PERMISSIONS, SCHEMA, ACL, ALL");
     }
 
     private @NotNull CharSequence tok(GenericLexer lexer, String expectedList) throws SqlException {

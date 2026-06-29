@@ -50,6 +50,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
 import io.questdb.std.str.Utf8StringSink;
 import org.jetbrains.annotations.NotNull;
 
@@ -86,6 +87,22 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
                 sink.put(alias);
             }
         }
+    }
+
+    // Emits a stored view/mat-view body with surrounding whitespace removed. The body is always a
+    // complete SELECT, where leading/trailing whitespace is never significant, so this only normalizes
+    // the dump's indentation; a trailing string or identifier literal ends in a quote (> ' '), so no
+    // character inside a literal is ever stripped.
+    public static void putTrimmed(Utf8Sink sink, CharSequence text) {
+        int lo = 0;
+        int hi = text.length();
+        while (lo < hi && text.charAt(lo) <= ' ') {
+            lo++;
+        }
+        while (hi > lo && text.charAt(hi - 1) <= ' ') {
+            hi--;
+        }
+        sink.put(text, lo, hi);
     }
 
     public static void tableFormatToSink(int format, CharSink<?> sink) {
