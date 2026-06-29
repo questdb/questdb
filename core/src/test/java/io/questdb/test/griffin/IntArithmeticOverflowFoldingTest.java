@@ -71,6 +71,11 @@ public class IntArithmeticOverflowFoldingTest extends AbstractCairoTest {
 
             assertQuery("SELECT (2147483647 + 3)::DATE AS v").expectSize().returns("v\n1970-01-25T20:31:23.650Z\n");
             assertQuery("SELECT (y + 3)::DATE AS v FROM u").expectSize().returns("v\n1970-01-25T20:31:23.650Z\n");
+
+            // FLOAT widens too: the wrapped INT (-2147483646) would print negative; the widened
+            // value (2147483650) rounds to the nearest float, +2.14748365E9.
+            assertQuery("SELECT (2147483647 + 3)::FLOAT AS v").expectSize().returns("v\n2.14748365E9\n");
+            assertQuery("SELECT (y + 3)::FLOAT AS v FROM u").expectSize().returns("v\n2.14748365E9\n");
         });
     }
 

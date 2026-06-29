@@ -149,7 +149,7 @@ public final class WhereClauseParser implements Mutable {
             @NotNull FunctionParser functionParser,
             @NotNull RecordMetadata metadata,
             @NotNull SqlExecutionContext executionContext,
-            boolean noKeyColumn,
+            boolean isKeyColumnSuppressed,
             @NotNull TableReader reader,
             boolean noIndex
     ) throws SqlException {
@@ -180,7 +180,7 @@ public final class WhereClauseParser implements Mutable {
                 functionParser,
                 metadata,
                 executionContext,
-                noKeyColumn, reader)) {
+                isKeyColumnSuppressed, reader)) {
             createKeyValueBindVariables(model, functionParser, executionContext);
             return model;
         }
@@ -199,7 +199,7 @@ public final class WhereClauseParser implements Mutable {
                             functionParser,
                             metadata,
                             executionContext,
-                            noKeyColumn,
+                            isKeyColumnSuppressed,
                             reader)) {
                         // Check if rhs is an OR of timestamp intrinsics
                         if (!tryExtractOrTimestampIntrinsics(timestampDriver, model, node.rhs, functionParser, metadata, executionContext)) {
@@ -215,7 +215,7 @@ public final class WhereClauseParser implements Mutable {
                             functionParser,
                             metadata,
                             executionContext,
-                            noKeyColumn,
+                            isKeyColumnSuppressed,
                             reader)) {
                         node = null;
                     } else if (tryExtractOrTimestampIntrinsics(timestampDriver, model, node.lhs, functionParser, metadata, executionContext)) {
@@ -396,7 +396,7 @@ public final class WhereClauseParser implements Mutable {
             FunctionParser functionParser,
             RecordMetadata metadata,
             SqlExecutionContext executionContext,
-            boolean noKeyColumn,
+            boolean isKeyColumnSuppressed,
             TableReader reader
     ) throws SqlException {
         // and_offset args are stored in reverse order: [offset, unit, predicate]
@@ -461,7 +461,7 @@ public final class WhereClauseParser implements Mutable {
                 functionParser,
                 metadata,
                 executionContext,
-                noKeyColumn,
+                isKeyColumnSuppressed,
                 reader
         );
 
@@ -541,7 +541,7 @@ public final class WhereClauseParser implements Mutable {
             RecordMetadata m,
             FunctionParser functionParser,
             SqlExecutionContext executionContext,
-            boolean noKeyColumn,
+            boolean isKeyColumnSuppressed,
             TableReader reader
     ) throws SqlException {
         checkNodeValid(node);
@@ -555,7 +555,7 @@ public final class WhereClauseParser implements Mutable {
                 m,
                 functionParser,
                 executionContext,
-                noKeyColumn,
+                isKeyColumnSuppressed,
                 reader
         )
                 ||
@@ -569,7 +569,7 @@ public final class WhereClauseParser implements Mutable {
                         m,
                         functionParser,
                         executionContext,
-                        noKeyColumn,
+                        isKeyColumnSuppressed,
                         reader
                 );
     }
@@ -584,7 +584,7 @@ public final class WhereClauseParser implements Mutable {
             RecordMetadata m,
             FunctionParser functionParser,
             SqlExecutionContext executionContext,
-            boolean noKeyColumn,
+            boolean isKeyColumnSuppressed,
             TableReader reader
     ) throws SqlException {
         if (nodesEqual(a, b)) {
@@ -624,7 +624,7 @@ public final class WhereClauseParser implements Mutable {
                     case ColumnType.STRING:
                     case ColumnType.LONG:
                     case ColumnType.INT:
-                        if (columnIsPreferredOrIndexedAndKeyColumnAllowed(columnName, m, noKeyColumn)) {
+                        if (columnIsPreferredOrIndexedAndKeyColumnAllowed(columnName, m, isKeyColumnSuppressed)) {
                             CharSequence value = isNullKeyword(b.token) ? null : unquote(b.token);
                             if (Chars.equalsIgnoreCaseNc(columnName, model.keyColumn)) {
                                 if (!isCorrectType(b.type)) {
@@ -773,7 +773,7 @@ public final class WhereClauseParser implements Mutable {
             RecordMetadata metadata,
             FunctionParser functionParser,
             SqlExecutionContext executionContext,
-            boolean noKeyColumn,
+            boolean isKeyColumnSuppressed,
             TableReader reader
     ) throws SqlException {
         if (node.paramCount < 2) {
@@ -790,8 +790,8 @@ public final class WhereClauseParser implements Mutable {
             throw SqlException.invalidColumn(col.position, col.token);
         }
         return analyzeInInterval(timestampDriver, model, col, node, false, functionParser, metadata, executionContext)
-                || analyzeListOfValues(model, column, metadata, node, noKeyColumn, reader, functionParser, executionContext)
-                || analyzeInLambda(model, column, metadata, node, noKeyColumn, reader);
+                || analyzeListOfValues(model, column, metadata, node, isKeyColumnSuppressed, reader, functionParser, executionContext)
+                || analyzeInLambda(model, column, metadata, node, isKeyColumnSuppressed, reader);
     }
 
     private boolean analyzeInInterval(
@@ -950,11 +950,11 @@ public final class WhereClauseParser implements Mutable {
             CharSequence columnName,
             RecordMetadata m,
             ExpressionNode node,
-            boolean noKeyColumn,
+            boolean isKeyColumnSuppressed,
             TableReader reader
     ) throws SqlException {
         int columnIndex = m.getColumnIndex(columnName);
-        if (columnIsPreferredOrIndexedAndKeyColumnAllowed(columnName, m, noKeyColumn)) {
+        if (columnIsPreferredOrIndexedAndKeyColumnAllowed(columnName, m, isKeyColumnSuppressed)) {
             if (preferredKeyColumn != null && !Chars.equalsIgnoreCase(columnName, preferredKeyColumn)) {
                 return false;
             }
@@ -1032,7 +1032,7 @@ public final class WhereClauseParser implements Mutable {
             CharSequence columnName,
             RecordMetadata meta,
             ExpressionNode node,
-            boolean noKeyColumn,
+            boolean isKeyColumnSuppressed,
             TableReader reader,
             FunctionParser functionParser,
             SqlExecutionContext executionContext
@@ -1042,14 +1042,14 @@ public final class WhereClauseParser implements Mutable {
 
         // Note: "preferred" is an unfortunate name, the actual meaning is a "column from a 'LATEST ON' clause".
         // Moreover, it is only populated when "latest on" has a single SYMBOL column.
-        // Q: Why does noKeyColumn gate index usage here?
-        // A: noKeyColumn is set whenever no latest-by factory can consume a key intrinsic -- a multi-column
+        // Q: Why does isKeyColumnSuppressed gate index usage here?
+        // A: isKeyColumnSuppressed is set whenever no latest-by factory can consume a key intrinsic -- a multi-column
         //    or a non-symbol single-column LATEST ON. A multi-column LATEST BY cannot use index-based scans
         //    because one indexed column alone does not identify the "latest" record (that needs all the
         //    LATEST BY columns); a non-symbol key has no symbol index to scan at all. In both cases the
         //    predicate must stay a residual filter, so disable key extraction. See
         //    columnIsPreferredOrIndexedAndKeyColumnAllowed for the full rule.
-        if (columnIsPreferredOrIndexedAndKeyColumnAllowed(columnName, meta, noKeyColumn)) {
+        if (columnIsPreferredOrIndexedAndKeyColumnAllowed(columnName, meta, isKeyColumnSuppressed)) {
             // check if we already have indexed column, and it is of worse selectivity
             if (model.keyColumn != null
                     && (newColumn = !Chars.equalsIgnoreCase(model.keyColumn, columnName))
@@ -1184,7 +1184,7 @@ public final class WhereClauseParser implements Mutable {
             FunctionParser functionParser,
             RecordMetadata metadata,
             SqlExecutionContext executionContext,
-            boolean noKeyColumn,
+            boolean isKeyColumnSuppressed,
             TableReader reader
     ) throws SqlException {
 
@@ -1202,7 +1202,7 @@ public final class WhereClauseParser implements Mutable {
         if (ok) {
             notNode.intrinsicValue = IntrinsicModel.TRUE;
         } else {
-            analyzeNotListOfValues(model, column, m, node, notNode, noKeyColumn, reader, functionParser, executionContext);
+            analyzeNotListOfValues(model, column, m, node, notNode, isKeyColumnSuppressed, reader, functionParser, executionContext);
         }
 
         return ok;
@@ -1234,7 +1234,7 @@ public final class WhereClauseParser implements Mutable {
             RecordMetadata m,
             FunctionParser functionParser,
             SqlExecutionContext executionContext,
-            boolean noKeyColumn,
+            boolean isKeyColumnSuppressed,
             TableReader reader
     ) throws SqlException {
         if (nodesEqual(a, b) && a.noLeafs() && b.noLeafs()) {
@@ -1274,7 +1274,7 @@ public final class WhereClauseParser implements Mutable {
                     case ColumnType.STRING:
                     case ColumnType.LONG:
                     case ColumnType.INT:
-                        if (columnIsPreferredOrIndexedAndKeyColumnAllowed(columnName, m, noKeyColumn)) {
+                        if (columnIsPreferredOrIndexedAndKeyColumnAllowed(columnName, m, isKeyColumnSuppressed)) {
                             CharSequence value = isNullKeyword(b.token) ? null : unquote(b.token);
                             if (Chars.equalsIgnoreCaseNc(columnName, model.keyColumn)) {
                                 if (!isCorrectType(b.type)) {
@@ -1371,7 +1371,7 @@ public final class WhereClauseParser implements Mutable {
             FunctionParser functionParser,
             RecordMetadata metadata,
             SqlExecutionContext executionContext,
-            boolean noKeyColumn,
+            boolean isKeyColumnSuppressed,
             TableReader reader
     ) throws SqlException {
         ExpressionNode node = notNode.rhs;
@@ -1396,7 +1396,7 @@ public final class WhereClauseParser implements Mutable {
         if (ok) {
             notNode.intrinsicValue = IntrinsicModel.TRUE;
         } else {
-            analyzeNotListOfValues(model, column, m, node, notNode, noKeyColumn, reader, functionParser, executionContext);
+            analyzeNotListOfValues(model, column, m, node, notNode, isKeyColumnSuppressed, reader, functionParser, executionContext);
         }
 
         return ok;
@@ -1408,14 +1408,14 @@ public final class WhereClauseParser implements Mutable {
             RecordMetadata m,
             ExpressionNode node,
             ExpressionNode notNode,
-            boolean noKeyColumn,
+            boolean isKeyColumnSuppressed,
             TableReader reader,
             FunctionParser functionParser,
             SqlExecutionContext executionContext
     ) throws SqlException {
         final int columnIndex = m.getColumnIndex(columnName);
         boolean newColumn = true;
-        if (columnIsPreferredOrIndexedAndKeyColumnAllowed(columnName, m, noKeyColumn)) {
+        if (columnIsPreferredOrIndexedAndKeyColumnAllowed(columnName, m, isKeyColumnSuppressed)) {
             if (model.keyColumn != null
                     && (newColumn = !Chars.equalsIgnoreCase(model.keyColumn, columnName))
                     && !isMoreSelective(model, m, reader, columnIndex)) {
@@ -1909,16 +1909,16 @@ public final class WhereClauseParser implements Mutable {
     }
 
     // A column qualifies as the intrinsic key column when key extraction is enabled
-    // (noKeyColumn is false) and the column is either the preferred key column or, absent
-    // a preferred one, an indexed column. noKeyColumn is set when the caller has no factory
+    // (isKeyColumnSuppressed is false) and the column is either the preferred key column or, absent
+    // a preferred one, an indexed column. isKeyColumnSuppressed is set when the caller has no factory
     // that can consume a key intrinsic -- a multi-column or non-symbol LATEST ON -- so the
     // predicate stays a residual filter instead of being silently dropped.
     private boolean columnIsPreferredOrIndexedAndKeyColumnAllowed(
             CharSequence columnName,
             RecordMetadata m,
-            boolean noKeyColumn
+            boolean isKeyColumnSuppressed
     ) {
-        return !noKeyColumn &&
+        return !isKeyColumnSuppressed &&
                 (
                         Chars.equalsIgnoreCaseNc(columnName, preferredKeyColumn)
                                 || (preferredKeyColumn == null && !noIndex && m.isColumnIndexed(m.getColumnIndex(columnName)))
@@ -2556,12 +2556,12 @@ public final class WhereClauseParser implements Mutable {
             FunctionParser functionParser,
             RecordMetadata metadata,
             SqlExecutionContext executionContext,
-            boolean noKeyColumn,
+            boolean isKeyColumnSuppressed,
             TableReader reader
     ) throws SqlException {
         return switch (intrinsicOps.get(node.token)) {
             case INTRINSIC_OP_IN ->
-                    analyzeIn(timestampDriver, translator, model, node, m, functionParser, executionContext, noKeyColumn, reader);
+                    analyzeIn(timestampDriver, translator, model, node, m, functionParser, executionContext, isKeyColumnSuppressed, reader);
             case INTRINSIC_OP_GREATER_EQ ->
                     analyzeGreater(timestampDriver, model, node, true, functionParser, metadata, executionContext);
             case INTRINSIC_OP_GREATER ->
@@ -2571,9 +2571,9 @@ public final class WhereClauseParser implements Mutable {
             case INTRINSIC_OP_LESS ->
                     analyzeLess(timestampDriver, model, node, false, functionParser, metadata, executionContext);
             case INTRINSIC_OP_EQUAL ->
-                    analyzeEquals(timestampDriver, translator, model, node, m, functionParser, executionContext, noKeyColumn, reader);
+                    analyzeEquals(timestampDriver, translator, model, node, m, functionParser, executionContext, isKeyColumnSuppressed, reader);
             case INTRINSIC_OP_NOT_EQ ->
-                    analyzeNotEquals(timestampDriver, translator, model, node, m, functionParser, executionContext, noKeyColumn, reader);
+                    analyzeNotEquals(timestampDriver, translator, model, node, m, functionParser, executionContext, isKeyColumnSuppressed, reader);
             case INTRINSIC_OP_NOT -> (
                     isInKeyword(node.rhs.token) && analyzeNotIn(
                             timestampDriver,
@@ -2584,7 +2584,7 @@ public final class WhereClauseParser implements Mutable {
                             functionParser,
                             metadata,
                             executionContext,
-                            noKeyColumn,
+                            isKeyColumnSuppressed,
                             reader
                     ))
                     || (
@@ -2597,14 +2597,14 @@ public final class WhereClauseParser implements Mutable {
                             functionParser,
                             metadata,
                             executionContext,
-                            noKeyColumn,
+                            isKeyColumnSuppressed,
                             reader
                     )
             );
             case INTRINSIC_OP_BETWEEN ->
                     analyzeBetween(timestampDriver, translator, model, node, m, functionParser, metadata, executionContext);
             case INTRINSIC_OP_AND_OFFSET ->
-                    analyzeAndOffset(timestampDriver, translator, model, node, m, functionParser, metadata, executionContext, noKeyColumn, reader);
+                    analyzeAndOffset(timestampDriver, translator, model, node, m, functionParser, metadata, executionContext, isKeyColumnSuppressed, reader);
             default -> false;
         };
     }

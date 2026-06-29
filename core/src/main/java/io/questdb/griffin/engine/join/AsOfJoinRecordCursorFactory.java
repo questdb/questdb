@@ -104,7 +104,11 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
                     slaveWrappedOverMaster,
                     columnIndex
             );
-            // From here on the cursor owns the maps and frees them on close().
+            // From here on the cursor owns the maps. Its close() frees them only once of() has set
+            // isOpen=true; before that it is a no-op. Safe only because the maps use openOnInit=false
+            // and hold no native backing until of() calls reopen(), so this pre-of() window has
+            // nothing to leak. Switching these maps to openOnInit=true would require close() to free
+            // them unconditionally, or this path leaks.
             cursorOwnsMaps = true;
             this.columnIndex = columnIndex;
             this.toleranceInterval = toleranceInterval;
