@@ -334,6 +334,281 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
         });
     }
 
+    // Regression: a pre-first-refresh backfill must survive a server restart even when max(base_ts)
+    // later retreats into the backfilled row's [R, R+LIMIT) window (see the in-memory variant
+    // testMatViewBackfillFrontierSurvivesBaseRetreatBeforeFirstRefresh in MatViewTest).
+    //
+    // Here max(base_ts) lands BETWEEN R and R+LIMIT after the drop, so REPLACE_RANGE.hi WOULD cover R
+    // if the boundary retreated. max(view_ts) cannot protect R because R IS the view's max (it is the
+    // only row), so the protection rests entirely on the backfillFrontier. Before the fix the frontier
+    // was in-memory only and reset to Long.MIN_VALUE on restart, letting the boundary slide back over R
+    // and a FULL refresh silently wipe it. The fix persists the frontier to the _mv.s state file (block
+    // type MAT_VIEW_STATE_FORMAT_EXTRA_FROZEN_MSG_TYPE) on the backfill apply path and restores it on
+    // restart, so the boundary stays pinned and R survives.
+    //
+    // The control variant testBackfillSurvivesBaseRetreatWithoutRestart runs the same sequence WITHOUT
+    // the restart; both must now agree that R survives.
+    @Test
+    public void testBackfillSurvivesBaseRetreatAcrossRestart() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final TestMicroClock testClock = new TestMicroClock(parseFloorPartialTimestamp("2024-09-12T00:00:00.000000Z"));
+
+            // The frontier is advanced on the WAL apply path (reconstructBackfillFrontier) to the
+            // minimal protective anchor for the backfilled row: bucketEnd + LIMIT. R = 09-10T18:00
+            // (1h bucket end 09-10T19:00) + 2 days = 09-12T19:00. (The commit-time validator no
+            // longer advances it -- see testMatViewBackfillFrontierAdvancesOnApplyNotCommit.)
+            final long expectedFrontier = timestampType.getDriver().parseFloorLiteral("2024-09-12T19:00:00.000000Z");
+
+            try (final TestServerMain main1 = startMainPortsDisabled(testClock)) {
+                executeWithRewriteTimestamp(main1);
+
+                // THREE base rows; 09-12T12:00 is the intermediate row that becomes base_max after
+                // we drop 09-13.
+                execute(
+                        main1,
+                        "insert into base_price values('a', 5.0, '2024-09-10T12:00')" +
+                                ",('a', 7.0, '2024-09-12T12:00')" +
+                                ",('a', 9.0, '2024-09-13T12:00')"
+                );
+                execute(
+                        main1,
+                        "create materialized view price_1h refresh manual deferred as " +
+                                "select sym, last(price) as price, ts from base_price sample by 1h;"
+                );
+                execute(main1, "alter materialized view price_1h set refresh limit 2 days;");
+                drainWalQueue(main1.getEngine());
+
+                final TableToken viewToken = main1.getEngine().getTableTokenIfExists("price_1h");
+                Assert.assertNotNull(viewToken);
+                final MatViewState viewState = main1.getEngine().getMatViewStateStore().getViewState(viewToken);
+                Assert.assertNotNull(viewState);
+
+                // Pre-first-refresh window: do NOT refresh. Wall clock 09-13T12:30.
+                // anchor = min(max(base)=09-13T12:00, now) = 09-13T12:00; boundary = 09-11T12:00.
+                // Backfill R = 09-10T18:00 < 09-11T12:00 -> ACCEPTED (frozen). The apply path then
+                // records backfillFrontier = bucketEnd(09-10T19:00) + LIMIT(2d) = 09-12T19:00, the
+                // minimal anchor that keeps R frozen (boundary stays at-or-above R's bucket end).
+                testClock.micros.set(parseFloorPartialTimestamp("2024-09-13T12:30:00.000000Z"));
+                execute(main1, "insert into price_1h values('a', 1.0, '2024-09-10T18:00')");
+                drainWalQueue(main1.getEngine());
+
+                // R is present, and the frontier was recorded, BEFORE the restart.
+                assertSql(
+                        main1,
+                        replaceExpectedTimestamp("""
+                                sym\tprice\tts
+                                a\t1.0\t2024-09-10T18:00:00.000000Z
+                                """),
+                        "price_1h order by ts"
+                );
+                Assert.assertEquals(expectedFrontier, viewState.getBackfillFrontier());
+            }
+
+            // RESTART. The frontier is persisted to _mv.s and must be restored (no longer MIN_VALUE).
+            try (final TestServerMain main2 = startMainPortsDisabled(testClock)) {
+                final TableToken viewToken = main2.getEngine().getTableTokenIfExists("price_1h");
+                Assert.assertNotNull(viewToken);
+                final MatViewState viewState = main2.getEngine().getMatViewStateStore().getViewState(viewToken);
+                Assert.assertNotNull(viewState);
+                Assert.assertEquals("backfill frontier must be restored from _mv.s on restart", expectedFrontier, viewState.getBackfillFrontier());
+
+                // R is still present after restart (it lives in the view table on disk).
+                assertSql(
+                        main2,
+                        replaceExpectedTimestamp("""
+                                sym\tprice\tts
+                                a\t1.0\t2024-09-10T18:00:00.000000Z
+                                """),
+                        "price_1h order by ts"
+                );
+
+                // Drop 09-13 so max(base_ts) retreats to 09-12T12:00, which sits BETWEEN
+                // R=09-10T18:00 and R+2d=09-12T18:00.
+                execute(main2, "alter table base_price drop partition list '2024-09-13'");
+                drainWalQueue(main2.getEngine());
+
+                try (MatViewRefreshJob refreshJob = createMatViewRefreshJob(main2.getEngine())) {
+                    execute(main2, "refresh materialized view price_1h full;");
+                    drainWalAndMatViewQueues(refreshJob, main2.getEngine());
+                }
+
+                // VERDICT: R SURVIVES. The restored frontier (09-13T12:00) pins the refresh anchor, so
+                // boundary = 09-11T12:00 stays ABOVE R=09-10T18:00; the REPLACE_RANGE never reaches R.
+                // 09-12 is recomputed from base; 09-13 is gone (its base partition was dropped). Crucially,
+                // NO base-derived row appears at 09-10T12:00 -- that would mean the boundary retreated and
+                // wiped the user's backfill.
+                assertSql(
+                        main2,
+                        replaceExpectedTimestamp("""
+                                sym\tprice\tts
+                                a\t1.0\t2024-09-10T18:00:00.000000Z
+                                a\t7.0\t2024-09-12T12:00:00.000000Z
+                                """),
+                        "price_1h order by ts"
+                );
+            }
+        });
+    }
+
+    // Crash-replay path: a backfill committed to the WAL but NOT yet applied (so the validator's
+    // in-memory frontier advance is lost on restart AND _mv.s was never updated) must have its
+    // frontier RECONSTRUCTED when the WAL is replayed on restart. This is the same code path a
+    // replica hits applying replicated backfills. The reload harness no-ops the WAL apply job, so
+    // leaving out drainWalQueue() before closing main1 faithfully simulates a crash between commit
+    // and apply. After restart the frontier starts at MIN (nothing persisted), and the replay must
+    // bring it back so the backfill survives a subsequent base-retreat + FULL refresh.
+    @Test
+    public void testBackfillFrontierReconstructedOnReplay() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final TestMicroClock testClock = new TestMicroClock(parseFloorPartialTimestamp("2024-09-12T00:00:00.000000Z"));
+
+            try (final TestServerMain main1 = startMainPortsDisabled(testClock)) {
+                executeWithRewriteTimestamp(main1);
+                execute(
+                        main1,
+                        "insert into base_price values('a', 5.0, '2024-09-10T12:00')" +
+                                ",('a', 7.0, '2024-09-12T12:00')" +
+                                ",('a', 9.0, '2024-09-13T12:00')"
+                );
+                execute(
+                        main1,
+                        "create materialized view price_1h refresh manual deferred as " +
+                                "select sym, last(price) as price, ts from base_price sample by 1h;"
+                );
+                execute(main1, "alter materialized view price_1h set refresh limit 2 days;");
+                drainWalQueue(main1.getEngine());
+
+                // Backfill R = 09-10T18:00 (frozen below the 09-11T12:00 boundary). The INSERT commits
+                // to the WAL (validator accepts, advances main1's in-memory frontier) but we deliberately
+                // DO NOT drainWalQueue -> the txn is never applied, so _mv.s is never updated. Closing
+                // main1 here = a crash between commit and apply.
+                testClock.micros.set(parseFloorPartialTimestamp("2024-09-13T12:30:00.000000Z"));
+                execute(main1, "insert into price_1h values('a', 1.0, '2024-09-10T18:00')");
+                // no drainWalQueue: simulate crash before apply
+            }
+
+            try (final TestServerMain main2 = startMainPortsDisabled(testClock)) {
+                final TableToken viewToken = main2.getEngine().getTableTokenIfExists("price_1h");
+                Assert.assertNotNull(viewToken);
+                final MatViewState viewState = main2.getEngine().getMatViewStateStore().getViewState(viewToken);
+                Assert.assertNotNull(viewState);
+
+                // Nothing was applied/persisted before the crash, so the frontier starts unset.
+                Assert.assertEquals("frontier must be unset before replay", Long.MIN_VALUE, viewState.getBackfillFrontier());
+
+                // Replay the pending WAL: this applies the backfill and must reconstruct the frontier
+                // from the applied txn (the validator does not run on replay).
+                drainWalQueue(main2.getEngine());
+                Assert.assertTrue(
+                        "frontier must be reconstructed from the replayed backfill",
+                        viewState.getBackfillFrontier() != Long.MIN_VALUE
+                );
+
+                // The backfilled row is now in the view.
+                assertSql(
+                        main2,
+                        replaceExpectedTimestamp("""
+                                sym\tprice\tts
+                                a\t1.0\t2024-09-10T18:00:00.000000Z
+                                """),
+                        "price_1h order by ts"
+                );
+
+                // Retreat max(base_ts) into [R, R+LIMIT) and FULL-refresh. Without the reconstructed
+                // frontier the boundary would slide back over R and wipe it.
+                execute(main2, "alter table base_price drop partition list '2024-09-13'");
+                drainWalQueue(main2.getEngine());
+                try (MatViewRefreshJob refreshJob = createMatViewRefreshJob(main2.getEngine())) {
+                    execute(main2, "refresh materialized view price_1h full;");
+                    drainWalAndMatViewQueues(refreshJob, main2.getEngine());
+                }
+
+                // R survives.
+                assertSql(
+                        main2,
+                        replaceExpectedTimestamp("""
+                                sym\tprice\tts
+                                a\t1.0\t2024-09-10T18:00:00.000000Z
+                                a\t7.0\t2024-09-12T12:00:00.000000Z
+                                """),
+                        "price_1h order by ts"
+                );
+            }
+        });
+    }
+
+    // Control: identical sequence to testBackfillSurvivesBaseRetreatAcrossRestart but with NO restart,
+    // so the in-memory backfillFrontier stays alive. R must survive here too -- the across-restart test
+    // proves the persisted frontier reproduces this same outcome after a reload.
+    @Test
+    public void testBackfillSurvivesBaseRetreatWithoutRestart() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final TestMicroClock testClock = new TestMicroClock(parseFloorPartialTimestamp("2024-09-12T00:00:00.000000Z"));
+            // Apply-path frontier = bucketEnd(09-10T19:00) + LIMIT(2d) = 09-12T19:00 (the minimal
+            // anchor that keeps R frozen); the commit-time validator no longer advances it.
+            final long expectedFrontier = timestampType.getDriver().parseFloorLiteral("2024-09-12T19:00:00.000000Z");
+
+            try (final TestServerMain main1 = startMainPortsDisabled(testClock)) {
+                executeWithRewriteTimestamp(main1);
+
+                execute(
+                        main1,
+                        "insert into base_price values('a', 5.0, '2024-09-10T12:00')" +
+                                ",('a', 7.0, '2024-09-12T12:00')" +
+                                ",('a', 9.0, '2024-09-13T12:00')"
+                );
+                execute(
+                        main1,
+                        "create materialized view price_1h refresh manual deferred as " +
+                                "select sym, last(price) as price, ts from base_price sample by 1h;"
+                );
+                execute(main1, "alter materialized view price_1h set refresh limit 2 days;");
+                drainWalQueue(main1.getEngine());
+
+                final TableToken viewToken = main1.getEngine().getTableTokenIfExists("price_1h");
+                Assert.assertNotNull(viewToken);
+                final MatViewState viewState = main1.getEngine().getMatViewStateStore().getViewState(viewToken);
+                Assert.assertNotNull(viewState);
+
+                testClock.micros.set(parseFloorPartialTimestamp("2024-09-13T12:30:00.000000Z"));
+                execute(main1, "insert into price_1h values('a', 1.0, '2024-09-10T18:00')");
+                drainWalQueue(main1.getEngine());
+
+                assertSql(
+                        main1,
+                        replaceExpectedTimestamp("""
+                                sym\tprice\tts
+                                a\t1.0\t2024-09-10T18:00:00.000000Z
+                                """),
+                        "price_1h order by ts"
+                );
+                Assert.assertEquals(expectedFrontier, viewState.getBackfillFrontier());
+
+                // Drop 09-13; frontier stays alive in memory (no restart).
+                execute(main1, "alter table base_price drop partition list '2024-09-13'");
+                drainWalQueue(main1.getEngine());
+                Assert.assertEquals(expectedFrontier, viewState.getBackfillFrontier());
+
+                try (MatViewRefreshJob refreshJob = createMatViewRefreshJob(main1.getEngine())) {
+                    execute(main1, "refresh materialized view price_1h full;");
+                    drainWalAndMatViewQueues(refreshJob, main1.getEngine());
+                }
+
+                // R survives: the live frontier (09-13T12:00) pins the anchor, boundary stays at
+                // 09-11T12:00, REPLACE_RANGE never reaches R.
+                assertSql(
+                        main1,
+                        replaceExpectedTimestamp("""
+                                sym\tprice\tts
+                                a\t1.0\t2024-09-10T18:00:00.000000Z
+                                a\t7.0\t2024-09-12T12:00:00.000000Z
+                                """),
+                        "price_1h order by ts"
+                );
+            }
+        });
+    }
+
     @Test
     public void testMatViewsRefreshIntervalsReloadOnServerStart() throws Exception {
         TestUtils.assertMemoryLeak(() -> {

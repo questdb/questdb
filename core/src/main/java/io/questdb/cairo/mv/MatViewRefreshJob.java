@@ -437,6 +437,15 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     commitPeriodHi
             );
         }
+        // Publish the staged frozen-zone boundary floor only after the
+        // REPLACE_RANGE commit and view-state success update have landed. The
+        // backfill validator's min(own, published) invariant relies on the
+        // published floor corresponding to actual committed coverage; an orphan
+        // floor from a refresh that aborted pre-commit would clamp the validator
+        // to a region no REPLACE_RANGE covers.
+        if (refreshContext.pendingFrozenBoundaryFloor != Numbers.LONG_NULL) {
+            viewState.setLastRefreshFrozenBoundaryFloor(refreshContext.pendingFrozenBoundaryFloor);
+        }
     }
 
     // The automatic refresh job runs on a worker pool an in-place primary-to-replica demote never halts:
@@ -670,10 +679,76 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             // Check if refresh limit should be applied.
             final int refreshLimitHoursOrMonths = viewDefinition.getRefreshLimitHoursOrMonths();
             if (refreshLimitHoursOrMonths != 0) {
-                if (refreshLimitHoursOrMonths > 0) { // hours
-                    minTs = Math.max(minTs, now - driver.fromHours(refreshLimitHoursOrMonths));
-                } else { // months
-                    minTs = Math.max(minTs, driver.addMonths(now, refreshLimitHoursOrMonths));
+                // Anchor the boundary on the high-water mark of the data frontier,
+                // max(max(base_ts), max(view_ts), backfillFrontier), then cap by `now`.
+                // max(view_ts) is the newest bucket the view has ever materialised; when the
+                // latest base partition is dropped (or a re-ingestion lowers max(base_ts)),
+                // max(base_ts) retreats but those view buckets stay put (orphans), so
+                // max(view_ts) preserves the frontier and the boundary cannot retreat below it
+                // and let a FULL refresh wipe frozen backfill. The frontier is monotonic
+                // because max(view_ts) never goes backwards: a refresh adds higher buckets as
+                // data grows and leaves older ones in place. (Routine TTL drops the OLDEST base
+                // partitions and lowers min(base_ts), not max, so it never moves the boundary.)
+                // backfillFrontier extends the same idea to user backfill accepted BEFORE the
+                // first refresh: the backfilled row is older than max(view_ts) so max(view_ts)
+                // cannot protect it, but the validator records the anchor it accepted against
+                // (see MatViewState.advanceBackfillFrontier) and folding it in here keeps the
+                // boundary from retreating over it. The first refresh of an empty view with no
+                // backfill sees all three = MIN_VALUE and just uses max(base_ts) -- there is no
+                // frozen data to preserve yet. Capping by `now` keeps a stale-ingestion gap or
+                // future-dated base data from pushing the boundary past the present. The
+                // wall-clock escape hatch restores the pre-frozen-zone anchor (wall clock only).
+                final long boundaryAnchor;
+                if (configuration.isMatViewRefreshLimitWallClockEnabled()) {
+                    boundaryAnchor = now;
+                } else {
+                    long frontier = baseTableReader.getMaxTimestamp();
+                    try (TableReader viewReader = engine.getReader(viewToken)) {
+                        final long viewMaxTs = viewReader.getMaxTimestamp();
+                        if (viewMaxTs != Long.MIN_VALUE && (frontier == Long.MIN_VALUE || viewMaxTs > frontier)) {
+                            frontier = viewMaxTs;
+                        }
+                    }
+                    // Fold in the backfill frontier: the largest anchor any accepted user
+                    // backfill was validated against (see MatViewState.advanceBackfillFrontier).
+                    // A backfilled row is older than max(view_ts), so max(view_ts) cannot keep
+                    // the boundary from retreating over it after a max(base_ts) drop; this can.
+                    final long backfillFrontier = viewState.getBackfillFrontier();
+                    if (backfillFrontier != Long.MIN_VALUE && (frontier == Long.MIN_VALUE || backfillFrontier > frontier)) {
+                        frontier = backfillFrontier;
+                    }
+                    // Empty base AND empty view both report Long.MIN_VALUE; fall back to now to avoid underflow.
+                    boundaryAnchor = frontier == Long.MIN_VALUE ? now : Math.min(frontier, now);
+                }
+                // The interval iterators snap minTs down to the containing bucket floor
+                // (FixedOffsetIntervalIterator.ofCommon and TimeZoneIntervalIterator.of),
+                // so refresh always processes whole buckets even when the boundary lands
+                // mid-bucket. The backfill validator (separate layer) replicates the same
+                // snap so the managed/frozen split is bucket-aligned on both sides.
+                // boundaryFromAnchor saturates to Long.MIN_VALUE on overflow (absurd limit)
+                // instead of using a wrapped boundary -- see MatViewBackfillValidator. The
+                // boundary is already non-retreating: the anchor above folds in max(view_ts)
+                // and backfillFrontier, both monotonic, so round(rawBoundary) only ever
+                // advances as the view materialises or accepts backfill. An EXTEND/SHRINK of
+                // the limit is absorbed by the validator's min(own, published) clamp, so no
+                // extra monotonic floor clamp is needed here -- and adding one would wrongly
+                // pin the boundary across an EXTEND (which must move it down).
+                final long rawBoundary = MatViewBackfillValidator.boundaryFromAnchor(driver, boundaryAnchor, refreshLimitHoursOrMonths);
+                minTs = Math.max(minTs, rawBoundary);
+                // Stage the snapped REPLACE_RANGE.lo on the refresh context. The backfill
+                // validator and materialized_views().backfill_max_ts clamp their accepted
+                // floor to min(own, published) so user backfill sits strictly below it and
+                // survives subsequent REPLACE_RANGE commits even when ALTER SET REFRESH LIMIT
+                // changes the current LIMIT between this publish and the user commit.
+                // commitMatView publishes the staged floor only after the REPLACE_RANGE
+                // commit lands, so a refresh that aborts pre-commit never leaves an orphan
+                // floor that does not correspond to actual REPLACE_RANGE coverage.
+                // Publish the floor on the SAME tz-aware grid the validator and REPLACE_RANGE use
+                // (createBucketSampler mirrors intervalIterator), so the validator's
+                // min(own, published) clamp is consistent for ALIGN TO CALENDAR TIME ZONE views.
+                final TimestampSampler publishSampler = MatViewBackfillValidator.createBucketSampler(viewDefinition);
+                if (publishSampler != null) {
+                    refreshContext.pendingFrozenBoundaryFloor = publishSampler.round(rawBoundary);
                 }
                 intersectIntervals(refreshIntervals, minTs, Long.MAX_VALUE);
             }
@@ -786,7 +861,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             }
 
             // Steps:
-            // - truncate view
+            // - truncate view (only when no REFRESH LIMIT is set)
             // - compile view and insert as select on all base table partitions
             // - write the result set to WAL (or directly to table writer O3 area)
             // - apply resulting commit
@@ -798,7 +873,20 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 engine.detachReader(baseTableReader);
                 refreshSqlExecutionContext.of(baseTableReader);
                 try {
-                    fencedMatViewCommit(walWriter::truncateSoft);
+                    // With REFRESH LIMIT set, FULL preserves the frozen zone: the
+                    // per-interval REPLACE_RANGE commits inside insertAsSelect rewrite
+                    // managed-zone buckets atomically while rows below the boundary stay
+                    // put. Without REFRESH LIMIT there is no frozen zone, so the legacy
+                    // wipe-then-reinsert is safe and avoids leaving orphan managed-zone
+                    // buckets when base data has gone missing. The escape-hatch config
+                    // also forces the legacy truncate so the whole frozen-zone feature
+                    // reverts together. Users who want to discard the frozen-zone backfill
+                    // on a view with REFRESH LIMIT set should DROP and recreate the view.
+                    if (viewDefinition.getRefreshLimitHoursOrMonths() == 0
+                            || configuration.isMatViewRefreshLimitWallClockEnabled()) {
+                        fencedMatViewCommit(walWriter::truncateSoft);
+                    }
+
                     resetInvalidState(viewState, walWriter);
 
                     final RefreshContext refreshContext = findRefreshIntervals(baseTableReader, viewDefinition, viewState, walWriter, Numbers.LONG_NULL);
@@ -2408,6 +2496,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         public boolean hasTruncateBarrier;
         public SampleByIntervalIterator intervalIterator;
         public long naturalStep;
+        // Snapped REPLACE_RANGE.lo computed by findRefreshIntervals, staged for
+        // publish via MatViewState.setLastRefreshFrozenBoundaryFloor only after
+        // the REPLACE_RANGE commit actually lands. Publishing pre-commit would
+        // leave the validator clamped to a floor that no REPLACE_RANGE covers if
+        // the refresh aborts mid-flight.
+        public long pendingFrozenBoundaryFloor = Numbers.LONG_NULL;
         public long periodHi = Numbers.LONG_NULL;
         // Reference to the live refresh intervals list owned by the iterator.
         // Held here so the retry path can recompute stepPerInterval after
@@ -2422,6 +2516,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             hasTruncateBarrier = false;
             intervalIterator = null;
             naturalStep = 0;
+            pendingFrozenBoundaryFloor = Numbers.LONG_NULL;
             periodHi = Numbers.LONG_NULL;
             refreshIntervals = null;
             stepPerInterval.clear();

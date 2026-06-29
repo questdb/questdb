@@ -161,6 +161,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     private long lastReplaceRangeLowTs = 0;
     private long lastTxnMaxTimestamp = -1;
     private byte lastTxnType = WalTxnType.DATA;
+    private @Nullable WalPreCommitValidator preCommitValidator;
     private long segmentRowCount = -1;
     private long totalSegmentsRowCount;
     private long totalSegmentsSize;
@@ -531,6 +532,19 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     public void rollback() {
         throwIfInColumnarWrite("rollback");
         rollback0();
+    }
+
+    /**
+     * Install an optional pre-commit validator that is consulted before every
+     * commit on this writer. A {@code null} value clears the validator. Setting
+     * a validator a second time replaces the previous one. The validator runs
+     * before the txn is sealed, so a rejection (CairoException) leaves the
+     * writer in a clean post-rollback state.
+     * <p>
+     * The WAL pool wires this up once per tenant when the table is a mat view.
+     */
+    public void setPreCommitValidator(@Nullable WalPreCommitValidator validator) {
+        this.preCommitValidator = validator;
     }
 
     protected final void cleanupBeforeClose() {
@@ -946,6 +960,35 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     ) {
         checkDistressed();
         throwIfInColumnarWrite("commit");
+        // Pre-commit validator runs before the txn is sealed so a CairoException
+        // rejection lands the writer in the same state it would be in after a
+        // user-initiated rollback. Mat-view writers carry one to enforce the
+        // bucket-whole rule on user backfill; everyone else has preCommitValidator
+        // == null and pays no cost.
+        //
+        // A CairoException is the sanctioned reject channel: we roll the txn back and
+        // rethrow, leaving the writer healthy and reusable. Any other Throwable is treated
+        // as an internal validator fault -- the writer is marked distressed first, so the
+        // pool expels this tenant and the next acquisition starts clean; rollback0() then
+        // short-circuits (it no-ops once distressed) since a distressed writer's segment is
+        // truncated on close anyway. Either way, if rollback itself throws, the original
+        // cause is preserved via addSuppressed so the validator's rejection is not lost in
+        // diagnostics.
+        if (preCommitValidator != null) {
+            try {
+                preCommitValidator.validate(txnType, dedupMode, txnMinTimestamp, txnMaxTimestamp);
+            } catch (Throwable ex) {
+                if (!(ex instanceof CairoException)) {
+                    distressed = true;
+                }
+                try {
+                    rollback0();
+                } catch (Throwable rollbackEx) {
+                    ex.addSuppressed(rollbackEx);
+                }
+                throw ex;
+            }
+        }
         try {
             if (inTransaction() || dedupMode == WAL_DEDUP_MODE_REPLACE_RANGE) {
                 final long txnRowCount = getUncommittedRowCount();

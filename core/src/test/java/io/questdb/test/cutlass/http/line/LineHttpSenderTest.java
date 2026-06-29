@@ -144,6 +144,84 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testIlpHttpBackfillIntoMatViewRespectsRefreshLimitGate() throws Exception {
+        // Integration coverage for the ILP-over-HTTP ingestion gate
+        // (LineHttpTudCache.getOrCreateTable + engine.isBackfillableMatView):
+        // a frozen-zone backfill into a mat view with REFRESH LIMIT set is accepted
+        // end-to-end (gate opens, commit-time validator accepts, row applies), while
+        // a mat view without REFRESH LIMIT is rejected.
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.CAIRO_MAT_VIEW_ENABLED.getEnvVarName(), "true"
+            )) {
+                final CairoEngine engine = serverMain.getEngine();
+                serverMain.execute("create table base_price (sym symbol, price double, ts timestamp) timestamp(ts) partition by DAY WAL");
+                serverMain.execute("insert into base_price values('gbpusd', 1.0, '2024-09-10T12:00')");
+                serverMain.awaitTxn("base_price", 1);
+                serverMain.execute("create materialized view price_1h refresh manual deferred as " +
+                        "select sym, last(price) price, ts from base_price sample by 1h");
+                serverMain.execute("alter materialized view price_1h set refresh limit 1 hour");
+                serverMain.execute("create materialized view price_nolimit refresh manual deferred as " +
+                        "select sym, last(price) price, ts from base_price sample by 1h");
+
+                // Wait for SET REFRESH LIMIT to apply so the ingestion gate observes the
+                // limit (number-independent ground-truth poll on the gate's own predicate).
+                final TableToken viewToken = engine.verifyTableName("price_1h");
+                long deadline = System.currentTimeMillis() + 30_000;
+                while (!engine.isBackfillableMatView(viewToken) && System.currentTimeMillis() < deadline) {
+                    Os.sleep(5);
+                }
+                Assert.assertTrue("SET REFRESH LIMIT did not apply in time", engine.isBackfillableMatView(viewToken));
+
+                int port = serverMain.getHttpServerPort();
+
+                // Frozen-zone backfill (09:00; base max 12:00, limit 1h -> boundary 11:00)
+                // must be ACCEPTED: the ILP HTTP gate opens for the backfillable mat view.
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP).address("localhost:" + port).build()) {
+                    sender.table("price_1h")
+                            .symbol("sym", "gbpusd")
+                            .doubleColumn("price", 9.99)
+                            .at(parseFloorPartialTimestamp("2024-09-10T09:00"), ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                // Poll until the backfilled row applies (apply is async on the worker pool).
+                deadline = System.currentTimeMillis() + 30_000;
+                AssertionError lastError = null;
+                while (System.currentTimeMillis() < deadline) {
+                    try {
+                        serverMain.assertSql(
+                                "select sym, price, ts from price_1h",
+                                "sym\tprice\tts\n" +
+                                        "gbpusd\t9.99\t2024-09-10T09:00:00.000000Z\n"
+                        );
+                        lastError = null;
+                        break;
+                    } catch (AssertionError e) {
+                        lastError = e;
+                        Os.sleep(20);
+                    }
+                }
+                if (lastError != null) {
+                    throw lastError;
+                }
+
+                // A mat view WITHOUT REFRESH LIMIT is not backfillable: the ILP HTTP gate
+                // rejects, surfacing the "cannot modify materialized view" error.
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP).address("localhost:" + port).build()) {
+                    sender.table("price_nolimit")
+                            .symbol("sym", "gbpusd")
+                            .doubleColumn("price", 1.0)
+                            .at(parseFloorPartialTimestamp("2024-09-10T09:00"), ChronoUnit.MICROS);
+                    sender.flush();
+                    Assert.fail("expected ILP rejection for a non-backfillable mat view");
+                } catch (LineSenderException e) {
+                    TestUtils.assertContains(e.getMessage(), "materialized view");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testAppendErrors() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(

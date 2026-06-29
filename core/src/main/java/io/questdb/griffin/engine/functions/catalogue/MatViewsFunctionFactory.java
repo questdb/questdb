@@ -30,9 +30,12 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.file.BlockFileReader;
+import io.questdb.cairo.mv.MatViewBackfillValidator;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateReader;
@@ -43,17 +46,20 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
+import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 
@@ -120,6 +126,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
         private static final int COLUMN_REFRESH_AVG_SCAN_SAMPLE_NANOS = COLUMN_REFRESH_AVG_COMMIT_NANOS + 1;
         private static final int COLUMN_REFRESH_AVG_SCAN_RANGE_TS_UNITS = COLUMN_REFRESH_AVG_SCAN_SAMPLE_NANOS + 1;
         private static final int COLUMN_REFRESH_GAP_THRESHOLD_TS_UNITS = COLUMN_REFRESH_AVG_SCAN_RANGE_TS_UNITS + 1;
+        private static final int COLUMN_BACKFILL_MAX_TS = COLUMN_REFRESH_GAP_THRESHOLD_TS_UNITS + 1;
         private static final RecordMetadata METADATA;
         private final ViewsListCursor cursor;
 
@@ -162,6 +169,23 @@ public class MatViewsFunctionFactory implements FunctionFactory {
             private final BlockFileReader viewStateFileReader;
             private final MatViewStateReader viewStateReader = new MatViewStateReader();
             private final ObjList<TableToken> viewTokens = new ObjList<>();
+            // Sampler reused across rows when the sampling interval/unit AND
+            // the base timestamp driver all match the previous view. Driver
+            // must be in the key because TimestampSampler is driver-bound:
+            // a MICROS sampler returned for view A would mis-round NANOS
+            // timestamps from view B even when (interval, unit) match.
+            private TimestampSampler cachedSampler;
+            private TimestampDriver cachedSamplerDriver;
+            private long cachedSamplerFixedOffset = Long.MIN_VALUE;
+            private long cachedSamplerInterval = Long.MIN_VALUE;
+            private TimeZoneRules cachedSamplerTzRules;
+            private char cachedSamplerUnit;
+            // max(base_ts) memoized across rows keyed by (base token, base writer txn) so
+            // many views sharing a base table open the base reader once per cursor pass
+            // instead of once per row. Long.MIN_VALUE means empty/unreadable base.
+            private long cachedBaseMaxTs = Long.MIN_VALUE;
+            private TableToken cachedBaseMaxTsToken;
+            private long cachedBaseMaxTsTxn = Long.MIN_VALUE;
             private SqlExecutionCircuitBreaker circuitBreaker;
             private int viewIndex = 0;
 
@@ -252,6 +276,69 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         // deferred after a transient "table busy" or out-of-memory error.
                         final boolean retrying = state != null && state.getRefreshRetryAfterMicros() != Numbers.LONG_NULL;
 
+                        // backfill_max_ts is a snapshot of the frozen-zone cutoff in
+                        // the base table's timestamp units; convert to micros for the
+                        // column. LONG_NULL stays LONG_NULL. The helper takes the loaded
+                        // mat-view state (may be null when the engine has not hydrated
+                        // it) so its bound clamps to the last refresh tick's anchor.
+                        // Reuse the sampler across rows whose sampling matches.
+                        // Driver identity is part of the key because samplers are
+                        // driver-bound -- see field comment for the MICROS/NANOS
+                        // mis-rounding hazard.
+                        // Time zone + fixed offset are part of the key: createBucketSampler bakes the
+                        // tz-aware grid in, so two views with the same (driver, interval, unit) but
+                        // different alignment must not share a sampler.
+                        if (cachedSampler == null
+                                || cachedSamplerDriver != viewDefinition.getBaseTableTimestampDriver()
+                                || cachedSamplerInterval != viewDefinition.getSamplingInterval()
+                                || cachedSamplerUnit != viewDefinition.getSamplingIntervalUnit()
+                                || cachedSamplerTzRules != viewDefinition.getTzRules()
+                                || cachedSamplerFixedOffset != viewDefinition.getFixedOffset()) {
+                            cachedSampler = MatViewBackfillValidator.createBucketSampler(viewDefinition);
+                            cachedSamplerDriver = viewDefinition.getBaseTableTimestampDriver();
+                            cachedSamplerInterval = viewDefinition.getSamplingInterval();
+                            cachedSamplerUnit = viewDefinition.getSamplingIntervalUnit();
+                            cachedSamplerTzRules = viewDefinition.getTzRules();
+                            cachedSamplerFixedOffset = viewDefinition.getFixedOffset();
+                        }
+                        // Resolve max(base_ts) once per (base token, txn) and reuse it for
+                        // every view on that base table, so the cursor opens at most one base
+                        // reader per distinct base table per pass rather than one per row.
+                        // Only needed when a frozen-zone cutoff could exist; skip the reader
+                        // open (and the cache) entirely when there is no REFRESH LIMIT or the
+                        // escape-hatch is on.
+                        final boolean frozenZonePossible = cachedSampler != null
+                                && refreshLimitHoursOrMonths != 0
+                                && !configuration.isMatViewRefreshLimitWallClockEnabled();
+                        long baseMaxTs = Long.MIN_VALUE;
+                        if (frozenZonePossible && baseTableToken != null) {
+                            if (baseTableToken == cachedBaseMaxTsToken && lastAppliedBaseTxn == cachedBaseMaxTsTxn) {
+                                baseMaxTs = cachedBaseMaxTs;
+                            } else {
+                                try (TableReader baseReader = engine.getReader(baseTableToken)) {
+                                    baseMaxTs = baseReader.getMaxTimestamp();
+                                } catch (CairoException | TableReferenceOutOfDateException e) {
+                                    baseMaxTs = Long.MIN_VALUE;
+                                    // Mirror the validator's advisory so operators polling backfill_max_ts
+                                    // can spot a persistent base-reader fallback (the column then reflects the
+                                    // wall-clock anchor rather than min(max(base_ts), now)).
+                                    LOG.advisory().$("mat view backfill_max_ts falling back to wall clock; base reader unavailable [view=").$(viewToken)
+                                            .$(", base=").$(baseTableToken)
+                                            .$(", reason=").$safe(e.getMessage())
+                                            .I$();
+                                }
+                                cachedBaseMaxTsToken = baseTableToken;
+                                cachedBaseMaxTsTxn = lastAppliedBaseTxn;
+                                cachedBaseMaxTs = baseMaxTs;
+                            }
+                        }
+                        final long backfillBucketFloor = !frozenZonePossible
+                                ? Numbers.LONG_NULL
+                                : MatViewBackfillValidator.computeFrozenBoundaryBucketFloor(engine, viewDefinition, state, cachedSampler, baseMaxTs);
+                        final long backfillMaxTs = backfillBucketFloor == Numbers.LONG_NULL
+                                ? Numbers.LONG_NULL
+                                : viewDefinition.getBaseTableTimestampDriver().toMicros(backfillBucketFloor);
+
                         record.of(
                                 viewDefinition,
                                 lastRefreshStartTimestamp,
@@ -273,6 +360,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                                 avgScanSampleNanos,
                                 avgScanRangeTsUnits,
                                 commitGapThresholdTsUnits,
+                                backfillMaxTs,
                                 retrying
                         );
                         viewIndex++;
@@ -297,6 +385,13 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                 viewTokens.clear();
                 engine.getMatViewGraph().getViews(viewTokens);
                 viewIndex = 0;
+                // Defensively drop the per-(base token, base txn) max(base_ts) memo on restart.
+                // The cache key already captures freshness (the base writer txn is re-read live
+                // each pass), so this is not required for correctness today, but resetting here
+                // removes the dependency on that reasoning if the key ever changes.
+                cachedBaseMaxTsToken = null;
+                cachedBaseMaxTsTxn = Long.MIN_VALUE;
+                cachedBaseMaxTs = Long.MIN_VALUE;
             }
 
             private static class MatViewsRecord implements Record {
@@ -304,6 +399,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                 private long avgCommitNanos;
                 private long avgScanRangeTsUnits;
                 private long avgScanSampleNanos;
+                private long backfillMaxTs;
                 private long commitGapThresholdTsUnits;
                 private boolean invalid;
                 private long lastAppliedBaseTxn;
@@ -346,6 +442,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         case COLUMN_REFRESH_BASE_TABLE_TXN -> lastRefreshTxn;
                         case COLUMN_APPLIED_BASE_TABLE_TXN -> lastAppliedBaseTxn;
                         case COLUMN_TIMER_START -> timerStart;
+                        case COLUMN_BACKFILL_MAX_TS -> backfillMaxTs;
                         default -> 0;
                     };
                 }
@@ -410,6 +507,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         long avgScanSampleNanos,
                         long avgScanRangeTsUnits,
                         long commitGapThresholdTsUnits,
+                        long backfillMaxTs,
                         boolean retrying
                 ) {
                     this.viewDefinition = viewDefinition;
@@ -433,6 +531,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                     this.avgScanSampleNanos = avgScanSampleNanos;
                     this.avgScanRangeTsUnits = avgScanRangeTsUnits;
                     this.commitGapThresholdTsUnits = commitGapThresholdTsUnits;
+                    this.backfillMaxTs = backfillMaxTs;
                     this.retrying = retrying;
                 }
 
@@ -478,6 +577,11 @@ public class MatViewsFunctionFactory implements FunctionFactory {
             metadata.add(new TableColumnMetadata("refresh_avg_scan_sample_nanos", ColumnType.LONG));
             metadata.add(new TableColumnMetadata("refresh_avg_scan_range_ts_units", ColumnType.LONG));
             metadata.add(new TableColumnMetadata("refresh_gap_threshold_ts_units", ColumnType.LONG));
+            // Snapshot of the current frozen-zone cutoff: rows with ts strictly
+            // less than this value can be backfilled into the view; equal-or-greater
+            // rows fall in or past the managed zone and are rejected at commit.
+            // NULL when REFRESH LIMIT is not set (no frozen zone exists).
+            metadata.add(new TableColumnMetadata("backfill_max_ts", ColumnType.TIMESTAMP_MICRO));
             METADATA = metadata;
         }
     }

@@ -1050,6 +1050,25 @@ public interface CairoConfiguration {
     boolean isMatViewParallelSqlEnabled();
 
     /**
+     * When false (the default), the mat-view REFRESH LIMIT boundary uses
+     * {@code min(maxBaseTimestamp, wallClock) - LIMIT}, so a stale-ingestion
+     * gap on the base table does not move the boundary forward and accidentally
+     * push managed-zone rows into the frozen zone.
+     * <p>
+     * When true, the boundary reverts to the pre-frozen-zone formula
+     * {@code wallClock - LIMIT}. The frozen-zone feature (FULL preserving
+     * older rows, backfill via direct INSERT/COPY/ILP) then reverts to
+     * pre-feature behaviour as well; the flag is a "revert to pre-feature
+     * behaviour" escape hatch, not a "use a different formula" switch.
+     *
+     * @return true if the boundary should use wall-clock only (pre-feature
+     * behaviour), false otherwise (default)
+     */
+    default boolean isMatViewRefreshLimitWallClockEnabled() {
+        return false;
+    }
+
+    /**
      * Returns true if the materialized view with the given name is in the configured refresh block
      * list ({@code cairo.mat.view.refresh.block.list}). Blocked views are skipped by every refresh
      * path; they may still be invalidated by a base-table/parent cascade or an explicit INVALIDATE.
