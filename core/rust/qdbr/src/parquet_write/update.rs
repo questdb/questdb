@@ -780,8 +780,10 @@ impl ParquetUpdater {
         self.reader.seek(SeekFrom::Start(rg_start))?;
         self.reader.read_exact(&mut self.copy_buffer)?;
 
-        // Extract bloom filter bitsets before taking columns.
-        let bloom_bitsets = extract_bloom_bitsets_from_buffer(
+        // Extract bloom filter bitsets before taking columns. These are indexed
+        // in source (pre-drop) column order; the remap loop below moves them into
+        // target order in lockstep with merged_cols.
+        let mut source_bloom_bitsets = extract_bloom_bitsets_from_buffer(
             &self.file_metadata.row_groups[rg_idx],
             &self.copy_buffer,
             rg_start,
@@ -808,9 +810,13 @@ impl ParquetUpdater {
             )
         })?;
 
-        // Merge existing and null column chunks in target schema order.
+        // Merge existing and null column chunks in target schema order. Each
+        // survivor's bloom bitset moves to the same target slot: the bitsets were
+        // extracted in source order, but a DROP COLUMN shifts surviving columns,
+        // and the _pm writer indexes bitsets positionally against target columns.
         let target_col_count = target_fields.len();
         let mut merged_cols: Vec<Option<ColumnChunk>> = vec![None; target_col_count];
+        let mut bloom_bitsets: Vec<Option<Vec<u8>>> = vec![None; target_col_count];
 
         // Take ownership of existing columns — each row group is processed exactly once.
         // NLL allows mutable access here because `old_rg` is no longer used.
@@ -823,6 +829,9 @@ impl ParquetUpdater {
                 let mut col_chunk = col_meta.into_thrift();
                 adjust_column_chunk_offsets(&mut col_chunk, offset_delta);
                 merged_cols[target_pos] = Some(col_chunk);
+                if let Some(bitset) = source_bloom_bitsets.get_mut(old_pos) {
+                    bloom_bitsets[target_pos] = bitset.take();
+                }
             }
             // else: dropped column — skip (dead bytes in raw copy)
         }
@@ -4344,6 +4353,165 @@ mod tests {
         assert_eq!(reader.column_count(), 2);
         assert_eq!(reader.column_descriptor(0).unwrap().id, 10);
         assert_eq!(reader.column_descriptor(1).unwrap().id, 20);
+        Ok(())
+    }
+
+    /// Regression: after a DROP COLUMN shifts the surviving columns,
+    /// copy_row_group_with_null_columns must inline each survivor's OWN bloom
+    /// filter into the _pm sidecar, not its source-order predecessor's. The
+    /// bitsets are extracted in source order but the columns are rewritten in
+    /// target order; without the remap the _pm writer's positional indexing
+    /// attached column a's bloom to b, b's to c, and c's to the bloom-less
+    /// timestamp, so an equality filter probed the wrong column's bloom and
+    /// could silently skip a matching row group. Source [a,b,c,ts] with blooms
+    /// on a/b/c, drop a, then assert the _pm carries b's and c's own blooms at
+    /// their new positions and no bloom on ts.
+    #[test]
+    fn copy_row_group_with_null_columns_remaps_bloom_to_target_order() -> Result<(), Box<dyn Error>>
+    {
+        use crate::allocator::TestAllocatorState;
+        use crate::parquet_metadata::reader::ParquetMetaReader;
+        use parquet2::metadata::SortingColumn;
+        use std::io::Read as _;
+
+        // Distinct value ranges make the three blooms distinct, so a
+        // misattributed bloom is caught by an exact byte comparison.
+        let a: Vec<i32> = (1000..1016).collect();
+        let b: Vec<i32> = (2000..2016).collect();
+        let c: Vec<i32> = (3000..3016).collect();
+        let ts: Vec<i64> = (1..17).collect();
+        let src_partition = Partition {
+            table: "t".to_string(),
+            columns: vec![
+                make_column_with_id(10, "a", ColumnTypeTag::Int.into_type(), &a),
+                make_column_with_id(11, "b", ColumnTypeTag::Int.into_type(), &b),
+                make_column_with_id(12, "c", ColumnTypeTag::Int.into_type(), &c),
+                make_designated_ts_with_id(0, "ts", &ts),
+            ],
+        };
+        let mut bloom_cols = HashSet::new();
+        bloom_cols.insert(0);
+        bloom_cols.insert(1);
+        bloom_cols.insert(2);
+        let src = NamedTempFile::new()?;
+        ParquetWriter::new(src.reopen()?)
+            .with_statistics(true)
+            .with_sorting_columns(Some(vec![SortingColumn::new(3, false, false)]))
+            .with_bloom_filter_columns(bloom_cols)
+            .finish(src_partition)?;
+        let src_len = src.as_file().metadata()?.len();
+
+        // The raw copy preserves each column's bloom bytes verbatim, so the
+        // source data-file blooms are the expected _pm blooms for the survivors.
+        let mut src_bytes = Vec::new();
+        src.reopen()?.read_to_end(&mut src_bytes)?;
+        let src_md =
+            read_metadata_with_size(&mut Cursor::new(&src_bytes[..]), src_bytes.len() as u64)?;
+        let src_rg = &src_md.row_groups[0];
+        assert!(
+            src_rg.columns()[3].metadata().bloom_filter_offset.is_none(),
+            "ts must carry no source bloom"
+        );
+        let bloom_a =
+            parquet2::bloom_filter::read_from_slice(&src_rg.columns()[0], &src_bytes)?.to_vec();
+        let bloom_b =
+            parquet2::bloom_filter::read_from_slice(&src_rg.columns()[1], &src_bytes)?.to_vec();
+        let bloom_c =
+            parquet2::bloom_filter::read_from_slice(&src_rg.columns()[2], &src_bytes)?.to_vec();
+        assert_ne!(
+            bloom_a, bloom_b,
+            "distinct values must yield distinct blooms"
+        );
+        assert_ne!(
+            bloom_b, bloom_c,
+            "distinct values must yield distinct blooms"
+        );
+
+        // Rewrite dropping `a`: survivors b, c, ts each shift down one position.
+        let out = NamedTempFile::new()?;
+        let pm = NamedTempFile::new()?;
+        let alloc = TestAllocatorState::new();
+        let mut updater = super::ParquetUpdater::new(
+            alloc.allocator(),
+            src.reopen()?,
+            src_len,
+            out.reopen()?,
+            0, // rewrite
+            Some(vec![SortingColumn::new(3, false, false)]),
+            true,
+            false,
+            CompressionOptions::Uncompressed,
+            None,
+            None,
+            DEFAULT_BLOOM_FILTER_FPP,
+            0.0,
+            Some(pm.reopen()?),
+            0,
+            0,
+            -1,
+        )?;
+        let target = Partition {
+            table: "t".to_string(),
+            columns: vec![
+                make_column_with_id(11, "b", ColumnTypeTag::Int.into_type(), &b),
+                make_column_with_id(12, "c", ColumnTypeTag::Int.into_type(), &c),
+                make_designated_ts_with_id(0, "ts", &ts),
+            ],
+        };
+        updater.set_target_schema(&target)?;
+        updater.copy_row_group_with_null_columns(0, &[])?;
+        updater.end(None)?;
+
+        // Post-fix only b (target 0) and c (target 1) carry blooms; pre-fix the
+        // shift also inlined a stray bloom onto ts (target 2).
+        let pm_size = updater.result_parquet_meta_size();
+        let mut pm_bytes = Vec::new();
+        pm.reopen()?.read_to_end(&mut pm_bytes)?;
+        let reader = ParquetMetaReader::from_file_size(&pm_bytes, pm_size as u64).unwrap();
+        assert_eq!(
+            reader.bloom_filter_columns(),
+            vec![0, 1],
+            "only the two surviving bloomed columns may carry a _pm bloom"
+        );
+        assert_eq!(
+            reader.bloom_filter_position(2),
+            None,
+            "ts must carry no bloom"
+        );
+
+        let read_inlined = |col_idx: u32| -> Vec<u8> {
+            let pos = reader
+                .bloom_filter_position(col_idx)
+                .expect("surviving column has a _pm bloom");
+            let off = reader
+                .bloom_filter_offset_in_pm(0, pos)
+                .expect("bloom offset") as usize;
+            let len = i32::from_le_bytes(pm_bytes[off..off + 4].try_into().unwrap()) as usize;
+            pm_bytes[off + 4..off + 4 + len].to_vec()
+        };
+
+        // b moved 1 -> 0 and c moved 2 -> 1; each must carry its own source
+        // bloom, not the source-order neighbor the pre-fix code attached.
+        assert_eq!(
+            read_inlined(0),
+            bloom_b,
+            "target col 0 must carry b's bloom"
+        );
+        assert_ne!(
+            read_inlined(0),
+            bloom_a,
+            "target col 0 must not carry dropped a's bloom"
+        );
+        assert_eq!(
+            read_inlined(1),
+            bloom_c,
+            "target col 1 must carry c's bloom"
+        );
+        assert_ne!(
+            read_inlined(1),
+            bloom_b,
+            "target col 1 must not carry b's bloom"
+        );
         Ok(())
     }
 }
