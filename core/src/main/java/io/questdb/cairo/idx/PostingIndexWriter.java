@@ -210,6 +210,7 @@ public class PostingIndexWriter implements IndexWriter {
     private boolean hasSpillData;
     private boolean isLastRollbackStreaming;
     private boolean isLastSealIncremental;
+    private boolean isLastSealSnapshotDeferred;
     private boolean isLastSealStreaming;
     private boolean isPoisoned;
     private int keyCapacity;
@@ -416,6 +417,7 @@ public class PostingIndexWriter implements IndexWriter {
                 isPoisoned = false;
                 isLastSealStreaming = false;
                 isLastSealIncremental = false;
+                isLastSealSnapshotDeferred = false;
                 isLastRollbackStreaming = false;
                 activeKeyCount = 0;
                 coverCount = 0;
@@ -1004,6 +1006,19 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     /**
+     * Whether the last seal() abandoned its incremental candidacy because the
+     * covered-column sidecar snapshot would not fit the live RSS headroom and
+     * deferred to a full (streaming) seal instead. Lets a test assert the
+     * snapshot pre-flight fired, distinguishing it from the later stride-merge
+     * pre-flight (which also clears {@link #isLastSealIncremental}). Reset on
+     * each seal() and on close/reopen.
+     */
+    @TestOnly
+    public boolean isLastSealSnapshotDeferredForTesting() {
+        return isLastSealSnapshotDeferred;
+    }
+
+    /**
      * Which path the last full seal() that reached the fast-vs-streaming
      * selection took: {@code true} for the per-key streaming compaction,
      * {@code false} for the fast stride-decoding path -- and {@code false} for an
@@ -1408,6 +1423,7 @@ public class PostingIndexWriter implements IndexWriter {
 
     public void seal() {
         checkNotPoisoned();
+        isLastSealSnapshotDeferred = false;
         if (!keyMem.isOpen()) {
             return;
         }
@@ -1500,6 +1516,7 @@ public class PostingIndexWriter implements IndexWriter {
                 int pp = p.size();
                 int gen0SiSize = PostingIndexUtils.strideIndexSize(gen0KeyCount);
                 long sentinelSlotOffset = PostingIndexUtils.PC_HEADER_SIZE + (long) PostingIndexUtils.strideCount(gen0KeyCount) * Long.BYTES;
+                boolean snapshotExceedsHeadroom = false;
                 for (int c = 0; c < coverCount; c++) {
                     if (coveredColumnIndices.getQuick(c) < 0) {
                         continue;
@@ -1523,10 +1540,35 @@ public class PostingIndexWriter implements IndexWriter {
                                             if (isTrustedSealedSidecarSnapshot(mapped, fileLen, gen0KeyCount)) {
                                                 long sentinel = Unsafe.getLong(mapped + sentinelSlotOffset);
                                                 long sealedLen = sentinel + gen0SiSize;
-                                                savedSidecarBufs[c] = Unsafe.malloc(sealedLen, MemoryTag.NATIVE_INDEX_READER);
-                                                savedSidecarSizes[c] = sealedLen;
-                                                Unsafe.copyMemory(mapped, savedSidecarBufs[c], sealedLen);
-                                                isTrusted = true;
+                                                // RSS pre-flight for the snapshot copy itself.
+                                                // sealIncremental holds one native sidecar snapshot
+                                                // per cover simultaneously and only pre-flights the
+                                                // stride-merge buffers later (inside
+                                                // reencodeAllGenerations) -- never these snapshots.
+                                                // On a skewed symbol a single cover's sealed sidecar
+                                                // is multi-GB, so an unguarded malloc here trips the
+                                                // global RSS limit and suspends the table. Defer to
+                                                // sealFull (which streams sidecars per-key from the
+                                                // column files and needs no snapshot) when the copy
+                                                // would not fit the live headroom. getRssMemUsed() is
+                                                // re-read per cover so the check accounts for
+                                                // snapshots already taken earlier in this loop.
+                                                final long snapshotHeadroom = rssHeadroom();
+                                                if (sealedLen > snapshotHeadroom) {
+                                                    LOG.info().$("posting index incremental seal sidecar snapshot would exceed RSS headroom, sealing full [indexName=").$(indexName)
+                                                            .$(", postingColumnNameTxn=").$(postingColumnNameTxn)
+                                                            .$(", sealTxn=").$(sealTxn)
+                                                            .$(", cover=").$(c)
+                                                            .$(", snapshotBytes=").$(sealedLen)
+                                                            .$(", headroom=").$(snapshotHeadroom)
+                                                            .I$();
+                                                    snapshotExceedsHeadroom = true;
+                                                } else {
+                                                    savedSidecarBufs[c] = Unsafe.malloc(sealedLen, MemoryTag.NATIVE_INDEX_READER);
+                                                    savedSidecarSizes[c] = sealedLen;
+                                                    Unsafe.copyMemory(mapped, savedSidecarBufs[c], sealedLen);
+                                                    isTrusted = true;
+                                                }
                                             }
                                         } finally {
                                             ff.munmap(mapped, fileLen, MemoryTag.MMAP_INDEX_WRITER);
@@ -1539,6 +1581,14 @@ public class PostingIndexWriter implements IndexWriter {
                         }
                     }
                     p.trimTo(pp);
+                    if (snapshotExceedsHeadroom) {
+                        // Any snapshots already taken for covers < c are freed by
+                        // the finally; sealFull rebuilds every sidecar from the
+                        // column files, so the incremental snapshot is pure waste here.
+                        isIncrementalCandidate = false;
+                        isLastSealSnapshotDeferred = true;
+                        break;
+                    }
                     if (!isTrusted) {
                         LOG.info().$("posting index sidecar snapshot not trusted, sealing full [indexName=").$(indexName)
                                 .$(", postingColumnNameTxn=").$(postingColumnNameTxn)
@@ -2831,6 +2881,27 @@ public class PostingIndexWriter implements IndexWriter {
             Unsafe.setMemory(spillKeyAddrsAddr + oldAddrsSize, newAddrsSize - oldAddrsSize, (byte) 0);
             spillArraysCapacity = newCap;
         }
+    }
+
+    /**
+     * Live RSS headroom in bytes for the given limit/usage snapshot:
+     * {@code limit - used} floored at 0, or {@link Long#MAX_VALUE} when no limit
+     * is configured ({@code limit <= 0}). Single source of truth for every seal/
+     * rollback RSS pre-flight so the copies cannot drift apart -- a stale copy
+     * would silently let a path that should defer/throw OOM and suspend the table.
+     * The caller passes a consistent {@code used} snapshot when it also needs the
+     * raw figure for a diagnostic; {@link #rssHeadroom()} reads a fresh pair.
+     */
+    private static long rssHeadroom(long rssLimit, long rssUsed) {
+        return rssLimit > 0 ? Math.max(0L, rssLimit - rssUsed) : Long.MAX_VALUE;
+    }
+
+    /**
+     * Live RSS headroom from the current limit and usage. See
+     * {@link #rssHeadroom(long, long)}.
+     */
+    private static long rssHeadroom() {
+        return rssHeadroom(Unsafe.getRssMemLimit(), Unsafe.getRssMemUsed());
     }
 
     /**
@@ -4591,7 +4662,7 @@ public class PostingIndexWriter implements IndexWriter {
                             maxKeyCount,
                             isRollbackWritingSidecars ? peakCoverColumnValueSize() : 0L,
                             isRollbackWritingSidecars);
-                    final long rollbackHeadroom = Math.max(0L, rollbackRssLimit - Unsafe.getRssMemUsed());
+                    final long rollbackHeadroom = rssHeadroom(rollbackRssLimit, Unsafe.getRssMemUsed());
                     if (rollbackPeak > rollbackHeadroom) {
                         throw CairoException.critical(0)
                                 .put("posting index rollback needs ").put(rollbackPeak)
@@ -4749,7 +4820,7 @@ public class PostingIndexWriter implements IndexWriter {
                 final long streamingPathPeakBytes = estimateStreamingPathPeakBytes(maxKeyCount, maxColValueSize);
                 final long rssLimit = Unsafe.getRssMemLimit();
                 final long rssUsed = Unsafe.getRssMemUsed();
-                final long headroom = rssLimit > 0 ? Math.max(0L, rssLimit - rssUsed) : Long.MAX_VALUE;
+                final long headroom = rssHeadroom(rssLimit, rssUsed);
 
                 if (fastPathPeakBytes <= headroom) {
                     isLastSealStreaming = false;
@@ -5614,7 +5685,7 @@ public class PostingIndexWriter implements IndexWriter {
                 incrementalPeak += peakVarCoverFsstScratchBytes();                   // streaming FSST batch (var covers)
                 incrementalPeak += (long) maxDirtyKeyCount * (Long.BYTES + Byte.BYTES); // longWorkspace + exceptionWorkspace (writeSidecarStrideData, fixed covers)
             }
-            final long headroom = Math.max(0L, rssLimit - Unsafe.getRssMemUsed());
+            final long headroom = rssHeadroom(rssLimit, Unsafe.getRssMemUsed());
             if (incrementalPeak > headroom) {
                 LOG.info().$("posting incremental seal falling back to full seal under RSS pressure ")
                         .$("[maxDirtyStrideTotal=").$(maxDirtyStrideTotal)
