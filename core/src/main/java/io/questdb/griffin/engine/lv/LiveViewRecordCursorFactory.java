@@ -46,7 +46,7 @@ import io.questdb.std.Misc;
  * {@code tryAcquireWrite} sees the reader and trails rather than progressing
  * past it.
  * <p>
- * The returned cursor wires Mode B seam_ts routing: when the consistency fence
+ * The returned cursor wires seam_ts routing: when the consistency fence
  * holds it serves disk rows with {@code ts < seamTs} and the pinned in-mem slot
  * for {@code ts >= seamTs}, skipping the hot tail partition(s) of the LV table.
  * The fence ({@code slot.lvSeqTxn == diskReader.seqTxn}) plus a full-schema,
@@ -66,7 +66,7 @@ import io.questdb.std.Misc;
 public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursorFactory base;
     private final CairoEngine engine;
-    // Static, query-shape eligibility for Mode B seam routing, surfaced as the
+    // Static, query-shape eligibility for seam routing, surfaced as the
     // EXPLAIN "inMemory" attribute. True when the read's shape permits the
     // in-mem tier to serve the recent band (see isInMemRoutable). The runtime
     // seqTxn fence, the tier's population state, and a timestamp-interval filter
@@ -91,7 +91,7 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
         LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance(liveViewToken.getTableName());
         LiveViewRecordCursor cursor = new LiveViewRecordCursor();
         try {
-            // Mode B seam routing assumes the disk scan yields rows in ascending
+            // seam routing assumes the disk scan yields rows in ascending
             // timestamp order. The LV table has a designated timestamp, so a
             // forward scan is ascending; backward / index scans are not, and the
             // cursor must fall back to disk-only for them.
@@ -107,7 +107,7 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public int getScanDirection() {
         // The cursor yields rows in the base scan's order: disk-only passes the
-        // base order straight through, and Mode B routing only engages for a
+        // base order straight through, and tier routing only engages for a
         // forward (ascending) base, so it never reorders either. Delegating keeps
         // the optimizer's order reasoning correct - e.g. ORDER BY ts DESC over an
         // LV whose base is a backward scan no longer adds a redundant sort.
@@ -116,11 +116,11 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public TimeFrameCursor getTimeFrameCursor(SqlExecutionContext executionContext) throws SqlException {
-        // Every in-mem row is also durable on disk after the
-        // inline apply, so ASOF JOIN-as-RHS reading via the base factory's
-        // time-frame cursor sees the full dataset. Future phases (when in-mem
-        // outpaces disk via the hand-off ring) will need a dedicated
-        // time-frame cursor that bridges both tiers.
+        // The time-frame cursor serves disk only: ASOF JOIN-as-RHS and interval
+        // intrinsics see the applied prefix and trail the in-mem lead by at most
+        // one flush cycle. A synthetic in-mem frame that bridges the lead is a
+        // deferred enhancement; the disk-only frame stays correct, just not as
+        // fresh as a record-cursor read that serves the lead.
         return base.getTimeFrameCursor(executionContext);
     }
 
@@ -143,7 +143,7 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
     public void toPlan(PlanSink sink) {
         sink.type("LiveView");
         sink.optAttr("view", liveViewToken.getTableName());
-        // Surface whether the read's shape permits Mode B seam routing through
+        // Surface whether the read's shape permits seam routing through
         // the in-mem tier. A capability flag, not a guarantee - see the field
         // doc and isInMemRoutable.
         sink.attr("inMemory").val(inMemRoutable);
@@ -161,11 +161,11 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     /**
-     * Static, refresh-timing-independent eligibility for Mode B seam routing -
+     * Static, refresh-timing-independent eligibility for seam routing -
      * the read-shape preconditions {@link LiveViewRecordCursor} checks before the
      * runtime seqTxn fence. True only when:
      * <ul>
-     *   <li>the base scan is forward (ascending timestamp) - Mode B's seam split
+     *   <li>the base scan is forward (ascending timestamp) - the seam split
      *   assumes ascending disk rows, so a backward / index scan routes
      *   disk-only;</li>
      *   <li>the projection keeps the timestamp ({@code timestampColumnIndex >= 0})

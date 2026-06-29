@@ -2497,19 +2497,23 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testInMemEvictionDurabilityClampHoldsBackUnflushedRows() throws Exception {
-        // In-mem eviction must clamp on
-        // (ts < latest - IN_MEMORY) AND (seqTxn <= applied_watermark) so the
-        // gap-free invariant between tiers stays intact when the disk tier
-        // is behind. The in-mem publish happens only after a
-        // successful apply, so the natural cycle always satisfies the clamp;
-        // this test poisons the published slot's maxSeqTxn to Long.MAX_VALUE
-        // before driving a second slow-path swap, simulating a future
-        // hand-off-ring regime where the in-mem tier publishes rows ahead of
-        // apply. The aged-out row must survive.
+    public void testEvictionRetainsAgedUnflushedLead() throws Exception {
+        // The load-bearing eviction clamp: a slot's trailing leadRowCount rows are
+        // the un-flushed lead (refreshed into RAM but not yet on the LV's on-disk
+        // tier), which have no durable disk copy, so they must never age out - even
+        // when their ts falls below latest - IN MEMORY. Only the overlap (rows
+        // already on disk) ages. growth.bytes = 0 forces the slow-path swap on
+        // every publish so the eviction runs each cycle.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_GROWTH_BYTES, 0);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // Pin the CREATE-moment wall clock below the data so every row is in
+            // frame. With the wall clock frozen at 0, no flush fires after the first
+            // cycle (IN MEMORY must be >= FLUSH EVERY, so both are 100ms), and the
+            // second and third refreshes accumulate the lead in RAM. The data spans
+            // more than 100ms, so the earliest lead row ends up below the IN MEMORY
+            // window while still un-flushed - exactly the case the clamp protects.
+            setCurrentMicros(0L);
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 100ms AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
 
@@ -2517,44 +2521,36 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             Assert.assertNotNull(instance);
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                setCurrentMicros(0L);
+                // Cycle 1: the first tick flushes row A to disk (it becomes overlap).
                 execute("INSERT INTO base (ts, x) VALUES ('2026-05-12T00:00:00.000000Z', 1)");
+                drainWalQueue();
+                drainJob(job);
+
+                // Refresh B as the lead: within FLUSH EVERY (clock still 0), so it
+                // publishes to the tier without flushing. B's ts keeps A in the
+                // IN MEMORY window, so the slow-path retains both.
+                execute("INSERT INTO base (ts, x) VALUES ('2026-05-12T00:00:00.050000Z', 2)");
+                drainWalQueue();
+                drainJob(job);
+
+                // Refresh C as the lead. Now latest - IN MEMORY = C.ts - 100ms sits
+                // above both A and B: A (overlap, on disk) ages out, but B (lead,
+                // un-flushed) is below the window yet must be retained.
+                execute("INSERT INTO base (ts, x) VALUES ('2026-05-12T00:00:00.200000Z', 3)");
                 drainWalQueue();
                 drainJob(job);
 
                 LiveViewInMemoryTier tier = instance.getInMemoryTier();
                 Assert.assertNotNull(tier);
-                LiveViewInMemoryBuffer firstPublished = tier.getSlot(tier.getPublishedIdx());
-                Assert.assertEquals("seed cycle: one row in tier", 1, firstPublished.rowCount());
-                Assert.assertNotEquals(
-                        "fast-path append must stamp slot maxSeqTxn",
-                        Numbers.LONG_NULL,
-                        firstPublished.maxSeqTxn()
-                );
-
-                // Poison the published slot's maxSeqTxn to outrun any
-                // applied_watermark the next cycle can advance to. This
-                // simulates a future regime where in-mem rows have been
-                // published ahead of the disk-side apply.
-                firstPublished.setMaxSeqTxn(Long.MAX_VALUE);
-
-                // Second insert: data ts 200ms after the first, so the first
-                // row's ts is below the IN_MEMORY threshold and would normally
-                // be evicted. With the clamp engaged (the prior slot is not
-                // durable yet), both rows must survive the slow-path swap.
-                setCurrentMicros(200_000L);
-                execute("INSERT INTO base (ts, x) VALUES ('2026-05-12T00:00:00.200000Z', 2)");
-                drainWalQueue();
-                drainJob(job);
-
                 LiveViewInMemoryBuffer published = tier.getSlot(tier.getPublishedIdx());
                 Assert.assertEquals(
-                        "durability clamp must retain the aged-out row when prior slot is unflushed",
+                        "aged durable overlap evicted; both un-flushed lead rows retained",
                         2,
                         published.rowCount()
                 );
-                Assert.assertEquals("first surviving row is the older insert", 1, published.getInt(0, 1));
-                Assert.assertEquals("second surviving row is the newer insert", 2, published.getInt(1, 1));
+                Assert.assertEquals("both retained rows are the un-flushed lead", 2, published.leadRowCount());
+                Assert.assertEquals("oldest retained row is the aged lead row B", 2, published.getInt(0, 1));
+                Assert.assertEquals("newest retained row is C", 3, published.getInt(1, 1));
             }
 
             execute("DROP LIVE VIEW lv");
@@ -2808,31 +2804,29 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSlowPathSwapFailureKeepsPreviousSlotPublished() throws Exception {
-        // End-to-end: when publishToInMemoryTier's slow-path
-        // swap throws after a successful tryAcquireWrite, the catch block must
-        // call releaseWriteWithoutPublish so the previously-published slot
-        // stays visible to readers and the held sentinel does not deadlock the
-        // next refresh. The unit-level test
-        // testReleaseWriteWithoutPublishKeepsPriorSlotPublished pins the tier
-        // contract; this smoke test drives the same recovery via the refresh
-        // worker so the production catch path itself is exercised.
-        // The publishSwap injection point fires only on the
-        // slow-path. Force slow-path (growth=0) so the failure injection runs.
+    public void testLeadPublishFailureEmergencyFlushesToDisk() throws Exception {
+        // When publishToInMemoryTier's slow-path swap throws mid-publish on the
+        // lead path, the catch releases the writer sentinel and rethrows;
+        // finishLeadRefresh recovers by flushing the just-drained rows straight to
+        // disk (the emergency flush), so no row is lost and the window state stays
+        // consistent (no re-drain that would double-advance the window functions).
+        // The published slot is left intact and marked stale; a subsequent refresh
+        // takes the freed sentinel, drops the stale slot, and rebuilds cleanly.
+        // The publishSwap injection fires only on the slow-path, so force it with
+        // growth.bytes = 0.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_GROWTH_BYTES, 0);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 5s AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
 
-            // First refresh populates the tier with a known row. Establishes
-            // the "previously-published" state the recovery path must preserve.
-            setCurrentMicros(0L);
             execute("INSERT INTO base (ts, x) VALUES ('2026-05-12T00:00:00.000001Z', 7)");
             drainWalQueue();
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Cycle 1: flush row 7 to disk; the tier holds it as overlap.
                 drainJob(job);
 
                 LiveViewInMemoryTier tier = instance.getInMemoryTier();
@@ -2841,81 +2835,54 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 LiveViewInMemoryBuffer pubSlotBeforeFailure = tier.getSlot(publishedBeforeFailure);
                 Assert.assertEquals("first refresh seeded one row", 1, pubSlotBeforeFailure.rowCount());
                 Assert.assertEquals(7, pubSlotBeforeFailure.getInt(0, 1));
-                int retriesBefore = instance.getFlushRetryCount();
-                Assert.assertEquals("no retries before injection", 0, retriesBefore);
+                Assert.assertEquals("no retries before injection", 0, instance.getFlushRetryCount());
 
-                // Arm a one-shot publishSwap failure. Wall-clock advance so the
-                // FLUSH EVERY gate (100ms) opens for the next refresh cycle.
+                // Cycle 2: arm a one-shot publishSwap failure. The lead publish
+                // throws; finishLeadRefresh catches it and emergency-flushes row 13
+                // to disk rather than re-draining it.
                 tier.setFailNextPublishSwap(new RuntimeException("test: simulated mid-swap failure"));
                 setCurrentMicros(200_000L);
                 execute("INSERT INTO base (ts, x) VALUES ('2026-05-12T00:00:00.000002Z', 13)");
                 drainWalQueue();
                 drainJob(job);
 
-                // Recovery contract:
-                //   1. Previously-published slot still holds the original row;
-                //      readers never observe a zero-row slot.
-                //   2. publishedIdx did not flip.
-                //   3. Sentinel on the write slot is cleared, so a subsequent
-                //      refresh can take it.
+                // The failed swap did not flip publishedIdx, and the
+                // previously-published slot still holds its row (the publish wrote
+                // to the other slot, then released the sentinel on the throw).
                 Assert.assertEquals(
-                        "publishedIdx must not flip after failed swap",
+                        "publishedIdx must not flip after the failed swap",
                         publishedBeforeFailure,
                         tier.getPublishedIdx()
                 );
-                LiveViewInMemoryBuffer pubSlotAfterFailure = tier.getSlot(tier.getPublishedIdx());
                 Assert.assertEquals(
-                        "previously-published slot must still hold the original row",
+                        "previously-published slot must still hold its row",
                         1,
-                        pubSlotAfterFailure.rowCount()
+                        tier.getSlot(tier.getPublishedIdx()).rowCount()
                 );
-                Assert.assertEquals(7, pubSlotAfterFailure.getInt(0, 1));
-                Assert.assertTrue(
-                        "in-mem-tier swap failure must tick the flush retry counter",
-                        instance.getFlushRetryCount() > retriesBefore
-                );
+                Assert.assertEquals(7, tier.getSlot(tier.getPublishedIdx()).getInt(0, 1));
+                // The emergency flush recovered the cycle, so the retry budget did
+                // not tick - the row landed on disk instead of being retried.
+                Assert.assertEquals("emergency flush recovers without ticking the retry budget",
+                        0, instance.getFlushRetryCount());
 
-                // The on-disk tier did advance — the inline apply committed
-                // before publishToInMemoryTier ran. Both base rows must be
-                // visible through SELECT (which reads from disk).
+                // No data lost: the emergency flush put row 13 on disk, so both
+                // rows are queryable.
                 assertQuery("SELECT x, rn FROM lv ORDER BY ts").noLeakCheck().expectSize().returns("x\trn\n" +
-                                "7\t1\n" +
-                                "13\t2\n");
+                        "7\t1\n" +
+                        "13\t2\n");
 
-                // A subsequent refresh must succeed normally: the sentinel was
-                // released, the staging buffer is repopulated from the next
-                // commit, and publishSwap flips the tier into a slot containing
-                // the retained row from the previously-published slot plus the
-                // new staging row.
-                //
-                // Note: the row processed by the failed refresh cycle
-                // (x=13) is durable on disk via the inline apply that committed
-                // before publishToInMemoryTier ran, but it never made it into
-                // the in-mem tier — the slow-path swap that would have copied
-                // it threw. The tier therefore lags the on-disk tier by one
-                // row until that row ages out of the IN MEMORY window. Reads
-                // route through disk, so this gap is invisible to
-                // SELECT; once seam_ts routing lands, the recovery path will
-                // need to re-source the missed rows from disk (or reset the
-                // seam) on the next successful swap. Documented here so the
-                // assertion doesn't drift silently when that lands.
+                // Cycle 3: a subsequent refresh succeeds (the sentinel was
+                // released, no deadlock), drops the stale slot, and rebuilds. All
+                // three rows are present and correctly sequenced - no corruption
+                // from a double-advanced window.
                 setCurrentMicros(400_000L);
                 execute("INSERT INTO base (ts, x) VALUES ('2026-05-12T00:00:00.000003Z', 21)");
                 drainWalQueue();
                 drainJob(job);
-                Assert.assertNotEquals(
-                        "third refresh must successfully flip publishedIdx",
-                        publishedBeforeFailure,
-                        tier.getPublishedIdx()
-                );
-                LiveViewInMemoryBuffer pubSlotAfterRecovery = tier.getSlot(tier.getPublishedIdx());
-                Assert.assertEquals(
-                        "post-recovery slot holds the retained row plus the new staging row",
-                        2,
-                        pubSlotAfterRecovery.rowCount()
-                );
-                Assert.assertEquals(7, pubSlotAfterRecovery.getInt(0, 1));
-                Assert.assertEquals(21, pubSlotAfterRecovery.getInt(1, 1));
+                assertQuery("SELECT x, rn FROM lv ORDER BY ts").noLeakCheck().expectSize().returns("x\trn\n" +
+                        "7\t1\n" +
+                        "13\t2\n" +
+                        "21\t3\n");
                 Assert.assertEquals(0, instance.getFlushRetryCount());
             }
 
@@ -13770,21 +13737,26 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
         // commits per turn and a five-commit gap to close in
         // scanForLaggingViews, the worker processes exactly three commits
         // then yields; the next FLUSH-EVERY pass drains the remainder.
+        //
+        // A SYMBOL output column keeps the view on the coupled refresh+flush
+        // cycle (not the lead path), so lastProcessedSeqTxn advances per cycle
+        // and the budget-bounded backlog drain is directly observable. The turn
+        // budget itself (in drainBaseWal) is shared by both paths.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_REFRESH_TURN_MAX_COMMITS, 3);
         assertMemoryLeak(() -> {
             setCurrentMicros(0L);
-            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, g, row_number() OVER () AS rn FROM base");
 
             // Six separate base WAL commits - one INSERT per row so each
             // becomes its own sequencer txn for the refresh worker to walk.
-            execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:01.000000Z', 1)");
-            execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:02.000000Z', 2)");
-            execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:03.000000Z', 3)");
-            execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:04.000000Z', 4)");
-            execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:05.000000Z', 5)");
-            execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:06.000000Z', 6)");
+            execute("INSERT INTO base (ts, x, g) VALUES ('2026-04-01T00:00:01.000000Z', 1, 'a')");
+            execute("INSERT INTO base (ts, x, g) VALUES ('2026-04-01T00:00:02.000000Z', 2, 'a')");
+            execute("INSERT INTO base (ts, x, g) VALUES ('2026-04-01T00:00:03.000000Z', 3, 'a')");
+            execute("INSERT INTO base (ts, x, g) VALUES ('2026-04-01T00:00:04.000000Z', 4, 'a')");
+            execute("INSERT INTO base (ts, x, g) VALUES ('2026-04-01T00:00:05.000000Z', 5, 'a')");
+            execute("INSERT INTO base (ts, x, g) VALUES ('2026-04-01T00:00:06.000000Z', 6, 'a')");
             drainWalQueue();
 
             LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");

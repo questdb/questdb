@@ -69,18 +69,17 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
     private final IntList columnTypes;
     private final ObjList<MemoryCARWImpl> columns;
     private final int timestampColumnIndex;
+    // Number of trailing rows in this slot that are NOT yet on the LV's on-disk
+    // tier (the un-flushed lead). Rows [rowCount - leadRowCount, rowCount) are
+    // the lead; rows [0, rowCount - leadRowCount) are the overlap (also on disk).
+    // A read that serves the lead adds it on top of disk: size() = disk.size() +
+    // leadRowCount. When the tier is a strict subset of disk this stays 0. The
+    // slow-path eviction never ages out a lead row (it has no durable disk copy).
+    private long leadRowCount;
     // LV-table applied seqTxn this slot reflects. The read-path fence serves the
     // slot only when this equals the disk reader's getSeqTxn() (same table
     // version => in-mem agrees with disk). LONG_NULL = not stamped yet.
     private long lvSeqTxn;
-    // Highest base seqTxn whose rows the slot reflects. Eviction only ages
-    // out rows when this value is covered by the LV's applied_watermark —
-    // protects unflushed rows from
-    // being dropped before they reach disk. The refresh worker always advances this
-    // after a successful apply, so the clamp is vacuous today; a future
-    // hand-off ring is the regime where the clamp does real work.
-    // LONG_NULL means "no seqTxn information yet" — treated as durable.
-    private long maxSeqTxn;
     private long rowCount;
     private long seamTs;
 
@@ -108,8 +107,8 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
         this.timestampColumnIndex = timestampColumnIndex;
         this.rowCount = 0;
         this.seamTs = Numbers.LONG_NULL;
-        this.maxSeqTxn = Numbers.LONG_NULL;
         this.lvSeqTxn = Numbers.LONG_NULL;
+        this.leadRowCount = 0;
     }
 
     @Override
@@ -340,12 +339,12 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
         return timestampColumnIndex;
     }
 
-    public long lvSeqTxn() {
-        return lvSeqTxn;
+    public long leadRowCount() {
+        return leadRowCount;
     }
 
-    public long maxSeqTxn() {
-        return maxSeqTxn;
+    public long lvSeqTxn() {
+        return lvSeqTxn;
     }
 
     public void putBool(long row, int col, boolean value) {
@@ -381,15 +380,15 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
     }
 
     /**
-     * Resets row count to zero, clears seam timestamp and the durability
-     * watermark. Column buffers retain their allocated pages so the next refill
-     * reuses memory.
+     * Resets row count and lead count to zero and clears the seam timestamp and
+     * the stamped LV-table seqTxn. Column buffers retain their allocated pages so
+     * the next refill reuses memory.
      */
     public void reset() {
         rowCount = 0;
         seamTs = Numbers.LONG_NULL;
-        maxSeqTxn = Numbers.LONG_NULL;
         lvSeqTxn = Numbers.LONG_NULL;
+        leadRowCount = 0;
     }
 
     public long rowCount() {
@@ -400,12 +399,12 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
         return seamTs;
     }
 
-    public void setLvSeqTxn(long lvSeqTxn) {
-        this.lvSeqTxn = lvSeqTxn;
+    public void setLeadRowCount(long leadRowCount) {
+        this.leadRowCount = leadRowCount;
     }
 
-    public void setMaxSeqTxn(long maxSeqTxn) {
-        this.maxSeqTxn = maxSeqTxn;
+    public void setLvSeqTxn(long lvSeqTxn) {
+        this.lvSeqTxn = lvSeqTxn;
     }
 
     public void setRowCount(long rowCount) {
@@ -413,13 +412,12 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
     }
 
     // Records the in-mem/disk seam timestamp - the lowest timestamp retained in
-    // this slot. The Mode B read path consults it to split the scan: the disk
-    // cursor serves rows with ts < seamTs and stops at the seam, then the slot
-    // serves every row with ts >= seamTs (see LiveViewRecordCursor.hasNext). The
-    // slot holds the whole suffix from seamTs up, so the boundary has neither a
-    // duplicate nor a gap. In V1 inline-apply the slot is a subset of disk, so a
-    // cursor that cannot pass the seqTxn fence falls back to a disk-only scan that
-    // ignores the seam and is always correct.
+    // this slot. The read path consults it to split the scan: the disk cursor
+    // serves rows with ts < seamTs and stops at the seam, then the slot serves
+    // every row with ts >= seamTs (see LiveViewRecordCursor.hasNext). The slot
+    // holds the whole suffix from seamTs up, so the boundary has neither a
+    // duplicate nor a gap. A cursor that cannot pass the seqTxn fence falls back
+    // to a disk-only scan that ignores the seam and is always correct.
     public void setSeamTs(long seamTs) {
         this.seamTs = seamTs;
     }

@@ -729,6 +729,184 @@ public class LiveViewInMemReadTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testServesUnflushedLeadFromRam() throws Exception {
+        assertMemoryLeak(() -> {
+            buildFlushedPlusLead();
+
+            // The tier leads disk: the cursor serves the 2 un-flushed lead rows
+            // from RAM on top of the 3 applied rows. The whole 30m window is
+            // resident, so all 5 rows come from the slot, but 2 are the lead.
+            InnerRead lead = readInner("SELECT * FROM lv");
+            Assert.assertTrue("lead read must be routing-eligible", lead.routingEligible);
+            Assert.assertEquals("all rows served from the tier", 5, lead.inMemRowsServed);
+            Assert.assertEquals("two un-flushed lead rows served from RAM", 2, lead.leadRowsServed);
+
+            // Differential oracle: the lead read equals a from-scratch recompute
+            // over the base table. printSql preserves the tier; assertQuery cannot
+            // be used here because its battery calls engine.clear() up front, which
+            // drops the LV registry entry and with it the un-flushed lead.
+            assertLvMatchesOracle("SELECT * FROM lv",
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            // Forcing the tier off (stamp mismatch) drops to the applied prefix:
+            // disk holds only the 3 flushed rows, not the lead.
+            assertDiskOnlyMatchesOracle("SELECT * FROM lv",
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base LIMIT 3");
+        });
+    }
+
+    @Test
+    public void testLeadSizeAndLimitPushdown() throws Exception {
+        assertMemoryLeak(() -> {
+            buildFlushedPlusLead();
+
+            // Full scan: size() = disk.size() + leadRowCount = 5; the read serves
+            // all five rows, matching the recompute.
+            assertLvMatchesOracle("SELECT * FROM lv",
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            // A tail LIMIT uses size() to find the offset, so it lands on the
+            // un-flushed lead rows.
+            assertLvMatchesOracle("SELECT * FROM lv LIMIT -2",
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base LIMIT -2");
+            // A head LIMIT crosses the overlap/lead boundary cleanly.
+            assertLvMatchesOracle("SELECT * FROM lv LIMIT 4",
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base LIMIT 4");
+        });
+    }
+
+    @Test
+    public void testFlushPromotesLeadToOverlap() throws Exception {
+        assertMemoryLeak(() -> {
+            buildFlushedPlusLead();
+
+            // Before the flush the 2 recent rows are the un-flushed lead.
+            InnerRead before = readInner("SELECT * FROM lv");
+            Assert.assertEquals("two lead rows before flush", 2, before.leadRowsServed);
+
+            // Advance the clock past FLUSH EVERY and tick once: the flush lands the
+            // lead on disk and re-stamps the slot as a subset of disk.
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(1_000_000L);
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            // The lead is now overlap: the cursor still routes through the tier,
+            // serves all 5 rows, but none of them are an un-flushed lead anymore.
+            InnerRead after = readInner("SELECT * FROM lv");
+            Assert.assertTrue("post-flush read must stay routing-eligible", after.routingEligible);
+            Assert.assertEquals("all rows still served from the tier", 5, after.inMemRowsServed);
+            Assert.assertEquals("no un-flushed lead after the flush", 0, after.leadRowsServed);
+
+            // Disk now holds every row, so the tier read and the disk-only read
+            // agree, and the tier read still matches the recompute.
+            assertModeBMatchesDiskOnly("SELECT * FROM lv");
+            assertLvMatchesOracle("SELECT * FROM lv",
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+        });
+    }
+
+    @Test
+    public void testSymbolLvIsNotLeadEligible() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, g SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            // SYMBOL output: stays a subset of disk (no lead) until eager interning.
+            execute("CREATE LIVE VIEW lv_sym FLUSH EVERY 1s IN MEMORY 30m AS " +
+                    "SELECT ts, g, row_number() OVER () AS rn FROM base");
+            // Non-SYMBOL output of the same base: lead-eligible.
+            execute("CREATE LIVE VIEW lv_num FLUSH EVERY 1s IN MEMORY 30m AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            execute("INSERT INTO base (ts, g, x) VALUES " +
+                    "('2026-05-12T00:00:01.000000Z', 'aa', 1), " +
+                    "('2026-05-12T00:00:02.000000Z', 'bb', 2)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            LiveViewInstance sym = engine.getLiveViewRegistry().getViewInstance("lv_sym");
+            LiveViewInstance num = engine.getLiveViewRegistry().getViewInstance("lv_num");
+            Assert.assertNotNull(sym);
+            Assert.assertNotNull(num);
+            Assert.assertTrue("lead eligibility must be computed", sym.isLeadEligibilityComputed());
+            Assert.assertFalse("SYMBOL output is not lead-eligible", sym.isLeadEligible());
+            Assert.assertTrue("fixed-width output is lead-eligible", num.isLeadEligible());
+
+            // The SYMBOL view still reads correctly as a subset of disk.
+            assertQuery("SELECT * FROM lv_sym")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tg\trn\n" +
+                            "2026-05-12T00:00:01.000000Z\taa\t1\n" +
+                            "2026-05-12T00:00:02.000000Z\tbb\t2\n");
+        });
+    }
+
+    // Builds an LV with 3 flushed rows (A) on disk and 2 un-flushed lead rows (B)
+    // in the tier: cycle 1 flushes A (the first tick always flushes); cycle 2
+    // refreshes B within the FLUSH EVERY window, so the refresh publishes B as the
+    // lead without flushing. The clock stays at 0 (set in the class @Before) so the
+    // second refresh is inside FLUSH EVERY relative to the first flush at t=0.
+    private void buildFlushedPlusLead() throws Exception {
+        execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        setCurrentMicros(0L);
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m AS " +
+                "SELECT ts, x, row_number() OVER () AS rn FROM base");
+        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            execute("INSERT INTO base (ts, x) VALUES " +
+                    "('2026-05-12T00:00:01.000000Z', 1), " +
+                    "('2026-05-12T00:00:02.000000Z', 2), " +
+                    "('2026-05-12T00:00:03.000000Z', 3)");
+            drainWalQueue();
+            drainJob(job); // clock 0: first tick flushes A to disk
+
+            execute("INSERT INTO base (ts, x) VALUES " +
+                    "('2026-05-12T00:00:04.000000Z', 4), " +
+                    "('2026-05-12T00:00:05.000000Z', 5)");
+            drainWalQueue();
+            drainJob(job); // clock still 0: refresh B as the un-flushed lead, no flush
+        }
+    }
+
+    // Asserts the LV read (tier on) is byte-identical to an oracle SQL - a
+    // from-scratch recompute over the base table. Uses printSql (not assertQuery,
+    // whose battery calls engine.clear() and so wipes the un-flushed lead).
+    private static void assertLvMatchesOracle(String lvSql, String oracleSql) throws SqlException {
+        StringSink lv = new StringSink();
+        printSql(lvSql, lv);
+        StringSink oracle = new StringSink();
+        printSql(oracleSql, oracle);
+        Assert.assertEquals("LV read must match oracle [" + lvSql + "] vs [" + oracleSql + "]",
+                oracle.toString(), lv.toString());
+    }
+
+    // Runs the LV SELECT with the fence forced off (disk-only, by mismatching both
+    // slots' stamps) and asserts the output equals an oracle SQL - the applied
+    // prefix. Restores the stamps afterwards.
+    private static void assertDiskOnlyMatchesOracle(String lvSql, String oracleSql) throws SqlException {
+        LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+        Assert.assertNotNull(instance);
+        LiveViewInMemoryTier tier = instance.getInMemoryTier();
+        Assert.assertNotNull(tier);
+        long s0 = tier.getSlot(0).lvSeqTxn();
+        long s1 = tier.getSlot(1).lvSeqTxn();
+        tier.getSlot(0).setLvSeqTxn(mismatch(s0));
+        tier.getSlot(1).setLvSeqTxn(mismatch(s1));
+        StringSink diskOnly = new StringSink();
+        try {
+            printSql(lvSql, diskOnly);
+        } finally {
+            tier.getSlot(0).setLvSeqTxn(s0);
+            tier.getSlot(1).setLvSeqTxn(s1);
+        }
+        StringSink oracle = new StringSink();
+        printSql(oracleSql, oracle);
+        Assert.assertEquals("disk-only read must match oracle for: " + lvSql, oracle.toString(), diskOnly.toString());
+    }
+
     // Runs the SELECT with the tier on (Mode B) and then with the fence forced
     // off (disk-only, achieved by mismatching both slots' stamps), and asserts
     // the two outputs are byte-identical. Restores the stamps afterwards.
@@ -829,7 +1007,7 @@ public class LiveViewInMemReadTest extends AbstractCairoTest {
             try (LiveViewRecordCursor cursor = (LiveViewRecordCursor) lvf.getCursor(sqlExecutionContext)) {
                 StringSink out = new StringSink();
                 println(lvf.getMetadata(), cursor, out);
-                return new InnerRead(out.toString(), cursor.inMemRowsServed(), cursor.isRoutingEligible());
+                return new InnerRead(out.toString(), cursor.inMemRowsServed(), cursor.leadRowsServed(), cursor.isRoutingEligible());
             }
         }
     }
@@ -843,15 +1021,17 @@ public class LiveViewInMemReadTest extends AbstractCairoTest {
         return (LiveViewRecordCursorFactory) f;
     }
 
-    // Captured output and Mode B observability counters from one inner-cursor read.
+    // Captured output and seam-routing observability counters from one inner-cursor read.
     private static final class InnerRead {
         final long inMemRowsServed;
+        final long leadRowsServed;
         final String output;
         final boolean routingEligible;
 
-        InnerRead(String output, long inMemRowsServed, boolean routingEligible) {
+        InnerRead(String output, long inMemRowsServed, long leadRowsServed, boolean routingEligible) {
             this.output = output;
             this.inMemRowsServed = inMemRowsServed;
+            this.leadRowsServed = leadRowsServed;
             this.routingEligible = routingEligible;
         }
     }

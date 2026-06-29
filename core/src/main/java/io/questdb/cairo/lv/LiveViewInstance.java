@@ -188,6 +188,23 @@ public class LiveViewInstance implements QuietCloseable {
     // gating role for O3 head-hit and (b) trailing this in {@code _lv.s} would
     // add a write per commit.
     private volatile long latestSeenTs = Numbers.LONG_NULL;
+    // Lead eligibility (cached, schema-derived). True when the LV's output schema is
+    // fully fixed-width AND carries no SYMBOL column, so the in-mem tier can hold an
+    // un-flushed lead the refresh worker serves ahead of disk. False keeps the tier a
+    // strict subset of disk: var-length output (no tier at all) or a SYMBOL output
+    // column (the tier would hold segment-local ids the read path cannot resolve until
+    // eager interning lands). Computed once on the first refresh cycle after the
+    // compiled factory is ready, then cached. Volatile so the catalogue thread can
+    // read it without extra synchronisation; mutated only under the refresh latch.
+    private volatile boolean leadEligible;
+    private volatile boolean leadEligibilityComputed;
+    // In-RAM lead row count: the number of output rows refreshed into the in-mem
+    // tier but not yet flushed to the LV's on-disk table. Grows with each refresh
+    // tick, reset to 0 at flush. Stamped onto the published slot so reads can serve
+    // the lead on top of disk (size() = disk.size() + leadRowCount). In-RAM only
+    // (recovered by replaying base WAL forward on restart); mutated under the
+    // refresh latch only, like the other refresh-worker-only fields.
+    private long leadRowCount;
     // Live-view's own table token. Populated at construction.
     private final TableToken liveViewToken;
     // Cumulative count of live-view rows produced over the LV's lifetime,
@@ -220,6 +237,15 @@ public class LiveViewInstance implements QuietCloseable {
     // moves past recordRowCopierMetadataVersion. Accessed only while the refresh latch is held.
     private RecordToRowCopier recordToRowCopier;
     private long recordRowCopierMetadataVersion = -1;
+    // In-RAM refresh cursor: the highest base seqTxn whose rows have been refreshed
+    // into the in-mem tier (the lead), which leads the flushed/applied point
+    // ({@link #getLastProcessedSeqTxn()}) by the un-flushed lead. The refresh worker
+    // drains base WAL from this point each tick; flush advances the applied point up
+    // to it. In-RAM only (not persisted): on restart it re-initialises to the applied
+    // point and drain-forward rebuilds the lead. LONG_NULL means "not initialised
+    // yet" -> {@link #getRefreshedUpToSeqTxn()} falls back to the applied point.
+    // Mutated under the refresh latch only.
+    private long refreshedUpToSeqTxn = Numbers.LONG_NULL;
     // Live-view-row count applied since the most recent head-checkpoint commit.
     // The refresh worker compares this against cairo.live.view.checkpoint.rows
     // each cycle to decide whether the row-count trigger has fired. Mutated
@@ -237,7 +263,7 @@ public class LiveViewInstance implements QuietCloseable {
     // reader-pinned: the published slot then keeps its pre-O3 rows, which the O3
     // replay has since re-sequenced on disk. The flag forces the next normal
     // publish (LiveViewRefreshJob.publishToInMemoryTier) to drop the retained
-    // rows instead of copying / appending onto them, so Mode B never serves the
+    // rows instead of copying / appending onto them, so a read never serves the
     // stale pre-O3 rows re-stamped with a matching seqTxn. Cleared on any
     // successful publish / rebuild. Touched only on the refresh-worker thread
     // (rebuild + publish both run under the refresh latch), so a plain field
@@ -451,6 +477,14 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * @return the in-RAM lead row count (output rows refreshed into the tier but
+     * not yet flushed to disk). See {@link #leadRowCount}.
+     */
+    public long getLeadRowCount() {
+        return leadRowCount;
+    }
+
+    /**
      * @return the highest base-row timestamp the refresh worker has fed
      * through the window pipeline since startup, or {@link Numbers#LONG_NULL}
      * if no row has been processed yet. The O3 detection path reads this to
@@ -499,6 +533,16 @@ public class LiveViewInstance implements QuietCloseable {
 
     public RecordToRowCopier getRecordToRowCopier() {
         return recordToRowCopier;
+    }
+
+    /**
+     * @return the in-RAM refresh cursor (highest base seqTxn drained into the tier
+     * as lead). Falls back to {@link #getLastProcessedSeqTxn()} (the applied point)
+     * when not yet initialised, so a fresh / restarted instance resumes refresh
+     * from where disk left off. See {@link #refreshedUpToSeqTxn}.
+     */
+    public long getRefreshedUpToSeqTxn() {
+        return refreshedUpToSeqTxn == Numbers.LONG_NULL ? getLastProcessedSeqTxn() : refreshedUpToSeqTxn;
     }
 
     public long getRowsSinceLastCheckpointWritten() {
@@ -573,6 +617,25 @@ public class LiveViewInstance implements QuietCloseable {
 
     public boolean isInvalid() {
         return stateReader.isInvalid();
+    }
+
+    /**
+     * @return the cached lead eligibility (output schema fully fixed-width and
+     * SYMBOL-free, so the in-mem tier may serve an un-flushed lead ahead of disk).
+     * Meaningful only when {@link #isLeadEligibilityComputed()} returns
+     * {@code true}. See {@link #leadEligible}.
+     */
+    public boolean isLeadEligible() {
+        return leadEligible;
+    }
+
+    /**
+     * @return {@code true} once the first refresh cycle has evaluated
+     * {@link #isLeadEligible()} from the compiled SELECT's output schema. The
+     * refresh worker computes it once per LV lifetime, then caches it.
+     */
+    public boolean isLeadEligibilityComputed() {
+        return leadEligibilityComputed;
     }
 
     /**
@@ -805,6 +868,24 @@ public class LiveViewInstance implements QuietCloseable {
         }
     }
 
+    /**
+     * Caches the lead eligibility, evaluated once after the LV's compiled factory
+     * becomes available. Writes the value before flipping the computed flag so a
+     * concurrent catalogue reader never observes {@code computed=true} with the
+     * default {@code eligible=false}. See {@link #leadEligible}.
+     */
+    public void setLeadEligible(boolean value) {
+        this.leadEligible = value;
+        this.leadEligibilityComputed = true;
+    }
+
+    /**
+     * Sets the in-RAM lead row count. See {@link #leadRowCount}.
+     */
+    public void setLeadRowCount(long leadRowCount) {
+        this.leadRowCount = leadRowCount;
+    }
+
     public void setLvConsumedSeqTxn(long lvConsumedSeqTxn) {
         stateReader.setLvConsumedSeqTxn(lvConsumedSeqTxn);
     }
@@ -832,6 +913,13 @@ public class LiveViewInstance implements QuietCloseable {
     public void setRecordToRowCopier(RecordToRowCopier copier, long metadataVersion) {
         this.recordToRowCopier = copier;
         this.recordRowCopierMetadataVersion = metadataVersion;
+    }
+
+    /**
+     * Sets the in-RAM refresh cursor. See {@link #refreshedUpToSeqTxn}.
+     */
+    public void setRefreshedUpToSeqTxn(long refreshedUpToSeqTxn) {
+        this.refreshedUpToSeqTxn = refreshedUpToSeqTxn;
     }
 
     /**
