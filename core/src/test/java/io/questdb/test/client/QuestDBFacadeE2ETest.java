@@ -668,19 +668,18 @@ public class QuestDBFacadeE2ETest extends AbstractBootstrapTest {
     }
 
     /**
-     * Two-arg connect: separate (here identical) ingest and query ws strings.
-     * Exercises the facade's two-string path end-to-end.
+     * Single cluster config drives both the ingest and query pools. Exercises
+     * the facade's one-config path end-to-end.
      */
     @Test
-    public void testTwoArgConnectRoundTrip() throws Exception {
+    public void testSingleConfigConnectRoundTrip() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain server = startFragmented()) {
                 server.execute("CREATE TABLE two(i LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
                 server.awaitTable("two");
 
-                String ingest = "ws::addr=127.0.0.1:" + HTTP_PORT + ";";
-                String query = "ws::addr=127.0.0.1:" + HTTP_PORT + ";";
-                try (QuestDB db = QuestDB.connect(ingest, query)) {
+                String config = "ws::addr=127.0.0.1:" + HTTP_PORT + ";";
+                try (QuestDB db = QuestDB.connect(config)) {
                     try (Sender s = db.borrowSender()) {
                         s.table("two").longColumn("i", 11).at(1_000_000L, java.time.temporal.ChronoUnit.MICROS);
                         s.table("two").longColumn("i", 22).at(2L * 1_000_000L, java.time.temporal.ChronoUnit.MICROS);
