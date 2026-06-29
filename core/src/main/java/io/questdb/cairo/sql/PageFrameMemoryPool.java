@@ -1699,6 +1699,11 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 // Only ever grow: symCap must stay the true allocation size so the
                 // matching Unsafe.free() in freeColumnBuffers() accounts the right
                 // number of bytes (a smaller frame must not shrink it).
+                // Guard the int symCap cast below: symBytes = rowCount * 4 cannot
+                // exceed int range for any page-frame-bounded rowCount, but never
+                // say never — make a pathological rowCount loud rather than let the
+                // cast truncate symCap and under-account the matching Unsafe.free().
+                assert symBytes <= Integer.MAX_VALUE : "rowCount too large for int symCap: " + rowCount;
                 symAddr = growNative(symAddr, symCap, symBytes);
                 symCap = (int) symBytes;
             }
