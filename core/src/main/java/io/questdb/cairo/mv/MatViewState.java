@@ -842,17 +842,18 @@ public class MatViewState implements QuietCloseable {
 
     /**
      * Advance the backfill frontier high-water mark to {@code anchor} (a monotonic max;
-     * lower values are ignored). Called from the WAL commit path
-     * ({@link MatViewBackfillValidator}) whenever a user backfill txn is accepted, with the
-     * boundary anchor the validator used ({@code min(max(base_ts), now)}). The refresh job
-     * folds this value into its boundary anchor (alongside {@code max(base_ts)} and
-     * {@code max(view_ts)}), so once a backfill has been accepted as frozen, a later
-     * {@code max(base_ts)} retreat (base partition drop / re-ingestion) cannot pull the
-     * boundary back over it -- the case {@code max(view_ts)} alone cannot cover because a
-     * backfilled row is older than the view's materialised frontier.
+     * lower values are ignored). Called from the WAL apply path
+     * ({@link io.questdb.cairo.wal.ApplyWal2TableJob#reconstructBackfillFrontier}) after a user
+     * backfill txn has been committed, with the boundary anchor derived from the committed row
+     * ({@code bucketEnd + LIMIT}). It is deliberately NOT advanced by the commit-time validator,
+     * which is a pre-commit hook: advancing before the txn is sealed could leave this no-rollback
+     * max permanently over-advanced if the commit fails. The refresh job folds this value into
+     * its boundary anchor (alongside {@code max(base_ts)} and {@code max(view_ts)}), so once a
+     * backfill has been accepted as frozen, a later {@code max(base_ts)} retreat (base partition
+     * drop / re-ingestion) cannot pull the boundary back over it -- the case {@code max(view_ts)}
+     * alone cannot cover because a backfilled row is older than the view's materialised frontier.
      * <p>
-     * Lock-free CAS max: multiple WAL writer threads for the same view may call this
-     * concurrently with each other and with the refresh job's reads.
+     * Lock-free CAS max: the apply path advances it while the refresh job reads it concurrently.
      */
     public void advanceBackfillFrontier(long anchor) {
         long current;

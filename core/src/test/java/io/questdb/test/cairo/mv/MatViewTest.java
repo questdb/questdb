@@ -56,6 +56,7 @@ import io.questdb.jit.JitUtil;
 import io.questdb.mp.Queue;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -66,12 +67,14 @@ import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.datetime.nanotime.Nanos;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.QueryAssertion;
 import io.questdb.test.TestTimestampType;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -7516,6 +7519,143 @@ public class MatViewTest extends AbstractCairoTest {
                     "ts",
                     true,
                     true
+            );
+        });
+    }
+
+    @Test
+    public void testMatViewBackfillFrontierAdvancesOnApplyNotCommit() throws Exception {
+        // #3 regression: the commit-time validator (a WalPreCommitValidator pre-commit hook)
+        // must NOT advance the in-memory backfill frontier. Advancing it before the txn is
+        // durably sealed means a commit that fails to seal -- or is simply never applied --
+        // leaves the refresh boundary permanently over-pinned (the frontier is a monotonic
+        // CAS-max with no rollback). The frontier must advance only on the WAL apply path
+        // (ApplyWal2TableJob.reconstructBackfillFrontier), after the data is committed.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("insert into base_price values('gbpusd', 2.0, '2024-09-10T11:00')");
+            drainWalQueue();
+            execute(
+                    "create materialized view price_1h refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+            execute("alter materialized view price_1h set refresh limit 1 hour;");
+            drainQueues();
+
+            final TableToken viewToken = engine.getTableTokenIfExists("price_1h");
+            Assert.assertNotNull(viewToken);
+            final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
+            Assert.assertNotNull(state);
+            Assert.assertEquals(Long.MIN_VALUE, state.getBackfillFrontier());
+
+            // Wall clock 12:30: anchor = min(11:00, 12:30) = 11:00, boundary = 10:00. Row at
+            // 09:00 is frozen and accepted. The INSERT commits to the WAL (validator runs) but
+            // we deliberately do NOT drain the WAL queue yet, so the txn is not applied.
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T12:30:00.000000Z");
+            execute("insert into price_1h values('gbpusd', 1.5, '2024-09-10T09:00:00.000000Z')");
+
+            // Commit-time validation has run, but the txn is not applied: the frontier must
+            // still be unset. (Pre-fix, the validator advanced it here.)
+            Assert.assertEquals(
+                    "validator must not advance the backfill frontier before the txn is applied",
+                    Long.MIN_VALUE,
+                    state.getBackfillFrontier()
+            );
+
+            // The apply path reconstructs the frontier from the committed backfill txn.
+            drainQueues();
+            Assert.assertTrue(
+                    "frontier must be reconstructed on the apply path",
+                    state.getBackfillFrontier() != Long.MIN_VALUE
+            );
+        });
+    }
+
+    @Test
+    public void testMatViewBackfillFrontierPersistedBeforeDataCommit() throws Exception {
+        // #1 regression: the backfill frontier must be persisted to _mv.s BEFORE the backfill data
+        // is committed, so a crash between the data commit and a post-commit state write can never
+        // leave applied backfill data whose frontier was lost (which a later max(base_ts) retreat
+        // could then silently wipe -- the txn is already applied, so a restart never re-runs
+        // reconstruct for it). We simulate the failing state write with a FilesFacade that fails the
+        // _mv.s write during the backfill apply. With the fix the persist runs first, so its failure
+        // aborts the apply and the data is NOT committed (the table suspends; consistency preserved);
+        // the backfill then applies cleanly once the fault clears -- nothing is lost, just deferred.
+        final AtomicBoolean failStateWrite = new AtomicBoolean(false);
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (failStateWrite.get() && Utf8s.containsAscii(name, MatViewState.MAT_VIEW_STATE_FILE_NAME)) {
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("insert into base_price values('gbpusd', 2.0, '2024-09-10T11:00')");
+            drainWalQueue();
+            execute(
+                    "create materialized view price_1h refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+            execute("alter materialized view price_1h set refresh limit 1 hour;");
+            drainQueues();
+
+            final TableToken viewToken = engine.getTableTokenIfExists("price_1h");
+            Assert.assertNotNull(viewToken);
+            final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
+            Assert.assertNotNull(state);
+
+            // Backfill a frozen-zone row (09:00, below the 10:00 boundary) with the _mv.s write
+            // failing during apply.
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T12:30:00.000000Z");
+            failStateWrite.set(true);
+            execute("insert into price_1h values('gbpusd', 1.5, '2024-09-10T09:00:00.000000Z')");
+            drainQueues();
+
+            // The state write failed before the data commit, so the backfill must NOT be committed
+            // and its frontier must NOT be marked persisted (pre-fix the persist ran after the
+            // commit, so the row would be committed/visible with a lost frontier).
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp("sym\tprice\tts\n"),
+                    "price_1h order by ts",
+                    "ts",
+                    true,
+                    true
+            );
+            Assert.assertEquals(
+                    "frontier must not be marked persisted when its state write failed",
+                    Long.MIN_VALUE,
+                    state.getPersistedBackfillFrontier()
+            );
+
+            // Clear the fault and resume: the backfill re-applies and the frontier becomes durable.
+            failStateWrite.set(false);
+            execute("alter materialized view price_1h resume wal");
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            gbpusd\t1.5\t2024-09-10T09:00:00.000000Z
+                            """),
+                    "price_1h order by ts",
+                    "ts",
+                    true,
+                    true
+            );
+            Assert.assertTrue(
+                    "frontier must be durably persisted to _mv.s after recovery",
+                    state.getPersistedBackfillFrontier() != Long.MIN_VALUE
             );
         });
     }

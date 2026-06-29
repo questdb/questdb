@@ -295,16 +295,15 @@ public final class MatViewBackfillValidator implements WalPreCommitValidator {
                     .put("]; backfill bucket end must be at-or-before the boundary bucket floor");
         }
 
-        // Accepted: this backfill sits in the frozen zone of the anchor we used. Record
-        // that anchor as the backfill-frontier high-water mark so a later refresh whose
-        // max(base_ts) has retreated (base partition drop / re-ingestion) still anchors its
-        // boundary at-or-above here and cannot wipe this row. max(view_ts) alone cannot
-        // cover this -- the backfilled row is older than the view's materialised frontier --
-        // which is the pre-first-refresh data-loss window this closes. Uses the same anchor
-        // formula as computeBoundaryBucketFloor (min(max(base_ts), now), or now when the
-        // base reader was unavailable).
-        final long ownAnchor = ownMaxBaseTs == Long.MIN_VALUE ? driver.getTicks() : Math.min(ownMaxBaseTs, driver.getTicks());
-        state.advanceBackfillFrontier(ownAnchor);
+        // Accepted: this backfill sits in the frozen zone. The backfill-frontier high-water
+        // mark that pins the refresh boundary at-or-above this row is NOT advanced here:
+        // this is a pre-commit hook (see WalPreCommitValidator), so the txn is not yet
+        // durably sealed. Advancing a monotonic, no-rollback CAS-max before the seal would
+        // leave the frontier (and the refresh boundary it pins) permanently over-advanced if
+        // the commit later fails or is never applied. The frontier is instead advanced on the
+        // WAL apply path (ApplyWal2TableJob.reconstructBackfillFrontier), after the data is
+        // committed -- the single, durability-ordered advance point that also covers crash
+        // replay and replicas (the validator does not run on either).
     }
 
     /**

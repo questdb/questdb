@@ -741,6 +741,22 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             case MAT_VIEW_DATA:
                 TableToken tableToken = writer.getTableToken();
                 walTelemetryFacade.store(WAL_TXN_APPLY_START, tableToken, walId, seqTxn, -1L, -1L, start - commitTimestamp, txnDetails.getMinTimestamp(seqTxn), txnDetails.getMaxTimestamp(seqTxn));
+                if (walTxnType == DATA && tableToken.isMatView()) {
+                    // Durability ordering for the backfill frontier (frozen zone): derive it from the
+                    // pending user-backfill txns and persist it to _mv.s BEFORE the data is committed,
+                    // so the frontier is durable no later than the data it protects. A post-commit-only
+                    // persist leaves a window where a crash after the data commit but before the state
+                    // write loses the frontier -- the txn is already applied, so a restart never re-runs
+                    // reconstruct for it, and a later max(base_ts) retreat could then wipe a (pre-first-
+                    // refresh) backfill. Persisting first degrades that window to harmless over-protection
+                    // (frontier durable ahead of the data it guards). Reconstructing over the loaded range,
+                    // a superset of what this commit seals, is safe: the extra txns are durable in the WAL
+                    // and will apply, and advanceBackfillFrontier is a monotonic CAS-max. No-op for
+                    // non-backfill DATA (refresh REPLACE_RANGE is filtered out) and when nothing advanced
+                    // the frontier, so refresh-only and ordinary workloads pay nothing.
+                    reconstructBackfillFrontier(tableToken, txnDetails, seqTxn, txnDetails.getLastSeqTxn());
+                    persistMatViewBackfillFrontier(tableToken);
+                }
                 long skipTxnCount = calculateSkipTransactionCount(tableToken, seqTxn, txnDetails);
                 // Ask TableWriter to skip applying transactions entirely when possible
                 boolean skipped = false;
@@ -1070,8 +1086,10 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
      * {@link MatViewBackfillValidator#validate} -- only generic {@link WalTxnType#DATA} with the
      * default dedup mode (user INSERT/COPY/ILP/QWP) is considered; refresh writes (MAT_VIEW_DATA, or
      * DATA + REPLACE_RANGE) are skipped. No-op when the view has no {@code REFRESH LIMIT} or the
-     * wall-clock escape-hatch is on. Idempotent against the validator's own commit-time advance
-     * (CAS-max), so normal operation is unaffected; only crash-replay and replicas rely on it.
+     * wall-clock escape-hatch is on. This is the single advance point for the frontier (the
+     * commit-time validator does not advance it -- see {@link MatViewBackfillValidator#validate}),
+     * so it runs uniformly for local commits, crash replay, and replicas. CAS-max, so repeated
+     * calls over an overlapping txn range are idempotent.
      */
     private void reconstructBackfillFrontier(TableToken viewToken, WalTxnDetails txnDetails, long fromSeqTxn, long toSeqTxn) {
         final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);

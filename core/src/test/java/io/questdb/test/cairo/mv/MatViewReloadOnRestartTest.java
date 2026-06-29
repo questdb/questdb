@@ -353,7 +353,11 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
         TestUtils.assertMemoryLeak(() -> {
             final TestMicroClock testClock = new TestMicroClock(parseFloorPartialTimestamp("2024-09-12T00:00:00.000000Z"));
 
-            final long expectedFrontier = timestampType.getDriver().parseFloorLiteral("2024-09-13T12:00:00.000000Z");
+            // The frontier is advanced on the WAL apply path (reconstructBackfillFrontier) to the
+            // minimal protective anchor for the backfilled row: bucketEnd + LIMIT. R = 09-10T18:00
+            // (1h bucket end 09-10T19:00) + 2 days = 09-12T19:00. (The commit-time validator no
+            // longer advances it -- see testMatViewBackfillFrontierAdvancesOnApplyNotCommit.)
+            final long expectedFrontier = timestampType.getDriver().parseFloorLiteral("2024-09-12T19:00:00.000000Z");
 
             try (final TestServerMain main1 = startMainPortsDisabled(testClock)) {
                 executeWithRewriteTimestamp(main1);
@@ -381,8 +385,9 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
 
                 // Pre-first-refresh window: do NOT refresh. Wall clock 09-13T12:30.
                 // anchor = min(max(base)=09-13T12:00, now) = 09-13T12:00; boundary = 09-11T12:00.
-                // Backfill R = 09-10T18:00 < 09-11T12:00 -> ACCEPTED (frozen). Validator records
-                // backfillFrontier = 09-13T12:00.
+                // Backfill R = 09-10T18:00 < 09-11T12:00 -> ACCEPTED (frozen). The apply path then
+                // records backfillFrontier = bucketEnd(09-10T19:00) + LIMIT(2d) = 09-12T19:00, the
+                // minimal anchor that keeps R frozen (boundary stays at-or-above R's bucket end).
                 testClock.micros.set(parseFloorPartialTimestamp("2024-09-13T12:30:00.000000Z"));
                 execute(main1, "insert into price_1h values('a', 1.0, '2024-09-10T18:00')");
                 drainWalQueue(main1.getEngine());
@@ -539,7 +544,9 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
     public void testBackfillSurvivesBaseRetreatWithoutRestart() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final TestMicroClock testClock = new TestMicroClock(parseFloorPartialTimestamp("2024-09-12T00:00:00.000000Z"));
-            final long expectedFrontier = timestampType.getDriver().parseFloorLiteral("2024-09-13T12:00:00.000000Z");
+            // Apply-path frontier = bucketEnd(09-10T19:00) + LIMIT(2d) = 09-12T19:00 (the minimal
+            // anchor that keeps R frozen); the commit-time validator no longer advances it.
+            final long expectedFrontier = timestampType.getDriver().parseFloorLiteral("2024-09-12T19:00:00.000000Z");
 
             try (final TestServerMain main1 = startMainPortsDisabled(testClock)) {
                 executeWithRewriteTimestamp(main1);
