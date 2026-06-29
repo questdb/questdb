@@ -528,6 +528,62 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConstantFoldDivisionAtIntWidth() throws Exception {
+        // A folded constant with a non-modular operator (division) must replicate
+        // the Java filter's per-op INT wrapping at an INT-width comparison.
+        // (1000000 * 1000000) / 7 folds in long to 142857142857, whose low 32
+        // bits are +1123222089, but DivInt#getInt computes
+        // (int) (1000000 * 1000000) / 7 = -103911424. Folding in long and
+        // truncating diverged: the JIT returned 0 rows where the Java filter
+        // returned every row.
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " cast(x - 100 as byte) i8," +
+                " cast(x - 100 as short) i16," +
+                " cast(x - 100 as int) i32," +
+                " (x - 100) i64" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        assertMemoryLeak(() -> {
+            execute(ddl);
+            // Per-op INT wrap = -103911424; every narrow/INT row (>= -99) exceeds it.
+            assertQueryNotNullNoLeakCheck("x where i8 > (1000000 * 1000000) / 7");
+            assertQueryNotNullNoLeakCheck("x where i16 > (1000000 * 1000000) / 7");
+            assertQueryNotNullNoLeakCheck("x where i32 > (1000000 * 1000000) / 7");
+            // LONG column reads full long width via DivInt#getLong = 142857142857;
+            // no i64 row reaches it, and the I8 fold path already agreed here.
+            assertQueryNullableNoLeakCheck("x where i64 > (1000000 * 1000000) / 7");
+        });
+    }
+
+    @Test
+    public void testConstantFoldRootUnderLongWithFloat() throws Exception {
+        // An overflowing constant product (258558 * -259815) nested under a LONG
+        // add (c0 + ...) is read at long width by AddLong#getLong, so the Java
+        // filter never wraps it. A FLOAT in the predicate suppressed the global
+        // narrow-i64 widening, and isLongTypedConstArith only checks LONG *leaves*,
+        // so the JIT folded the product to a wrapped I4 IMM and diverged (JIT all
+        // rows, Java none). The serializer now tags such fold roots for a full I8
+        // IMM.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (c0 LONG, c8 INT, c9 FLOAT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t SELECT rnd_long(-1000000, 1000000, 8), " +
+                    "rnd_int(-1000000, 1000000, 8), rnd_float(8), " +
+                    "timestamp_sequence(to_timestamp('2024-01-01', 'yyyy-MM-dd'), 1800000000L) " +
+                    "FROM long_sequence(122)");
+            // Previously diverging shapes: fold root under a genuine LONG op with a
+            // FLOAT comparison. Still JIT-compiled, now correct.
+            assertJitMatchesJava("SELECT * FROM t WHERE c9 <= (c0 + (258558 * -259815))", true);
+            assertJitMatchesJava("SELECT * FROM t WHERE c9 <= (c0 - (258558 * -259815))", true);
+            assertJitMatchesJava("SELECT * FROM t WHERE c9 <= ((258558 * -259815) + c0)", true);
+            // Control: direct float-vs-overflow comparison still wraps via
+            // getDouble(getInt()), so the wrapped I4 fold remains correct.
+            assertJitMatchesJava("SELECT * FROM t WHERE c9 <= (258558 * -259815)", true);
+            // Control: pure-INT arithmetic under a float wraps (no genuine LONG).
+            assertJitMatchesJava("SELECT * FROM t WHERE c9 <= (c8 + (258558 * -259815))", true);
+        });
+    }
+
+    @Test
     public void testConstantOverflowFoldOnByteColumn() throws Exception {
         // Overflowing INT constant arithmetic must agree across JIT off/scalar/
         // vectorized. A BYTE column compares at INT width, so the JIT folds the
