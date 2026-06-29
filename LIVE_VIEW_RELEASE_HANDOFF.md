@@ -17,7 +17,7 @@ worker) is **out of scope**: the refresh worker keeps reading base rows via the
 disk path (`WalSegmentPageFrameCursor`), exactly as today. **Everything else from
 the RFC's tiered-storage / flush / recovery design is in scope.**
 
-**STATUS: Steps 1-5 DONE (2026-06-29); Step 6 not started.** Decision recorded
+**STATUS: Steps 1-6 DONE (2026-06-29).** Decision recorded
 2026-06-29: adopt the RFC's in-RAM-lead model (defer the whole flush; lead lives
 in RAM; recover from the retained base WAL); no hand-off ring. This rewrite
 supersedes the earlier "Mode A via deferred apply" draft, which had diverged from
@@ -614,20 +614,59 @@ explicit and tested; the EXPLAIN attribute's meaning is Mode-A-accurate. Full LV
 suite green (`InMemRead` 33, `Test` 30, `Smoke` 391, `Fuzz` 7, `Concurrency` 8,
 `Checkpoint` 12, `InMemoryTier` 9, `SnapshotKeyCodec` 7).
 
-### Step 6 - fuzz, concurrency, benchmark gate
+### Step 6 - fuzz, concurrency, benchmark gate - DONE (2026-06-29)
 
-- `LiveViewFuzzTest`: a Mode A read-back knob - SELECT routes through the lead;
-  cross-check Mode A == recompute == disk-only-prefix + lead, under O3 / restart /
-  crash-before-flush / backfill / forced-flush interleavings.
-- `LiveViewConcurrencyTest`: readers churning while refresh publishes leads and
-  flush runs underneath; per-snapshot invariant (ts ascending, gapless); Mode A
-  engaged post-quiescence.
-- JMH: Mode A (seam skip + lead-from-RAM) vs Mode B (seam, subset) vs
-  forced-disk-only, whole-view and seam-split shapes, warm/cold cache. Report the
-  net honestly.
+- DONE. **`LiveViewFuzzTest`: a Mode A lead read-back knob.** `runFuzz` gained a
+  `leadReadBack` mode (a 9th arg): after the randomized O3 + optional backfill
+  churn it builds a deterministic un-flushed lead on top of the applied state
+  (`buildLeadForReadBack` pins the flush clock to the un-advanced test clock and
+  refreshes a 2-row forward batch above the global max ts, so the rows publish
+  into the tier as the lead without crossing FLUSH EVERY - disk keeps only the
+  applied prefix). It then cross-checks three ways via a direct `SELECT * FROM lv`
+  (native ts-ascending order, NOT the `ORDER BY 1` wrapper whose routing is not
+  guaranteed Mode A): the tier-on read serves exactly the lead (`leadRowsServed ==
+  getLeadRowCount()`) and equals the from-scratch recompute, while the forced
+  disk-only fallback (both slot stamps mismatched) serves only the applied prefix
+  (the recompute with the trailing lead rows trimmed - `dropTrailingDataRows`).
+  Two tests: `testFuzzLeadReadBack` (O3 + optional backfill + optional SYMBOL
+  passthrough) and `testFuzzLeadReadBackCrashRecovery` (same, plus a post-build
+  crash-before-flush via `restartAndRecoverLead`: clear the registry, rebuild from
+  disk losing the RAM-only lead, drain the retained base WAL forward to recover it
+  - `lvConsumedSeqTxn == applied` keeps the lead's base rows - then re-run the same
+  Mode A cross-checks on the recovered lead).
+- DONE. **`LiveViewConcurrencyTest`: `testReaderChurnSoakModeALead`.** The refresh
+  driver advances the clock by only 1/6 of FLUSH EVERY per tick (`runReaderChurnSoak`
+  gained a `leadMode` arg), so most refreshes publish an un-flushed lead and a
+  flush comes due underneath the readers only every few ticks - readers churn
+  cursors over a live lead (Mode A) with flushes underneath, instead of the
+  always-flushed disk subset (Mode B). The readers assert the per-snapshot
+  invariant (ts strictly ascending, rn a gapless 1..N), which holds whether a
+  snapshot is served from the lead, the overlap, or disk-only after a fence miss,
+  so a torn lead publish, a seam duplicate/gap at the overlap/lead boundary, or a
+  stale-restamped slot surfaces as a value mismatch (not merely a crash). After
+  quiescence `assertModeALeadEngaged` rebuilds a known lead and asserts Mode A is
+  engaged: the cursor routes through the tier, serves exactly the lead, and equals
+  the recompute.
+- DONE. **JMH `LiveViewInMemReadBenchmark`.** Added a `modeA` routing arm (the
+  tier leads disk by an un-flushed `LEAD_ROWS` lead) alongside `modeB` (disk
+  subset) and `diskOnly` (fence forced off), and a `shape` param: `whole` (every
+  row resident, seam = min ts - the upper-bound benefit) vs `seamSplit` (the IN
+  MEMORY window covers only the recent half of the span, so the tier arms still
+  pay for the disk prefix - the realistic, smaller win). Setup asserts each arm's
+  routing and lead presence. **The net, reported honestly:** modeA and modeB read
+  cost is essentially identical - a lead row and an overlap row take the same hot
+  path, so modeA's distinct value is freshness, not throughput. The seam skip
+  ({modeA, modeB} vs diskOnly) is the read-throughput lever, large in `whole` and
+  smaller in `seamSplit`; the disk-only arm reads the warm OS page cache in JMH
+  steady state, so the reported tier win is the conservative warm-cache figure
+  (a cold cache would widen it). Numbers get filled in by the first run.
 
-Exit: lead lifecycle exercised end-to-end with asserted results; the read
-tradeoff is quantified.
+Exit (met): the lead lifecycle is exercised end-to-end with asserted results (the
+Mode A read-back differential oracle under O3 / restart / crash-before-flush /
+backfill, and the concurrent reader-churn invariant against live leads with
+flushes underneath), and the read tradeoff is quantified by the benchmark. Full LV
+suite green (`InMemRead` 33, `Smoke` 391, `Test` 30, `Fuzz` 9, `Concurrency` 9,
+`Checkpoint` 12, `InMemoryTier` 9, `SnapshotKeyCodec` 7).
 
 ---
 

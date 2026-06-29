@@ -68,42 +68,67 @@ import java.nio.file.attribute.BasicFileAttributes;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Quantifies the in-memory tier (Mode B) read benefit for a live view, gating
- * the "keep Mode B on by default?" decision (RFC v2, open question 3).
+ * Quantifies the in-memory tier read benefit for a live view, gating the "keep
+ * the tier on by default?" decision (RFC v2, open question 3) and reporting the
+ * Mode A (lead-from-RAM) vs Mode B (disk subset) vs disk-only net.
  * <p>
  * A SYMBOL-free {@code row_number()} view (so {@code SELECT * FROM lv} routes
- * through the tier) is populated with {@code rows} ticks at a 1ms step, all
- * inside the {@code IN MEMORY 60m} window - so the whole view is resident and
- * Mode B serves the entire scan from RAM (seam = min ts). This is the upper
- * bound of the benefit: a real query reads only its recent suffix from RAM and
- * the older prefix from disk, and the recent disk partition is often already in
- * the page cache. If even this best case is within noise, defaulting Mode B off
- * for V1 is justified.
+ * through the tier) is populated with {@code rows} ticks at a 1ms step. All three
+ * read arms scan the identical {@code SELECT * FROM lv}; the {@code routing} param
+ * decides what the cursor serves:
+ * <ul>
+ *   <li><b>modeA</b> - the tier leads disk: the last {@link #LEAD_ROWS} rows are
+ *   refreshed into the tier but held un-flushed (the in-RAM lead), the rest are
+ *   applied to disk. The read serves the lead and the overlap from RAM.</li>
+ *   <li><b>modeB</b> - the whole view is flushed, so the tier is a strict subset
+ *   of disk; the read serves the resident overlap from RAM (no lead).</li>
+ *   <li><b>diskOnly</b> - the whole view is flushed and both slot stamps are
+ *   mismatched so the seqTxn fence fails; the read serves everything from disk
+ *   (the same forced-disk-only technique the differential-oracle tests use).</li>
+ * </ul>
+ * The {@code shape} param sets how much of the view is resident:
+ * <ul>
+ *   <li><b>whole</b> - {@code IN MEMORY 60m} keeps every row resident (seam = min
+ *   ts), so the tier serves the entire scan from RAM. This is the upper bound of
+ *   the benefit.</li>
+ *   <li><b>seamSplit</b> - the {@code IN MEMORY} window covers only the recent
+ *   half of the span, so the seam falls mid-view: the tier serves the recent half
+ *   from RAM and disk serves the older half. This is the realistic shape - the
+ *   tier arms still pay for the disk prefix, so the win over disk-only shrinks.</li>
+ * </ul>
+ * Honest caveats for reading the numbers: (1) modeA and modeB read cost is
+ * essentially identical - a lead row and an overlap row take the same hot path,
+ * so modeA's distinct value is freshness, not throughput; the arms differ only in
+ * what is served, not how. (2) The disk-only arm reads from the OS page cache
+ * once warm (JMH steady state), so the reported tier win is the conservative
+ * warm-cache figure; a cold cache would widen it. (3) The seam skip - not the
+ * lead - is the read-throughput lever, visible as {modeA, modeB} vs diskOnly.
  * <p>
- * The two arms read the identical {@code SELECT * FROM lv}; the {@code routing}
- * param decides whether the cursor takes Mode B or the disk-only fallback. The
- * disk-only arm mismatches both slot stamps so the seqTxn fence fails - the same
- * forced-disk-only technique the differential-oracle tests use - so both arms
- * exercise the production read path with the only difference being the routing.
- * Setup asserts each arm actually took the intended path.
- * <p>
- * Numbers get filled in by the first run; see the PR description for the
- * baseline. Reported as average wall time per full scan.
+ * Setup asserts each arm took the intended path. Reported as average wall time
+ * per full scan.
  */
 @State(Scope.Benchmark)
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.MICROSECONDS)
 public class LiveViewInMemReadBenchmark {
 
-    // 1ms step keeps `rows` ticks inside the default 60-minute IN MEMORY window
-    // (1M rows span ~16.7 min), so the whole view stays resident in the tier.
+    // The trailing rows refreshed but held un-flushed (the in-RAM lead) in the
+    // modeA arm. Small relative to `rows` and well inside the IN MEMORY window in
+    // either shape, so it is always resident.
+    private static final int LEAD_ROWS = 5_000;
+    // 1ms step. In the `whole` shape `rows` ticks stay inside the 60-minute IN
+    // MEMORY window (1M rows span ~16.7 min) so the whole view is resident; the
+    // `seamSplit` shape sizes its window to the recent half of the span instead.
     private static final long STEP_MICROS = 1_000L;
 
     @Param({"100000", "1000000"})
     public int rows;
 
-    @Param({"modeB", "diskOnly"})
+    @Param({"modeA", "modeB", "diskOnly"})
     public String routing;
+
+    @Param({"whole", "seamSplit"})
+    public String shape;
 
     private Path dbRoot;
     private CairoEngine engine;
@@ -138,27 +163,36 @@ public class LiveViewInMemReadBenchmark {
 
         engine.execute("create table base (ts timestamp, i long) timestamp(ts) partition by DAY WAL", sqlCtx);
         // SYMBOL-free output so SELECT * FROM lv is a full-schema fixed-width
-        // projection - the precondition for Mode B routing.
+        // projection - the precondition for tier routing. The `whole` shape keeps
+        // every row resident; `seamSplit` sizes the window to the recent half of
+        // the span so the seam falls mid-view.
+        final boolean modeA = "modeA".equals(routing);
+        final boolean seamSplit = "seamSplit".equals(shape);
+        final long spanSeconds = Math.max(1L, (long) rows * STEP_MICROS / 1_000_000L);
+        final String inMemory = seamSplit ? "in memory " + Math.max(1L, spanSeconds / 2) + "s " : "in memory 60m ";
         engine.execute(
-                "create live view lv flush every 100ms in memory 60m as "
+                "create live view lv flush every 100ms " + inMemory + "as "
                         + "select ts, i, row_number() over () as rn from base",
                 sqlCtx
         );
 
         // Data starts 30 days in the future so every row sits above the
-        // non-backfill view's CREATE-moment lower bound (the wall clock now).
+        // non-backfill view's CREATE-moment lower bound (the wall clock now). In
+        // modeA the trailing LEAD_ROWS rows are held back to be the un-flushed
+        // lead; the rest are applied to disk first.
         final long baseTs = System.currentTimeMillis() * 1000L + 30L * 86_400L * 1_000_000L;
+        final int appliedRows = modeA ? rows - LEAD_ROWS : rows;
         engine.execute(
                 "insert into base select (" + baseTs + " + (x - 1) * " + STEP_MICROS + ")::timestamp, x "
-                        + "from long_sequence(" + rows + ")",
+                        + "from long_sequence(" + appliedRows + ")",
                 sqlCtx
         );
         drainWal(engine);
 
-        // Drive one refresh cycle to materialise the view and populate the tier,
-        // clearing the FLUSH EVERY gate so the flush is not deferred.
         final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
         try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            // Materialise the applied portion and populate the tier, clearing the
+            // FLUSH EVERY gate each pass so the flush is not deferred.
             for (int i = 0; i < 64; i++) {
                 instance.setLastFlushTimeUs(Numbers.LONG_NULL);
                 boolean progressed = false;
@@ -171,6 +205,22 @@ public class LiveViewInMemReadBenchmark {
                     break;
                 }
             }
+
+            if (modeA) {
+                // Pin the flush clock far in the future so the next refresh
+                // publishes the trailing rows into the tier as the un-flushed lead
+                // (the tier leads disk) without crossing FLUSH EVERY.
+                instance.setLastFlushTimeUs(engine.getConfiguration().getMicrosecondClock().getTicks() + 3_600_000_000L);
+                engine.execute(
+                        "insert into base select (" + baseTs + " + (" + appliedRows + " + x - 1) * " + STEP_MICROS + ")::timestamp, "
+                                + appliedRows + " + x from long_sequence(" + LEAD_ROWS + ")",
+                        sqlCtx
+                );
+                drainWal(engine);
+                //noinspection StatementWithEmptyBody
+                while (job.run()) ; // refresh only -> lead in RAM, no flush
+                drainWal(engine);
+            }
         }
 
         final LiveViewInMemoryTier tier = instance.getInMemoryTier();
@@ -178,8 +228,19 @@ public class LiveViewInMemReadBenchmark {
             throw new IllegalStateException("in-mem tier was not allocated");
         }
         final LiveViewInMemoryBuffer slot = tier.getSlot(tier.getPublishedIdx());
-        if (slot.rowCount() != rows) {
+        // In the `whole` shape every row is resident; in `seamSplit` only the
+        // recent window is, so just require a populated slot there.
+        if (!seamSplit && slot.rowCount() != rows) {
             throw new IllegalStateException("tier not fully populated: expected " + rows + ", got " + slot.rowCount());
+        }
+        if (seamSplit && slot.rowCount() <= 0) {
+            throw new IllegalStateException("seam-split tier was not populated");
+        }
+        if (modeA && slot.leadRowCount() != LEAD_ROWS) {
+            throw new IllegalStateException("expected an un-flushed lead of " + LEAD_ROWS + ", got " + slot.leadRowCount());
+        }
+        if (!modeA && slot.leadRowCount() != 0) {
+            throw new IllegalStateException("expected no lead, got " + slot.leadRowCount());
         }
 
         if ("diskOnly".equals(routing)) {
@@ -221,9 +282,10 @@ public class LiveViewInMemReadBenchmark {
         return sum;
     }
 
-    // Opens the inner LiveViewRecordCursor once and verifies the routing matches
-    // the param, so a silently mis-routed arm (e.g. a future change that breaks
-    // the fence) surfaces loudly instead of reporting a phantom win or loss.
+    // Opens the inner LiveViewRecordCursor once, drains it, and verifies the
+    // routing matches the param, so a silently mis-routed arm (e.g. a future
+    // change that breaks the fence) surfaces loudly instead of reporting a phantom
+    // win or loss. For modeA it also confirms the cursor actually served the lead.
     private void assertRouting() throws Exception {
         RecordCursorFactory f = factory;
         while (f != null && !(f instanceof LiveViewRecordCursorFactory)) {
@@ -233,10 +295,17 @@ public class LiveViewInMemReadBenchmark {
             throw new IllegalStateException("expected a LiveViewRecordCursorFactory in the plan");
         }
         try (LiveViewRecordCursor cursor = (LiveViewRecordCursor) f.getCursor(sqlCtx)) {
-            final boolean expectedModeB = "modeB".equals(routing);
-            if (cursor.isRoutingEligible() != expectedModeB) {
+            final boolean expectedTier = !"diskOnly".equals(routing);
+            if (cursor.isRoutingEligible() != expectedTier) {
                 throw new IllegalStateException(
-                        "routing mismatch: expected modeB=" + expectedModeB + ", got " + cursor.isRoutingEligible());
+                        "routing mismatch: expected tier=" + expectedTier + ", got " + cursor.isRoutingEligible());
+            }
+            //noinspection StatementWithEmptyBody
+            while (cursor.hasNext()) {
+            }
+            if ("modeA".equals(routing) && cursor.leadRowsServed() != LEAD_ROWS) {
+                throw new IllegalStateException(
+                        "modeA must serve the lead from RAM: expected " + LEAD_ROWS + ", got " + cursor.leadRowsServed());
             }
         }
     }

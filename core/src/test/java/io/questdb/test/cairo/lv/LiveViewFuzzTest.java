@@ -161,6 +161,42 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFuzzLeadReadBack() throws Exception {
+        // Mode A read-back: after the randomized O3 + optional backfill churn the
+        // harness builds a deterministic un-flushed lead on top of the applied
+        // state (a forward batch refreshed into the in-mem tier but held below the
+        // FLUSH EVERY cadence, so it never reaches disk). The final read then
+        // routes through the lead and is cross-checked three ways: the tier-on read
+        // serves exactly the lead and equals the from-scratch recompute, while the
+        // forced disk-only fallback serves only the applied prefix (the recompute
+        // with the lead trimmed off). A SYMBOL passthrough is added on half the
+        // runs, exercising the eager-interned lead's id resolution through Mode A.
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1 + rnd.nextInt(4));
+        assertMemoryLeak(() -> {
+            final boolean backfill = rnd.nextBoolean();
+            runFuzz(rnd, 0, 120 + rnd.nextInt(280), true, false, backfill, true, false, true);
+        });
+    }
+
+    @Test
+    public void testFuzzLeadReadBackCrashRecovery() throws Exception {
+        // Mode A read-back with a crash-before-flush twist: the harness builds the
+        // un-flushed lead, verifies the Mode A cross-checks, then simulates a crash
+        // (registry clear + rebuild from disk, which drops the RAM-only lead) and a
+        // restart that recovers the lead by draining the retained base WAL forward
+        // (lvConsumedSeqTxn == applied keeps the lead's base rows). The same Mode A
+        // cross-checks must hold on the recovered lead. restart=true drives the
+        // post-build crash; the per-commit restarts inside runFuzz add further churn.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        assertMemoryLeak(() -> {
+            final boolean backfill = rnd.nextBoolean();
+            runFuzz(rnd, 0, 120 + rnd.nextInt(220), true, true, backfill, true, false, true);
+        });
+    }
+
+    @Test
     public void testFuzzO3() throws Exception {
         // Out-of-order ingestion across commits, refreshing between each commit
         // so late rows force head replay against already-materialized state.
@@ -215,6 +251,36 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
                 runFuzz(rnd, v, 300 + rnd.nextInt(400), true, true, true, true);
             }
         });
+    }
+
+    // Mode A read-back cross-check: with a known un-flushed lead resident, the
+    // tier-on read must serve exactly the lead and equal the from-scratch
+    // recompute, while the forced disk-only fallback serves only the applied
+    // prefix (the recompute with the trailing lead rows trimmed). All three sides
+    // share the native ts-ascending order, so the comparison is byte-for-byte.
+    // Run single-threaded after the worker is freed and the lead is built.
+    private static void assertLeadReadBack(String viewSql) throws SqlException {
+        LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+        Assert.assertNotNull(instance);
+        final long leadRows = instance.getLeadRowCount();
+        Assert.assertTrue("Mode A read-back needs a non-empty lead", leadRows > 0);
+
+        // The tier routes Mode A and serves exactly the un-flushed lead.
+        Assert.assertEquals("the cursor must serve exactly the instance's lead",
+                leadRows, leadRowsServedFor("SELECT * FROM lv"));
+
+        // Tier-on content equals the recompute (both native ts-ascending order).
+        StringSink lvOut = new StringSink();
+        printSql("SELECT * FROM lv", lvOut);
+        StringSink recompute = new StringSink();
+        printSql(viewSql, recompute);
+        Assert.assertEquals("Mode A read must equal the recompute", recompute.toString(), lvOut.toString());
+
+        // Disk-only fallback content equals the applied prefix (recompute minus the lead).
+        StringSink diskOnly = new StringSink();
+        printDiskOnly("SELECT * FROM lv", diskOnly);
+        Assert.assertEquals("disk-only read must equal the applied prefix",
+                dropTrailingDataRows(recompute.toString(), leadRows), diskOnly.toString());
     }
 
     // Confirms SELECT * FROM lv actually routes through Mode B (the in-mem tier),
@@ -336,10 +402,71 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
         return any;
     }
 
+    // Drops the last `count` data rows from a printSql output (a header line plus
+    // one '\n'-terminated line per row), keeping the header. Used to turn the full
+    // recompute into the applied prefix (recompute minus the un-flushed lead) the
+    // disk-only fallback must match.
+    private static String dropTrailingDataRows(String printed, long count) {
+        if (count <= 0) {
+            return printed;
+        }
+        // split(-1) keeps the trailing empty token after the final '\n', so for a
+        // header + N data rows the array is [header, r1, ..., rN, ""].
+        final String[] lines = printed.split("\n", -1);
+        final int dataRows = lines.length - 2;
+        final int keep = (int) (dataRows - count);
+        Assert.assertTrue("cannot drop more rows than present", keep >= 0);
+        final StringSink sb = new StringSink();
+        sb.put(lines[0]).put('\n');
+        for (int i = 1; i <= keep; i++) {
+            sb.put(lines[i]).put('\n');
+        }
+        return sb.toString();
+    }
+
+    // Opens the inner LiveViewRecordCursor for the SELECT (unwrapping any
+    // QueryProgress wrapper), drains it, asserts the read routed through the tier
+    // (Mode A), and returns the number of un-flushed lead rows it served.
+    private static long leadRowsServedFor(String sql) throws SqlException {
+        try (RecordCursorFactory factory = select(sql)) {
+            RecordCursorFactory f = factory;
+            while (f != null && !(f instanceof LiveViewRecordCursorFactory)) {
+                f = f.getBaseFactory();
+            }
+            Assert.assertNotNull("expected a LiveViewRecordCursorFactory in the plan", f);
+            try (LiveViewRecordCursor cursor = (LiveViewRecordCursor) f.getCursor(sqlExecutionContext)) {
+                StringSink sink = new StringSink();
+                println(f.getMetadata(), cursor, sink);
+                Assert.assertTrue("Mode A read-back must route through the tier", cursor.isRoutingEligible());
+                return cursor.leadRowsServed();
+            }
+        }
+    }
+
     // Maps a slot stamp to a value the disk reader can never report, forcing the
     // fence off so the read serves disk-only. LONG_NULL slots map to 1.
     private static long mismatch(long seqTxn) {
         return seqTxn == Numbers.LONG_NULL ? 1 : seqTxn + 1_000_000;
+    }
+
+    // Prints the SELECT with the seqTxn fence forced off (both slot stamps
+    // mismatched), so the cursor falls back to the disk-only path and serves only
+    // the applied prefix. Restores the stamps afterwards.
+    private static void printDiskOnly(String sql, StringSink sink) throws SqlException {
+        LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+        Assert.assertNotNull(instance);
+        LiveViewInMemoryTier tier = instance.getInMemoryTier();
+        Assert.assertNotNull(tier);
+        long s0 = tier.getSlot(0).lvSeqTxn();
+        long s1 = tier.getSlot(1).lvSeqTxn();
+        tier.getSlot(0).setLvSeqTxn(mismatch(s0));
+        tier.getSlot(1).setLvSeqTxn(mismatch(s1));
+        try {
+            printSql(sql, sink);
+        } finally {
+            tier.getSlot(0).setLvSeqTxn(s0);
+            tier.getSlot(1).setLvSeqTxn(s1);
+        }
     }
 
     // Returns the projection (SELECT list) for the given non-decimal window-query
@@ -386,6 +513,23 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
 
     private static int variantCount() {
         return DECIMAL_VARIANT + 1;
+    }
+
+    // Builds a deterministic un-flushed lead on top of the already-applied state:
+    // pins the flush clock to the current (un-advanced) test clock so the next
+    // refresh publishes the inserted rows into the in-mem tier as the lead without
+    // crossing FLUSH EVERY, then refreshes a forward batch above the global max ts.
+    // Disk keeps only the applied prefix; the tier leads it by these two rows. The
+    // clock is never advanced, so the lead stays un-flushed.
+    private void buildLeadForReadBack(LiveViewRefreshJob job, long maxTs) throws Exception {
+        LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+        Assert.assertNotNull(instance);
+        instance.setLastFlushTimeUs(currentMicros);
+        execute("INSERT INTO base (ts, sym, i, x) VALUES ("
+                + (maxTs + 1) + "::timestamp, 'AA', 1, 1.0), ("
+                + (maxTs + 2) + "::timestamp, 'AA', 2, 2.0)");
+        drainWalQueue();
+        drainJob(job); // refresh only -> lead in RAM (clock not advanced past FLUSH EVERY)
     }
 
     // Drives the named view's backfill sweep to completion on the caller's job,
@@ -476,6 +620,24 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
         drainWalQueue();
     }
 
+    // Simulates a crash-before-flush: drops the in-memory registry (losing the
+    // RAM-only lead) and rebuilds from on-disk state, then a restart that recovers
+    // the lead by draining the retained base WAL forward. The restored instance's
+    // flush clock is pinned so drain-forward rebuilds the lead without re-flushing
+    // it (lvConsumedSeqTxn == applied retained the lead's base rows). One drain pass
+    // restores the head .cp, replays to the applied point, and rebuilds the lead.
+    private void restartAndRecoverLead() {
+        engine.getLiveViewRegistry().clear();
+        engine.buildViewGraphs();
+        LiveViewInstance restored = engine.getLiveViewRegistry().getViewInstance("lv");
+        Assert.assertNotNull(restored);
+        restored.setLastFlushTimeUs(currentMicros);
+        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            drainJob(job);
+        }
+        drainWalQueue();
+    }
+
     private void runFuzz(
             Rnd rnd,
             int variant,
@@ -485,7 +647,7 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
             boolean backfill,
             boolean inMemory
     ) throws Exception {
-        runFuzz(rnd, variant, rowCount, o3, restart, backfill, inMemory, false);
+        runFuzz(rnd, variant, rowCount, o3, restart, backfill, inMemory, false, false);
     }
 
     private void runFuzz(
@@ -497,6 +659,20 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
             boolean backfill,
             boolean inMemory,
             boolean inMemReadBack
+    ) throws Exception {
+        runFuzz(rnd, variant, rowCount, o3, restart, backfill, inMemory, inMemReadBack, false);
+    }
+
+    private void runFuzz(
+            Rnd rnd,
+            int variant,
+            int rowCount,
+            boolean o3,
+            boolean restart,
+            boolean backfill,
+            boolean inMemory,
+            boolean inMemReadBack,
+            boolean leadReadBack
     ) throws Exception {
         // Drive a controllable clock so FLUSH EVERY flush gating is deterministic.
         // Pin "now" a day BEFORE the data start (2026-01-01). A non-backfill
@@ -530,9 +706,9 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
         // LV-space ids) is exercised through Mode B under O3 / restart / backfill.
         // The decimal family always carries a SYMBOL passthrough, so it never
         // combines with the read-back path.
-        final boolean symbolReadBack = inMemReadBack && rnd.nextBoolean();
-        final boolean isDecimal = !inMemReadBack && variant == DECIMAL_VARIANT;
-        final boolean inMem = inMemory || inMemReadBack;
+        final boolean symbolReadBack = (inMemReadBack || leadReadBack) && rnd.nextBoolean();
+        final boolean isDecimal = !inMemReadBack && !leadReadBack && variant == DECIMAL_VARIANT;
+        final boolean inMem = inMemory || inMemReadBack || leadReadBack;
         final int decimalWidth = isDecimal ? rnd.nextInt(DECIMAL_PRECISION.length) : -1;
         final int decimalPrecision = isDecimal ? DECIMAL_PRECISION[decimalWidth] : 0;
         final int decimalScale = isDecimal ? DECIMAL_SCALE[decimalWidth] : 0;
@@ -542,12 +718,13 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
         // rescaled precision (= precision - scale + targetScale) within bounds.
         final int rescaleTargetScale = isDecimal ? decimalScale + rnd.nextInt(4) : 0;
         final String projection;
-        if (inMemReadBack) {
+        if (inMemReadBack || leadReadBack) {
             // Fixed-width identity output: SELECT * FROM lv is then a full-schema
             // projection the in-mem tier can serve, so the read routes through
-            // Mode B instead of disk-only. The optional SYMBOL passthrough is
-            // resolved against the disk reader's symbol table via the LV-space
-            // ids the refresh worker stored.
+            // the tier (Mode B subset, or Mode A with an un-flushed lead) instead
+            // of disk-only. The optional SYMBOL passthrough is resolved against the
+            // disk reader's symbol table via the LV-space ids the refresh worker
+            // stored, plus the per-tier symbol cache for any lead-only value.
             projection = symbolReadBack
                     ? "ts, sym, i, row_number() OVER () AS rn"
                     : "ts, i, row_number() OVER () AS rn";
@@ -572,7 +749,8 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
                 .$(", n=").$(n).$(", symCount=").$(symCount).$(", stepMode=").$(stepMode)
                 .$(", o3=").$(o3).$(", restart=").$(restart)
                 .$(", backfill=").$(backfill).$(", inMem=").$(inMem)
-                .$(", inMemReadBack=").$(inMemReadBack).$(", symbolReadBack=").$(symbolReadBack)
+                .$(", inMemReadBack=").$(inMemReadBack).$(", leadReadBack=").$(leadReadBack)
+                .$(", symbolReadBack=").$(symbolReadBack)
                 .$(", where=").$(withWhere).$(", decimalType=").$(decimalType)
                 .$(", sql=").$(viewSql).$();
 
@@ -669,30 +847,57 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
                 drainWalQueue();
                 refreshCycle(job);
                 driveRefreshToQuiescence(job);
+            } else if (leadReadBack) {
+                // Build a deterministic un-flushed lead on top of the applied
+                // state: pin the flush clock to now and refresh a forward batch
+                // above the global max ts so it publishes into the tier as the lead
+                // without crossing FLUSH EVERY (no flush, so disk keeps only the
+                // applied prefix). The clock is not advanced, so the lead stays.
+                buildLeadForReadBack(job, tsv[rowCount - 1]);
             }
         } finally {
             Misc.free(job);
         }
 
-        // The oracle: the live view must equal the window query recomputed over
-        // the base table. ORDER BY 1 (the unique ts) gives both sides a total
-        // order; genericStringMatch tolerates SYMBOL-vs-STRING on passthrough.
-        TestUtils.assertSqlCursors(
-                engine,
-                sqlExecutionContext,
-                "(" + viewSql + ") ORDER BY 1",
-                "(lv) ORDER BY 1",
-                LOG,
-                true
-        );
+        if (leadReadBack) {
+            // Mode A read-back cross-checks, single-threaded now the worker is freed
+            // and a known lead is resident: the tier-on read serves exactly the
+            // un-flushed lead and equals the recompute, while the forced disk-only
+            // fallback serves only the applied prefix (the recompute minus the
+            // lead). Uses a direct SELECT * FROM lv (native ts order) rather than
+            // the ORDER BY 1 wrapper, whose routing is not guaranteed to be Mode A.
+            assertLeadReadBack(viewSql);
 
-        if (inMemReadBack) {
-            // Mode B read-back cross-checks, single-threaded now that the worker is
-            // freed and the view is quiesced: the tier actually serves the read,
-            // and the Mode B result is byte-identical to the forced disk-only path
-            // under whatever O3 / restart / backfill pattern this run produced.
-            assertModeBEngaged();
-            assertModeBMatchesDiskOnly("SELECT * FROM lv");
+            if (restart) {
+                // Crash-before-flush: drop the in-memory registry (losing the RAM
+                // lead) and rebuild from disk, then a restart that recovers the lead
+                // by draining the retained base WAL forward. The same cross-checks
+                // must hold on the recovered lead.
+                restartAndRecoverLead();
+                assertLeadReadBack(viewSql);
+            }
+        } else {
+            // The oracle: the live view must equal the window query recomputed over
+            // the base table. ORDER BY 1 (the unique ts) gives both sides a total
+            // order; genericStringMatch tolerates SYMBOL-vs-STRING on passthrough.
+            TestUtils.assertSqlCursors(
+                    engine,
+                    sqlExecutionContext,
+                    "(" + viewSql + ") ORDER BY 1",
+                    "(lv) ORDER BY 1",
+                    LOG,
+                    true
+            );
+
+            if (inMemReadBack) {
+                // Mode B read-back cross-checks, single-threaded now that the worker
+                // is freed and the view is quiesced: the tier actually serves the
+                // read, and the Mode B result is byte-identical to the forced
+                // disk-only path under whatever O3 / restart / backfill pattern this
+                // run produced.
+                assertModeBEngaged();
+                assertModeBMatchesDiskOnly("SELECT * FROM lv");
+            }
         }
 
         execute("DROP LIVE VIEW lv");

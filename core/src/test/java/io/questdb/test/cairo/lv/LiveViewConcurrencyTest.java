@@ -43,6 +43,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -169,7 +170,7 @@ public class LiveViewConcurrencyTest extends AbstractCairoTest {
         // The sum() view carries a SYMBOL passthrough, so the reads route disk-only;
         // this soak stresses the read/publish hand-off without Mode B in the loop.
         final Rnd rnd = TestUtils.generateRandom(LOG);
-        assertMemoryLeak(() -> runReaderChurnSoak(rnd, 4, 4, 800, false));
+        assertMemoryLeak(() -> runReaderChurnSoak(rnd, 4, 4, 800, false, false));
     }
 
     @Test
@@ -182,7 +183,24 @@ public class LiveViewConcurrencyTest extends AbstractCairoTest {
         // mismatch, not merely a crash. The cross-writer O3 drives the in-mem
         // rebuild against the live Mode B readers (the both-slots-pinned race).
         final Rnd rnd = TestUtils.generateRandom(LOG);
-        assertMemoryLeak(() -> runReaderChurnSoak(rnd, 4, 4, 800, true));
+        assertMemoryLeak(() -> runReaderChurnSoak(rnd, 4, 4, 800, true, false));
+    }
+
+    @Test
+    public void testReaderChurnSoakModeALead() throws Exception {
+        // Mode A variant of the row_number() soak: the refresh driver advances the
+        // clock only a fraction of FLUSH EVERY per tick, so most refreshes publish
+        // an un-flushed lead into the in-mem tier (the tier leads disk) and flushes
+        // land underneath the readers only every few ticks. The readers churn
+        // cursors over the live lead and assert the same per-snapshot invariant - ts
+        // strictly ascending, rn a gapless 1..N sequence - which must hold whether a
+        // snapshot is served from the lead, the overlap, or disk-only after a fence
+        // miss. So a torn lead publish, a seam duplicate/gap at the overlap/lead
+        // boundary, or a stale-restamped slot surfaces as a value mismatch. After
+        // the run quiesces the test rebuilds a known lead and asserts Mode A is
+        // engaged (the cursor serves the lead and equals the recompute).
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        assertMemoryLeak(() -> runReaderChurnSoak(rnd, 4, 4, 800, true, true));
     }
 
     private static void appendRow(WalWriter walWriter, long ts, int symIdx, long iv, double xv) {
@@ -656,7 +674,12 @@ public class LiveViewConcurrencyTest extends AbstractCairoTest {
     // appends via the fast-path CAS and writers ingest (the RFC reader-churn risk
     // callout). The readers detect torn reads / tier-slot corruption by crashing or
     // throwing; the quiesced final state still matches the recompute.
-    private void runReaderChurnSoak(Rnd rnd, int numWriters, int numReaders, int rowCount, boolean modeB) throws Exception {
+    // <p>
+    // leadMode: the driver advances the clock only a fraction of FLUSH EVERY per
+    // tick, so most refreshes publish an un-flushed lead (the tier leads disk) and
+    // flushes land only every few ticks - the readers churn against a live lead
+    // (Mode A) with flushes underneath, instead of a strict disk subset (Mode B).
+    private void runReaderChurnSoak(Rnd rnd, int numWriters, int numReaders, int rowCount, boolean modeB, boolean leadMode) throws Exception {
         setCurrentMicros(MicrosTimestampDriver.floor(CLOCK_START));
 
         final int n = 1 + rnd.nextInt(8);
@@ -684,7 +707,7 @@ public class LiveViewConcurrencyTest extends AbstractCairoTest {
 
         LOG.info().$("LV concurrency reader-churn soak: writers=").$(numWriters)
                 .$(", readers=").$(numReaders).$(", rows=").$(rowCount).$(", n=").$(n)
-                .$(", modeB=").$(modeB).$(", sql=").$(viewSql).$();
+                .$(", modeB=").$(modeB).$(", leadMode=").$(leadMode).$(", sql=").$(viewSql).$();
 
         final TableToken baseToken = engine.verifyTableName("base");
         final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
@@ -699,11 +722,16 @@ public class LiveViewConcurrencyTest extends AbstractCairoTest {
                 final int batch = 5 + rnd.nextInt(20);
                 writers[w] = newWriterThread(w, numWriters, 0, rowCount, batch, tsv, symIdx, iv, xv, baseToken, barrier, errors);
             }
+            // In lead mode advance the clock by a fraction of FLUSH EVERY per tick so
+            // a flush comes due only every few ticks; the refreshes in between
+            // publish the un-flushed lead. Otherwise advance past FLUSH EVERY every
+            // tick so every refresh also flushes (the tier stays a disk subset).
+            final long clockStepMicros = leadMode ? CLOCK_ADVANCE_MICROS / 6 : CLOCK_ADVANCE_MICROS;
             final Thread driver = new Thread(() -> {
                 try {
                     barrier.await();
                     while (running.get()) {
-                        setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                        setCurrentMicros(currentMicros + clockStepMicros);
                         drainWalQueue();
                         drainJob(job);
                     }
@@ -760,6 +788,9 @@ public class LiveViewConcurrencyTest extends AbstractCairoTest {
             Misc.free(job);
         }
 
+        // The driveRefreshToQuiescence above flushed every lead, so the view is a
+        // strict disk subset now - the standard ORDER BY 1 oracle is safe (no lead
+        // to drop on a fence miss).
         TestUtils.assertSqlCursors(
                 engine,
                 sqlExecutionContext,
@@ -769,14 +800,69 @@ public class LiveViewConcurrencyTest extends AbstractCairoTest {
                 true
         );
 
-        if (modeB) {
+        if (modeB && !leadMode) {
             // Guard against the soak silently passing on disk-only reads: confirm
             // the quiesced production read path actually routes through Mode B.
             assertModeBEngaged();
         }
 
+        if (leadMode) {
+            // Confirm Mode A is reachable for this view shape: rebuild a known
+            // un-flushed lead and assert the cursor serves it and equals the
+            // recompute. (The soak above already exercised live leads under the
+            // readers; this pins it deterministically post-quiescence.)
+            assertModeALeadEngaged(viewSql, tsv[rowCount - 1]);
+        }
+
         execute("DROP LIVE VIEW lv");
         execute("DROP TABLE base");
+    }
+
+    // Rebuilds a deterministic un-flushed lead on top of the quiesced (fully
+    // flushed) state and asserts Mode A serves it: pins the flush clock to now and
+    // refreshes a forward batch above the global max ts so it publishes into the
+    // tier without crossing FLUSH EVERY, then opens the inner cursor and asserts it
+    // routes through the tier, serves exactly the lead, and equals the recompute.
+    private void assertModeALeadEngaged(String viewSql, long maxTs) throws Exception {
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+        Assert.assertNotNull(instance);
+        instance.setLastFlushTimeUs(currentMicros);
+        execute("INSERT INTO base (ts, sym, i, x) VALUES ("
+                + (maxTs + 1) + "::timestamp, 'AA', 1, 1.0), ("
+                + (maxTs + 2) + "::timestamp, 'AA', 2, 2.0)");
+        drainWalQueue();
+        try (LiveViewRefreshJob leadJob = new LiveViewRefreshJob(0, engine, 1)) {
+            drainJob(leadJob); // refresh only -> lead in RAM (clock not advanced past FLUSH EVERY)
+        }
+
+        final long leadRows = instance.getLeadRowCount();
+        Assert.assertTrue("a non-empty lead must be resident", leadRows > 0);
+
+        try (
+                SqlCompiler compiler = engine.getSqlCompiler();
+                RecordCursorFactory factory = compiler.compile("SELECT * FROM lv", sqlExecutionContext).getRecordCursorFactory()
+        ) {
+            RecordCursorFactory f = factory;
+            while (f != null && !(f instanceof LiveViewRecordCursorFactory)) {
+                f = f.getBaseFactory();
+            }
+            Assert.assertNotNull("expected a LiveViewRecordCursorFactory in the plan", f);
+            try (LiveViewRecordCursor cursor = (LiveViewRecordCursor) f.getCursor(sqlExecutionContext)) {
+                StringSink sink = new StringSink();
+                println(f.getMetadata(), cursor, sink);
+                Assert.assertTrue("Mode A lead read must route through the tier", cursor.isRoutingEligible());
+                Assert.assertEquals("the cursor must serve exactly the lead", leadRows, cursor.leadRowsServed());
+            }
+        }
+
+        // Direct SELECT * FROM lv (native ts order) equals the recompute, including
+        // the lead - not the ORDER BY 1 wrapper, whose routing is not guaranteed
+        // Mode A.
+        StringSink lvOut = new StringSink();
+        printSql("SELECT * FROM lv", lvOut);
+        StringSink recompute = new StringSink();
+        printSql(viewSql, recompute);
+        Assert.assertEquals("Mode A lead read must equal the recompute", recompute.toString(), lvOut.toString());
     }
 
     // Confirms the SYMBOL-free row_number() view engages Mode B on the production
