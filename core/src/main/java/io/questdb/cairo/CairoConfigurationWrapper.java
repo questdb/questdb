@@ -534,6 +534,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getMatViewRefreshBusyRetryLimit() {
+        return getDelegate().getMatViewRefreshBusyRetryLimit();
+    }
+
+    @Override
+    public long getMatViewRefreshBusyRetryTimeout() {
+        return getDelegate().getMatViewRefreshBusyRetryTimeout();
+    }
+
+    @Override
     public long getMatViewRefreshIntervalsUpdatePeriod() {
         return getDelegate().getMatViewRefreshIntervalsUpdatePeriod();
     }
@@ -546,11 +556,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public long getMatViewRefreshMemoryLimitBytes() {
         return getDelegate().getMatViewRefreshMemoryLimitBytes();
-    }
-
-    @Override
-    public long getMatViewRefreshOomRetryTimeout() {
-        return getDelegate().getMatViewRefreshOomRetryTimeout();
     }
 
     @Override
@@ -1626,6 +1631,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isMatViewRefreshLimitWallClockEnabled() {
         return getDelegate().isMatViewRefreshLimitWallClockEnabled();
+    }
+
+    @Override
+    public boolean isMatViewRefreshBlocked(CharSequence viewName) {
+        return getDelegate().isMatViewRefreshBlocked(viewName);
     }
 
     @Override

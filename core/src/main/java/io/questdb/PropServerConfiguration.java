@@ -82,6 +82,7 @@ import io.questdb.std.ConcurrentCacheConfiguration;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -344,12 +345,14 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int matViewMaxRefreshRetries;
     private final long matViewMaxRefreshStepUs;
     private final boolean matViewParallelExecutionEnabled;
+    private final LowerCaseCharSequenceHashSet matViewRefreshBlockList = new LowerCaseCharSequenceHashSet();
+    private final long matViewRefreshBusyRetryTimeout;
     private final long matViewRefreshIntervalsUpdatePeriod;
     private final boolean matViewRefreshLimitWallClockEnabled;
+    private final int matViewRefreshBusyRetryLimit;
     private final int matViewRefreshMaxClusters;
     private final long matViewRefreshMemoryLimitBytes;
     private final boolean matViewRefreshMissingWalFilesFatal;
-    private final long matViewRefreshOomRetryTimeout;
     private final WorkerPoolConfiguration matViewRefreshPoolConfiguration = new PropMatViewsRefreshPoolConfiguration();
     private final long matViewRefreshSleepTimeout;
     private final int[] matViewRefreshWorkerAffinity;
@@ -1510,7 +1513,9 @@ public class PropServerConfiguration implements ServerConfiguration {
             // reuse wal-apply defaults for mat view workers
             this.matViewEnabled = getBoolean(properties, env, PropertyKey.CAIRO_MAT_VIEW_ENABLED, true);
             this.matViewMaxRefreshRetries = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_RETRIES, 10);
-            this.matViewRefreshOomRetryTimeout = getMillis(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_OOM_RETRY_TIMEOUT, 200);
+            this.matViewRefreshBusyRetryTimeout = getMillis(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_BUSY_RETRY_TIMEOUT, 1000);
+            this.matViewRefreshBusyRetryLimit = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_BUSY_RETRY_LIMIT, 10);
+            parseMatViewRefreshBlockList(getString(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_BLOCK_LIST, ""));
             // Do not use shared write pool by default for mat-view-refresh, use same worker count as wal-apply
             this.matViewRefreshWorkerCount = getInt(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_COUNT, cpuWalApplyWorkers);
             this.matViewRefreshWorkerAffinity = getAffinity(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_AFFINITY, matViewRefreshWorkerCount);
@@ -3018,6 +3023,23 @@ public class PropServerConfiguration implements ServerConfiguration {
         return result;
     }
 
+    private void parseMatViewRefreshBlockList(String value) {
+        matViewRefreshBlockList.clear();
+        if (value == null) {
+            return;
+        }
+        for (String name : value.split(",")) {
+            final String trimmed = name.trim();
+            if (!trimmed.isEmpty()) {
+                matViewRefreshBlockList.add(trimmed);
+            }
+        }
+        if (matViewRefreshBlockList.size() > 0) {
+            log.advisory().$("materialized view refresh block list configured [count=").$(matViewRefreshBlockList.size())
+                    .I$();
+        }
+    }
+
     protected void getUrls(
             Properties properties,
             @Nullable Map<String, String> env,
@@ -3518,6 +3540,10 @@ public class PropServerConfiguration implements ServerConfiguration {
             registerDeprecated(PropertyKey.CAIRO_SQL_DOUBLE_CAST_SCALE);
             registerDeprecated(PropertyKey.CAIRO_SQL_FLOAT_CAST_SCALE);
             registerDeprecated(PropertyKey.CAIRO_MAT_VIEW_MIN_REFRESH_INTERVAL);
+            registerDeprecated(
+                    PropertyKey.CAIRO_MAT_VIEW_REFRESH_OOM_RETRY_TIMEOUT,
+                    PropertyKey.CAIRO_MAT_VIEW_REFRESH_BUSY_RETRY_TIMEOUT
+            );
             registerDeprecated(PropertyKey.CAIRO_SYMBOL_TABLE_APPEND_PAGE_SIZE);
             registerDeprecated(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_ENABLED);
             registerDeprecated(PropertyKey.PG_UPDATE_CACHE_ENABLED);
@@ -4156,6 +4182,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getMatViewRefreshBusyRetryLimit() {
+            return matViewRefreshBusyRetryLimit;
+        }
+
+        @Override
+        public long getMatViewRefreshBusyRetryTimeout() {
+            return matViewRefreshBusyRetryTimeout;
+        }
+
+        @Override
         public long getMatViewRefreshIntervalsUpdatePeriod() {
             return matViewRefreshIntervalsUpdatePeriod;
         }
@@ -4168,11 +4204,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getMatViewRefreshMemoryLimitBytes() {
             return matViewRefreshMemoryLimitBytes;
-        }
-
-        @Override
-        public long getMatViewRefreshOomRetryTimeout() {
-            return matViewRefreshOomRetryTimeout;
         }
 
         @Override
@@ -5243,6 +5274,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isMatViewRefreshLimitWallClockEnabled() {
             return matViewRefreshLimitWallClockEnabled;
+        }
+
+        @Override
+        public boolean isMatViewRefreshBlocked(CharSequence viewName) {
+            return matViewRefreshBlockList.size() > 0 && matViewRefreshBlockList.contains(viewName);
         }
 
         @Override
