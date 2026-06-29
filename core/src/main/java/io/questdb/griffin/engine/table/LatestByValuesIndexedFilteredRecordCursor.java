@@ -139,10 +139,13 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractPageFrameRecordC
         if (index > -1) {
             try (RowCursor cursor = indexReader.getCursor(symbolKey, partitionLo, partitionHi)) {
                 while (cursor.hasNext()) {
+                    // cursor.next() is already frame-relative (BitmapIndex*Reader subtracts
+                    // minValue == partitionLo). Do not subtract partitionLo again, or the record
+                    // is positioned partitionLo rows too early when partitionLo > 0.
                     final long row = cursor.next();
-                    recordA.setRowIndex(row - partitionLo);
+                    recordA.setRowIndex(row);
                     if (filter.getBool(recordA)) {
-                        rows.add(Rows.toRowID(frameIndex, row - partitionLo));
+                        rows.add(Rows.toRowID(frameIndex, row));
                         found.addAt(index, symbolKey);
                         break;
                     }
@@ -153,6 +156,12 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractPageFrameRecordC
 
     private void buildTreeMap() {
         if (keyCount < 0) {
+            // The found.size() == keyCount early exit (and the dropped per-frame overlap guard) relies on
+            // symbolKeys and deferredSymbolKeys being disjoint; a duplicate would inflate keyCount and stop
+            // the exit from ever firing (full scan). The deduping is done by the factory, so guard the
+            // invariant here against a future caller that wires these sets up directly.
+            assert keysDisjoint(symbolKeys, deferredSymbolKeys)
+                    : "deferredSymbolKeys must be deduped against symbolKeys (see AbstractDeferredTreeSetRecordCursorFactory.initRecordCursor)";
             keyCount = symbolKeys.size();
             if (deferredSymbolKeys != null) {
                 keyCount += deferredSymbolKeys.size();
@@ -160,7 +169,7 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractPageFrameRecordC
         }
 
         PageFrame frame;
-        while ((frame = frameCursor.next()) != null && found.size() < keyCount) {
+        while (found.size() < keyCount && (frame = frameCursor.next()) != null) {
             circuitBreaker.statefulThrowExceptionIfTripped();
             final int frameIndex = frameCount;
             final IndexReader indexReader = frame.getIndexReader(columnIndex, IndexReader.DIR_BACKWARD);
@@ -178,11 +187,12 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractPageFrameRecordC
                 addFoundKey(symbolKey, indexReader, invertedFrameIndex, partitionLo, partitionHi);
             }
             if (deferredSymbolKeys != null) {
+                // deferredSymbolKeys is deduped against symbolKeys at factory level
+                // (AbstractDeferredTreeSetRecordCursorFactory.initRecordCursor), so no overlap guard
+                // is needed here; addFoundKey is idempotent regardless.
                 for (int i = 0, n = deferredSymbolKeys.size(); i < n; i++) {
                     int symbolKey = deferredSymbolKeys.get(i);
-                    if (!symbolKeys.contains(symbolKey)) {
-                        addFoundKey(symbolKey, indexReader, invertedFrameIndex, partitionLo, partitionHi);
-                    }
+                    addFoundKey(symbolKey, indexReader, invertedFrameIndex, partitionLo, partitionHi);
                 }
             }
         }
@@ -190,5 +200,16 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractPageFrameRecordC
         rows.sortAsUnsigned();
         index = 0;
         lim = rows.size();
+    }
+
+    private static boolean keysDisjoint(IntHashSet symbolKeys, @Nullable IntHashSet deferredSymbolKeys) {
+        if (deferredSymbolKeys != null) {
+            for (int i = 0, n = deferredSymbolKeys.size(); i < n; i++) {
+                if (symbolKeys.contains(deferredSymbolKeys.get(i))) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 }
