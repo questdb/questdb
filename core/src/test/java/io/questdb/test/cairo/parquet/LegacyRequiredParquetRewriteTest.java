@@ -126,6 +126,27 @@ public class LegacyRequiredParquetRewriteTest extends AbstractCairoTest {
         return rows;
     }
 
+    // Differential oracle for the lazy parquet read path over the legacy Required fixture. A native
+    // CTAS copy of the legacy data, converted via the native ALTER kernel, is the oracle; legacy_all
+    // is converted in place and stays parquet (ALTER COLUMN TYPE is lazy on a parquet partition), so
+    // its read materialises each conversion through the lazy single-pass decode arm. Each entry must
+    // target a DISTINCT column (a column has one type), so one fixture load covers the whole batch.
+    private void assertLegacyConversionsMatchNative(String[][] conversions) throws Exception {
+        loadFixture();
+        execute("create table golden as (select * from legacy_all)");
+        for (String[] conv : conversions) {
+            execute("alter table golden alter column " + conv[0] + " type " + conv[1]);
+            execute("alter table legacy_all alter column " + conv[0] + " type " + conv[1]);
+        }
+        drainWalQueue();
+        for (String[] conv : conversions) {
+            assertSqlCursors(
+                    "select ts, " + conv[0] + " from golden order by ts",
+                    "select ts, " + conv[0] + " from legacy_all order by ts"
+            );
+        }
+    }
+
     @Test
     public void testReadLegacyRequiredParquetPartition() throws Exception {
         // Isolation: reading the legacy Required parquet (all column types, Required
@@ -159,6 +180,52 @@ public class LegacyRequiredParquetRewriteTest extends AbstractCairoTest {
                 Assert.assertEquals("re-read after converting " + conv[0] + " -> " + conv[1], 150, readAll(sink));
             }
         });
+    }
+
+    // The tests below cover the fixed->fixed pairs that decode straight to the target in a single
+    // pass (plan_decode_conversion -> DecodeAs::Target): BYTE/SHORT -> LONG/TIMESTAMP and
+    // FLOAT/DOUBLE -> {BYTE,SHORT,INT,LONG,DATE,TIMESTAMP}, exercised against the legacy Required
+    // fixture. The Optional-schema matrix in ParquetColumnTypeConversionTest#testFixedWithAllEncodings
+    // decodes Optional pages only; here the same single-pass arms must decode legacy Required pages
+    // (BYTE/SHORT/FLOAT/DOUBLE stored without def levels) and still match the native ALTER. The
+    // FLOAT/DOUBLE sources additionally cover a Required NULL carried as an in-band NaN.
+    //
+    // Sources are the c_* columns (data in every row) plus the sentinel-bearing n_float / n_double
+    // column tops (their NULL survives a native CTAS copy as NaN). The no-sentinel column-top columns
+    // (n_byte, n_short) are deliberately excluded: a BYTE/SHORT column top in a legacy Required file
+    // reads as the stored 0 (it has no def level to carry NULL -- see
+    // testBooleanColumnTopReadsFalseAndConvertsToZero), so a native CTAS copy flattens the column top
+    // to 0 while the lazy conversion materialises it as the target NULL sentinel. That is a
+    // pre-existing divergence (the pre-flip two-pass decoder produces the same null) unrelated to the
+    // single-pass decode, so the CTAS oracle does not hold for those columns.
+
+    @Test
+    public void testLegacySinglePassToIntLongMatchNative() throws Exception {
+        assertMemoryLeak(() -> assertLegacyConversionsMatchNative(new String[][]{
+                {"c_float", "int"}, {"c_double", "long"},
+                {"c_byte", "long"}, {"c_short", "timestamp"},
+                {"n_float", "int"}, {"n_double", "long"},
+        }));
+    }
+
+    @Test
+    public void testLegacySinglePassToLongIntMatchNative() throws Exception {
+        assertMemoryLeak(() -> assertLegacyConversionsMatchNative(new String[][]{
+                {"c_float", "long"}, {"c_double", "int"},
+                {"c_byte", "timestamp"}, {"c_short", "long"},
+                {"n_float", "long"}, {"n_double", "int"},
+        }));
+    }
+
+    @Test
+    public void testLegacySinglePassToByteShortMatchNative() throws Exception {
+        // -> byte / -> short exercise the narrow range-check converter arms (different range
+        // constants from -> int/-> long). -> date / -> timestamp share the i64 path with -> long,
+        // already covered above. A column has one type, so c_float and c_double appear once here.
+        assertMemoryLeak(() -> assertLegacyConversionsMatchNative(new String[][]{
+                {"c_float", "byte"}, {"c_double", "short"},
+                {"n_float", "byte"}, {"n_double", "short"},
+        }));
     }
 
     @Test
