@@ -2419,6 +2419,21 @@ public class NumbersTest {
         assertEquals(sink.length(), Numbers.sinkSizeIPv4(ipv4));
     }
 
+    @Test
+    public void testCorrFromSumsOverflowClampsToFinite() {
+        // product overflows to +Infinity; split sqrt path keeps it finite (was 0.0 before the fix)
+        assertEquals(1.0, Numbers.corrFromSums(1e306, 1e306, 1e306), 0.0);
+        assertEquals(-1.0, Numbers.corrFromSums(-1e306, 1e306, 1e306), 0.0);
+    }
+
+    @Test
+    public void testCorrFromSumsUnderflowStaysFinite() {
+        // product underflows to 0.0; split sqrt path yields a finite ~1 (was NaN before the fix).
+        // The two split-sqrt roundings land it 1 ULP below 1.0; the clamp only bounds the high side.
+        assertEquals(0.9999999999999999, Numbers.corrFromSums(2e-300, 2e-300, 2e-300), 0.0);
+        assertEquals(-0.9999999999999999, Numbers.corrFromSums(-2e-300, 2e-300, 2e-300), 0.0);
+    }
+
     private static void assertFails(ExceptionalRunnable r) {
         try {
             r.run();
