@@ -1,6 +1,6 @@
 use crate::allocator::{AcVec, QdbAllocator};
 use crate::parquet::error::{ParquetError, ParquetErrorReason, ParquetResult};
-use crate::parquet::qdb_metadata::{QdbMeta, QDB_META_KEY};
+use crate::parquet::qdb_metadata::{ParquetFieldId, QdbMeta, QDB_META_KEY};
 use crate::parquet_read::{ColumnMeta, ParquetDecoder};
 use nonmax::NonMaxU32;
 use parquet2::metadata::{ColumnDescriptor, FileMetaData};
@@ -135,6 +135,19 @@ pub fn infer_column_type(column: &ColumnDescriptor) -> Option<ColumnType> {
     }
 }
 
+/// Resolves a column's QuestDB id, preferring the authoritative id carried in
+/// `QdbMeta` (the table writer index) over the Parquet `field_id`.
+///
+/// QuestDB stamps both with the same value, but external (non-QuestDB) parquet
+/// has no `QdbMeta` id, so it falls back to the `field_id`. A negative `QdbMeta`
+/// id counts as absent. Returns -1 when neither source supplies an id.
+pub(crate) fn resolve_column_id(
+    qdb_id: Option<ParquetFieldId>,
+    field_id: Option<ParquetFieldId>,
+) -> ParquetFieldId {
+    qdb_id.filter(|&id| id >= 0).or(field_id).unwrap_or(-1)
+}
+
 impl ParquetDecoder {
     pub fn read<R: Read + Seek>(
         allocator: QdbAllocator,
@@ -199,7 +212,13 @@ impl ParquetDecoder {
                 }
                 columns.push(ColumnMeta {
                     column_type: Some(column_type),
-                    id: base_field.id.unwrap_or(-1_i32),
+                    id: resolve_column_id(
+                        qdb_meta
+                            .as_ref()
+                            .and_then(|m| m.schema.get(index))
+                            .and_then(|c| c.id),
+                        base_field.id,
+                    ),
                     name_size: name.len() as i32,
                     name_ptr: name.as_ptr(),
                     name_vec: name,
@@ -372,6 +391,78 @@ mod tests {
     use parquet2::schema::Repetition;
     use qdb_core::col_type::{ColumnType, ColumnTypeTag};
     use tempfile::NamedTempFile;
+
+    #[test]
+    fn resolve_column_id_prefers_qdb_meta_then_field_id() {
+        use super::resolve_column_id;
+        // A non-negative QdbMeta id always wins over the parquet field_id.
+        assert_eq!(resolve_column_id(Some(7), Some(3)), 7);
+        assert_eq!(resolve_column_id(Some(5), None), 5);
+        // Absent or negative QdbMeta id falls back to the field_id.
+        assert_eq!(resolve_column_id(None, Some(3)), 3);
+        assert_eq!(resolve_column_id(Some(-1), Some(3)), 3);
+        // No id from either source yields the -1 sentinel.
+        assert_eq!(resolve_column_id(None, None), -1);
+        assert_eq!(resolve_column_id(Some(-1), None), -1);
+    }
+
+    #[test]
+    fn read_prefers_qdb_meta_id_over_parquet_field_id() {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
+        // A single INT column. The writer stamps its id (4) into BOTH the
+        // parquet field_id and the QdbMeta id, so a freshly written file has
+        // them equal.
+        let row_count = 4;
+        let (_buff, column) =
+            create_fix_column(4, row_count, ColumnType::new(ColumnTypeTag::Int, 0), 4, "c");
+        let partition = Partition { table: "t".to_string(), columns: vec![column] };
+
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        ParquetWriter::new(&mut buf)
+            .with_statistics(false)
+            .finish(partition)
+            .expect("parquet writer");
+        let mut bytes = buf.into_inner();
+
+        // Rewrite ONLY the QdbMeta column id (4 -> 9) in the footer JSON, leaving
+        // the parquet field_id at 4. The single-digit edit preserves the thrift
+        // string length. A correct reader now reports 9, proving it prefers the
+        // QdbMeta id over the field_id.
+        let needle = b"\"id\":4";
+        let occurrences = bytes.windows(needle.len()).filter(|w| *w == needle).count();
+        assert_eq!(
+            occurrences, 1,
+            "expected exactly one QdbMeta id token to patch"
+        );
+        let pos = bytes
+            .windows(needle.len())
+            .position(|w| w == needle)
+            .unwrap();
+        bytes[pos + needle.len() - 1] = b'9';
+
+        let mut temp_file = NamedTempFile::new().expect("Failed to create temp file");
+        temp_file
+            .write_all(&bytes)
+            .expect("Failed to write to temp file");
+        let path = temp_file.path().to_str().unwrap();
+        let mut file = File::open(Path::new(path)).unwrap();
+        let file_len = file.len();
+        let meta = ParquetDecoder::read(allocator, &mut file, file_len).unwrap();
+
+        assert_eq!(meta.columns.len(), 1);
+        // The QdbMeta id (9) wins over the parquet field_id (4).
+        assert_eq!(meta.columns[0].id, 9);
+        // The QdbMeta still parses, so the column type is recovered: the patch
+        // diverged the id without corrupting the metadata.
+        assert_eq!(
+            meta.columns[0].column_type.unwrap(),
+            ColumnType::new(ColumnTypeTag::Int, 0)
+        );
+
+        temp_file.close().expect("Failed to delete temp file");
+    }
 
     #[test]
     fn test_decode_column_type_fixed() {

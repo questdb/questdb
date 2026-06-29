@@ -240,6 +240,7 @@ fn run_e2e_pipeline(parquet_bytes: &[u8]) {
                 column_top: 0,
                 format: if col_idx == 0 { format } else { None },
                 ascii: if col_idx == 0 { ascii } else { None },
+                id: None,
             };
 
             let descriptor = reconstruct_descriptor(
@@ -385,6 +386,7 @@ fn run_e2e_pipeline_multi(parquet_bytes: &[u8]) -> (Vec<Vec<u8>>, Vec<Vec<u8>>) 
                 column_top: 0,
                 format: None,
                 ascii: None,
+                id: None,
             };
 
             let descriptor = reconstruct_descriptor(
@@ -1006,6 +1008,7 @@ fn e2e_multiple_row_groups() {
         column_top: 0,
         format: None,
         ascii: None,
+        id: None,
     };
 
     let mut pm_all_data = Vec::new();
@@ -1122,6 +1125,7 @@ fn run_e2e_filtered<const FILL_NULLS: bool>(parquet_bytes: &[u8], rows_filter: &
         column_top: 0,
         format,
         ascii,
+        id: None,
     };
 
     let descriptor = reconstruct_descriptor(

@@ -28,6 +28,14 @@ impl Statistics for BooleanStatistics {
     fn null_count(&self) -> Option<i64> {
         self.null_count
     }
+
+    fn has_min_value(&self) -> bool {
+        self.min_value.is_some()
+    }
+
+    fn has_max_value(&self) -> bool {
+        self.max_value.is_some()
+    }
 }
 
 pub fn read(v: &ParquetStatistics) -> Result<Arc<dyn Statistics>> {
@@ -70,5 +78,7 @@ pub fn write(v: &BooleanStatistics) -> ParquetStatistics {
         min_value: v.min_value.map(|x| vec![x as u8]),
         min: None,
         max: None,
+        is_max_value_exact: None,
+        is_min_value_exact: None,
     }
 }

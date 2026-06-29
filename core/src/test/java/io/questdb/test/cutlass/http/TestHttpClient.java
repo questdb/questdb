@@ -301,7 +301,11 @@ public class TestHttpClient implements QuietCloseable {
             }
 
             reqToSink(req, sink, username, password, null, null);
-            TestUtils.assertContains(sink.toString(), expectedResponse);
+            // Response body is binary Parquet (not valid UTF-8); search the raw bytes for the ASCII
+            // needle instead of decoding via sink.toString(), which throws on the binary footer.
+            if (!Utf8s.containsAscii(sink, expectedResponse)) {
+                Assert.fail("Expected response to contain:\n" + expectedResponse + "\nActual (escaped):\n" + toUnicodeEscape(sink));
+            }
         } finally {
             if (!keepConnection) {
                 httpClient.disconnect();

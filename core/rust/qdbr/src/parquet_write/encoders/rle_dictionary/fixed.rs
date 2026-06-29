@@ -185,7 +185,7 @@ where
             if value.is_null() {
                 state.push_optional_null()?;
             } else {
-                let key = upsert_dict_entry(
+                let key = upsert_dict_entry::<T, false>(
                     &mut dict_map,
                     &mut dict_entries,
                     value,

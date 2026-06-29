@@ -29,7 +29,7 @@ nonmax = "0.5.5"
 seq-macro = "0.3.6"
 rapidhash = "4.4.1"
 zstd = "0.13"
-memmap2 = "0.9.8"
+memmap2 = "0.9.11"
 
 [dev-dependencies]
 parquet = "56.2.0"
@@ -37,7 +37,7 @@ arrow = "56.2.0"
 bytes = "1.11.1"
 tempfile = "3.23.0"
 rand = "0.10.1"
-criterion = "0.4"
+criterion = "0.8.2"
 
 [profile.release]
 lto = true
