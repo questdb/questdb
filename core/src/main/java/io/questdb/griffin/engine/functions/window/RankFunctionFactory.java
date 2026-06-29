@@ -453,7 +453,7 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
                 // Only the ORDER BY columns decide whether two consecutive rows are peers, so the
                 // MapValue holds just those (compacted) plus the running rank and count. Copying the
                 // whole projected row would force pass-through columns the MapValue cannot store
-                // (UUID, STRING, VARCHAR, BINARY, LONG256, arrays, ...) through RecordValueSinkFactory
+                // (STRING, VARCHAR, BINARY, arrays, ...) through RecordValueSinkFactory
                 // and crash compilation. The value sink reads the ORDER BY columns from the live
                 // record at their base indices and writes them into MapValue slots 0..k-1; the
                 // comparator and rank maps are built over a matching compacted metadata so they read
