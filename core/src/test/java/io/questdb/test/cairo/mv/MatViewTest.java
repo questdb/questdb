@@ -8159,6 +8159,65 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMatViewBackfillTimeZoneAlignedMidnightDstRefreshLimit() throws Exception {
+        // R4 regression: for a super-day view aligned to a DST zone whose transition is near LOCAL
+        // MIDNIGHT (the day-bucket boundary), the refresh's TimeZoneIntervalIterator collapses the
+        // ambiguous/gap hour into a single bucket (adjustLoBoundary), pulling REPLACE_RANGE.lo a full
+        // bucket below the plain local-floor. The validator must bucket on that SAME (collapsed) grid
+        // or it accepts a row the refresh then wipes. Africa/Cairo falls back at local midnight.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "insert into base_price values" +
+                            "('a', 5.0, '2023-10-20T12:00')" +
+                            ",('a', 9.0, '2023-10-27T01:00')"
+            );
+            drainWalQueue();
+            execute(
+                    "create materialized view price_1d refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price " +
+                            "sample by 1d align to calendar time zone 'Africa/Cairo';"
+            );
+            execute("alter materialized view price_1d set refresh limit 1 hour;");
+            drainQueues();
+
+            currentMicros = parseFloorPartialTimestamp("2023-10-27T01:30:00.000000Z");
+            // The boundary's bucket is the fall-back day; the iterator collapses it to
+            // [2023-10-25T21:00, 2023-10-26T22:00) with floor 2023-10-25T21:00. A row at 21:30 lands
+            // in that collapsed (managed) bucket -- pre-fix the tz-blind/plain-floor validator
+            // accepted it and the refresh then wiped it; now it must be rejected.
+            try {
+                execute("insert into price_1d values('a', 1.0, '2023-10-25T21:30')");
+                Assert.fail("expected rejection: row falls in the DST-collapsed managed bucket");
+            } catch (CairoException e) {
+                assertContains(e.getFlyweightMessage(), "backfill row falls in or past the managed zone");
+            }
+
+            // A row strictly below the collapsed floor is frozen and survives the refresh.
+            execute("insert into price_1d values('a', 1.0, '2023-10-23T12:00')");
+            drainQueues();
+
+            execute("refresh materialized view price_1d full;");
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            a\t1.0\t2023-10-23T12:00:00.000000Z
+                            """),
+                    "price_1d where price = 1.0",
+                    "ts",
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testMatViewExtendRefreshLimitOverwritesBackfillInNewlyManagedRange() throws Exception {
         // backfillFrontier must NOT wrongly pin the boundary across an ALTER that EXTENDS the
         // limit. Extending grows the managed zone downward; a row backfilled into what used

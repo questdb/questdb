@@ -36,12 +36,13 @@ import io.questdb.cairo.wal.WalUtils;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
-import io.questdb.griffin.engine.groupby.TimezoneFloorTimestampSampler;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Numbers;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.TimeZoneRules;
+import io.questdb.std.str.CharSink;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -207,9 +208,9 @@ public final class MatViewBackfillValidator implements WalPreCommitValidator {
      * {@code materialized_views()} catalogue, and the backfill-frontier reconstruction all agree
      * with refresh -- including for {@code ALIGN TO CALENDAR TIME ZONE} views. A tz-blind sampler
      * (fixed offset only) would bucket on a different grid than the tz-aware refresh and let the
-     * validator accept a row the refresh then overwrites. Mirrors {@code timestamp_floor_utc} /
-     * {@link TimezoneFloorTimestampSampler} so buckets stay stable across DST. Returns {@code null}
-     * when the stored sampler params are unreadable (corruption).
+     * validator accept a row the refresh then overwrites. Mirrors {@code timestamp_floor_utc} so
+     * buckets stay stable across DST. Returns {@code null} when the stored sampler params are
+     * unreadable (corruption).
      */
     public static @Nullable TimestampSampler createBucketSampler(MatViewDefinition def) {
         final TimestampSampler base = createSampler(def);
@@ -235,11 +236,101 @@ public final class MatViewBackfillValidator implements WalPreCommitValidator {
             base.setOffset(fixedOffset - CommonUtils.getFloorUtcTzOffset(tzRules, 0, unit));
             return base;
         }
-        // Super-day strides under a DST zone: bucket widths vary in UTC; wrap so floor/next follow
-        // local-calendar rules (matches the refresh's TimeZoneIntervalIterator and SAMPLE BY).
-        final TimezoneFloorTimestampSampler wrap = new TimezoneFloorTimestampSampler(base, tzRules, unit);
-        wrap.setOffset(fixedOffset);
-        return wrap;
+        // Super-day strides under a DST zone: bucket widths vary in UTC AND the refresh's
+        // TimeZoneIntervalIterator collapses DST shift intervals (the ambiguous fall-back hour / the
+        // spring-forward gap) into a single bucket via adjustLoBoundary -- pulling REPLACE_RANGE.lo a
+        // full bucket below a plain local floor. A plain-floor sampler (TimezoneFloorTimestampSampler)
+        // does NOT collapse, so its floor can sit a bucket above the refresh lo and the validator
+        // would accept a row the refresh then wipes (e.g. Africa/Cairo, which falls back at local
+        // midnight -- the day-bucket boundary itself). Bucket through the iterator so the grid is
+        // identical to refresh, collapse included.
+        return new RefreshGridSampler(def.getBaseTableTimestampDriver(), base, tzRules, fixedOffset);
+    }
+
+    /**
+     * A {@link TimestampSampler} whose {@code round}/{@code nextTimestamp} delegate to the refresh's
+     * own {@link TimeZoneIntervalIterator}, so the validator, published floor, catalogue, and
+     * frontier reconstruction bucket EXACTLY on the grid the refresh REPLACE_RANGE uses for a
+     * super-day stride under a DST zone -- including the iterator's DST shift-interval collapse, which
+     * a plain local-floor sampler omits. Only {@code round} and the 1-step {@code nextTimestamp} are
+     * exercised by the frozen-zone callers; the rest delegate to the wrapped local sampler or are
+     * unused. The iterator sets the sampler offset on every {@code of()}, so no pre-configuration is
+     * needed.
+     */
+    private static final class RefreshGridSampler implements TimestampSampler {
+        private final TimestampSampler base;
+        private final TimestampDriver driver;
+        private final long fixedOffset;
+        private final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
+        private final TimeZoneRules tzRules;
+
+        private RefreshGridSampler(TimestampDriver driver, TimestampSampler base, TimeZoneRules tzRules, long fixedOffset) {
+            this.driver = driver;
+            this.base = base;
+            this.tzRules = tzRules;
+            this.fixedOffset = fixedOffset;
+        }
+
+        @Override
+        public long getApproxBucketSize() {
+            return base.getApproxBucketSize();
+        }
+
+        @Override
+        public long getBucketSize() {
+            return base.getBucketSize();
+        }
+
+        @Override
+        public int getTimestampType() {
+            return base.getTimestampType();
+        }
+
+        @Override
+        public long nextTimestamp(long timestamp, long numSteps) {
+            if (numSteps != 1) {
+                throw new UnsupportedOperationException();
+            }
+            return bucket(timestamp).getMaxTimestamp();
+        }
+
+        @Override
+        public long nextTimestamp(long timestamp) {
+            return bucket(timestamp).getMaxTimestamp();
+        }
+
+        @Override
+        public long previousTimestamp(long timestamp) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public long round(long timestamp) {
+            return bucket(timestamp).getMinTimestamp();
+        }
+
+        @Override
+        public void setOffset(long offset) {
+            base.setOffset(offset);
+        }
+
+        @Override
+        public void setStart(long timestamp) {
+            base.setStart(timestamp);
+        }
+
+        @Override
+        public void toSink(@NotNull CharSink<?> sink) {
+            sink.putAscii("RefreshGrid(");
+            base.toSink(sink);
+            sink.putAscii(')');
+        }
+
+        // Snap a one-bucket window around timestamp. getMin/getMaxTimestamp are computed in the
+        // iterator's ofCommon (with adjustLoBoundary/adjustHiBoundary) independent of the step.
+        private TimeZoneIntervalIterator bucket(long timestamp) {
+            return iterator.of(driver, base, tzRules, fixedOffset, null, timestamp, timestamp, 1);
+        }
     }
 
     /**
