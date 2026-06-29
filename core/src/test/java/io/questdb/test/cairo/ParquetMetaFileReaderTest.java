@@ -246,7 +246,11 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
 
                     ParquetMetaFileReader reader = new ParquetMetaFileReader();
                     reader.of(dataPtr, parquetMetaSize);
-                    Assert.assertTrue(reader.resolveFooter(Long.MAX_VALUE));
+                    // Freshly staged single-snapshot _pm with no committed parquet size to
+                    // MVCC-match on: resolve the physically-last footer, same as the sibling
+                    // testColumnMetadataAccessors. resolveFooter(parquetFileSize) would never
+                    // match (derived size 0+0+PARQUET_TRAILER_SIZE != the requested size).
+                    Assert.assertTrue(reader.resolveLastFooter());
 
                     // Required (legacy) columns report 0; Optional (modern) report 1. The
                     // designated timestamp is Required in both old and new files, so the

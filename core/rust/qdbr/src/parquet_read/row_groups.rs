@@ -189,9 +189,14 @@ pub(super) fn post_convert(
         (ColumnTypeTag::Varchar | ColumnTypeTag::String, dst) if is_var_to_fixed_target(dst) => {}
         // Decimal → Decimal: rescale to the target scale and NULL out any value that does not fit
         // the target exactly (lossy scale-down, scale-up overflow, or magnitude beyond the target
-        // precision), mirroring the native DecimalColumnTypeConverter. Always run, even at equal
-        // scale, so a same-scale precision reduction still clamps out-of-range values to NULL.
-        (src, dst) if is_decimal_tag(src) && is_decimal_tag(dst) => {
+        // precision), mirroring the native DecimalColumnTypeConverter. Runs for any genuine
+        // conversion, even at equal scale, so a same-scale precision reduction still clamps
+        // out-of-range values to NULL. A true identity read (from_type == to_type) requests no
+        // conversion and must pass through untouched: the decoded bytes are already the target
+        // representation, and a plain read reconstructs the ColumnType from file metadata that may
+        // omit precision/scale (precision 0), which would otherwise clamp every value with
+        // |v| >= 10^0 = 1 to NULL. Identity falls through to the `a == b` no-op arm below.
+        (src, dst) if is_decimal_tag(src) && is_decimal_tag(dst) && from_type != to_type => {
             if decimal_tag_size(dst) < decimal_tag_size(src) {
                 // Narrowing: plan_decode_conversion kept the source width (DecodeAs::Source), so the
                 // buffer holds full-width source values; rescale, range-check, then narrow.
