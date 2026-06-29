@@ -115,6 +115,10 @@ import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
  */
 public class LiveViewRefreshJob implements Job, QuietCloseable {
     private static final Log LOG = LogFactory.getLog(LiveViewRefreshJob.class);
+    // Sentinel returned by replayToApplied when it detected an out-of-order base
+    // commit mid-gap and handed off to o3Replay (which rebuilt disk + re-stamped
+    // the watermarks). Distinct from the non-negative replayed-row counts.
+    private static final long REPLAY_TO_APPLIED_O3 = -1L;
     private final PageFrameAddressCache addressCache = new PageFrameAddressCache();
     private final AnchorDispatchingCursor anchorDispatchingCursor = new AnchorDispatchingCursor();
     private final ApplyWal2TableJob applyJob;
@@ -2206,6 +2210,77 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * Restart replay-to-applied: re-feeds base WAL rows over
+     * {@code (fromSeqTxn, toSeqTxn]} through the window pipeline to advance the
+     * accumulators restored from the head {@code .cp} up to the persisted applied
+     * watermark, WITHOUT emitting (no LV WAL write, no inline apply, no in-mem
+     * tier append). The on-disk LV table already holds these rows - the checkpoint
+     * cadence simply left the {@code .cp} short of the applied point - so only the
+     * restored accumulators need to catch up before drain-forward rebuilds the
+     * un-flushed lead lost on the crash.
+     * <p>
+     * The whole gap is processed in this single call: the per-turn yield budget is
+     * reset before each drain pass so the replay never stops mid-gap and leaves the
+     * accumulators short of disk (which would make drain-forward re-emit rows disk
+     * already holds). On out-of-order arrival - only reachable when a prior post-O3
+     * {@code .cp} write failed, so an unresolved O3 sits between the head and the
+     * applied point - it hands off to {@link #o3Replay}, passing the applied point
+     * (not the offending seqTxn) as {@code advanceTo} so the REPLACE_RANGE rewrite
+     * covers everything disk already holds; {@code o3Replay} re-stamps the
+     * watermarks and writes a fresh head {@code .cp}, and this returns
+     * {@link #REPLAY_TO_APPLIED_O3}. Otherwise returns the number of rows re-fed.
+     */
+    private long replayToApplied(
+            LiveViewInstance instance,
+            WindowRecordCursorFactory windowFactory,
+            long fromSeqTxn,
+            long toSeqTxn
+    ) throws SqlException {
+        RecordCursorFactory filterFactory = windowFactory.getBaseFactory();
+        final Function filter = filterFactory.getFilter();
+        RecordCursorFactory pageFrameFactory = filter != null ? filterFactory.getBaseFactory() : filterFactory;
+        final TableToken baseToken = instance.getDefinition().getBaseTableToken();
+        final RecordMetadata baseMetadata = pageFrameFactory.getMetadata();
+        final int baseTimestampIndex = baseMetadata.getTimestampIndex();
+        buildColumnMappings(baseMetadata, baseToken);
+        final long viewLowerBoundTimestamp = instance.getDefinition().getViewLowerBoundTimestamp();
+        final RecordMetadata outMetadata = windowFactory.getMetadata();
+        final int cursorTimestampIndex = outMetadata.getTimestampIndex();
+
+        long replayedRows = 0;
+        long from = fromSeqTxn;
+        while (from < toSeqTxn) {
+            // Replay-to-applied must finish the gap inside this one restore call, so
+            // it is not subject to the per-turn yield budget: reset the budget before
+            // each pass and loop until the drain reaches the applied point.
+            turnStartUs = engine.getConfiguration().getMicrosecondClock().getTicks();
+            turnCommitsProcessed = 0;
+            drainResult.reset();
+            // walWriter == null and populateTier == false: drainBaseWal drives the
+            // window cursor (advancing accumulators and latestSeenTs per row) but
+            // skips every WAL write and every staging-buffer mirror.
+            drainBaseWal(
+                    instance, windowFactory, baseToken, baseMetadata, baseTimestampIndex,
+                    cursorTimestampIndex, viewLowerBoundTimestamp, filter, from, toSeqTxn,
+                    null, null, false, instance.getLatestSeenTs()
+            );
+            if (drainResult.o3Detected) {
+                o3Replay(instance, windowFactory, drainResult.o3LateRowTs, baseToken, toSeqTxn);
+                return REPLAY_TO_APPLIED_O3;
+            }
+            replayedRows += drainResult.appendedRows;
+            if (drainResult.advanceTo <= from) {
+                // No forward progress (only compacted / non-WAL entries remain). Stop
+                // to avoid spinning; the caller still advances the watermarks to the
+                // applied point.
+                break;
+            }
+            from = drainResult.advanceTo;
+        }
+        return replayedRows;
+    }
+
+    /**
      * Opens the head {@code .cp} at {@code headLvSeqTxn} and rehydrates the LV's
      * window state (anchor map + per-function maps) from the manifest + anchor
      * block + per-function blocks. Populates {@code out} with the manifest's
@@ -2381,55 +2456,102 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     /**
      * Restart-restore: opens the head {@code .cp} (stamped on the
      * instance by the startup sweep), rehydrates the LV's window state from
-     * the manifest + anchor block + per-function blocks, then advances
-     * {@code lastProcessedSeqTxn} to the manifest's {@code baseSeqTxn} so the
-     * upcoming incremental refresh resumes one step past the head.
+     * the manifest + anchor block + per-function blocks, replays the base WAL
+     * forward to close the checkpoint-cadence gap between the head and the
+     * applied point, then resumes the refresh worker at the applied point so
+     * the next incremental refresh rebuilds only the un-flushed lead.
      * <p>
-     * Failure handling: any structural error (CRC fail, magic mismatch,
-     * missing function class, anchor type mismatch) unlinks the head .cp
-     * and clears the head metadata on the instance. The LV is not
-     * invalidated - {@code .cp} is derived state, and the upcoming refresh
-     * cycle falls through to the head-miss replay path. A fresh head is
-     * written by the same cycle once it lands rows.
+     * The head {@code .cp}'s {@code baseSeqTxn} can lag the persisted applied
+     * watermark, because the checkpoint cadence does not write a fresh {@code .cp}
+     * on every flush: the on-disk LV table holds every base commit up to the
+     * applied point, but the restored accumulators stop at the (older) head. The
+     * gap is closed by {@link #replayToApplied}, which re-feeds the base rows over
+     * {@code (manifestBaseSeqTxn, appliedWatermark]} through the window pipeline to
+     * advance the accumulators to the disk state without re-emitting.
+     * <p>
+     * Failure handling: a structural error opening the {@code .cp} (CRC fail,
+     * magic mismatch, missing function class, anchor type mismatch) unlinks the
+     * head .cp and clears the head metadata on the instance; the LV is not
+     * invalidated - {@code .cp} is derived state, and the upcoming refresh cycle
+     * falls through to the head-miss replay path. A replay-to-applied error,
+     * however, can leave the restored accumulators inconsistent with disk, so it
+     * invalidates the view (operator recovers with DROP + CREATE) via the
+     * pending-invalidation hook rather than serving wrong results.
      */
     private void tryRestoreFromHead(LiveViewInstance instance, WindowRecordCursorFactory windowFactory) {
         final long headLvSeqTxn = instance.getHeadCheckpointLvSeqTxn();
+        // The persisted applied watermark (base seqTxn) is disk truth: the LV's
+        // on-disk table holds every base commit up to it. Snapshot it before the
+        // restore below overwrites the in-memory watermarks with the head's
+        // (potentially older) base seqTxn.
+        final long diskAppliedSeqTxn = instance.getAppliedWatermark();
         if (!restoreFromHead(instance, windowFactory, headLvSeqTxn, restoredHeadState)) {
             // restoreFromHead has already unlinked the corrupt .cp and
             // cleared head metadata; nothing more to do here.
             return;
         }
-        // Advance the refresh worker's view of the base position to the
-        // manifest's baseSeqTxn; the next incrementalRefresh resumes one
-        // step past it. appliedWatermark mirrors lastProcessed here
-        // (the seam_ts is anchored at the WAL commit boundary,
-        // see incrementalRefresh).
-        instance.setLastProcessedSeqTxn(restoredHeadState.manifestBaseSeqTxn);
-        instance.setAppliedWatermark(restoredHeadState.manifestBaseSeqTxn);
-        // Re-seed the lifetime row counter from the manifest so subsequent
-        // addRowsSinceLastCheckpointWritten calls accumulate against the
-        // restored total rather than resetting to zero.
-        instance.setLvRowsTotal(restoredHeadState.lvRowsTotal);
-        // Re-seed the O3 detection watermark - latestSeenTs is an in-memory
-        // volatile reset to LONG_NULL on rebuild. Without it the first
-        // post-restart commit is not compared against already-materialized
-        // rows, so a late row arriving first slips past O3 detection and gets
-        // forward-appended in arrival order. Mirrors the backfill-resume restore.
+        final long manifestBaseSeqTxn = restoredHeadState.manifestBaseSeqTxn;
+        // Re-seed the O3 detection watermark from the head before any replay -
+        // latestSeenTs is an in-memory volatile reset to LONG_NULL on rebuild.
+        // Without it the first post-restart commit (or the replay below) is not
+        // compared against already-materialized rows, so a late row arriving
+        // first slips past O3 detection and gets forward-appended in arrival
+        // order. The monotonic setter lets the replay advance it further.
         if (restoredHeadState.maxTimestamp != Numbers.LONG_NULL) {
             instance.setLatestSeenTs(restoredHeadState.maxTimestamp);
         }
-        // Refresh the head metadata trio with the real maxTs + stateBytes
-        // we just read; the startup sweep stamped placeholder values.
-        // writtenUs stays LONG_NULL so the next cycle's cadence check
-        // treats this as "first commit" and writes a fresh head soon
-        // after - re-emit a fresh .cp after the first post-restart refresh
-        // cycle.
+        // Refresh the head metadata trio with the real maxTs + stateBytes we just
+        // read; the startup sweep stamped placeholders. Done before the replay so
+        // that if replayToApplied hands off to o3Replay, its head-hit / head-miss
+        // decision reads the real materialized maxTs rather than the placeholder.
+        // writtenUs stays LONG_NULL so the next flush's cadence check treats this
+        // as "first commit" and writes a fresh head soon after.
         instance.setHeadCheckpoint(
                 headLvSeqTxn,
                 restoredHeadState.maxTimestamp,
                 restoredHeadState.stateBytes,
                 Numbers.LONG_NULL
         );
+        long resumeSeqTxn = manifestBaseSeqTxn;
+        long replayedRows = 0;
+        if (diskAppliedSeqTxn > manifestBaseSeqTxn) {
+            // The checkpoint cadence left the head short of the applied point.
+            // Advance the restored accumulators over the gap without re-emitting
+            // (disk already holds these rows), then resume at the applied point.
+            try {
+                replayedRows = replayToApplied(instance, windowFactory, manifestBaseSeqTxn, diskAppliedSeqTxn);
+            } catch (Throwable t) {
+                LOG.critical().$("live view replay-to-applied failed on restart [view=")
+                        .$(instance.getDefinition().getViewName())
+                        .$(", manifestBaseSeqTxn=").$(manifestBaseSeqTxn)
+                        .$(", appliedWatermark=").$(diskAppliedSeqTxn)
+                        .$(", error=").$(t).I$();
+                // Recovery integrity is compromised (accumulators may be a partial
+                // advance over disk). Invalidate out of the refresh latch via the
+                // pending-reason hook rather than serve wrong results.
+                instance.setPendingInvalidationReason("live view restart replay-to-applied failed");
+                return;
+            }
+            if (replayedRows == REPLAY_TO_APPLIED_O3) {
+                // replayToApplied hit an out-of-order base commit mid-gap and handed
+                // off to o3Replay, which rebuilt the on-disk tier from base in ts
+                // order over the applied range, re-stamped the watermarks, and wrote
+                // a fresh head .cp. Restore is complete.
+                instance.setCheckpointRestoreSucceeded();
+                return;
+            }
+            resumeSeqTxn = diskAppliedSeqTxn;
+        }
+        // Resume the refresh worker at the applied point; the next incremental
+        // refresh drains forward from here to rebuild the un-flushed lead. The
+        // seam_ts is anchored at the WAL commit boundary (see incrementalRefresh),
+        // so appliedWatermark mirrors lastProcessed.
+        instance.setLastProcessedSeqTxn(resumeSeqTxn);
+        instance.setAppliedWatermark(resumeSeqTxn);
+        // Re-seed the lifetime row counter from the manifest plus the rows the
+        // replay re-fed, so subsequent addRowsSinceLastCheckpointWritten calls
+        // accumulate against the disk total rather than the (older) head total.
+        instance.setLvRowsTotal(restoredHeadState.lvRowsTotal + replayedRows);
         instance.setCheckpointRestoreSucceeded();
     }
 

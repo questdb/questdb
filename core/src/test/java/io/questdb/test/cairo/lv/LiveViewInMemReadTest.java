@@ -808,6 +808,151 @@ public class LiveViewInMemReadTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRestartRecoversUnflushedLeadFromBaseWal() throws Exception {
+        // Crash between refresh and flush: the un-flushed lead lives only in RAM,
+        // so a restart loses it. The base WAL is retained up to the applied point
+        // (lvConsumedSeqTxn == applied), so the first post-restart refresh rebuilds
+        // the lead by draining the retained base WAL forward. No row is lost and
+        // the read matches a from-scratch recompute.
+        assertMemoryLeak(() -> {
+            buildFlushedPlusLead(); // 3 flushed rows on disk + 2 un-flushed lead rows in RAM
+
+            // Sanity: the lead is resident before the "crash".
+            InnerRead before = readInner("SELECT * FROM lv");
+            Assert.assertEquals("two un-flushed lead rows before restart", 2, before.leadRowsServed);
+
+            // Simulated crash + restart: drop the in-memory registry (and its tier,
+            // so the RAM lead is gone) and rebuild from on-disk state. Disk holds
+            // only the 3 flushed rows; the .cp sits at the applied point (no gap).
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            LiveViewInstance restored = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(restored);
+            // Keep the rebuilt lead un-flushed: lastFlushTimeUs is in-RAM and resets
+            // to LONG_NULL on restart, which would otherwise flush on the first tick.
+            // With the clock pinned at 0 and FLUSH EVERY 1s this suppresses the flush.
+            restored.setLastFlushTimeUs(0L);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job); // restore from .cp, then drain the base WAL forward to rebuild the lead
+            }
+
+            // The lead is back in RAM (2 rows) and the read equals the recompute.
+            // After a restart the rebuilt tier holds only the lead; the overlap (the
+            // flushed rows within the IN MEMORY window) is served from disk until a
+            // later flush rebuilds the resident window, so only the 2 lead rows are
+            // served from the tier here. Correctness is unaffected - disk holds the
+            // overlap - and the seam cut stitches the two together.
+            InnerRead after = readInner("SELECT * FROM lv");
+            Assert.assertTrue("post-restart read must be routing-eligible", after.routingEligible);
+            Assert.assertEquals("only the rebuilt lead is resident after restart", 2, after.inMemRowsServed);
+            Assert.assertEquals("two un-flushed lead rows recovered from the base WAL", 2, after.leadRowsServed);
+            assertLvMatchesOracle("SELECT * FROM lv",
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            // Disk still holds only the applied prefix (the lead is in RAM again).
+            assertDiskOnlyMatchesOracle("SELECT * FROM lv",
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base LIMIT 3");
+        });
+    }
+
+    @Test
+    public void testRestartReplaysCheckpointCadenceGap() throws Exception {
+        // The head .cp is written on a cadence (rows / duration), not every flush,
+        // so its base seqTxn can lag the applied point: the on-disk LV table holds
+        // rows the .cp's accumulators do not. On restart the restore must replay the
+        // base WAL over (head, applied] WITHOUT re-emitting to advance the
+        // accumulators to the disk state, then resume at the applied point so
+        // drain-forward only rebuilds the un-flushed lead. Without replay-to-applied
+        // the restore would resume at the head and re-emit the rows disk already
+        // holds, duplicating them once the rebuilt lead is flushed.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 30m AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Batch 1 -> flush 1. The first flush always writes a head .cp
+                // (firstCp), stamped at the applied point.
+                execute("INSERT INTO base (ts, x) VALUES " +
+                        "('2026-05-12T00:00:01.000000Z', 1), ('2026-05-12T00:00:02.000000Z', 2)");
+                drainWalQueue();
+                drainJob(job); // clock 0: refresh batch 1 then flush (firstCp -> .cp written)
+
+                // Batch 2 -> flush 2. Past FLUSH EVERY so it flushes, but neither the
+                // row cadence (default 1M) nor the duration cadence (default 5m) is
+                // met, so flush 2 does NOT write a fresh .cp. The .cp now lags applied.
+                setCurrentMicros(200_000L);
+                execute("INSERT INTO base (ts, x) VALUES " +
+                        "('2026-05-12T00:00:03.000000Z', 3), ('2026-05-12T00:00:04.000000Z', 4)");
+                drainWalQueue();
+                drainJob(job);
+
+                // Batch 3 -> un-flushed lead (within FLUSH EVERY of flush 2).
+                setCurrentMicros(250_000L);
+                execute("INSERT INTO base (ts, x) VALUES " +
+                        "('2026-05-12T00:00:05.000000Z', 5), ('2026-05-12T00:00:06.000000Z', 6)");
+                drainWalQueue();
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            // The cadence gap exists: head .cp base seqTxn < applied watermark.
+            Assert.assertTrue(
+                    "test must create a checkpoint-cadence gap (head < applied)",
+                    instance.getHeadCheckpointLvSeqTxn() < instance.getAppliedWatermark()
+            );
+            InnerRead before = readInner("SELECT * FROM lv");
+            Assert.assertEquals("two un-flushed lead rows before restart", 2, before.leadRowsServed);
+
+            // Simulated restart: the RAM lead (batch 3) is lost; disk holds batches
+            // 1 + 2 at the applied point; the .cp sits at batch 1.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            LiveViewInstance restored = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(restored);
+            restored.setLastFlushTimeUs(250_000L); // suppress an immediate flush so the lead stays in RAM
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(250_000L);
+                drainJob(job); // restore .cp@batch1 -> replay-to-applied (batch 2) -> drain forward (batch 3)
+            }
+
+            // The rebuilt view matches the recompute, and the disk-only (applied)
+            // prefix holds batches 1 + 2 exactly once - replay-to-applied did not
+            // re-emit batch 2.
+            InnerRead after = readInner("SELECT * FROM lv");
+            Assert.assertTrue("post-restart read must be routing-eligible", after.routingEligible);
+            Assert.assertEquals("two un-flushed lead rows recovered (batch 3)", 2, after.leadRowsServed);
+            assertLvMatchesOracle("SELECT * FROM lv",
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            assertDiskOnlyMatchesOracle("SELECT * FROM lv",
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base LIMIT 4");
+
+            // Flush the rebuilt lead and confirm disk holds all six rows exactly
+            // once (no duplicate batch 2). assertQuery is safe now: the lead is on
+            // disk, so engine.clear() loses nothing.
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(1_000_000L);
+                drainJob(job);
+            }
+            drainWalQueue();
+            assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tx\trn\n" +
+                            "2026-05-12T00:00:01.000000Z\t1\t1\n" +
+                            "2026-05-12T00:00:02.000000Z\t2\t2\n" +
+                            "2026-05-12T00:00:03.000000Z\t3\t3\n" +
+                            "2026-05-12T00:00:04.000000Z\t4\t4\n" +
+                            "2026-05-12T00:00:05.000000Z\t5\t5\n" +
+                            "2026-05-12T00:00:06.000000Z\t6\t6\n");
+        });
+    }
+
+    @Test
     public void testSymbolLvIsNotLeadEligible() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, g SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");

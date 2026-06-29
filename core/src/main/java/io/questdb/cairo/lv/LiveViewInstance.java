@@ -404,6 +404,14 @@ public class LiveViewInstance implements QuietCloseable {
         return false;
     }
 
+    /**
+     * @return the persisted applied watermark (base seqTxn): the on-disk LV table
+     * holds every base commit up to it. Delegates to {@link #stateReader}.
+     */
+    public long getAppliedWatermark() {
+        return stateReader.getAppliedWatermark();
+    }
+
     public ObjList<String> getDependencyColumnNames() {
         return definition.getDependencyColumnNames();
     }
