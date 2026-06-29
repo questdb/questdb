@@ -359,7 +359,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      * the server's.
      * <p>
      * The dict bit also clears every per-column scratch's native-key to
-     * conn-id cache via {@link QwpResultBatchBuffer#resetForNewQuery()} --
+     * conn-id cache via {@link QwpResultBatchBuffer#clearConnKeyMaps()} --
      * without that, a cached key would resolve to an id the reset dict has
      * already dropped, and the next batch's row payload would reference an id
      * the client was never taught.
@@ -367,7 +367,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     public void applyCacheReset(byte resetMask) {
         if ((resetMask & QwpEgressMsgKind.RESET_MASK_DICT) != 0) {
             connSymbolDict.clear();
-            batchBuffer.resetForNewQuery();
+            batchBuffer.clearConnKeyMaps();
         }
     }
 
@@ -533,12 +533,22 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      * safe to emit the frame; this method has no side effects.
      */
     public byte computeCacheResetMask() {
+        return computeCacheResetMask(false);
+    }
+
+    /**
+     * As {@link #computeCacheResetMask()}, plus a forced SYMBOL dict reset when
+     * {@code forceDictReset} is set and the dict is non-empty (an empty dict
+     * needs no {@code CACHE_RESET} frame).
+     */
+    public byte computeCacheResetMask(boolean forceDictReset) {
         byte mask = 0;
         int dictEntriesCap = maxDictEntriesOverride >= 0
                 ? maxDictEntriesOverride : QwpConstants.DEFAULT_MAX_EGRESS_DICT_ENTRIES;
         int dictHeapCap = maxDictHeapBytesOverride >= 0
                 ? maxDictHeapBytesOverride : QwpConstants.DEFAULT_MAX_EGRESS_DICT_HEAP_BYTES;
-        if (connSymbolDict.size() >= dictEntriesCap || connSymbolDict.heapBytes() >= dictHeapCap) {
+        boolean capExceeded = connSymbolDict.size() >= dictEntriesCap || connSymbolDict.heapBytes() >= dictHeapCap;
+        if (capExceeded || (forceDictReset && connSymbolDict.size() > 0)) {
             mask |= QwpEgressMsgKind.RESET_MASK_DICT;
         }
         return mask;

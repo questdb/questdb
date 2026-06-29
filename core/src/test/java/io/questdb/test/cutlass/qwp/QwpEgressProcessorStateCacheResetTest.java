@@ -143,6 +143,66 @@ public class QwpEgressProcessorStateCacheResetTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testForceDictResetEmptyDictIsZero() {
+        try (QwpEgressProcessorState state = new QwpEgressProcessorState(cfg)) {
+            // An empty dict needs no CACHE_RESET frame even when a query forces
+            // the reset: there is nothing to clear, and emitting the frame would
+            // be pure overhead. This is the empty-dict guard.
+            Assert.assertEquals(0, state.computeCacheResetMask(true));
+        }
+    }
+
+    @Test
+    public void testForceDictResetIdempotentWithCap() {
+        try (QwpEgressProcessorState state = new QwpEgressProcessorState(cfg)) {
+            state.setCacheResetCapsForTest(1, -1);
+            state.getConnSymbolDict().addEntry("x");
+            // The entry cap is already tripped, so the unforced mask already
+            // carries the DICT bit. Forcing must not change or double it.
+            Assert.assertEquals(QwpEgressMsgKind.RESET_MASK_DICT, state.computeCacheResetMask(false));
+            Assert.assertEquals(QwpEgressMsgKind.RESET_MASK_DICT, state.computeCacheResetMask(true));
+        }
+    }
+
+    @Test
+    public void testForceDictResetNoSideEffects() {
+        try (QwpEgressProcessorState state = new QwpEgressProcessorState(cfg)) {
+            state.getConnSymbolDict().addEntry("foo");
+            state.getConnSymbolDict().addEntry("bar");
+            Assert.assertEquals(QwpEgressMsgKind.RESET_MASK_DICT, state.computeCacheResetMask(true));
+            // computeCacheResetMask is a pure query; applyCacheReset is the only
+            // mutator. A forced compute must not flush the dict.
+            Assert.assertEquals("force-compute must not clear the dict", 2, state.getConnSymbolDict().size());
+            Assert.assertEquals(QwpEgressMsgKind.RESET_MASK_DICT, state.computeCacheResetMask(true));
+        }
+    }
+
+    @Test
+    public void testForceDictResetNonEmptyDictSetsMask() {
+        try (QwpEgressProcessorState state = new QwpEgressProcessorState(cfg)) {
+            state.getConnSymbolDict().addEntry("foo");
+            // Below every production cap, so the unforced mask is zero...
+            Assert.assertEquals(0, state.computeCacheResetMask(false));
+            // ...but a forced reset on a non-empty dict requests the DICT bit so
+            // the connection-scoped dict gets scoped to the upcoming query.
+            Assert.assertEquals(QwpEgressMsgKind.RESET_MASK_DICT, state.computeCacheResetMask(true));
+        }
+    }
+
+    @Test
+    public void testForceDictResetThenApplyClearsDict() {
+        try (QwpEgressProcessorState state = new QwpEgressProcessorState(cfg)) {
+            QwpEgressConnSymbolDict dict = state.getConnSymbolDict();
+            dict.addEntry("alpha");
+            dict.addEntry("beta");
+            byte mask = state.computeCacheResetMask(true);
+            Assert.assertEquals(QwpEgressMsgKind.RESET_MASK_DICT, mask);
+            state.applyCacheReset(mask);
+            Assert.assertEquals("forced reset must flush the dict", 0, dict.size());
+        }
+    }
+
+    @Test
     public void testMergePendingCacheResetMaskIsIdempotent() {
         // Re-staging the same bit must leave the mask unchanged. Covers the
         // benign case where a non-SELECT trips the dict cap, then a follow-up
@@ -164,6 +224,18 @@ public class QwpEgressProcessorStateCacheResetTest extends AbstractCairoTest {
             state.mergePendingCacheResetMask(QwpEgressMsgKind.RESET_MASK_DICT);
             state.mergePendingCacheResetMask((byte) 0);
             Assert.assertEquals(QwpEgressMsgKind.RESET_MASK_DICT, state.getPendingCacheResetMask());
+        }
+    }
+
+    @Test
+    public void testNoArgMaskDelegatesToUnforced() {
+        try (QwpEgressProcessorState state = new QwpEgressProcessorState(cfg)) {
+            // The no-arg overload must behave exactly like forceDictReset=false,
+            // both when the dict is empty and when it is non-empty below cap.
+            Assert.assertEquals(state.computeCacheResetMask(false), state.computeCacheResetMask());
+            state.getConnSymbolDict().addEntry("foo");
+            Assert.assertEquals(state.computeCacheResetMask(false), state.computeCacheResetMask());
+            Assert.assertEquals(0, state.computeCacheResetMask());
         }
     }
 
