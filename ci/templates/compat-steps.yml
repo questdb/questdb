@@ -9,9 +9,10 @@ steps:
         # reached over the Hetzner vSwitch can't absorb that connection churn under concurrent
         # builds (intermittent "Connect to maven.internal:8081 ... Connection timed out", which
         # the failover-less mirror turns into a build failure). Reusing connections avoids it.
-        # NOTE: this toggle only affects the default HttpClient resolver transport. Tasks that
-        # run with -Dmaven.resolver.transport=wagon ignore it and instead pool connections via
-        # -Dmaven.wagon.httpconnectionManager.ttlSeconds (already set in MAVEN_RUN_OPTS).
+        # NOTE: this toggle only affects the default HttpClient resolver transport. The mvn
+        # tasks here run with -Dmaven.resolver.transport=wagon, which ignores it and instead
+        # reuses connections via the wagon pool flags in MAVEN_RUN_OPTS
+        # (-Dmaven.wagon.http.pool=true + maxPerRoute/maxTotal + ttlSeconds).
         echo "##vso[task.setvariable variable=MAVEN_KEEPALIVE_OPT]"
       else
         echo "Private Reposilite not reachable, using default maven settings"

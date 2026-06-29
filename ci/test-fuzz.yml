@@ -17,11 +17,12 @@ variables:
   includeTests: "%regex[.*[^o].class]"
   MAVEN_CACHE_FOLDER: $(HOME)/.m2/repository
   MAVEN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx3072m -XX:+UseParallelGC"
-  # Wagon retries a dropped connect to the single-IP cache (count + nonRetryableClasses,
-  # which re-enables retry on ConnectException) instead of failing the build; the connect
-  # timeout in maven-settings-hetzner.xml bounds each attempt. See test-pipeline.yml for the
-  # full rationale.
-  MAVEN_RUN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Dmaven.resolver.transport=wagon -Dmaven.wagon.httpconnectionManager.ttlSeconds=30 -Dmaven.wagon.http.retryHandler.count=3 -Dmaven.wagon.http.retryHandler.nonRetryableClasses=java.io.NotSerializableException"
+  # Wagon reuses keep-alive connections to the single-IP cache (pool=true + maxPerRoute/maxTotal)
+  # so a build's 600+ artifact fetches don't each open a fresh connect, and retries a dropped
+  # connect (count + nonRetryableClasses, which re-enables retry on ConnectException) instead of
+  # failing the build; the connect timeout in maven-settings-hetzner.xml bounds each attempt.
+  # See test-pipeline.yml for the full rationale.
+  MAVEN_RUN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Dmaven.resolver.transport=wagon -Dmaven.wagon.http.pool=true -Dmaven.wagon.httpconnectionManager.maxPerRoute=64 -Dmaven.wagon.httpconnectionManager.maxTotal=64 -Dmaven.wagon.httpconnectionManager.ttlSeconds=30 -Dmaven.wagon.http.retryHandler.count=3 -Dmaven.wagon.http.retryHandler.nonRetryableClasses=java.io.NotSerializableException"
   MAVEN_VERSION: "version"
   MAVEN_VERSION_OPTION: "Default"
   # Full reactor (the fuzz regex spans core and compat), but no fuzz test serves the

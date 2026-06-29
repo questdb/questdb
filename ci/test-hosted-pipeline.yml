@@ -16,9 +16,10 @@ variables:
   MAVEN_CACHE_FOLDER: $(HOME)/.m2/repository
   MAVEN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx3g -XX:+UseParallelGC"
   # Kept in sync with test-pipeline.yml. These hosted (mac/windows) agents resolve from
-  # Maven Central, not the cache, so the retry is a harmless no-op for them; keeping
-  # MAVEN_RUN_OPTS identical across pipelines avoids drift. See test-pipeline.yml for rationale.
-  MAVEN_RUN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Dmaven.resolver.transport=wagon -Dmaven.wagon.httpconnectionManager.ttlSeconds=30 -Dmaven.wagon.http.retryHandler.count=3 -Dmaven.wagon.http.retryHandler.nonRetryableClasses=java.io.NotSerializableException "
+  # Maven Central, not the cache, so the connection reuse + retry are a harmless no-op for
+  # them; keeping MAVEN_RUN_OPTS identical across pipelines avoids drift. See test-pipeline.yml
+  # for rationale.
+  MAVEN_RUN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Dmaven.resolver.transport=wagon -Dmaven.wagon.http.pool=true -Dmaven.wagon.httpconnectionManager.maxPerRoute=64 -Dmaven.wagon.httpconnectionManager.maxTotal=64 -Dmaven.wagon.httpconnectionManager.ttlSeconds=30 -Dmaven.wagon.http.retryHandler.count=3 -Dmaven.wagon.http.retryHandler.nonRetryableClasses=java.io.NotSerializableException "
   MAVEN_VERSION: "version"
   MAVEN_VERSION_OPTION: "Default"
   # Hosted mac/windows jobs (hosted-jobs.yml) override this to "-pl core -am" and
