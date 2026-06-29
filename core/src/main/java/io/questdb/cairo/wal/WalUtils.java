@@ -259,15 +259,6 @@ public class WalUtils {
         } finally {
             tableDirPath.trimTo(len);
         }
-
-        // Optional section: replica-only index flags (backward compatible), mirrors the index-type section.
-        // Written last so older readers ignore the trailing bytes and newer readers find it after the
-        // covering-columns section.
-        metaMem.putLong(checkSum * 31 + SEQ_META_REPLICA_ONLY_CHECKSUM_SALT);
-        metaMem.putInt(columnCount);
-        for (int i = 0; i < columnCount; i++) {
-            metaMem.putByte((byte) (metadata.getColumnMetadata(i).isReplicaOnlyIndex() ? 1 : 0));
-        }
     }
 
     /**
@@ -435,6 +426,15 @@ public class WalUtils {
                     metaMem.putInt(indices.getQuick(j));
                 }
             }
+        }
+
+        // Optional section: replica-only index flags (backward compatible), mirrors the index-type
+        // section. Written last so older readers ignore the trailing bytes and newer readers find it
+        // after the covering-columns section.
+        metaMem.putLong(checkSum * 31 + SEQ_META_REPLICA_ONLY_CHECKSUM_SALT);
+        metaMem.putInt(columnCount);
+        for (int i = 0; i < columnCount; i++) {
+            metaMem.putByte((byte) (metadata.getColumnMetadata(i).isReplicaOnlyIndex() ? 1 : 0));
         }
     }
 
