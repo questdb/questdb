@@ -313,7 +313,7 @@ public class PostingGenLookup implements Closeable {
         // crash-recovery regressions).
         long firstGenTxnAtSeal = genCount > 0
                 ? keyMem.getLong(PostingIndexChainEntry.resolveGenDirOffset(entryOffset, 0)
-                + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL)
+                                 + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL)
                 : Long.MIN_VALUE;
         long genSealFloor = firstGenTxnAtSeal - WAL_FAST_LAG_SEAL_TOLERANCE;
         for (int i = 0; i < genCount; i++) {
