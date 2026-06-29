@@ -137,6 +137,12 @@ class LatestByValuesIndexedRecordCursor extends AbstractPageFrameRecordCursor {
 
     private void buildTreeMap() {
         if (keyCount < 0) {
+            // The found.size() == keyCount early exit (and the dropped per-frame overlap guard) relies on
+            // symbolKeys and deferredSymbolKeys being disjoint; a duplicate would inflate keyCount and stop
+            // the exit from ever firing (full scan). The deduping is done by the factory, so guard the
+            // invariant here against a future caller that wires these sets up directly.
+            assert keysDisjoint(symbolKeys, deferredSymbolKeys)
+                    : "deferredSymbolKeys must be deduped against symbolKeys (see AbstractDeferredTreeSetRecordCursorFactory.initRecordCursor)";
             keyCount = symbolKeys.size();
             if (deferredSymbolKeys != null) {
                 keyCount += deferredSymbolKeys.size();
@@ -176,6 +182,17 @@ class LatestByValuesIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         // in ascending designated-timestamp order, matching the FORWARD scan direction the factory reports.
         rows.sortAsUnsigned();
         index = 0;
+    }
+
+    private static boolean keysDisjoint(IntHashSet symbolKeys, @Nullable IntHashSet deferredSymbolKeys) {
+        if (deferredSymbolKeys != null) {
+            for (int i = 0, n = deferredSymbolKeys.size(); i < n; i++) {
+                if (symbolKeys.contains(deferredSymbolKeys.get(i))) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     private void buildTreeMapConditionally() {

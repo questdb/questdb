@@ -1865,17 +1865,9 @@ public class LatestByTest extends AbstractCairoTest {
     @Test
     public void testLatestByIndexedDuplicateDeferredKeyDoesNotFullScan() throws Exception {
         assertMemoryLeak(() -> {
-            ff = new TestFilesFacadeImpl() {
-                @Override
-                public long openRO(LPSZ name) {
-                    // The duplicate deferred key must not make the cursor scan an older partition
-                    // after the only unique key has already been found in the latest partition.
-                    if (Utf8s.containsAscii(name, "1970-01-01")) {
-                        return -1;
-                    }
-                    return TestFilesFacadeImpl.INSTANCE.openRO(name);
-                }
-            };
+            // Fail to open the older partition; the test then fails loudly if the duplicate deferred key
+            // makes the cursor scan it after the only unique key was already found in the latest partition.
+            ff = failOpenForPartition("1970-01-01");
 
             executeWithRewriteTimestamp(
                     "create table tk (sym symbol index, px double, ts #TIMESTAMP) timestamp(ts) partition by day",
@@ -1901,17 +1893,9 @@ public class LatestByTest extends AbstractCairoTest {
     @Test
     public void testLatestByIndexedFilteredDuplicateDeferredKeyDoesNotFullScan() throws Exception {
         assertMemoryLeak(() -> {
-            ff = new TestFilesFacadeImpl() {
-                @Override
-                public long openRO(LPSZ name) {
-                    // The duplicate deferred key must not make the cursor scan an older partition
-                    // after the only unique key has already passed the residual filter.
-                    if (Utf8s.containsAscii(name, "1970-01-01")) {
-                        return -1;
-                    }
-                    return TestFilesFacadeImpl.INSTANCE.openRO(name);
-                }
-            };
+            // Fail to open the older partition; the test then fails loudly if the duplicate deferred key
+            // makes the cursor scan it after the only unique key already passed the residual filter.
+            ff = failOpenForPartition("1970-01-01");
 
             executeWithRewriteTimestamp(
                     "create table tk (sym symbol index, venue symbol, px double, ts #TIMESTAMP) timestamp(ts) partition by day",
@@ -1933,5 +1917,20 @@ public class LatestByTest extends AbstractCairoTest {
                             a\t2.0
                             """);
         });
+    }
+
+    // A FilesFacade whose openRO fails for any file under the named partition. Used to prove an indexed
+    // LATEST ON cursor short-circuits before opening (and thus reading) an older partition once every key
+    // has already been resolved in a newer one.
+    private static TestFilesFacadeImpl failOpenForPartition(String partition) {
+        return new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (Utf8s.containsAscii(name, partition)) {
+                    return -1;
+                }
+                return TestFilesFacadeImpl.INSTANCE.openRO(name);
+            }
+        };
     }
 }
