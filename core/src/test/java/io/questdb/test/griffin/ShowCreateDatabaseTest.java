@@ -42,6 +42,8 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.table.ShowCreateDatabaseRecordCursorFactory;
+import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.model.QueryModelWrapper;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
@@ -136,7 +138,104 @@ public class ShowCreateDatabaseTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck("SHOW CREATE DATABASE INCLUDE (TABLES,)", 37, "unexpected category");
             assertExceptionNoLeakCheck("SHOW CREATE DATABASE INCLUDE TABLES", 29, "'ALL' or '('");
             assertExceptionNoLeakCheck("SHOW CREATE DATABASE INCLUDE ALL garbage", 33, "garbage");
+            // a non-INCLUDE/EXCLUDE token after DATABASE is left for the trailing-token check
+            assertExceptionNoLeakCheck("SHOW CREATE DATABASE garbage", 21, "garbage");
+            // a category list must be comma-separated
+            assertExceptionNoLeakCheck("SHOW CREATE DATABASE INCLUDE (TABLES VIEWS)", 37, "',' or ')'");
         });
+    }
+
+    @Test
+    public void testAclCategoriesParseToEmptyDumpInOss() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, true);
+            execute("create table base (ts timestamp, s symbol, v double) timestamp(ts) partition by day wal");
+            drainWalQueue();
+            // the ACL categories are valid grammar but select no schema, so in OSS (no ACL) the dump is empty
+            for (String category : new String[]{"USERS", "GROUPS", "SERVICE_ACCOUNTS", "PERMISSIONS", "ACL"}) {
+                Assert.assertEquals(category, 0, dumpDatabase("SHOW CREATE DATABASE INCLUDE (" + category + ")").size());
+            }
+            // mixing an ACL category with a schema category still emits the schema object
+            final String mixed = dump("SHOW CREATE DATABASE INCLUDE (PERMISSIONS, TABLES)");
+            Assert.assertTrue(mixed, mixed.contains("CREATE TABLE 'base'"));
+            // ALL is also accepted as a parenthesised category, equivalent to the bare default
+            Assert.assertEquals(dump("SHOW CREATE DATABASE"), dump("SHOW CREATE DATABASE INCLUDE (ALL)"));
+        });
+    }
+
+    @Test
+    public void testExplainPlan() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table foo (ts timestamp, s symbol) timestamp(ts) partition by year bypass wal");
+            assertQuery("SHOW CREATE DATABASE")
+                    .noLeakCheck()
+                    .assertsPlan("show_create_database\n");
+        });
+    }
+
+    @Test
+    public void testMatViewWithTypedFilterDependencyOrdering() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, true);
+            execute("create table base (ts timestamp, s symbol, d double, i int, l long, b boolean) timestamp(ts) partition by day wal");
+            // a typed WHERE filter makes the compiled plan render double/int/long/boolean constants; walking that
+            // plan to collect the base table exercises the value-rendering paths of the token collector
+            execute("create materialized view mv with base base as (" +
+                    "select ts, avg(d) d from base where d > 1.5 and i = 3 and l <> 100000000000 and b = true sample by 1h" +
+                    ") partition by day");
+            drainWalQueue();
+            final String dump = dump("SHOW CREATE DATABASE");
+            final int baseIdx = dump.indexOf("CREATE TABLE 'base'");
+            final int mvIdx = dump.indexOf("CREATE MATERIALIZED VIEW 'mv'");
+            Assert.assertTrue(dump, baseIdx >= 0 && mvIdx >= 0);
+            Assert.assertTrue("base table must precede the mat view that reads it", baseIdx < mvIdx);
+        });
+    }
+
+    @Test
+    public void testMatViewCompileFailureFallsBackToBaseTable() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, true);
+            execute("create table a_base (ts timestamp, k symbol, v double) timestamp(ts) partition by day wal");
+            execute("create table z_dim (ts timestamp, k symbol, label string) timestamp(ts) partition by day wal");
+            execute("create materialized view m_mv with base a_base as " +
+                    "(select a_base.ts, z_dim.label, avg(a_base.v) v from a_base join z_dim on k sample by 1h) partition by day");
+            drainWalQueue();
+
+            // drop the joined dimension so the mat view SQL no longer compiles; dependency resolution must
+            // swallow the compile failure and fall back to ordering by the base table, still emitting the view
+            execute("drop table z_dim");
+            drainWalQueue();
+
+            final String dump = dump("SHOW CREATE DATABASE");
+            Assert.assertTrue(dump, dump.contains("CREATE MATERIALIZED VIEW 'm_mv'"));
+            Assert.assertTrue(dump, dump.contains("CREATE TABLE 'a_base'"));
+        });
+    }
+
+    @Test
+    public void testQueryModelWrapperShowCreateDatabaseInclude() {
+        // the wrapper getter delegates; the setter is unsupported (a SHOW CREATE DATABASE model is never wrapped)
+        final QueryModel delegate = QueryModel.FACTORY.newInstance();
+        delegate.setShowCreateDatabaseInclude(ShowCreateDatabaseRecordCursorFactory.INCLUDE_SCHEMA);
+        final QueryModelWrapper wrapper = new QueryModelWrapper();
+        wrapper.setDelegate(delegate);
+        Assert.assertEquals(ShowCreateDatabaseRecordCursorFactory.INCLUDE_SCHEMA, wrapper.getShowCreateDatabaseInclude());
+        try {
+            wrapper.setShowCreateDatabaseInclude(ShowCreateDatabaseRecordCursorFactory.INCLUDE_ALL);
+            Assert.fail("expected UnsupportedOperationException");
+        } catch (UnsupportedOperationException expected) {
+            // the wrapper forbids mutating the shared delegate
+        }
+    }
+
+    @Test
+    public void testShowCreateUnknownObjectTypeFails() throws Exception {
+        assertMemoryLeak(() -> assertExceptionNoLeakCheck(
+                "SHOW CREATE WAREHOUSE",
+                12,
+                "expected 'TABLE' or 'VIEW' or 'MATERIALIZED VIEW' or 'DATABASE'"
+        ));
     }
 
     @Test
