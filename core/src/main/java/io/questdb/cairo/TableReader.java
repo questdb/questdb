@@ -1917,7 +1917,24 @@ public class TableReader implements Closeable, SymbolTableSource {
                 if (metadata.isColumnIndexed(columnIndex)) {
                     IndexReader indexReader = indexReaders.getQuick(primaryIndex);
                     if (indexReader != null) {
-                        indexReader.of(configuration, path.trimTo(plen), name, columnTxn, partitionTxn, columnTop, metadata, columnVersionReader, partitionTimestamp);
+                        try {
+                            indexReader.of(configuration, path.trimTo(plen), name, columnTxn, partitionTxn, columnTop, metadata, columnVersionReader, partitionTimestamp);
+                        } catch (CairoException e) {
+                            // Re-opening a CACHED index reader onto a partition whose replica-only
+                            // index sidecars are absent on this node (purged on a hot promote to a
+                            // skipping primary, or not yet materialized after restore) is NOT
+                            // corruption -- mirror the getIndexReader()/createIndexReaderAt()
+                            // tolerance. Drop the stale cached reader so the column reads as "not
+                            // materialized here"; a later getIndexReader() then surfaces the
+                            // recoverable non-critical error if a query still tries to use the index.
+                            // Normal indexed columns keep the critical-corruption behaviour, as do
+                            // non-file-not-found failures on replica-only columns.
+                            if (metadata.isColumnReplicaOnlyIndex(columnIndex) && Files.isErrnoFileDoesNotExist(e.getErrno())) {
+                                Misc.free(indexReaders.getAndSetQuick(primaryIndex, null));
+                            } else {
+                                throw e;
+                            }
+                        }
                     }
                 } else {
                     Misc.free(indexReaders.getAndSetQuick(primaryIndex, null));

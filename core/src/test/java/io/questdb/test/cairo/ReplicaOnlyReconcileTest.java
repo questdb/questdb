@@ -142,6 +142,95 @@ public class ReplicaOnlyReconcileTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCachedIndexReaderSurvivesReloadAfterPromotePurge() throws Exception {
+        // Reader-side companion to the purge. reloadColumnAt() re-opens a CACHED index reader via
+        // IndexReader.of(...). closeIndexReader() frees a partition's cached reader but does NOT null
+        // the slot, so after a partition's columns are closed the slot still holds a (closed) reader.
+        // If a hot promote to a skipping primary purged the replica-only sidecars in the meantime, the
+        // re-open hits a now-absent key file. For a replica-only column that must degrade gracefully
+        // (drop the cached reader) rather than throw a CRITICAL corruption error that distresses the
+        // reader and suspends the table.
+        assertMemoryLeak(() -> {
+            // 1. Replica (skip=false): two partitions, index materialized.
+            skip = false;
+            execute("create table x (s symbol index capacity 256 replica only, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into x values ('a',1,0),('b',2,1000000),('a',3,86400000000)"); // day0 + day1
+            drainWalQueue();
+            Assert.assertTrue("index files must exist on a replica", indexFilesExist("x", "s"));
+
+            final TableToken token = engine.verifyTableName("x");
+            try (io.questdb.cairo.TableReader reader = engine.getReader(token)) {
+                final int sIdx = reader.getMetadata().getColumnIndex("s");
+                // Cache an index reader for partition 0 (day0): the slot becomes non-null.
+                reader.openPartition(0);
+                Assert.assertNotNull(reader.getIndexReader(0, sIdx, io.questdb.cairo.idx.IndexReader.DIR_BACKWARD));
+
+                // 2. Hot promote to a skipping primary, then an O3 insert into partition 0. The WAL
+                //    apply self-heals (purges the sidecars) and rewrites partition 0 (new nameTxn)
+                //    WITHOUT rebuilding the index (skip=true).
+                skip = true;
+                engine.bumpRoleGeneration();
+                execute("insert into x values ('a',4,500000)"); // out-of-order within day0
+                drainWalQueue();
+                Assert.assertFalse("promote must purge the replica-only index files", indexFilesExist("x", "s"));
+
+                // 3. Reload + re-open partition 0: closeRewrittenPartitionFiles closes its columns
+                //    (slot freed but retained non-null) and reloadColumnAt re-opens the CACHED reader
+                //    onto the now-absent index file. Must NOT throw a CRITICAL corruption error.
+                reader.reload();
+                reader.openPartition(0);
+                // A later index-reader fetch must also stay graceful.
+                reader.getIndexReaderIfExists(0, sIdx, io.questdb.cairo.idx.IndexReader.DIR_BACKWARD);
+            }
+
+            // 4. Table is healthy and not suspended: a full-scan query (planner skips the index on a
+            //    primary) returns correct rows.
+            assertIndexNotUsed();
+            assertContents("s\tv\tts\n" +
+                    "a\t1.0\t1970-01-01T00:00:00.000000Z\n" +
+                    "a\t4.0\t1970-01-01T00:00:00.500000Z\n" +
+                    "a\t3.0\t1970-01-02T00:00:00.000000Z\n");
+        });
+    }
+
+    @Test
+    public void testCachedNormalIndexReaderReloadStaysCritical() throws Exception {
+        // Negative control for the reloadColumnAt() tolerance: the guard must apply ONLY to
+        // replica-only columns. A NORMAL (non-replica-only) indexed column whose index file is
+        // genuinely missing during a cached-reader reload must remain a CRITICAL corruption error.
+        assertMemoryLeak(() -> {
+            skip = false; // role is irrelevant for a normal index; it is never purged
+            execute("create table n (s symbol index capacity 256, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into n values ('a',1,0),('b',2,1000000),('a',3,86400000000)");
+            drainWalQueue();
+            Assert.assertTrue(indexFilesExist("n", "s"));
+
+            final TableToken token = engine.verifyTableName("n");
+            try (io.questdb.cairo.TableReader reader = engine.getReader(token)) {
+                final int sIdx = reader.getMetadata().getColumnIndex("s");
+                reader.openPartition(0);
+                Assert.assertNotNull(reader.getIndexReader(0, sIdx, io.questdb.cairo.idx.IndexReader.DIR_BACKWARD));
+
+                // Rewrite partition 0 (closes + reopens its columns), then delete the rebuilt index
+                // files to simulate genuine corruption -- a normal index is never legitimately absent.
+                execute("insert into n values ('a',4,500000)");
+                drainWalQueue();
+                deleteIndexFiles("n", "s");
+
+                boolean threw = false;
+                try {
+                    reader.reload();
+                    reader.openPartition(0);
+                } catch (io.questdb.cairo.CairoException e) {
+                    threw = true;
+                    Assert.assertTrue("a missing NORMAL index file must remain CRITICAL during reload", e.isCritical());
+                }
+                Assert.assertTrue("expected a critical error for the corrupted normal index", threw);
+            }
+        });
+    }
+
+    @Test
     public void testReconcileIfRoleChangedTriggerOnPooledWriter() throws Exception {
         assertMemoryLeak(() -> {
             // Replica (skip=false): index materialized on apply.
