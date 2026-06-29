@@ -1231,7 +1231,9 @@ public class Mig941Test extends AbstractCairoTest {
                 try {
                     ParquetMetaFileReader reader = new ParquetMetaFileReader();
                     reader.of(parquetMetaAddr, parquetMetaSize);
-                    reader.resolveFooter(Long.MAX_VALUE);
+                    // Freshly regenerated _pm: a single footer at the tail, no
+                    // MVCC chain to match a committed size against.
+                    Assert.assertTrue(reader.resolveLastFooter());
                     Assert.assertEquals(2, reader.getColumnCount());
                     Assert.assertEquals(1, reader.getRowGroupCount());
                     Assert.assertEquals(
@@ -1353,7 +1355,9 @@ public class Mig941Test extends AbstractCairoTest {
                 try {
                     ParquetMetaFileReader reader = new ParquetMetaFileReader();
                     reader.of(parquetMetaAddr, parquetMetaSize);
-                    reader.resolveFooter(Long.MAX_VALUE);
+                    // Freshly regenerated _pm: a single footer at the tail, no
+                    // MVCC chain to match a committed size against.
+                    Assert.assertTrue(reader.resolveLastFooter());
                     Assert.assertEquals(2, reader.getColumnCount());
                     Assert.assertEquals(1, reader.getRowGroupCount());
                 } finally {

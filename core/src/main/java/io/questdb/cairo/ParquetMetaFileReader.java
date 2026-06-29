@@ -818,13 +818,16 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
 
         // CRC-verify the resolved footer (keyed on currentSize) before trusting
         // its bytes: the physically-last footer can be an orphaned rolled-back
-        // one, so only the resolved footer is guaranteed committed. Cached after
-        // the first open; callers clear this reader before resolving a larger
-        // footer. verifyChecksum0 throws on a mismatch or bad file.
+        // one, so only the resolved footer is guaranteed committed. The native
+        // reader locates its footer from the trailer at the passed size, so it
+        // must be parsed at currentSize, never the raw mapped header size --
+        // otherwise it verifies and binds to the dead footer at the tail. The
+        // parse is retained as the handle (createNativeReader throws on a
+        // mismatch or bad file); callers clear this reader before re-resolving.
         if (!checksumVerified) {
             assert nativeReaderPtr == 0; // of()/clear() reset the handle with the flag
-            nativeReaderPtr = createNativeReader(addr, parquetMetaFileSize, true);
-            nativeReaderFileSize = parquetMetaFileSize;
+            nativeReaderPtr = createNativeReader(addr, currentSize, true);
+            nativeReaderFileSize = currentSize;
             checksumVerified = true;
         }
 
