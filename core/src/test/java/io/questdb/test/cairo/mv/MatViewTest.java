@@ -7988,6 +7988,69 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMatViewBackfillFrontierSurvivesBaseRetreatMonthsLimit() throws Exception {
+        // R3 regression: a months-based REFRESH LIMIT must protect a frozen backfill across a
+        // max(base_ts) retreat just like an hours limit. The frontier records the minimal anchor
+        // for the backfilled bucket; the refresh recovers the boundary by subtracting the limit.
+        // For a months limit that subtraction is calendar arithmetic (addMonths), which clamps
+        // day-of-month, so a naive bucketEnd+LIMIT anchor round-trips strictly BELOW bucketEnd at
+        // a month-end bucket and the refresh's REPLACE_RANGE would wipe the backfill. The frontier
+        // (safeBackfillAnchor) must compensate so the recovered boundary stays at-or-above bucketEnd.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "insert into base_price values" +
+                            "('a', 5.0, '2024-07-15T12:00')" +
+                            ",('a', 6.0, '2024-08-20T12:00')" +
+                            ",('a', 9.0, '2024-10-05T12:00')"
+            );
+            drainWalQueue();
+            execute(
+                    "create materialized view price_1d refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1d;"
+            );
+            execute("alter materialized view price_1d set refresh limit 2 months;");
+            drainQueues();
+
+            // Wall 2024-10-10. anchor = min(max(base)=10-05, now) = 10-05; boundary floor =
+            // round(addMonths(10-05,-2)) = 08-05. Backfill bucket [07-30, 07-31) ends at 07-31
+            // <= 08-05 -> accepted. The bucket end 07-31 is a month-end that clamps under
+            // addMonths(+2)->09-30, whose inverse addMonths(-2)->07-30 lands BELOW 07-31.
+            currentMicros = parseFloorPartialTimestamp("2024-10-10T00:00:00.000000Z");
+            execute("insert into price_1d values('a', 1.0, '2024-07-30T06:00')");
+            drainQueues();
+
+            // Retreat max(base_ts) to 08-20 by dropping the recent partition. 08-20 sits ABOVE
+            // the backfill's 07-31 bucket end, so the FULL refresh's REPLACE_RANGE hi reaches it;
+            // whether the backfill is wiped depends only on whether the recovered boundary stays
+            // at-or-above 07-31.
+            execute("alter table base_price drop partition list '2024-10-05'");
+            drainWalQueue();
+
+            execute("refresh materialized view price_1d full;");
+            drainQueues();
+
+            // The backfill at 07-30 must survive (boundary >= its 07-31 bucket end despite the
+            // lossy addMonths round-trip); 08-20 is the recomputed managed-zone bucket.
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            a\t1.0\t2024-07-30T06:00:00.000000Z
+                            a\t6.0\t2024-08-20T00:00:00.000000Z
+                            """),
+                    "price_1d order by ts",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testMatViewExtendRefreshLimitOverwritesBackfillInNewlyManagedRange() throws Exception {
         // backfillFrontier must NOT wrongly pin the boundary across an ALTER that EXTENDS the
         // limit. Extending grows the managed zone downward; a row backfilled into what used

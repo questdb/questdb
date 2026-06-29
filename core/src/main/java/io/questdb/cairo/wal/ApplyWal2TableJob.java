@@ -1056,28 +1056,39 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     }
 
     /**
-     * Returns the live frozen-zone frontier for {@code viewToken}, or {@link Long#MIN_VALUE} when the
-     * view's in-memory state is unavailable. The validator advances this at backfill-commit time and
-     * the refresh job publishes the boundary floor; persisting them with every state-file write keeps
-     * an accepted backfill durable across a restart.
-     */
-    /**
      * Minimal backfill-frontier anchor that keeps a backfill whose sample-by bucket ends at
-     * {@code bucketEnd} frozen: the {@code A} for which {@code boundaryFromAnchor(driver, A, limit)
-     * == bucketEnd}. The refresh job folds the frontier into its boundary anchor, so recording this
-     * guarantees the refresh boundary floor stays at-or-above {@code bucketEnd} and the bucket is
-     * never recomputed. Saturates to {@link Long#MAX_VALUE} on overflow (an absurd multi-century
-     * limit), which the refresh job's own {@code boundaryFromAnchor} then treats as the whole view
-     * frozen -- the conservative direction. Cannot over-freeze legitimate managed buckets because
-     * {@code bucketEnd} sits at-or-below the boundary the validator already accepted the row under.
+     * {@code bucketEnd} frozen: the smallest {@code A} for which
+     * {@code boundaryFromAnchor(driver, A, limit) >= bucketEnd}. The refresh job folds the frontier
+     * into its boundary anchor, so recording this guarantees the refresh boundary floor stays
+     * at-or-above {@code bucketEnd} and the bucket is never recomputed. Saturates to
+     * {@link Long#MAX_VALUE} on overflow (an absurd multi-century limit), which the refresh job's own
+     * {@code boundaryFromAnchor} then treats as the whole view frozen -- the conservative direction.
+     * <p>
+     * For an hours limit the inverse is exact ({@code fromHours} is linear). For a MONTHS limit it is
+     * not: {@code addMonths} clamps day-of-month, so {@code addMonths(addMonths(bucketEnd,+L),-L)} can
+     * land strictly below {@code bucketEnd} at a month-end bucket (e.g. Jul-31 +2 -> Sep-30, then -2
+     * -> Jul-30). A naive anchor would let the refresh boundary retreat below the frozen bucket and a
+     * REPLACE_RANGE would wipe the backfill. We therefore advance the months anchor by whole days
+     * until its inverse no longer underflows; the clamp deficit is under one month so it converges in
+     * a few steps, and the small overshoot only freezes a little extra (the conservative direction).
      */
     private static long safeBackfillAnchor(TimestampDriver driver, long bucketEnd, int limitHoursOrMonths) {
-        final long anchor = limitHoursOrMonths > 0
-                ? bucketEnd + driver.fromHours(limitHoursOrMonths)
-                : driver.addMonths(bucketEnd, -limitHoursOrMonths);
-        // anchor must be >= bucketEnd (we add a positive limit); a smaller value means the duration
-        // arithmetic overflowed/wrapped -- saturate so we never record a wrapped (too-low) frontier.
-        return anchor < bucketEnd ? Long.MAX_VALUE : anchor;
+        if (limitHoursOrMonths > 0) {
+            final long anchor = bucketEnd + driver.fromHours(limitHoursOrMonths);
+            // anchor must be >= bucketEnd (we add a positive limit); a smaller value means the
+            // arithmetic overflowed -- saturate so we never record a wrapped (too-low) frontier.
+            return anchor < bucketEnd ? Long.MAX_VALUE : anchor;
+        }
+        long anchor = driver.addMonths(bucketEnd, -limitHoursOrMonths);
+        if (anchor < bucketEnd) {
+            return Long.MAX_VALUE; // overflow (absurd multi-century limit) -> whole view frozen
+        }
+        final long oneDay = driver.fromHours(24);
+        // 62 days bounds any single-month day-of-month clamp deficit with margin.
+        for (int i = 0; i < 62 && MatViewBackfillValidator.boundaryFromAnchor(driver, anchor, limitHoursOrMonths) < bucketEnd; i++) {
+            anchor += oneDay;
+        }
+        return anchor;
     }
 
     /**
