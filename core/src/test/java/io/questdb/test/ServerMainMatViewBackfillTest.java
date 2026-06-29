@@ -101,7 +101,10 @@ public class ServerMainMatViewBackfillTest extends AbstractBootstrapTest {
                     final long ts = frozenTop - (long) i * bucketMicros; // distinct, descending, all frozen
                     try {
                         serverMain.execute("insert into price_1h values('a', " + (i + 1) + ", " + ts + "::timestamp)");
-                    } catch (Throwable rejectedEx) {
+                    } catch (Exception rejectedEx) {
+                        // Count only an expected engine/SQL rejection; let Errors (AssertionError,
+                        // OutOfMemoryError) propagate so a real failure fails the test fast instead
+                        // of being miscounted as a rejection.
                         rejected++;
                     }
                 }

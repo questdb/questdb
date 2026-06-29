@@ -1084,11 +1084,21 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             return Long.MAX_VALUE; // overflow (absurd multi-century limit) -> whole view frozen
         }
         final long oneDay = driver.fromHours(24);
-        // 62 days bounds any single-month day-of-month clamp deficit with margin.
-        for (int i = 0; i < 62 && MatViewBackfillValidator.boundaryFromAnchor(driver, anchor, limitHoursOrMonths) < bucketEnd; i++) {
+        // 62 days bounds any single-month day-of-month clamp deficit with margin. Fail safe: never
+        // return an anchor whose boundary still underflows bucketEnd (that would under-protect the
+        // accepted bucket) and never overflow the day-bump -- saturate to Long.MAX_VALUE (whole view
+        // frozen, conservative) instead. In practice the deficit is resolved in a single step and the
+        // anchor is far from overflow; this is defence-in-depth against a future change to the loop.
+        for (int i = 0; i < 62; i++) {
+            if (MatViewBackfillValidator.boundaryFromAnchor(driver, anchor, limitHoursOrMonths) >= bucketEnd) {
+                return anchor;
+            }
+            if (Long.MAX_VALUE - anchor < oneDay) {
+                return Long.MAX_VALUE;
+            }
             anchor += oneDay;
         }
-        return anchor;
+        return MatViewBackfillValidator.boundaryFromAnchor(driver, anchor, limitHoursOrMonths) >= bucketEnd ? anchor : Long.MAX_VALUE;
     }
 
     /**
