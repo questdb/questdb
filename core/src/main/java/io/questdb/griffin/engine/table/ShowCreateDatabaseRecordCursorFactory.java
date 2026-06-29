@@ -410,7 +410,6 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
         ordered.add(token);
     }
 
-    // Walks a compiled query plan collecting the tokens of every table the query reads.
     /**
      * Walks a compiled factory's execution plan to enumerate the table tokens it reads, without
      * rendering any plan text. Unlike {@link io.questdb.griffin.TextPlanSink}, every value- and
