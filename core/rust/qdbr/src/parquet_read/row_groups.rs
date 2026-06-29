@@ -6,9 +6,6 @@ use crate::parquet_read::decode::{
     decode_page, decode_page_filtered, decompress_sliced_data, decompress_sliced_dict,
     page_row_count, resize_decompress_buffer, sliced_page_row_count,
 };
-use crate::parquet_read::decoders::{
-    F32_MAX_SAFE_FOR_I32, F32_MAX_SAFE_FOR_I64, F64_MAX_SAFE_FOR_I64,
-};
 use crate::parquet_read::page::{DataPage, DictPage};
 use crate::parquet_read::{
     ColumnChunkBuffers, ColumnFilterPacked, ColumnFilterValues, ColumnMeta, DecodeContext,
@@ -238,22 +235,17 @@ pub(super) fn post_convert(
                 to_type.decimal_precision(),
             )?;
         }
-        // Int32 → Int64 widening (Byte/Short/Int → Long/Date/Timestamp).
-        // Int uses i32::MIN → i64::MIN via the value check below. Byte and Short
-        // have no in-band null sentinel, so their only nulls are the column-top
-        // prefix (def-level=0 on the OPTIONAL schema); `leading_nulls` rows are
-        // stamped with the target sentinel to match the native ALTER path.
-        (
-            ColumnTypeTag::Byte,
-            ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
-        ) => {
+        // Int32 → Int64 widening. Byte/Short → Long/Timestamp now decode straight to i64
+        // (DecodeAs::Target), so only Byte/Short → Date reaches post_convert here; Date has
+        // no dedicated DeltaBinaryPacked decode arm yet, so it stays a two-pass widen.
+        // Byte/Short have no in-band null sentinel, so their only nulls are the column-top
+        // prefix (def-level=0 on the OPTIONAL schema); `leading_nulls` rows are stamped with
+        // the target sentinel to match the native ALTER path.
+        (ColumnTypeTag::Byte, ColumnTypeTag::Date) => {
             convert_numeric_in_place::<i8, i64>(&mut bufs.data_vec, |_| false, 0i64, |v| v as i64)?;
             stamp_leading_nulls(&mut bufs.data_vec, leading_nulls, nulls::LONG);
         }
-        (
-            ColumnTypeTag::Short,
-            ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
-        ) => {
+        (ColumnTypeTag::Short, ColumnTypeTag::Date) => {
             convert_numeric_in_place::<i16, i64>(
                 &mut bufs.data_vec,
                 |_| false,
@@ -262,6 +254,7 @@ pub(super) fn post_convert(
             )?;
             stamp_leading_nulls(&mut bufs.data_vec, leading_nulls, nulls::LONG);
         }
+        // Int → Long/Date/Timestamp stays Source: i32::MIN → i64::MIN via the value check.
         (
             ColumnTypeTag::Int,
             ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
@@ -384,78 +377,9 @@ pub(super) fn post_convert(
                 |v| v as f64,
             )?;
         }
-        // Float → Int (NaN, infinity, and out-of-range map to dst null sentinel)
-        (ColumnTypeTag::Float, ColumnTypeTag::Byte) => {
-            convert_numeric_in_place::<f32, i8>(
-                &mut bufs.data_vec,
-                |v| v.is_nan() || v > i8::MAX as f32 || v < i8::MIN as f32,
-                0i8,
-                |v| v as i8,
-            )?;
-        }
-        (ColumnTypeTag::Float, ColumnTypeTag::Short) => {
-            convert_numeric_in_place::<f32, i16>(
-                &mut bufs.data_vec,
-                |v| v.is_nan() || v > i16::MAX as f32 || v < i16::MIN as f32,
-                0i16,
-                |v| v as i16,
-            )?;
-        }
-        (ColumnTypeTag::Float, ColumnTypeTag::Int) => {
-            convert_numeric_in_place::<f32, i32>(
-                &mut bufs.data_vec,
-                |v| v.is_nan() || v > F32_MAX_SAFE_FOR_I32 || v < i32::MIN as f32,
-                nulls::INT,
-                |v| v as i32,
-            )?;
-        }
-        (
-            ColumnTypeTag::Float,
-            ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
-        ) => {
-            convert_numeric_in_place::<f32, i64>(
-                &mut bufs.data_vec,
-                |v| v.is_nan() || v > F32_MAX_SAFE_FOR_I64 || v < i64::MIN as f32,
-                nulls::LONG,
-                |v| v as i64,
-            )?;
-        }
-        // Double → Int (NaN, infinity, and out-of-range map to dst null sentinel)
-        (ColumnTypeTag::Double, ColumnTypeTag::Byte) => {
-            convert_numeric_in_place::<f64, i8>(
-                &mut bufs.data_vec,
-                |v| v.is_nan() || v > i8::MAX as f64 || v < i8::MIN as f64,
-                0i8,
-                |v| v as i8,
-            )?;
-        }
-        (ColumnTypeTag::Double, ColumnTypeTag::Short) => {
-            convert_numeric_in_place::<f64, i16>(
-                &mut bufs.data_vec,
-                |v| v.is_nan() || v > i16::MAX as f64 || v < i16::MIN as f64,
-                0i16,
-                |v| v as i16,
-            )?;
-        }
-        (ColumnTypeTag::Double, ColumnTypeTag::Int) => {
-            convert_numeric_in_place::<f64, i32>(
-                &mut bufs.data_vec,
-                |v| v.is_nan() || v > i32::MAX as f64 || v < i32::MIN as f64,
-                nulls::INT,
-                |v| v as i32,
-            )?;
-        }
-        (
-            ColumnTypeTag::Double,
-            ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
-        ) => {
-            convert_numeric_in_place::<f64, i64>(
-                &mut bufs.data_vec,
-                |v| v.is_nan() || v > F64_MAX_SAFE_FOR_I64 || v < i64::MIN as f64,
-                nulls::LONG,
-                |v| v as i64,
-            )?;
-        }
+        // Float/Double → Byte/Short/Int/Long/Date/Timestamp now decode straight to the
+        // target via the FloatToIntRangeCheckConverter arms (DecodeAs::Target), so they
+        // reach the no-op block below instead of converting here.
         // Float <-> Double (infinity and out-of-range map to dst null sentinel)
         (ColumnTypeTag::Float, ColumnTypeTag::Double) => {
             convert_numeric_in_place::<f32, f64>(
@@ -486,6 +410,22 @@ pub(super) fn post_convert(
         (
             ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
             ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
+        ) => {}
+        // Byte/Short -> Long/Timestamp: decoded straight to i64 (no in-band sentinel).
+        (
+            ColumnTypeTag::Byte | ColumnTypeTag::Short,
+            ColumnTypeTag::Long | ColumnTypeTag::Timestamp,
+        ) => {}
+        // Float/Double -> int/time: decoded straight to the target by the range-check
+        // converter, which already maps NaN/out-of-range to the target null sentinel.
+        (
+            ColumnTypeTag::Float | ColumnTypeTag::Double,
+            ColumnTypeTag::Byte
+            | ColumnTypeTag::Short
+            | ColumnTypeTag::Int
+            | ColumnTypeTag::Long
+            | ColumnTypeTag::Date
+            | ColumnTypeTag::Timestamp,
         ) => {}
         (
             ColumnTypeTag::String | ColumnTypeTag::Varchar | ColumnTypeTag::Symbol,
@@ -1539,14 +1479,31 @@ pub(super) fn plan_decode_conversion(
         | (Int, Short | Byte)
         // Int64-family reinterpretation (Long/Date/Timestamp share Int64 physical).
         | (Long | Date | Timestamp, Long)
-        | (Long, Timestamp | Date) => Some(DecodeAs::Target),
+        | (Long, Timestamp | Date)
+        // Byte/Short -> Long/Timestamp: Byte/Short have no in-band null sentinel, so the
+        // i32->i64 widening decode arm (filling nulls::LONG for def-level=0 rows) is
+        // byte-identical to decoding at the source width and widening in post_convert.
+        // (-> Date stays Source below: no DeltaBinaryPacked Date decode arm exists yet.)
+        | (Byte | Short, Long | Timestamp)
+        // Float/Double -> int/time: the FloatToIntRangeCheckConverter decode arms map
+        // NaN / out-of-range to the target null sentinel with the same range constants
+        // and LOWER_STRICT flag that post_convert uses, so decoding straight to the
+        // target is byte-identical. DeltaBinaryPacked is impossible for FLOAT/DOUBLE
+        // physical, so Plain + dictionary cover every encoding.
+        | (Float | Double, Byte | Short | Int | Long | Date | Timestamp) => {
+            Some(DecodeAs::Target)
+        }
 
         // Cross-physical int (Int32 <-> Int64) and cross-family numeric:
         // keep source type for decode; post_convert converts.
-        (Byte | Short | Int, Long | Date | Timestamp)
+        // Int is sentinel-bearing (i32::MIN), so a single-pass i32->i64 widening arm
+        // (which has no in-band sentinel check) would diverge from the native ALTER on
+        // a stored i32::MIN; keep Source so post_convert maps the sentinel to i64::MIN.
+        (Int, Long | Date | Timestamp)
+        // Byte/Short -> Date: no DeltaBinaryPacked Date decode arm (see Target block).
+        | (Byte | Short, Date)
         | (Long | Date | Timestamp, Byte | Short | Int)
         | (Byte | Short | Int | Long | Date | Timestamp, Float | Double)
-        | (Float | Double, Byte | Short | Int | Long | Date | Timestamp)
         | (Float, Double)
         | (Double, Float)
         // Date <-> Timestamp and Timestamp nano <-> micro need post-decode scaling.
@@ -4004,6 +3961,13 @@ mod multi_dict_tests {
             (ColumnTypeTag::Date, ColumnTypeTag::Long),
             (ColumnTypeTag::Long, ColumnTypeTag::Timestamp),
             (ColumnTypeTag::Timestamp, ColumnTypeTag::Long),
+            // Flipped to DecodeAs::Target: decoded straight to the target, no-op here.
+            (ColumnTypeTag::Byte, ColumnTypeTag::Long),
+            (ColumnTypeTag::Short, ColumnTypeTag::Timestamp),
+            (ColumnTypeTag::Float, ColumnTypeTag::Int),
+            (ColumnTypeTag::Float, ColumnTypeTag::Long),
+            (ColumnTypeTag::Double, ColumnTypeTag::Short),
+            (ColumnTypeTag::Double, ColumnTypeTag::Timestamp),
             (ColumnTypeTag::String, ColumnTypeTag::Varchar),
             (ColumnTypeTag::Varchar, ColumnTypeTag::String),
             (ColumnTypeTag::Symbol, ColumnTypeTag::Varchar),
