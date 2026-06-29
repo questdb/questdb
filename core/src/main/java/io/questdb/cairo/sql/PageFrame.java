@@ -75,6 +75,75 @@ public interface PageFrame {
     IndexReader getIndexReader(int columnIndex, int direction);
 
     /**
+     * Per-column runtime source tag.
+     *
+     * @param columnIndex index of the column
+     * @return {@link DataSource#DIRECT} for a normally memory-mapped column, or
+     * {@link DataSource#COVERED} for a column whose values are decoded
+     * from the covering index sidecar by the worker-side decode arm.
+     * Default {@link DataSource#DIRECT} keeps all existing frames unchanged.
+     */
+    default byte getColumnSource(int columnIndex) {
+        return DataSource.DIRECT;
+    }
+
+    /**
+     * The posting-index sidecar include index that covered query column
+     * {@code columnIndex} decodes from, i.e. the argument passed to
+     * {@code CoveringRowCursor.getCoveredXxx(includeIdx)}. Defined only for
+     * columns that report {@link DataSource#COVERED}; {@code -1} otherwise
+     * (the symbol key column and any non-covered column). Consumed by the
+     * worker-side covered decode arm.
+     */
+    default int getCoveredIncludeIndex(int columnIndex) {
+        return -1;
+    }
+
+    /**
+     * The deduplicated set of sidecar include indices this frame's covered
+     * columns decode from — passed as the required-cover-columns argument when
+     * opening a covering cursor over the frame's posting reader. {@code null}
+     * for non-covered frames.
+     */
+    default int[] getCoveredIncludeIndices() {
+        return null;
+    }
+
+    /**
+     * The resolved WHERE symbol key whose rows this frame's covered columns
+     * belong to. Meaningful only for covered frames (frames that report at
+     * least one {@link DataSource#COVERED} column); other frames return the
+     * not-found sentinel. Consumed by the worker-side covered decode arm.
+     */
+    default int getCoveredKey() {
+        return SymbolTable.VALUE_NOT_FOUND;
+    }
+
+    /**
+     * Exclusive high row index, within the base partition, of the range this
+     * covered frame's rows were produced from. {@code -1L} for non-covered frames.
+     * <p>
+     * Note: the non-covered sentinel here is {@code -1L} (a row index), which is
+     * distinct from {@link SymbolTable#VALUE_NOT_FOUND} ({@code -2}) used by
+     * {@link #getCoveredKey()}. Do not conflate the two.
+     */
+    default long getCoveredRowHi() {
+        return -1;
+    }
+
+    /**
+     * Inclusive low row index, within the base partition, of the range this
+     * covered frame's rows were produced from. {@code -1L} for non-covered frames.
+     * <p>
+     * Note: the non-covered sentinel here is {@code -1L} (a row index), which is
+     * distinct from {@link SymbolTable#VALUE_NOT_FOUND} ({@code -2}) used by
+     * {@link #getCoveredKey()}. Do not conflate the two.
+     */
+    default long getCoveredRowLo() {
+        return -1;
+    }
+
+    /**
      * Return the address of the start of the page frame or if this page represents
      * a column top (a column that was added to the table when other columns already
      * had data) then return 0.
