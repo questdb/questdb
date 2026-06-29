@@ -1332,9 +1332,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                             writeBinaryToFrame(addrs[q], varDataAddrs, varDataPos, varDataCap, q, count, crc.getCoveredBin(includeIdx));
                     case ColumnType.ARRAY -> writeArrayToFrame(addrs[q], varDataAddrs, varDataPos, varDataCap, q, count,
                             crc.getCoveredArray(includeIdx, columnTypes[q]));
+                    // Mirrors the worker path (CoveredColumnDecoder): an unhandled covered type must
+                    // fail loud, not silently skip the slot.
                     default ->
-                            // Mirrors the worker path (CoveredColumnDecoder): an unhandled covered type must
-                            // fail loud, not silently skip the slot.
                             throw CairoException.critical(0).put("unsupported covered column type [tag=").put(tag).put(']');
                 }
             }
