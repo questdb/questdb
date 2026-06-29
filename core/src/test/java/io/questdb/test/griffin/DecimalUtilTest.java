@@ -330,6 +330,25 @@ public class DecimalUtilTest extends AbstractCairoTest {
                             0.50
                             """);
 
+            // A bare integer zero literal is the value 0 and fits DECIMAL(p, p).
+            assertQuery("SELECT 0::DECIMAL(4, 4) x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x
+                            0.0000
+                            """);
+
+            // The string -> DECIMAL(p, p) cast routes through DecimalParser, where the integer
+            // zero "0" used to be rejected by the same precision floor.
+            assertQuery("SELECT cast('0' as DECIMAL(2, 2)) x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x
+                            0.00
+                            """);
+
             // A value with a non-zero integer part still does not fit DECIMAL(p, p).
             assertQuery("SELECT 1.5::DECIMAL(2, 2) x")
                     .fails(7, "requires precision of 3 but is limited to 2");
@@ -842,6 +861,12 @@ public class DecimalUtilTest extends AbstractCairoTest {
         assertEqualPrecisionAndScale("0.0001", (short) 1);
         assertEqualPrecisionAndScale("0.0000", (short) 0);
         assertEqualPrecisionAndScale("0.5", (short) 5000);
+
+        // A bare integer zero is the value 0, which fits any DECIMAL(p, p): the leading "0"
+        // carries no significant digits, so it must not demand precision p + 1.
+        assertEqualPrecisionAndScale("0", (short) 0);
+        assertEqualPrecisionAndScale("-0", (short) 0);
+        assertEqualPrecisionAndScale("00", (short) 0);
 
         // A value with a non-zero integer part still does not fit a DECIMAL(p, p) type.
         for (String value : new String[]{"1.5", "5", "1.0000", "-1.0000"}) {

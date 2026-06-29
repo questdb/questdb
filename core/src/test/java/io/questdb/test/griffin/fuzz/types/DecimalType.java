@@ -80,12 +80,15 @@ public final class DecimalType implements FuzzColumnType {
         }
         long intPart = magnitude == 0 ? 0 : rnd.nextLong(magnitude);
         boolean negative = rnd.nextBoolean();
+        // 1:4 of the time emit a bare integer literal (no fractional part) even when the type
+        // carries a scale, to exercise the integer -> DECIMAL cast path, including 0 -> DECIMAL(p, p).
+        boolean fractional = scale > 0 && rnd.nextInt(4) != 0;
         StringBuilder sb = new StringBuilder();
         if (negative) {
             sb.append('-');
         }
         sb.append(intPart);
-        if (scale > 0) {
+        if (fractional) {
             sb.append('.');
             for (int i = 0; i < scale; i++) {
                 sb.append(rnd.nextInt(10));
