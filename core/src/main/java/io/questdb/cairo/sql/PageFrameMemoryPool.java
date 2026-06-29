@@ -1655,9 +1655,12 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             }
             // Guard against a theoretical int overflow in initDataCap = rowCount * 32
             // (var-size initial data cap). In practice a covered frame is bounded by
-            // the table's page-frame row cap (order of thousands), but the assert makes
-            // any future pathological rowCount loud in -ea mode.
-            assert (long) rowCount * 32 <= Integer.MAX_VALUE : "rowCount too large for int varDataCap init: " + rowCount;
+            // the table's page-frame row cap (order of thousands). Throw (not assert) so
+            // a pathological rowCount fails loud even with -ea off, matching the >2GB
+            // var-data guards below rather than silently truncating the int cap.
+            if ((long) rowCount * 32 > Integer.MAX_VALUE) {
+                throw CairoException.critical(0).put("covered frame too large for int varDataCap init [rows=").put(rowCount).put(']');
+            }
             for (int q = 0; q < queryColCount; q++) {
                 varDataPos[q] = 0;
                 if (!coveredColumn[q] || coveredIncludeIdx[q] < 0) {
@@ -1701,9 +1704,12 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 // number of bytes (a smaller frame must not shrink it).
                 // Guard the int symCap cast below: symBytes = rowCount * 4 cannot
                 // exceed int range for any page-frame-bounded rowCount, but never
-                // say never — make a pathological rowCount loud rather than let the
-                // cast truncate symCap and under-account the matching Unsafe.free().
-                assert symBytes <= Integer.MAX_VALUE : "rowCount too large for int symCap: " + rowCount;
+                // say never — throw (not assert) so a pathological rowCount fails loud
+                // even with -ea off rather than letting the cast truncate symCap and
+                // under-account the matching Unsafe.free().
+                if (symBytes > Integer.MAX_VALUE) {
+                    throw CairoException.critical(0).put("covered frame too large for int symCap [rows=").put(rowCount).put(']');
+                }
                 symAddr = growNative(symAddr, symCap, symBytes);
                 symCap = (int) symBytes;
             }

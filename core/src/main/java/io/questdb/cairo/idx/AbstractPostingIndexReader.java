@@ -775,6 +775,11 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         genLookup.setFrozen(frozen);
     }
 
+    @Override
+    public boolean isFrozen() {
+        return frozen;
+    }
+
     @TestOnly
     public void setGenLookupCacheBudget(long budget) {
         genLookup.setCacheMemoryBudget(budget);

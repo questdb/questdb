@@ -414,6 +414,11 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 sink.putColumnName(q);
             }
         }
+        // The decode strategy is intentionally derivable from the filter shape below rather than
+        // emitted as a separate attr (which would churn every covering-plan golden test): a single
+        // equality ("sym = 'x'") is produced metadata-only at frame production and decoded in
+        // parallel on the reduce workers, whereas an IN-list ("sym IN (...)") is decoded eagerly via
+        // the multi-key merge. The parallelism itself surfaces on the parent async operator's plan.
         if (keyValueFuncs != null) {
             sink.attr("filter").putColumnName(keyQueryPosition).val(" IN ").val(keyValueFuncs);
         } else {

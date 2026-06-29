@@ -152,6 +152,15 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
             hasParquetFrames = true;
         }
 
+        // Defensive consistency check: a covering frame produces its per-column
+        // DataSource.COVERED flags and its per-frame covered accessors together, so the
+        // two must agree. A future PageFrame wrapper that delegates some but not all of
+        // the covered accessors (the realistic failure mode) would otherwise silently
+        // record the frame as non-covered (or half-covered) here, no-op'ing the worker
+        // covered-decode arm and producing wrong/NULL columns with no error. -ea is on in
+        // all tests + CI, so this turns that silent corruption into a loud failure.
+        assert coveredMetadataConsistent(frame, covered, format);
+
         frameSizes.add(frame.getPartitionHi() - frame.getPartitionLo());
         frameFormats.add(format);
         ParquetDecoder decoder = frame.getParquetDecoder();
@@ -185,6 +194,40 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
             coveredIncludeIndices.add(null);
             coveredIndexReaders.add(null);
         }
+    }
+
+    /**
+     * Cross-checks that a frame's per-column {@link DataSource#COVERED} flags agree with its
+     * per-frame covered accessors. A covering frame produces both together; a wrapper that
+     * propagates one but not the other is a bug that would otherwise silently mis-handle the
+     * frame. Only meaningful for NATIVE frames (covered frames always report NATIVE).
+     *
+     * @param covered the per-column covered flags collected in the native pass (null = none covered)
+     * @return true if consistent (used via {@code assert})
+     */
+    private static boolean coveredMetadataConsistent(@Transient PageFrame frame, boolean[] covered, byte format) {
+        if (format != PartitionFormat.NATIVE) {
+            // Non-native (e.g. parquet) frames are never covered and skip the covered accessors.
+            return covered == null;
+        }
+        final boolean anyColumnCovered = covered != null;
+        final int[] perFrameIncludes = frame.getCoveredIncludeIndices();
+        // The per-column COVERED flags and the per-frame include set are produced together, so
+        // exactly one of two states is valid: both present (covered frame) or both absent (plain).
+        if (anyColumnCovered != (perFrameIncludes != null)) {
+            return false;
+        }
+        if (anyColumnCovered) {
+            // Every COVERED column must carry a valid sidecar include index: >= 0 for an
+            // INCLUDE-mapped column, or -1 for the synthesized symbol key. Anything below -1
+            // means the per-column include remap was dropped/garbled.
+            for (int c = 0; c < covered.length; c++) {
+                if (covered[c] && frame.getCoveredIncludeIndex(c) < -1) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     @Override

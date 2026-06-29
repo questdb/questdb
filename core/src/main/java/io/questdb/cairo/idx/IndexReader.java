@@ -127,6 +127,15 @@ public interface IndexReader extends Closeable {
 
     boolean isOpen();
 
+    /**
+     * Whether this reader is currently frozen (see {@link #setFrozen(boolean)}). Readers that do
+     * not support freezing always report {@code false}. Exposed so the parallel-decode freeze
+     * wiring ({@code PageFrameAddressCache.freezeCoveredReaders}) can be verified directly.
+     */
+    default boolean isFrozen() {
+        return false;
+    }
+
     void of(
             CairoConfiguration configuration,
             @Transient Path path,

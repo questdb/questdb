@@ -257,6 +257,99 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCountOverCoveringIndexResealedAndMultiGen() throws Exception {
+        // Review finding #1: count() WHERE sym=k is answered from posting metadata
+        // (SingleKeyCoveringCursor.size() -> countMatchesClamped, which uses the EXACT per-gen
+        // first/last, unlike the cursor's slack-bound size() that can false-bail). The existing
+        // count test only covers a single freshly-loaded partition; here we prove the end-to-end
+        // count() is EXACT across MULTI-GEN (several sealed commits), an O3 RESEAL (out-of-order
+        // rows shrink/extend the sealed gen's covered range), and a NULL prefix -- by comparing to
+        // a non-indexed twin whose count() WHERE sym=k is a plain full-scan filter with no metadata
+        // short-circuit. If the metadata count diverged from the true row count in any gen state,
+        // cov != ref here.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE cov (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (px), px DOUBLE)" +
+                    " TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("CREATE TABLE ref (ts TIMESTAMP, sym SYMBOL, px DOUBLE)" +
+                    " TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+
+            // Commit 1: ordered rows on day 1 -> sealed gen.
+            final String gen1 = "SELECT ('2024-01-01'::timestamp + (x-1)*3600000000L)::timestamp," +
+                    " case when x%5=0 then null else ('K'||(x%4)) end, x::double FROM long_sequence(200)";
+            execute("INSERT INTO cov " + gen1);
+            execute("INSERT INTO ref " + gen1);
+            engine.releaseAllWriters(); // seal gen 0
+
+            // Commit 2: OUT-OF-ORDER rows interleaved into the SAME day-1 partition (offset by 30min,
+            // earlier than already-sealed rows) -> O3 reseal, so the sealed gen's covered range no
+            // longer ends at the partition's true max row.
+            final String gen2 = "SELECT ('2024-01-01T00:30:00'::timestamp + (x-1)*3600000000L)::timestamp," +
+                    " case when x%3=0 then null else ('K'||(x%4)) end, (1000+x)::double FROM long_sequence(150)";
+            execute("INSERT INTO cov " + gen2);
+            execute("INSERT INTO ref " + gen2);
+            engine.releaseAllWriters();
+
+            // Commit 3: a later partition (day 10) appended as a third gen.
+            final String gen3 = "SELECT ('2024-01-10'::timestamp + (x-1)*3600000000L)::timestamp," +
+                    " case when x%2=0 then null else ('K'||(x%4)) end, (2000+x)::double FROM long_sequence(120)";
+            execute("INSERT INTO cov " + gen3);
+            execute("INSERT INTO ref " + gen3);
+            engine.releaseAllWriters();
+
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                // Per-key, NULL, absent key, and a partial-frame interval crossing the O3 reseal.
+                for (String pred : new String[]{
+                        "sym = 'K0'", "sym = 'K1'", "sym = 'K2'", "sym = 'K3'", "sym IS NULL", "sym = 'NOPE'",
+                        "sym = 'K1' AND ts >= '2024-01-01T00:00:00' AND ts < '2024-01-01T06:00:00'",
+                        "sym IS NULL AND ts >= '2024-01-10T00:00:00' AND ts < '2024-01-10T03:00:00'"
+                }) {
+                    final String q = "SELECT count() FROM %s WHERE " + pred;
+                    TestUtils.assertSqlCursors(compiler, sqlExecutionContext,
+                            String.format(q, "ref"), String.format(q, "cov"), LOG);
+                }
+            }
+            // The metadata fast-path routing (Count over CoveringIndex) for cov count() is pinned by
+            // testCountOverCoveringIndex; here the ref-vs-cov equality proves the count VALUE is
+            // exact across the multi-gen / O3-reseal / null-prefix states.
+        });
+    }
+
+    @Test
+    public void testCoveringPlanShowsDecodeStrategyViaFilterShape() throws Exception {
+        // Review finding #7: rather than emit a separate decode-strategy attr (which would churn
+        // every covering-plan golden test), the strategy is intentionally derivable from the filter
+        // shape. This test PINS that contract so a future change to either the plan or the routing
+        // is caught: a single equality (sym='x') is produced metadata-only and decoded in parallel
+        // on the reduce workers; an IN-list (sym IN [...]) is decoded eagerly via the multi-key
+        // merge. See CoveringIndexRecordCursorFactory.toPlan.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE cov (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (px), px DOUBLE)" +
+                    " TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            // 60 rows, sym = 'K' || (x%3) -> K0/K1/K2 each appear exactly 20 times.
+            execute("INSERT INTO cov SELECT ('2024-01-01'::timestamp + (x-1)*3600000000L)::timestamp," +
+                    " ('K'||(x%3)), x::double FROM long_sequence(60)");
+            engine.releaseAllWriters();
+
+            // Single equality -> single-key (metadata-only production + parallel worker decode):
+            // the plan renders "filter: sym='K1'".
+            assertQuery("SELECT count() FROM cov WHERE sym = 'K1'")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("CoveringIndex on: sym", "filter: sym='K1'")
+                    .returns("count\n20\n");
+            // IN-list -> multi-key (eager multi-key merge at production): the plan renders
+            // "filter: sym IN ['K1','K2']".
+            assertQuery("SELECT count() FROM cov WHERE sym IN ('K1','K2')")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("CoveringIndex on: sym", "filter: sym IN ['K1','K2']")
+                    .returns("count\n40\n");
+        });
+    }
+
+    @Test
     public void testParallelCoveredDecodeMatchesReference() throws Exception {
         // THE HEADLINE TEST (Task 9): covered column decode now happens on the
         // async workers inside PageFrameMemoryPool.navigateTo, and must be both
@@ -443,6 +536,105 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
                 // Non-null key on the same table: locks the data (non-null-prefix) branch.
                 final String aggS1 = "SELECT sum(px), count() FROM %s WHERE sym = 'S1'";
                 TestUtils.assertSqlCursors(compiler, ctx, String.format(aggS1, "ref"), String.format(aggS1, "cov"), LOG);
+            }, configuration, LOG);
+        });
+    }
+
+    @Test
+    public void testParallelCoveredDecodeGeoDecimalCharTimestampMatchReference() throws Exception {
+        // Review finding #5: the all-types parallel test omits the most layout-sensitive fixed
+        // widths -- GEOHASH (all 4 backing widths byte/short/int/long), DECIMAL (all 6 widths
+        // 8/16/32/64/128/256), CHAR, and a covered TIMESTAMP -- which were only exercised
+        // single-threaded via the record path. Decode them under 4 workers + a small frame cap so
+        // each partition splits into several worker-decoded frames, and compare a projecting
+        // residual filter (record fast-path) AND first/last (stable-pointer path, where the type
+        // supports it) against a non-indexed twin. rnd seeds match because ref is INSERT...SELECT *.
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 200);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(pool, (engine, compiler, ctx) -> {
+                final String cols =
+                        "  g_b GEOHASH(1c), g_s GEOHASH(3c), g_i GEOHASH(6c), g_l GEOHASH(12c)," +
+                                "  d8 DECIMAL(2,1), d16 DECIMAL(4,2), d32 DECIMAL(9,2)," +
+                                "  d64 DECIMAL(18,4), d128 DECIMAL(38,10), d256 DECIMAL(40,5)," +
+                                "  c CHAR, a_ts TIMESTAMP";
+                engine.execute(
+                        "CREATE TABLE cov (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE " +
+                                "(g_b, g_s, g_i, g_l, d8, d16, d32, d64, d128, d256, c, a_ts)," +
+                                cols + ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
+                engine.execute("CREATE TABLE ref (ts TIMESTAMP, sym SYMBOL," + cols +
+                        ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
+                final int rows = 20_000; // ~5 daily partitions; >>200-row frame cap => many frames/partition
+                engine.execute("INSERT INTO cov SELECT" +
+                        " ('2024-01-01'::TIMESTAMP + (x-1)*60_000_000L)::timestamp," +
+                        " ('S' || ((x-1) % 4))::symbol," +
+                        " case when x%7=0 then null else rnd_geohash(5) end," +
+                        " case when x%7=0 then null else rnd_geohash(15) end," +
+                        " case when x%7=0 then null else rnd_geohash(30) end," +
+                        " case when x%7=0 then null else rnd_geohash(60) end," +
+                        " case when x%7=0 then null else rnd_decimal(2,1,0) end," +
+                        " case when x%7=0 then null else rnd_decimal(4,2,0) end," +
+                        " case when x%7=0 then null else rnd_decimal(9,2,0) end," +
+                        " case when x%7=0 then null else rnd_decimal(18,4,0) end," +
+                        " case when x%7=0 then null else rnd_decimal(38,10,0) end," +
+                        " case when x%7=0 then null else rnd_decimal(40,5,0) end," +
+                        " case when x%7=0 then null else rnd_char() end," +
+                        " case when x%7=0 then null else ('2020-01-01'::timestamp + x*1000000L)::timestamp end" +
+                        " FROM long_sequence(" + rows + ")", ctx);
+                engine.execute("INSERT INTO ref SELECT * FROM cov", ctx);
+                engine.releaseAllWriters();
+
+                for (String sym : new String[]{"S0", "S2"}) {
+                    // Record fast-path: project every covered type through a residual filter.
+                    final String proj = "SELECT g_b,g_s,g_i,g_l,d8,d16,d32,d64,d128,d256,c,a_ts " +
+                            "FROM %s WHERE sym = '" + sym + "' AND d64 > 0";
+                    TestUtils.assertSqlCursors(compiler, ctx, String.format(proj, "ref"), String.format(proj, "cov"), LOG);
+                    // Stable-pointer (first/last) over the GEO widths (first/last support GEOHASH).
+                    final String fl = "SELECT first(g_b), last(g_s), first(g_i), last(g_l), count() " +
+                            "FROM %s WHERE sym = '" + sym + "'";
+                    TestUtils.assertSqlCursors(compiler, ctx, String.format(fl, "ref"), String.format(fl, "cov"), LOG);
+                }
+            }, configuration, LOG);
+        });
+    }
+
+    @Test
+    public void testParallelCoveredFirstLastArrayAcrossManyFrames() throws Exception {
+        // Review finding #3: first()/last() over a covered ARRAY is the riskiest lifetime case --
+        // the aggregate retains a RAW pointer into a covered decode buffer for the merge phase, so
+        // if a covered buffer were freed/rebound while a stable pointer still referenced it the
+        // result would be wrong. Drive first(arr)/last(arr) over a covered query spanning MANY
+        // frames (small frame cap + many partitions, well past the frame queue capacity) under 4
+        // workers, vs a non-indexed twin. (BINARY has no first/last aggregate, so its covered
+        // stable-pointer surface is the record/projection path already covered by the all-types
+        // test; here we additionally project a_bin across many frames as a belt-and-suspenders.)
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 128);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(pool, (engine, compiler, ctx) -> {
+                engine.execute(
+                        "CREATE TABLE cov (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (a_arr, a_bin)," +
+                                " a_arr DOUBLE[], a_bin BINARY) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
+                engine.execute("CREATE TABLE ref (ts TIMESTAMP, sym SYMBOL, a_arr DOUBLE[], a_bin BINARY)" +
+                        " TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
+                final int rows = 30_000; // many daily partitions x many 128-row frames per key
+                engine.execute("INSERT INTO cov SELECT" +
+                        " ('2024-01-01'::TIMESTAMP + (x-1)*120_000_000L)::timestamp," +
+                        " ('S' || ((x-1) % 4))::symbol," +
+                        " case when x%9=0 then null else ARRAY[(x%5)::double, ((x+1)%7)::double, ((x*3)%11)::double] end," +
+                        " case when x%9=0 then null else rnd_bin(4, 40, 0) end" +
+                        " FROM long_sequence(" + rows + ")", ctx);
+                engine.execute("INSERT INTO ref SELECT * FROM cov", ctx);
+                engine.releaseAllWriters();
+
+                for (String sym : new String[]{"S0", "S1", "S3"}) {
+                    // Stable-pointer ARRAY aggregation across the merge of many covered frames.
+                    final String fl = "SELECT first(a_arr), last(a_arr), count() FROM %s WHERE sym = '" + sym + "'";
+                    TestUtils.assertSqlCursors(compiler, ctx, String.format(fl, "ref"), String.format(fl, "cov"), LOG);
+                    // Var-size BINARY + ARRAY projection across many worker-decoded frames.
+                    final String proj = "SELECT a_arr, a_bin FROM %s WHERE sym = '" + sym + "'";
+                    TestUtils.assertSqlCursors(compiler, ctx, String.format(proj, "ref"), String.format(proj, "cov"), LOG);
+                }
             }, configuration, LOG);
         });
     }
@@ -1086,6 +1278,61 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
                     assertNull("no covered index reader on a plain frame", addressCache.getCoveredIndexReader(i));
                     assertFalse("column 0 not covered", addressCache.isColumnCovered(i, 0));
                     assertFalse("column 1 not covered", addressCache.isColumnCovered(i, 1));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testFreezeCoveredReadersWiringFlipsAllReaders() throws Exception {
+        // Review finding #2 (negative control for the dispatch freeze WIRING): the parallel-decode
+        // pipeline relies on PageFrameSequence.buildAddressCache -> freezeCoveredReaders() to make
+        // every covered partition's posting reader read-only BEFORE any worker is dispatched, and
+        // unfreezeCoveredReaders() at teardown. The freeze PRIMITIVE already has a red-on-break test
+        // (PostingReaderConcurrentReadTest.testFrozenReaderSuppressesReload, which fails if a frozen
+        // reader stops suppressing reloadConditionally). This pins the other half -- the wiring that
+        // flips the flag on EVERY covered reader -- by driving a covering query's frames through a
+        // PageFrameAddressCache exactly as the async pipeline does and asserting the freeze/unfreeze
+        // calls actually toggle isFrozen() on each distinct reader. If that loop were dropped or a
+        // reader were missed, this goes red.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE cov (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (px), px DOUBLE) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            // Several daily partitions so the cache holds several distinct per-partition readers.
+            execute("INSERT INTO cov SELECT ('2024-01-01'::timestamp + (x-1)*3600000000L)::timestamp, " +
+                    "('K'||(x%3)), x::double FROM long_sequence(240)");
+            engine.releaseAllWriters();
+
+            try (RecordCursorFactory factory = select("SELECT sym, px FROM cov WHERE sym = 'K1'");
+                 PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC);
+                 PageFrameAddressCache addressCache = new PageFrameAddressCache()) {
+                addressCache.of(factory.getMetadata(), cursor.getColumnMapping(), cursor.isExternal());
+                int frameCount = 0;
+                PageFrame f;
+                while ((f = cursor.next(0)) != null) {
+                    addressCache.add(frameCount++, f);
+                }
+                assertTrue("expected covered frames", addressCache.hasCoveredFrames());
+
+                // Distinct covered readers across the frames (one per partition; multiple frames in
+                // the same partition share the same reader instance).
+                final java.util.IdentityHashMap<IndexReader, Boolean> readers = new java.util.IdentityHashMap<>();
+                for (int i = 0; i < frameCount; i++) {
+                    IndexReader r = addressCache.getCoveredIndexReader(i);
+                    assertNotNull("covered frame " + i + " must carry a posting reader", r);
+                    readers.put(r, Boolean.TRUE);
+                    assertFalse("reader must start unfrozen", r.isFrozen());
+                }
+                assertTrue("expected at least one covered reader", readers.size() > 0);
+
+                addressCache.freezeCoveredReaders();
+                for (IndexReader r : readers.keySet()) {
+                    assertTrue("freezeCoveredReaders must freeze every covered reader", r.isFrozen());
+                }
+
+                addressCache.unfreezeCoveredReaders();
+                for (IndexReader r : readers.keySet()) {
+                    assertFalse("unfreezeCoveredReaders must unfreeze every covered reader", r.isFrozen());
                 }
             }
         });
