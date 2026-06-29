@@ -109,8 +109,11 @@ public final class CoveredColumnDecoder {
                     case ColumnType.BINARY -> writeBinary(addr, varData, q, count, crc.getCoveredBin(includeIdx));
                     case ColumnType.ARRAY ->
                             writeArray(addr, varData, q, count, crc.getCoveredArray(includeIdx, columnTypes[q]));
-                    default -> {
-                    }
+                    default ->
+                            // Neither a fixed-width type handled above nor a known var-size type: a covered
+                            // column type the decoder cannot materialize. Fail loud rather than leave the
+                            // slot uninitialized (which would feed garbage into aggregation/projection).
+                            throw CairoException.critical(0).put("unsupported covered column type [tag=").put(tag).put(']');
                 }
             }
         }
@@ -139,7 +142,7 @@ public final class CoveredColumnDecoder {
                     Unsafe.putShort(addr + (long) count * Short.BYTES, crc.getCoveredShort(includeIdx));
             case ColumnType.BYTE, ColumnType.BOOLEAN, ColumnType.GEOBYTE, ColumnType.DECIMAL8 ->
                     Unsafe.putByte(addr + count, crc.getCoveredByte(includeIdx));
-            case ColumnType.UUID, ColumnType.DECIMAL128 -> {
+            case ColumnType.LONG128, ColumnType.UUID, ColumnType.DECIMAL128 -> {
                 long off128 = (long) count * 16;
                 Unsafe.putLong(addr + off128, crc.getCoveredLong128Lo(includeIdx));
                 Unsafe.putLong(addr + off128 + 8, crc.getCoveredLong128Hi(includeIdx));
