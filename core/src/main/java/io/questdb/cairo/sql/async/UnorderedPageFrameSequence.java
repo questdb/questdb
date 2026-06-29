@@ -53,6 +53,7 @@ import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
 import io.questdb.std.Os;
+import io.questdb.std.Rows;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.StringSink;
 
@@ -498,6 +499,11 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
     private void buildAddressCache() {
         PageFrame frame;
         while ((frame = frameCursor.next()) != null) {
+            if (frameCount >= Rows.MAX_SAFE_PARTITION_INDEX) {
+                throw CairoException.nonCritical()
+                        .put("too many page frames for a single query [limit=").put(Rows.MAX_SAFE_PARTITION_INDEX)
+                        .put("]; reduce the scanned range or raise cairo.sql.page.frame.max.rows");
+            }
             frameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
             frameAddressCache.add(frameCount++, frame);
         }

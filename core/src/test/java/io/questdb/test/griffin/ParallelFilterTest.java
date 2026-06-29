@@ -35,6 +35,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
@@ -49,6 +50,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -327,6 +329,60 @@ public class ParallelFilterTest extends AbstractCairoTest {
                             .noRandomAccess()
                             .expectSize()
                             .returns("count\n999\n");
+                },
+                configuration,
+                LOG
+        );
+    }
+
+    @Test
+    public void testParallelFilterOverSplitParquetRowGroups() throws Exception {
+        // Each parquet row group (1000 rows) exceeds page.frame.max.rows (100) and splits into 10 bounded
+        // sub-frames. The async filter must treat a row group as one unit of parallel work (one task) and
+        // collect its sub-frames in order, returning exactly the rows the native scan returns.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 1000);
+        WorkerPool pool = new WorkerPool(() -> 4);
+        TestUtils.execute(
+                pool,
+                (engine, compiler, sqlExecutionContext) -> {
+                    sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+                    engine.execute("CREATE TABLE x (v LONG, ts TIMESTAMP) timestamp(ts) PARTITION BY DAY", sqlExecutionContext);
+                    // 5000 rows in 2024-01-01 => 5 parquet row groups, each split into 10 sub-frames
+                    engine.execute(
+                            "INSERT INTO x SELECT x, timestamp_sequence('2024-01-01', 1000000) FROM long_sequence(5000)",
+                            sqlExecutionContext
+                    );
+                    // a sentinel in a second partition keeps 2024-01-01 non-active so it can be converted
+                    engine.execute("INSERT INTO x VALUES (-1, '2024-01-02T00:00:00.000000Z')", sqlExecutionContext);
+
+                    // Three drain paths over the same split row groups: a full forward scan, an offset scan
+                    // (skipRows across sub-frames), and a reversed scan (negative-limit async filter over the
+                    // backward page-frame cursor).
+                    final String fwdQuery = "SELECT v FROM x WHERE ts in '2024-01-01' AND v % 7 = 0";
+                    final String offsetQuery = "SELECT v FROM x WHERE ts in '2024-01-01' AND v % 7 = 0 LIMIT 25, 75";
+                    final String bwdQuery = "SELECT v FROM x WHERE ts in '2024-01-01' AND v % 7 = 0 LIMIT -50";
+                    assertPlanContains(compiler, sqlExecutionContext, fwdQuery, "Async");
+
+                    final StringSink fwdOracle = new StringSink();
+                    final StringSink offsetOracle = new StringSink();
+                    final StringSink bwdOracle = new StringSink();
+                    dumpLongColumn(compiler, sqlExecutionContext, fwdQuery, fwdOracle);
+                    dumpLongColumn(compiler, sqlExecutionContext, offsetQuery, offsetOracle);
+                    dumpLongColumn(compiler, sqlExecutionContext, bwdQuery, bwdOracle);
+
+                    engine.execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'", sqlExecutionContext);
+
+                    final StringSink fwdActual = new StringSink();
+                    final StringSink offsetActual = new StringSink();
+                    final StringSink bwdActual = new StringSink();
+                    dumpLongColumn(compiler, sqlExecutionContext, fwdQuery, fwdActual);
+                    dumpLongColumn(compiler, sqlExecutionContext, offsetQuery, offsetActual);
+                    dumpLongColumn(compiler, sqlExecutionContext, bwdQuery, bwdActual);
+
+                    Assert.assertTrue("expected at least one matching row", fwdOracle.length() > 0);
+                    TestUtils.assertEquals(fwdOracle, fwdActual);
+                    TestUtils.assertEquals(offsetOracle, offsetActual);
+                    TestUtils.assertEquals(bwdOracle, bwdActual);
                 },
                 configuration,
                 LOG
@@ -827,6 +883,28 @@ public class ParallelFilterTest extends AbstractCairoTest {
     @Test
     public void testVarcharBindVariable() throws Exception {
         testStrBindVariable("VARCHAR", SqlJitMode.JIT_MODE_ENABLED);
+    }
+
+    private static void assertPlanContains(SqlCompiler compiler, SqlExecutionContext ctx, String sql, String fragment) throws Exception {
+        final StringSink sink = new StringSink();
+        try (RecordCursorFactory factory = compiler.compile("EXPLAIN " + sql, ctx).getRecordCursorFactory();
+             RecordCursor cursor = factory.getCursor(ctx)) {
+            final Record record = cursor.getRecord();
+            while (cursor.hasNext()) {
+                sink.put(record.getStrA(0)).put('\n');
+            }
+        }
+        TestUtils.assertContains(sink, fragment);
+    }
+
+    private static void dumpLongColumn(SqlCompiler compiler, SqlExecutionContext ctx, String sql, StringSink sink) throws Exception {
+        try (RecordCursorFactory factory = compiler.compile(sql, ctx).getRecordCursorFactory();
+             RecordCursor cursor = factory.getCursor(ctx)) {
+            final Record record = cursor.getRecord();
+            while (cursor.hasNext()) {
+                sink.put(record.getLong(0)).put('\n');
+            }
+        }
     }
 
     private void testAsyncOffloadTimeout(String query) throws Exception {

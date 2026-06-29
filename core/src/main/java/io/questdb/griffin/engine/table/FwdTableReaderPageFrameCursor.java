@@ -384,8 +384,11 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
                     continue;
                 }
 
-                // Found a non-skippable row group
-                final long adjustedHi = Math.min(partitionHi, rowGroupEndRow);
+                // Found a non-skippable row group. Bound the frame by the row-group end and by the
+                // page-frame row limit, so a row group larger than pageFrameMaxRows yields several
+                // bounded sub-frames (matching the native path).
+                final long frameLimitedHi = reenterPageFrameRowLimit > 0 ? partitionLo + reenterPageFrameRowLimit : Long.MAX_VALUE;
+                final long adjustedHi = Math.min(Math.min(partitionHi, rowGroupEndRow), frameLimitedHi);
                 if (adjustedHi < partitionHi) {
                     reenterPartitionLo = adjustedHi;
                     reenterPartitionHi = partitionHi;
@@ -394,8 +397,15 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
                     reenterPartitionFrame = false;
                 }
 
-                cachedRowGroupIndex = i + 1;
-                cachedRowGroupStartRow = rowGroupEndRow;
+                // Advance to the next row group only when this one is exhausted; a cut inside the
+                // row group re-enters the same group on the next call.
+                if (adjustedHi >= rowGroupEndRow) {
+                    cachedRowGroupIndex = i + 1;
+                    cachedRowGroupStartRow = rowGroupEndRow;
+                } else {
+                    cachedRowGroupIndex = i;
+                    cachedRowGroupStartRow = rowGroupStartRow;
+                }
 
                 remainingRowsInInterval = partitionHi - adjustedHi;
 
@@ -422,7 +432,9 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         if (format == PartitionFormat.PARQUET) {
             clearAddresses();
             reenterParquetDecoder = partitionFrame.getParquetMetaDecoder();
-            reenterPageFrameRowLimit = 0;
+            // Honour the page-frame row limit on parquet too, so a row group larger than
+            // pageFrameMaxRows is split into bounded sub-frames (matching the native path).
+            reenterPageFrameRowLimit = calculatePageFrameRowLimit(lo, hi, pageFrameMinRows, pageFrameMaxRows, sharedQueryWorkerCount);
             cachedRowGroupIndex = 0;
             cachedRowGroupStartRow = 0;
             assert reenterParquetDecoder != null;
