@@ -79,13 +79,16 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
             int slaveValueTimestampIndex
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
+        Map joinKeyMapA = null;
+        Map joinKeyMapB = null;
+        boolean cursorOwnsMaps = false;
         try {
             this.masterKeySink = masterKeySink;
             this.slaveKeySink = slaveKeySink;
-            Map joinKeyMapA = MapFactory.createUnorderedMap(configuration, mapKeyTypes, mapValueTypes, false, false);
+            joinKeyMapA = MapFactory.createUnorderedMap(configuration, mapKeyTypes, mapValueTypes, false, false);
             // if toleranceInterval is not set, we do not need a second map for evacuation. since evacuations are only
             // executed when TOLERANCE_INTERVAL is set
-            Map joinKeyMapB = toleranceInterval != Numbers.LONG_NULL ? MapFactory.createUnorderedMap(configuration, mapKeyTypes, mapValueTypes, false, false) : null;
+            joinKeyMapB = toleranceInterval != Numbers.LONG_NULL ? MapFactory.createUnorderedMap(configuration, mapKeyTypes, mapValueTypes, false, false) : null;
             int slaveWrappedOverMaster = slaveColumnTypes.getColumnCount() - masterTableKeyColumns.getColumnCount();
             this.cursor = new LtJoinRecordCursor(
                     columnSplit,
@@ -101,11 +104,19 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
                     slaveWrappedOverMaster,
                     columnIndex
             );
+            // From here on the cursor owns the maps and frees them on close().
+            cursorOwnsMaps = true;
             this.slaveColumnIndex = columnIndex;
             this.toleranceInterval = toleranceInterval;
             this.slaveValueTimestampIndex = slaveValueTimestampIndex;
             this.mapEvacuationThreshold = configuration.getSqlAsOfJoinMapEvacuationThreshold();
         } catch (Throwable th) {
+            // If a map allocation or the cursor constructor throws before the cursor takes ownership,
+            // close() cannot reach the maps, so free them here.
+            if (!cursorOwnsMaps) {
+                Misc.free(joinKeyMapA);
+                Misc.free(joinKeyMapB);
+            }
             close();
             throw th;
         }

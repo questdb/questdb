@@ -194,6 +194,32 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
                 f.close();
             }
         }
+        // INT NULL widening: an IntFunction arg whose getInt() returns INT_NULL reaches init() through the
+        // inherited IntFunction.getLong(), which already maps INT_NULL to LONG_NULL. IntRuntimeConstFunction
+        // caches the widened value, so it must map that LONG_NULL back to INT_NULL for the cached int and
+        // keep serving LONG_NULL/NaN through the widening getters -- exactly like a real INT function over a
+        // NULL column. A naive (int) LONG_NULL would corrupt the cached int (LONG_NULL truncates to -1).
+        {
+            final RuntimeConstFunction f = RuntimeConstFunction.newInstance(new IntFunction() {
+                @Override
+                public int getInt(Record rec) {
+                    return Numbers.INT_NULL;
+                }
+
+                @Override
+                public boolean isRuntimeConstant() {
+                    return true;
+                }
+            });
+            try {
+                f.init(null, sqlExecutionContext);
+                assertEquals(Numbers.INT_NULL, f.getInt(null));
+                assertEquals(Numbers.LONG_NULL, f.getLong(null));
+                assertTrue("NULL int must widen to NaN", Numbers.isNull(f.getDouble(null)));
+            } finally {
+                f.close();
+            }
+        }
     }
 
     @Test

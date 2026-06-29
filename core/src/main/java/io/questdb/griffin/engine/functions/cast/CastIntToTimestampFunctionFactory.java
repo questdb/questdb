@@ -60,7 +60,7 @@ public class CastIntToTimestampFunctionFactory implements FunctionFactory {
         public long getTimestamp(Record rec) {
             // getLong() widens: NULL-safe for a plain INT, un-wrapped for overflowing
             // INT arithmetic, so the timestamp holds the full-width result (e.g.
-            // to_utc(<seconds> * 1000000)).
+            // to_utc(<seconds> * 1_000_000)).
             return arg.getLong(rec);
         }
     }

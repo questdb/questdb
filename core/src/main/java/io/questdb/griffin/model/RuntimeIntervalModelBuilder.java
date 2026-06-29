@@ -252,7 +252,11 @@ public class RuntimeIntervalModelBuilder implements Mutable {
      * offsets, not their intersection. This builds that union and intersects it with the builder's own
      * intervals once. Only static intervals are supported.
      *
-     * @param model the RuntimeIntervalModel to merge from
+     * @param model    the RuntimeIntervalModel to merge from
+     * @param loOffset the window frame lo offset, subtracted from each master interval lo; {@code LONG_NULL}
+     *                 or {@code Long.MAX_VALUE} leaves the lower bound open (include-prevailing)
+     * @param hiOffset the window frame hi offset, added to each master interval hi; {@code LONG_NULL}
+     *                 or {@code Long.MAX_VALUE} leaves the upper bound open
      */
     public void merge(RuntimeIntervalModel model, long loOffset, long hiOffset) {
         if (model == null || isEmptySet()) {

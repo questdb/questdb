@@ -10243,7 +10243,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // 'sym IS NOT NULL') out of the residual filter into the key intrinsic and
                 // the LatestByAllFiltered/LatestByAllSymbolsFiltered path, which ignores
                 // the key column, silently drops the predicate.
-                final boolean suppressKeyColumn = latestByColumnCount > 0 && preferredKeyColumn == null;
+                final boolean isKeyColumnSuppressed = latestByColumnCount > 0 && preferredKeyColumn == null;
 
                 intrinsicModel = whereClauseParser.extract(
                         model,
@@ -10255,7 +10255,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         functionParser,
                         queryMeta,
                         executionContext,
-                        suppressKeyColumn,
+                        isKeyColumnSuppressed,
                         reader,
                         SqlHints.hasNoIndexHint(model)
                 );
@@ -10300,7 +10300,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             model.setWhereClause(null);
 
             if (intrinsicModel.intrinsicValue == IntrinsicModel.FALSE) {
-                // 'latest by' clause takes over the latest by nodes, so that the later generateLatestBy() is a no-op
+                // the WHERE clause is unsatisfiable, so the result is empty; clear the latest-by nodes
+                // so the later generateLatestBy() becomes a no-op
                 model.getLatestBy().clear();
                 return new EmptyTableRecordCursorFactory(queryMeta);
             }
@@ -10308,7 +10309,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (latestByColumnCount > 0) {
                 Function filter = compileFilter(intrinsicModel, queryMeta, executionContext);
                 if (filter != null && filter.isConstant() && !filter.getBool(null)) {
-                    // 'latest by' clause takes over the latest by nodes, so that the later generateLatestBy() is no-op
+                    // the residual filter is a constant false, so the result is empty; clear the latest-by
+                    // nodes so the later generateLatestBy() becomes a no-op
                     model.getLatestBy().clear();
                     Misc.free(filter);
                     return new EmptyTableRecordCursorFactory(queryMeta);

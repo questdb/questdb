@@ -1041,11 +1041,14 @@ public final class WhereClauseParser implements Mutable {
         boolean newColumn = true;
 
         // Note: "preferred" is an unfortunate name, the actual meaning is a "column from a 'LATEST ON' clause".
-        // Moreover, it is only populated when "latest on" has a single column.
-        // Q: Why are we checking if we have multi-column latest by here?
-        // A: When using multi-column LATEST BY, we cannot use index-based scans because the indexed column
-        //    alone doesn't provide enough information to determine the "latest" record. The "latest" determination
-        //    requires all columns in the LATEST BY clause, so we must disable index usage in such cases.
+        // Moreover, it is only populated when "latest on" has a single SYMBOL column.
+        // Q: Why does noKeyColumn gate index usage here?
+        // A: noKeyColumn is set whenever no latest-by factory can consume a key intrinsic -- a multi-column
+        //    or a non-symbol single-column LATEST ON. A multi-column LATEST BY cannot use index-based scans
+        //    because one indexed column alone does not identify the "latest" record (that needs all the
+        //    LATEST BY columns); a non-symbol key has no symbol index to scan at all. In both cases the
+        //    predicate must stay a residual filter, so disable key extraction. See
+        //    columnIsPreferredOrIndexedAndKeyColumnAllowed for the full rule.
         if (columnIsPreferredOrIndexedAndKeyColumnAllowed(columnName, meta, noKeyColumn)) {
             // check if we already have indexed column, and it is of worse selectivity
             if (model.keyColumn != null

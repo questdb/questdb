@@ -57,7 +57,8 @@ import io.questdb.test.griffin.fuzz.types.ColumnKind;
  * projection with neither is a non-keyed single-row aggregate. At least one
  * aggregate is always emitted and the first is always over the slave so the
  * join actually contributes. The {@code RANGE}/{@code LIST} spec is bounded
- * to at most five offsets (each offset is a separate ASOF pass).
+ * to at most six offsets (RANGE; LIST emits two to four), each offset being a
+ * separate ASOF pass.
  * <p>
  * The WHERE references master columns only ({@code "WHERE clause of HORIZON
  * JOIN can only reference left-hand side columns"}). The two tables share a
@@ -208,7 +209,7 @@ public final class HorizonJoinClause {
         } else {
             int step = 1 + rnd.nextInt(3);
             int before = rnd.nextInt(3); // 0..2 steps before zero
-            int after = 1 + rnd.nextInt(3); // 1..3 steps after zero (total <= 5 offsets)
+            int after = 1 + rnd.nextInt(3); // 1..3 steps after zero (zero + before + after = up to 6 offsets)
             sql.put(" RANGE FROM ").put(-step * before).put(unit)
                     .put(" TO ").put(step * after).put(unit)
                     .put(" STEP ").put(step).put(unit).put(" AS h");
