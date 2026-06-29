@@ -1126,11 +1126,12 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 continue; // empty txn
             }
             if (sampler == null) {
-                sampler = MatViewBackfillValidator.createSampler(def);
+                // tz-aware grid (matches the validator + refresh) so the reconstructed bucketEnd
+                // is consistent for ALIGN TO CALENDAR TIME ZONE views.
+                sampler = MatViewBackfillValidator.createBucketSampler(def);
                 if (sampler == null) {
                     return; // stored sampler params unreadable (corruption); refresh would skip too
                 }
-                sampler.setOffset(def.getFixedOffset());
             }
             final long bucketEnd = sampler.nextTimestamp(sampler.round(maxTs));
             state.advanceBackfillFrontier(safeBackfillAnchor(driver, bucketEnd, limit));

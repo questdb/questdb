@@ -743,9 +743,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 // commitMatView publishes the staged floor only after the REPLACE_RANGE
                 // commit lands, so a refresh that aborts pre-commit never leaves an orphan
                 // floor that does not correspond to actual REPLACE_RANGE coverage.
-                final TimestampSampler publishSampler = viewDefinition.getTimestampSampler();
-                publishSampler.setOffset(viewDefinition.getFixedOffset());
-                refreshContext.pendingFrozenBoundaryFloor = publishSampler.round(rawBoundary);
+                // Publish the floor on the SAME tz-aware grid the validator and REPLACE_RANGE use
+                // (createBucketSampler mirrors intervalIterator), so the validator's
+                // min(own, published) clamp is consistent for ALIGN TO CALENDAR TIME ZONE views.
+                final TimestampSampler publishSampler = MatViewBackfillValidator.createBucketSampler(viewDefinition);
+                if (publishSampler != null) {
+                    refreshContext.pendingFrozenBoundaryFloor = publishSampler.round(rawBoundary);
+                }
                 intersectIntervals(refreshIntervals, minTs, Long.MAX_VALUE);
             }
         }

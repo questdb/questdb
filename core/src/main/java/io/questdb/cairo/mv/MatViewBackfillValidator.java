@@ -36,9 +36,12 @@ import io.questdb.cairo.wal.WalUtils;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
+import io.questdb.griffin.engine.groupby.TimezoneFloorTimestampSampler;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Numbers;
+import io.questdb.std.datetime.CommonUtils;
+import io.questdb.std.datetime.TimeZoneRules;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -110,15 +113,16 @@ public final class MatViewBackfillValidator implements WalPreCommitValidator {
      * <p>
      * Allocates a sampler per call and opens the base reader once per call.
      * Callers iterating many views (e.g. the {@code materialized_views()}
-     * cursor) should use {@link #createSampler(MatViewDefinition)} once and
-     * pass the reused sampler in via the four-arg overload.
+     * cursor) should build the sampler with {@link #createBucketSampler(MatViewDefinition)}
+     * once per distinct (driver, interval, unit, time-zone, offset) and pass the
+     * reused sampler in via the four-arg overload.
      */
     public static long computeFrozenBoundaryBucketFloor(
             CairoEngine engine,
             MatViewDefinition def,
             @Nullable MatViewState state
     ) {
-        final TimestampSampler sampler = createSampler(def);
+        final TimestampSampler sampler = createBucketSampler(def);
         if (sampler == null) {
             return Numbers.LONG_NULL;
         }
@@ -126,9 +130,9 @@ public final class MatViewBackfillValidator implements WalPreCommitValidator {
     }
 
     /**
-     * Overload that reuses a caller-managed sampler. Caller is responsible for
-     * matching the sampler to {@code def}'s sampling interval and unit (one
-     * sampler per unique (driver, interval, unit) tuple) and may pass the same
+     * Overload that reuses a caller-managed sampler. The sampler must be built via
+     * {@link #createBucketSampler(MatViewDefinition)} (one per unique (driver, interval, unit,
+     * time-zone, offset) tuple) so its grid matches the refresh; the caller may pass the same
      * sampler across many calls.
      */
     public static long computeFrozenBoundaryBucketFloor(
@@ -172,7 +176,7 @@ public final class MatViewBackfillValidator implements WalPreCommitValidator {
             // Surface no cutoff so the gate and the metadata stay consistent.
             return Numbers.LONG_NULL;
         }
-        sampler.setOffset(def.getFixedOffset());
+        // sampler is pre-configured by createBucketSampler (offset/zone baked in); no setOffset here.
         return computeBoundaryBucketFloor(engine, def, sampler, state, ownMaxBaseTs);
     }
 
@@ -194,6 +198,48 @@ public final class MatViewBackfillValidator implements WalPreCommitValidator {
             // here is corruption.
             return null;
         }
+    }
+
+    /**
+     * Build a sampler whose {@code round}/{@code nextTimestamp} reproduce the SAME bucket grid
+     * the refresh REPLACE_RANGE uses for this view (see {@link MatViewRefreshJob}'s
+     * {@code intervalIterator}), so the validator, the published frozen-boundary floor, the
+     * {@code materialized_views()} catalogue, and the backfill-frontier reconstruction all agree
+     * with refresh -- including for {@code ALIGN TO CALENDAR TIME ZONE} views. A tz-blind sampler
+     * (fixed offset only) would bucket on a different grid than the tz-aware refresh and let the
+     * validator accept a row the refresh then overwrites. Mirrors {@code timestamp_floor_utc} /
+     * {@link TimezoneFloorTimestampSampler} so buckets stay stable across DST. Returns {@code null}
+     * when the stored sampler params are unreadable (corruption).
+     */
+    public static @Nullable TimestampSampler createBucketSampler(MatViewDefinition def) {
+        final TimestampSampler base = createSampler(def);
+        if (base == null) {
+            return null;
+        }
+        final long fixedOffset = def.getFixedOffset();
+        final TimeZoneRules tzRules = def.getTzRules();
+        if (tzRules == null) {
+            base.setOffset(fixedOffset);
+            return base;
+        }
+        // Fixed-offset zone (no DST): the whole grid is shifted by the constant zone offset.
+        if (tzRules.hasFixedOffset()) {
+            base.setOffset(fixedOffset - tzRules.getOffset(0));
+            return base;
+        }
+        // Sub-day strides: timestamp_floor_utc uses the standard (non-DST) offset and bakes the
+        // user offset into the anchor, leaving bucket widths uniform in UTC (matches the refresh's
+        // FixedOffsetIterator branch).
+        final char unit = def.getSamplingIntervalUnit();
+        if (CommonUtils.isSubDayUnit(unit)) {
+            base.setOffset(fixedOffset - CommonUtils.getFloorUtcTzOffset(tzRules, 0, unit));
+            return base;
+        }
+        // Super-day strides under a DST zone: bucket widths vary in UTC; wrap so floor/next follow
+        // local-calendar rules (matches the refresh's TimeZoneIntervalIterator and SAMPLE BY).
+        final TimezoneFloorTimestampSampler wrap = new TimezoneFloorTimestampSampler(base, tzRules, unit);
+        wrap.setOffset(fixedOffset);
+        return wrap;
     }
 
     /**
@@ -254,25 +300,17 @@ public final class MatViewBackfillValidator implements WalPreCommitValidator {
         }
 
         // Sampler is cached on the instance and reused across commits; sample
-        // interval/unit cannot change without DROP + recreate. setOffset is
-        // idempotent so it is safe to call every time in case the offset ever
-        // becomes mutable.
+        // interval/unit/time-zone cannot change without DROP + recreate, and the
+        // tz-aware grid (createBucketSampler) bakes the offset/zone in once, so it
+        // needs no per-commit reconfiguration. A null result means the stored
+        // sampler params are unreadable (corruption); let the txn through (refresh
+        // would skip it on the same grounds).
         if (cachedSampler == null) {
-            try {
-                cachedSampler = TimestampSamplerFactory.getInstance(
-                        def.getBaseTableTimestampDriver(),
-                        def.getSamplingInterval(),
-                        def.getSamplingIntervalUnit(),
-                        0
-                );
-            } catch (SqlException e) {
-                // Stored sampler params are validated at create-time; treat a
-                // failure here as corruption and let the txn through (refresh
-                // would skip it on the same grounds).
+            cachedSampler = createBucketSampler(def);
+            if (cachedSampler == null) {
                 return;
             }
         }
-        cachedSampler.setOffset(def.getFixedOffset());
 
         final long ownMaxBaseTs = readBaseMaxTimestampCached(def);
         final long boundaryBucketFloor = computeBoundaryBucketFloor(engine, def, cachedSampler, state, ownMaxBaseTs);

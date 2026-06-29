@@ -8051,6 +8051,114 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMatViewBackfillTimeZoneAlignedRefreshLimit() throws Exception {
+        // R3 regression: a tz-aligned view must bucket the validator (and the frozen floor) on the
+        // SAME tz-aware grid the refresh REPLACE_RANGE uses, so an accepted backfill is never
+        // overwritten. For Asia/Kolkata (+5:30) with SAMPLE BY 1h the bucket boundaries sit at :30
+        // past the UTC hour. Pre-fix the validator bucketed tz-blind (:00) and accepted a row the
+        // tz-aware refresh then silently wiped.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "insert into base_price values" +
+                            "('a', 5.0, '2024-09-10T08:00')" +
+                            ",('a', 9.0, '2024-09-10T12:00')"
+            );
+            drainWalQueue();
+            execute(
+                    "create materialized view price_1h refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price " +
+                            "sample by 1h align to calendar time zone 'Asia/Kolkata';"
+            );
+            execute("alter materialized view price_1h set refresh limit 1 hour;");
+            drainQueues();
+
+            // anchor = min(12:00, 12:30) = 12:00, boundary 11:00 UTC; tz-aware bucket floor
+            // (boundaries at :30) = 10:30 UTC.
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T12:30:00.000000Z");
+
+            // A row in the tz-aware managed zone -- bucket [10:30,11:30) ends at 11:30 > 10:30 --
+            // must be rejected (pre-fix it was accepted on the tz-blind grid, then wiped).
+            try {
+                execute("insert into price_1h values('a', 1.0, '2024-09-10T10:30')");
+                Assert.fail("expected rejection: row falls in the tz-aware managed zone");
+            } catch (CairoException e) {
+                assertContains(e.getFlyweightMessage(), "backfill row falls in or past the managed zone");
+            }
+
+            // A row strictly in the tz-aware frozen zone -- bucket [09:30,10:30) ends at 10:30 ==
+            // floor -- is accepted and survives the refresh.
+            execute("insert into price_1h values('a', 1.0, '2024-09-10T09:45')");
+            drainQueues();
+
+            execute("refresh materialized view price_1h full;");
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            a\t1.0\t2024-09-10T09:45:00.000000Z
+                            """),
+                    "price_1h where price = 1.0",
+                    "ts",
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testMatViewBackfillTimeZoneAlignedSuperDayDstRefreshLimit() throws Exception {
+        // R3 regression (super-day + DST path): a 1d view aligned to a DST zone buckets on the
+        // local-calendar grid via TimezoneFloorTimestampSampler in the validator, matching the
+        // refresh's TimeZoneIntervalIterator. A frozen-zone backfill must survive the refresh.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "insert into base_price values" +
+                            "('a', 5.0, '2024-01-10T12:00')" +
+                            ",('a', 9.0, '2024-01-20T12:00')"
+            );
+            drainWalQueue();
+            execute(
+                    "create materialized view price_1d refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price " +
+                            "sample by 1d align to calendar time zone 'Europe/Berlin';"
+            );
+            execute("alter materialized view price_1d set refresh limit 2 days;");
+            drainQueues();
+
+            currentMicros = parseFloorPartialTimestamp("2024-01-20T18:00:00.000000Z");
+            // Old row, clearly in the frozen zone (well below the ~01-17 boundary): accepted and
+            // must survive the refresh on the local-calendar grid.
+            execute("insert into price_1d values('a', 1.0, '2024-01-12T10:00')");
+            drainQueues();
+
+            execute("refresh materialized view price_1d full;");
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            a\t1.0\t2024-01-12T10:00:00.000000Z
+                            """),
+                    "price_1d where price = 1.0",
+                    "ts",
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testMatViewExtendRefreshLimitOverwritesBackfillInNewlyManagedRange() throws Exception {
         // backfillFrontier must NOT wrongly pin the boundary across an ALTER that EXTENDS the
         // limit. Extending grows the managed zone downward; a row backfilled into what used

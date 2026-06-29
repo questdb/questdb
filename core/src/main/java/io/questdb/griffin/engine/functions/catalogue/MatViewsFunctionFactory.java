@@ -59,6 +59,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 
@@ -175,7 +176,9 @@ public class MatViewsFunctionFactory implements FunctionFactory {
             // timestamps from view B even when (interval, unit) match.
             private TimestampSampler cachedSampler;
             private TimestampDriver cachedSamplerDriver;
+            private long cachedSamplerFixedOffset = Long.MIN_VALUE;
             private long cachedSamplerInterval = Long.MIN_VALUE;
+            private TimeZoneRules cachedSamplerTzRules;
             private char cachedSamplerUnit;
             // max(base_ts) memoized across rows keyed by (base token, base writer txn) so
             // many views sharing a base table open the base reader once per cursor pass
@@ -282,14 +285,21 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         // Driver identity is part of the key because samplers are
                         // driver-bound -- see field comment for the MICROS/NANOS
                         // mis-rounding hazard.
+                        // Time zone + fixed offset are part of the key: createBucketSampler bakes the
+                        // tz-aware grid in, so two views with the same (driver, interval, unit) but
+                        // different alignment must not share a sampler.
                         if (cachedSampler == null
                                 || cachedSamplerDriver != viewDefinition.getBaseTableTimestampDriver()
                                 || cachedSamplerInterval != viewDefinition.getSamplingInterval()
-                                || cachedSamplerUnit != viewDefinition.getSamplingIntervalUnit()) {
-                            cachedSampler = MatViewBackfillValidator.createSampler(viewDefinition);
+                                || cachedSamplerUnit != viewDefinition.getSamplingIntervalUnit()
+                                || cachedSamplerTzRules != viewDefinition.getTzRules()
+                                || cachedSamplerFixedOffset != viewDefinition.getFixedOffset()) {
+                            cachedSampler = MatViewBackfillValidator.createBucketSampler(viewDefinition);
                             cachedSamplerDriver = viewDefinition.getBaseTableTimestampDriver();
                             cachedSamplerInterval = viewDefinition.getSamplingInterval();
                             cachedSamplerUnit = viewDefinition.getSamplingIntervalUnit();
+                            cachedSamplerTzRules = viewDefinition.getTzRules();
+                            cachedSamplerFixedOffset = viewDefinition.getFixedOffset();
                         }
                         // Resolve max(base_ts) once per (base token, txn) and reuse it for
                         // every view on that base table, so the cursor opens at most one base
