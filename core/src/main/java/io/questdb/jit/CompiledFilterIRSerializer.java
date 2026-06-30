@@ -537,6 +537,26 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         return arithExprType(node);
     }
 
+    /**
+     * Folds one operand's {@link #genuineArithType} into a running
+     * comparison-width accumulator. Unlike {@link #promoteArithType}, a
+     * non-numeric ({@link #UNDEFINED_CODE}) operand is treated as identity
+     * rather than absorbing the result: an IN list keeps its column operand last
+     * in {@code args} (with {@code lhs} / {@code rhs} null in the multi-value
+     * form), so a plain promote seeded from the null operands would stay
+     * UNDEFINED and read a LONG-width fold as a wrapped I4.
+     */
+    private int foldCmpType(int cmpType, ExpressionNode operand) {
+        int operandType = genuineArithType(operand);
+        if (operandType == UNDEFINED_CODE) {
+            return cmpType;
+        }
+        if (cmpType == UNDEFINED_CODE) {
+            return operandType;
+        }
+        return promoteArithType(cmpType, operandType);
+    }
+
     private static boolean isArithmeticOperation(ExpressionNode node) {
         final CharSequence token = node.token;
         if (node.paramCount < 2) {
@@ -1162,9 +1182,24 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * and wraps (cmpLong stays false), but a genuinely LONG-typed operand is
      * still read at long width and the arithmetic branch re-marks the folds
      * beneath it via {@link #genuineArithType}.
+     * <p>
+     * An IN / NOT IN list is an {@link ExpressionNode#FUNCTION} node, not an
+     * OPERATION, so it is let through to the boundary handling as well. Its
+     * operands live in {@code args} with {@code lhs} / {@code rhs} null for the
+     * multi-value form, so the comparison width is derived across all operands
+     * via {@link #foldCmpType}, which treats a non-numeric operand as identity
+     * rather than letting it absorb the width to UNDEFINED.
      */
     private void markI64WidenFoldRoots(ExpressionNode node, boolean underGenuineLong) {
-        if (node == null || node.type != ExpressionNode.OPERATION) {
+        if (node == null) {
+            return;
+        }
+        // An IN / NOT IN list is a FUNCTION node rather than an OPERATION; let it
+        // through so the boundary handling below can mark an overflowing fold in
+        // its value list. Every other FUNCTION (e.g. a scalar call) stops here --
+        // descend() does not fold across it.
+        if (node.type != ExpressionNode.OPERATION
+                && !(node.type == ExpressionNode.FUNCTION && SqlKeywords.isInKeyword(node.token))) {
             return;
         }
         if (isArithmeticOperation(node) || (node.paramCount == 1 && Chars.equals(node.token, '-'))) {
@@ -1177,9 +1212,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             markI64WidenFoldRoots(node.rhs, nodeGenuineLong);
             return;
         }
-        int cmpType = promoteArithType(genuineArithType(node.lhs), genuineArithType(node.rhs));
+        int cmpType = foldCmpType(UNDEFINED_CODE, node.lhs);
+        cmpType = foldCmpType(cmpType, node.rhs);
         for (int i = 0, n = node.args.size(); i < n; i++) {
-            cmpType = promoteArithType(cmpType, genuineArithType(node.args.getQuick(i)));
+            cmpType = foldCmpType(cmpType, node.args.getQuick(i));
         }
         boolean cmpLong = cmpType == I8_TYPE;
         markI64WidenFoldRoots(node.lhs, cmpLong);

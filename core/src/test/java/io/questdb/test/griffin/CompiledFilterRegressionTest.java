@@ -942,6 +942,27 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInOperatorOverflowFoldMatchesJavaOnLongColumn() throws Exception {
+        // An overflowing INT arithmetic fold inside an IN() list against a LONG column: the
+        // Java filter reads the IN element at long width (10^12), so the JIT must too. The
+        // table carries both the widened value (10^12) and its wrapped INT image
+        // (-727379968) so a wrong fold matches the wrong row instead of returning empty.
+        // markI64WidenFoldRoots used to bail on the IN node (it is a FUNCTION, not an
+        // OPERATION) for the single-value form, and could not derive the comparison width
+        // for the multi-value form (the operands live in args with lhs/rhs null), so it
+        // emitted a wrapped I4 IMM and diverged from the Java filter.
+        assertMemoryLeak(() -> {
+            execute("create table x as (select cast(v as long) i64 " +
+                    "from (select 1000000000000 v union all select -727379968 v))");
+            assertJitMatchesJava("x where i64 in (1000000 * 1000000)", true);          // single value
+            assertJitMatchesJava("x where i64 in (1, 1000000 * 1000000)", true);       // two values
+            assertJitMatchesJava("x where i64 in (1, 2, 1000000 * 1000000)", true);    // multi value
+            assertJitMatchesJava("x where i64 not in (1, 1000000 * 1000000)", true);   // inverse
+            assertJitMatchesJava("x where i64 = 1000000 * 1000000", true);             // control: plain '='
+        });
+    }
+
+    @Test
     public void testInOperatorSingleValue() throws Exception {
         // Tests single-value IN() which has a special unrolled code path in CompiledFilterIRSerializer
         final String ddl = "create table x as " +

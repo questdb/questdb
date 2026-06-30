@@ -106,6 +106,50 @@ public class IntArithmeticOverflowFoldingTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRuntimeConstDivisionWrapsLikeColumnAndLiteral() throws Exception {
+        // IntRuntimeConstFunction memoizes a composite runtime-const INT subtree. For + - *
+        // (int) getLong() == getInt() (a modular ring homomorphism: the low 32 bits of the
+        // widened result equal the wrapped result), but division breaks it: getInt() divides
+        // the per-op-wrapped INT operands while getLong() divides the full-width ones. Here
+        // (1000000 * 1000000) wraps to -727379968 at INT width, so the INT division is
+        // -727379968 / 7 == -103911424, while the LONG division is 10^12 / 7 == 142857142857
+        // (whose low 32 bits, 1123222089, are a different number). Before the fix the wrapper
+        // derived the INT value from getLong() and served 1123222089 from getInt(); it must
+        // cache each getter at its own width instead.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (a INT, b INT, c INT, ai INT)");
+            execute("INSERT INTO x VALUES (1000000, 1000000, 7, 0)");
+
+            // literal and column forms read the division at INT width: -103911424
+            assertQuery("SELECT ((1000000 * 1000000) / 7) + ai AS v FROM x").expectSize().returns("v\n-103911424\n");
+            assertQuery("SELECT ((a * b) / c) + ai AS v FROM x").expectSize().returns("v\n-103911424\n");
+
+            // the bind (runtime-const) form must agree, not serve the widened low 32 bits
+            bindVariableService.clear();
+            bindVariableService.setStr("b0", "1000000");
+            bindVariableService.setStr("b1", "1000000");
+            bindVariableService.setStr("b2", "7");
+            assertQuery("SELECT ((:b0::INT * :b1::INT) / :b2::INT) + ai AS v FROM x").expectSize().returns("v\n-103911424\n");
+
+            // a LONG-promoting context still reads the widened division on every path
+            assertQuery("SELECT ((1000000 * 1000000) / 7)::LONG AS v FROM x").expectSize().returns("v\n142857142857\n");
+            assertQuery("SELECT ((a * b) / c)::LONG AS v FROM x").expectSize().returns("v\n142857142857\n");
+            bindVariableService.clear();
+            bindVariableService.setStr("b0", "1000000");
+            bindVariableService.setStr("b1", "1000000");
+            bindVariableService.setStr("b2", "7");
+            assertQuery("SELECT ((:b0::INT * :b1::INT) / :b2::INT)::LONG AS v FROM x").expectSize().returns("v\n142857142857\n");
+
+            // NULL flows through unchanged: a null divisor yields a null quotient
+            bindVariableService.clear();
+            bindVariableService.setStr("b0", "1000000");
+            bindVariableService.setStr("b1", "1000000");
+            bindVariableService.setStr("b2", null);
+            assertQuery("SELECT ((:b0::INT * :b1::INT) / :b2::INT) + ai AS v FROM x").expectSize().returns("v\nnull\n");
+        });
+    }
+
+    @Test
     public void testRuntimeConstWidensLikeColumnAndLiteral() throws Exception {
         // A runtime-constant (but not compile-time-constant) overflowing INT arithmetic subtree --
         // here a string bind variable cast to INT -- gets memoized by IntRuntimeConstFunction. The

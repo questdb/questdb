@@ -31,7 +31,6 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.Numbers;
 
 /**
  * Wraps a runtime-constant subtree of a fixed-width scalar type, evaluates it once per cursor in
@@ -487,15 +486,17 @@ public interface RuntimeConstFunction extends UnaryFunction {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             arg.init(symbolTableSource, executionContext);
-            // Read the arg exactly once via its widest getter and derive the wrapped INT from it,
-            // rather than reading getInt() and getLong() separately (which would evaluate the
-            // composite subtree twice). For a well-formed INT function (int) getLong() == getInt()
-            // for any non-NULL value -- both are the low 32 bits of the same product -- and the
-            // largest INT*INT magnitude (2^62) is far below LONG_NULL, so a real value never
-            // collides with it. NULL is the only case where the two getters diverge bit for bit
-            // ((int) LONG_NULL != INT_NULL), so map it back explicitly.
+            // Cache each getter at its own width. (int) getLong() == getInt() for + - * (a
+            // modular ring homomorphism: the low 32 bits of the widened result equal the
+            // wrapped result), but NOT for division: getInt() divides the per-op-wrapped INT
+            // operands while getLong() divides the full-width ones, so e.g.
+            // (1000000 * 1000000) / 7 wraps to -103911424 under getInt() but widens to
+            // 142857142857 under getLong(), whose low 32 bits (1123222089) are a different
+            // number. Deriving one getter from the other would serve that wrong value, so read
+            // both. The arg is pure runtime-const arithmetic, so the double evaluation is
+            // once-per-cursor and side-effect free.
+            value = arg.getInt(null);
             longValue = arg.getLong(null);
-            value = longValue == Numbers.LONG_NULL ? Numbers.INT_NULL : (int) longValue;
         }
     }
 
