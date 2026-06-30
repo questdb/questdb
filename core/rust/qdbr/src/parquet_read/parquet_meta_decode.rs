@@ -56,20 +56,19 @@ impl<'a> ColumnChunkSource<'a> {
         col_len: usize,
     ) -> ParquetResult<&'a [u8]> {
         match self {
-            Self::File(file_data) => {
-                let col_end = col_start + col_len;
-                if col_end > file_data.len() {
-                    return Err(fmt_err!(
+            Self::File(file_data) => col_start
+                .checked_add(col_len)
+                .and_then(|col_end| file_data.get(col_start..col_end))
+                .ok_or_else(|| {
+                    fmt_err!(
                         InvalidType,
                         "column chunk range {}..{} exceeds file data length {} (parquet column {})",
                         col_start,
-                        col_end,
+                        col_start.saturating_add(col_len),
                         file_data.len(),
                         parquet_col_idx
-                    ));
-                }
-                Ok(&file_data[col_start..col_end])
-            }
+                    )
+                }),
             Self::Buffers(chunks) => {
                 let slice = chunk_slice(chunks, dest_col_idx, parquet_col_idx)?;
                 // Pages self-terminate, so a wrong lease size is otherwise
@@ -1471,5 +1470,23 @@ mod tests {
             "unexpected error: {msg}"
         );
         Ok(())
+    }
+
+    #[test]
+    fn file_chunk_data_overflow_returns_error() {
+        let data = vec![0u8; 64];
+        let source = ColumnChunkSource::File(&data);
+        // col_start + col_len wraps (old unchecked add passes the guard, new checked_add catches it)
+        for (start, len) in [
+            (usize::MAX - 5, 10), // sum wraps to 4 < 64, old guard passes → panic; checked_add → Err
+            (data.len() + 1, 1),  // start alone past end
+            (1, data.len()),      // start + len = 65 > 64
+        ] {
+            let result = source.chunk_data(0, 0, start, len);
+            assert!(
+                result.is_err(),
+                "expected Err for out-of-bounds range start={start} len={len}",
+            );
+        }
     }
 }
