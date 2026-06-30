@@ -36,6 +36,8 @@ import org.jetbrains.annotations.NotNull;
 import static io.questdb.cairo.TableUtils.META_OFFSET_PARTITION_BY;
 
 public class TableWriterMetadata extends AbstractRecordMetadata implements TableMetadata {
+    private long expiryCleanupIntervalMicros;
+    private String expiryPredicate;
     private int maxUncommittedRows;
     private long metadataVersion;
     private long o3MaxLag;
@@ -60,6 +62,16 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     @Override
     public IntList getCoveringColumnIndices(int columnIndex) {
         return getColumnMetadata(columnIndex).getCoveringColumnIndices();
+    }
+
+    @Override
+    public long getExpiryCleanupIntervalMicros() {
+        return expiryCleanupIntervalMicros;
+    }
+
+    @Override
+    public String getExpiryPredicate() {
+        return expiryPredicate;
     }
 
     @Override
@@ -163,6 +175,8 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         this.metadataVersion = metaMem.getLong(TableUtils.META_OFFSET_METADATA_VERSION);
         this.walEnabled = metaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
         this.ttlHoursOrMonths = TableUtils.getTtlHoursOrMonths(metaMem);
+        this.expiryPredicate = null;
+        this.expiryCleanupIntervalMicros = 0;
         this.tableFormat = TableUtils.getTableFormat(metaMem);
 
         long offset = TableUtils.getColumnNameOffset(columnCount);
@@ -220,6 +234,22 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
                 }
             }
         }
+
+        // Trailing row-expiry policy section. Use the shared offset helper so this stays byte-identical
+        // with TableReaderMetadata's reader, independent of the covering-population loop above.
+        if (TableUtils.isMetaFormatAtLeast(metaMem, TableUtils.META_FORMAT_MINOR_VERSION_EXPIRE_ROWS)) {
+            long policyOffset = TableUtils.getMetaExpiryPolicyOffset(metaMem, columnCount);
+            if (policyOffset >= 0 && policyOffset + Integer.BYTES <= metaSize) {
+                CharSequence pred = metaMem.getStrA(policyOffset);
+                policyOffset += Vm.getStorageLength(pred);
+                if (pred != null && pred.length() > 0) {
+                    this.expiryPredicate = Chars.toString(pred);
+                }
+                if (policyOffset + Long.BYTES <= metaSize) {
+                    this.expiryCleanupIntervalMicros = metaMem.getLong(policyOffset);
+                }
+            }
+        }
     }
 
     public void setMaxUncommittedRows(int rows) {
@@ -240,6 +270,11 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
 
     public void setTtlHoursOrMonths(int ttlHoursOrMonths) {
         this.ttlHoursOrMonths = ttlHoursOrMonths;
+    }
+
+    public void setExpiry(String predicate, long cleanupIntervalMicros) {
+        this.expiryPredicate = predicate;
+        this.expiryCleanupIntervalMicros = cleanupIntervalMicros;
     }
 
     public void setTxReader(TxReader txReader) {

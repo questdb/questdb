@@ -32,6 +32,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MetadataCacheReader;
+import io.questdb.cairo.RowExpiryUtil;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -85,6 +86,19 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
             } else {
                 sink.put(alias);
             }
+        }
+    }
+
+    public static void expireToSink(CharSequence predicate, long cleanupIntervalMicros, CharSink<?> sink) {
+        if (predicate == null || predicate.length() == 0) {
+            return;
+        }
+        sink.putAscii(" EXPIRE ROWS ");
+        RowExpiryUtil.appendExpireClause(sink, predicate);
+        // Only print CLEANUP EVERY when it differs from the (shared) default cadence.
+        if (cleanupIntervalMicros > 0 && cleanupIntervalMicros != RowExpiryUtil.DEFAULT_CLEANUP_INTERVAL_MICROS) {
+            sink.putAscii(" CLEANUP EVERY ");
+            RowExpiryUtil.appendCleanupEvery(sink, cleanupIntervalMicros);
         }
     }
 
@@ -239,6 +253,8 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
                 tableFormatToSink(table.getTableFormat(), sink);
                 // (BYPASS) WAL
                 putWal();
+                // EXPIRE ROWS WHEN <pred> [CLEANUP EVERY <dur>]
+                expireToSink(sink);
             }
             // IN VOLUME OTHER_VOLUME
             putInVolume(config);
@@ -394,6 +410,12 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
         // overridden in ent, do not remove!
         protected void ttlToSink(CharSink<?> sink) {
             ShowCreateTableRecordCursorFactory.ttlToSink(table.getTtlHoursOrMonths(), sink);
+        }
+
+        // protected extension point (parallel to ttlToSink); ent may override, but currently does not --
+        // EXPIRE ROWS renders identically in OSS and ent. Keep it protected so an override stays possible.
+        protected void expireToSink(CharSink<?> sink) {
+            ShowCreateTableRecordCursorFactory.expireToSink(table.getExpiryPredicate(), table.getExpiryCleanupIntervalMicros(), sink);
         }
 
         private static int countCoveringSurvivors(IntList coveringCols, CairoTable table) {

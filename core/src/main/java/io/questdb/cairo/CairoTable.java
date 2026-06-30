@@ -36,6 +36,8 @@ public class CairoTable implements Sinkable {
     public final IntList columnOrderList;
     public final ObjList<CairoColumn> columns;
     private boolean dedup;
+    private long expiryCleanupIntervalMicros;
+    private String expiryPredicate;
     private boolean hasParquetPartitions;
     private int matViewRefreshLimitHoursOrMonths;
     private int matViewTimerInterval;
@@ -74,6 +76,8 @@ public class CairoTable implements Sinkable {
         o3MaxLag = fromTab.getO3MaxLag();
         timestampIndex = fromTab.getTimestampIndex();
         ttlHoursOrMonths = fromTab.getTtlHoursOrMonths();
+        expiryPredicate = fromTab.getExpiryPredicate();
+        expiryCleanupIntervalMicros = fromTab.getExpiryCleanupIntervalMicros();
         tableFormat = fromTab.getTableFormat();
         softLink = fromTab.isSoftLink();
         dedup = fromTab.hasDedup();
@@ -107,6 +111,14 @@ public class CairoTable implements Sinkable {
 
     public String getDirectoryName() {
         return token.getDirName();
+    }
+
+    public long getExpiryCleanupIntervalMicros() {
+        return expiryCleanupIntervalMicros;
+    }
+
+    public String getExpiryPredicate() {
+        return expiryPredicate;
     }
 
     public int getId() {
@@ -205,6 +217,11 @@ public class CairoTable implements Sinkable {
 
     public void setDedupFlag(boolean dedup) {
         this.dedup = dedup;
+    }
+
+    public void setExpiry(String expiryPredicate, long expiryCleanupIntervalMicros) {
+        this.expiryPredicate = expiryPredicate;
+        this.expiryCleanupIntervalMicros = expiryCleanupIntervalMicros;
     }
 
     public void setHasParquetPartitions(boolean hasParquetPartitions) {

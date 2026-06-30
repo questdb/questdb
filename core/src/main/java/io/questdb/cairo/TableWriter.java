@@ -2247,6 +2247,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return designatedTimestampColumnName;
     }
 
+    @Override
+    public long getExpiryCleanupIntervalMicros() {
+        return metadata.getExpiryCleanupIntervalMicros();
+    }
+
+    @Override
+    public String getExpiryPredicate() {
+        return metadata.getExpiryPredicate();
+    }
+
     public FilesFacade getFilesFacade() {
         return ff;
     }
@@ -3161,6 +3171,30 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public void setMetaO3MaxLag(long o3MaxLagUs) {
         commit();
         metadata.setO3MaxLag(o3MaxLagUs);
+        writeMetadataToDisk();
+    }
+
+    @Override
+    public void setMetaExpiry(String predicate, long cleanupIntervalMicros) {
+        commit();
+        if (predicate != null) {
+            if (!getTableToken().isMatView()) {
+                // Defense-in-depth: EXPIRE ROWS is materialized-view-only and the compiler enforces it. Never
+                // persist a policy onto a non-mat-view at apply time, even from a malformed/forged WAL alter.
+                // Skip rather than throw -- a throw during WAL apply would suspend the table; a clear
+                // (predicate == null) still proceeds below so DROP EXPIRE always works.
+                LOG.error().$("ignoring EXPIRE ROWS policy on non-materialized-view [table=")
+                        .$safe(getTableToken().getTableName()).I$();
+                return;
+            }
+            // Open the read-filter gate before the policy is written/hydrated, so a query racing this
+            // SET (e.g. the first policy on the database) cannot skip the filter and expose expired rows.
+            engine.getMetadataCache().markExpiryPolicyPossible(getTableToken().getTableId());
+        }
+        metadata.setExpiry(predicate, cleanupIntervalMicros);
+        // writeMetadataToDisk() rewrites _meta (persisting the policy via the ALTER-rewrite
+        // serializer), bumps the metadata version, and refreshes the MetadataCache via
+        // hydrateTable(metadata) so the read-time row-expiry filter immediately sees the change.
         writeMetadataToDisk();
     }
 
@@ -12469,6 +12503,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
                 }
             }
+
+            // Trailing row-expiry policy section (kept symmetric with TableUtils.writeMetadata serializer).
+            ddlMem.putStr(metadata.getExpiryPredicate() == null ? "" : metadata.getExpiryPredicate());
+            ddlMem.putLong(metadata.getExpiryCleanupIntervalMicros());
 
             ddlMem.sync(false);
             return index;

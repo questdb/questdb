@@ -39,6 +39,8 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.LongHashSet;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
@@ -105,6 +107,20 @@ public class MetadataCache implements QuietCloseable {
     private volatile Runnable latchCompleteTestHook;
     private TxReader txReader;
     private long version;
+    // Row-expiry gate: avoids the per-table-reference policy lookup (read filter) and the cleanup
+    // table scan when no table carries an EXPIRE ROWS policy. anyExpiryPolicySeen is monotonic (set
+    // when a policied table is cached, never reset); fullyHydrated stays false until startup hydration
+    // completes, so the gate is conservatively open during the fill window (see mayHaveExpiryPolicy).
+    private volatile boolean anyExpiryPolicySeen = false;
+    private volatile boolean fullyHydrated = false;
+    // Per-table refinement of the gate: the IDs of tables that carry (or are getting) an EXPIRE ROWS
+    // policy. Lets the read filter take the cache read lock + do the predicate lookup ONLY for tables that
+    // actually have a policy, instead of every table once any policy exists anywhere. Copy-on-write
+    // immutable snapshot for lock-free reads; populated at the same points (and before policy visibility)
+    // as anyExpiryPolicySeen, so a racing query never wrongly skips a policied table. Monotonic — table
+    // IDs are never reused, so a dropped policy only leaves a harmless stale id (one redundant lookup).
+    private final Object policiedTableIdsLock = new Object();
+    private volatile LongHashSet policiedTableIds = new LongHashSet();
 
     public MetadataCache(CairoEngine engine) {
         this.engine = engine;
@@ -155,11 +171,65 @@ public class MetadataCache implements QuietCloseable {
                 LOG.info().$("metadata hydration completed [tables=").$(metadataRO.getTableCount()).I$();
                 latchCacheCompleteIfWarmed(tableTokens);
             }
+            // From here the cache reflects every existing table, so the row-expiry gate can trust
+            // anyExpiryPolicySeen rather than staying conservatively open.
+            fullyHydrated = true;
         } catch (CairoException e) {
             LogRecord l = e.isCritical() ? LOG.critical() : LOG.error();
             l.$safe(e.getFlyweightMessage()).$();
         } finally {
             Path.clearThreadLocals();
+        }
+    }
+
+    /**
+     * Records that an EXPIRE ROWS policy now exists (or is being created), opening the read-filter gate
+     * ({@link #mayHaveExpiryPolicy()}). Called as a policy is set, BEFORE it becomes visible, so a query
+     * racing the SET/CREATE never sees the gate closed and skips the filter. Monotonic — never reset
+     * (the gate is a performance hint, not authoritative state).
+     */
+    public void markExpiryPolicyPossible(int tableId) {
+        // Publish the per-table id BEFORE the global flag so a reader that observes the open gate
+        // (anyExpiryPolicySeen) also observes the id in the set (see mayTableHaveExpiryPolicy).
+        addPoliciedTableId(tableId);
+        anyExpiryPolicySeen = true;
+    }
+
+    /**
+     * Whether any table may carry an EXPIRE ROWS policy. Returns true while the cache is still
+     * hydrating at startup (so the read filter is never skipped before a policy becomes visible), and
+     * thereafter true only once a policied table has been cached. Lets the read filter and the cleanup
+     * discovery skip their per-table work on databases that never use EXPIRE ROWS.
+     */
+    public boolean mayHaveExpiryPolicy() {
+        return !fullyHydrated || anyExpiryPolicySeen;
+    }
+
+    /**
+     * Per-table refinement of {@link #mayHaveExpiryPolicy()}: whether THIS table may carry an EXPIRE ROWS
+     * policy. Conservatively true while hydrating (the id set is not yet complete); afterwards true only
+     * for tables whose id is in the policied set. Lock-free — a volatile read of an immutable snapshot —
+     * so the read filter can skip the cache read lock + predicate lookup for the (typically many)
+     * non-policied tables once some unrelated table has a policy.
+     */
+    public boolean mayTableHaveExpiryPolicy(TableToken tableToken) {
+        return !fullyHydrated || policiedTableIds.contains(tableToken.getTableId());
+    }
+
+    // Copy-on-write add to the policied-table-id snapshot: readers see an immutable set with no lock.
+    // Adds are rare (a policy is set, or a policied table is hydrated) and policied tables are few.
+    private void addPoliciedTableId(int tableId) {
+        synchronized (policiedTableIdsLock) {
+            final LongHashSet current = policiedTableIds;
+            if (current.contains(tableId)) {
+                return;
+            }
+            final LongHashSet next = new LongHashSet(current.size() + 1);
+            for (int i = 0, n = current.size(); i < n; i++) {
+                next.add(current.get(i));
+            }
+            next.add(tableId);
+            policiedTableIds = next; // volatile publish
         }
     }
 
@@ -553,10 +623,37 @@ public class MetadataCache implements QuietCloseable {
             int timestampWriterIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
             table.setTimestampIndex(-1);
             table.setTtlHoursOrMonths(TableUtils.getTtlHoursOrMonths(metaMem));
+            // Read the trailing row-expiry policy (predicate + cleanup interval) in a SINGLE offset walk;
+            // calling the two TableUtils.getExpiry* helpers separately would walk the column section twice.
+            // Byte-identical to TableReaderMetadata.readExpiryPolicy / TableWriterMetadata, sharing the
+            // offset helper (the only drift-prone part).
+            String expiryPredicate = null;
+            long expiryCleanupIntervalMicros = 0;
+            if (TableUtils.isMetaFormatAtLeast(metaMem, TableUtils.META_FORMAT_MINOR_VERSION_EXPIRE_ROWS)) {
+                long policyOffset = TableUtils.getMetaExpiryPolicyOffset(metaMem, columnCount);
+                if (policyOffset >= 0 && policyOffset + Integer.BYTES <= metaMem.size()) {
+                    CharSequence pred = metaMem.getStrA(policyOffset);
+                    policyOffset += Vm.getStorageLength(pred);
+                    if (pred != null && pred.length() > 0) {
+                        expiryPredicate = Chars.toString(pred);
+                    }
+                    if (policyOffset + Long.BYTES <= metaMem.size()) {
+                        expiryCleanupIntervalMicros = metaMem.getLong(policyOffset);
+                    }
+                }
+            }
+            table.setExpiry(expiryPredicate, expiryCleanupIntervalMicros);
+            if (expiryPredicate != null) {
+                markExpiryPolicyPossible(token.getTableId());
+            }
             table.setTableFormat(TableUtils.getTableFormat(metaMem));
             table.setSoftLinkFlag(isSoftLink);
 
             TableUtils.buildColumnListFromMetadataFile(metaMem, columnCount, table.columnOrderList);
+            // Inline symbol capacity is trustworthy from META_FORMAT_MINOR_VERSION_SYMBOL_CAPACITY onward.
+            // Gate on THAT version, not LATEST: a later LATEST bump (TTL, then EXPIRE_ROWS) must not force
+            // every pre-existing table onto the slow per-column loadCapacities() path on each hydration.
+            boolean symbolCapacityInMeta = TableUtils.isMetaFormatAtLeast(metaMem, TableUtils.META_FORMAT_MINOR_VERSION_SYMBOL_CAPACITY);
             boolean isMetaFormatUpToDate = TableUtils.isMetaFormatAtLeast(metaMem, TableUtils.META_FORMAT_MINOR_VERSION_PARQUET_ENCODING_CONFIG);
             boolean hasParquetEncodingConfig = TableUtils.hasParquetEncodingConfig(metaMem);
             // populate columns
@@ -609,7 +706,7 @@ public class MetadataCache implements QuietCloseable {
                 }
 
                 if (columnType == ColumnType.SYMBOL) {
-                    if (isMetaFormatUpToDate) {
+                    if (symbolCapacityInMeta) {
                         column.setSymbolCapacity(TableUtils.getSymbolCapacity(metaMem, writerIndex));
                         column.setSymbolCached(TableUtils.isSymbolCached(metaMem, writerIndex));
                     } else {
@@ -842,6 +939,30 @@ public class MetadataCache implements QuietCloseable {
             rwLock.readLock().unlock();
         }
 
+        @Override
+        public void collectPoliciedTables(ObjList<TableToken> tokensOut, ObjList<String> predicatesOut, LongList cleanupIntervalsOut) {
+            for (int i = 0, n = tableMap.size(); i < n; i++) {
+                final CairoTable table = tableMap.getAt(i);
+                if (table == null) {
+                    continue;
+                }
+                final String predicate = table.getExpiryPredicate();
+                if (predicate == null || predicate.isEmpty()) {
+                    continue;
+                }
+                final TableToken token = table.getTableToken();
+                if (token == null || !token.isMatView()) {
+                    // EXPIRE ROWS is materialized-view-only; require isMatView() (not merely !isView()) so a
+                    // policy that ever leaks onto a plain table is inert here rather than physically deleting
+                    // its rows. The compiler is the gatekeeper; this is defense-in-depth for an irreversible op.
+                    continue;
+                }
+                tokensOut.add(token);
+                predicatesOut.add(predicate);
+                cleanupIntervalsOut.add(table.getExpiryCleanupIntervalMicros());
+            }
+        }
+
         /**
          * Returns a table ONLY if it is already present in the cache.
          *
@@ -1030,6 +1151,11 @@ public class MetadataCache implements QuietCloseable {
             int timestampWriterIndex = tableMetadata.getTimestampIndex();
             table.setTimestampIndex(-1);
             table.setTtlHoursOrMonths(tableMetadata.getTtlHoursOrMonths());
+            final String expiryPredicate = tableMetadata.getExpiryPredicate();
+            table.setExpiry(expiryPredicate, tableMetadata.getExpiryCleanupIntervalMicros());
+            if (expiryPredicate != null && !expiryPredicate.isEmpty()) {
+                markExpiryPolicyPossible(tableToken.getTableId());
+            }
             table.setTableFormat(tableMetadata.getTableFormat());
             Path tempPath = Path.getThreadLocal(engine.getConfiguration().getDbRoot());
             table.setSoftLinkFlag(Files.isSoftLink(tempPath.concat(tableToken.getDirNameUtf8()).$()));

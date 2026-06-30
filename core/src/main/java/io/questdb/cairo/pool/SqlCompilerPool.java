@@ -27,6 +27,7 @@ package io.questdb.cairo.pool;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.BatchCallback;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.ExpressionParserListener;
@@ -156,6 +157,21 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         }
 
         @Override
+        public long expiryTimestampThresholdMicros(SqlExecutionContext executionContext, RecordMetadata metadata, CharSequence predicate, CharSequence timestampColumn) {
+            return delegate.expiryTimestampThresholdMicros(executionContext, metadata, predicate, timestampColumn);
+        }
+
+        @Override
+        public boolean expiryPredicateReferencesColumn(RecordMetadata metadata, CharSequence predicate, int columnIndex) {
+            return delegate.expiryPredicateReferencesColumn(metadata, predicate, columnIndex);
+        }
+
+        @Override
+        public boolean isExpiryCleanupMonotonic(SqlExecutionContext executionContext, RecordMetadata metadata, CharSequence source, CharSequence predicate, CharSequence timestampColumn) {
+            return delegate.isExpiryCleanupMonotonic(executionContext, metadata, source, predicate, timestampColumn);
+        }
+
+        @Override
         public ExecutionModel generateExecutionModel(CharSequence sqlText, SqlExecutionContext executionContext) throws SqlException {
             return delegate.generateExecutionModel(sqlText, executionContext);
         }
@@ -213,6 +229,11 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         @Override
         public QueryBuilder query() {
             return delegate.query();
+        }
+
+        @Override
+        public void validateExpiryPredicateOnMetadata(SqlExecutionContext executionContext, RecordMetadata metadata, CharSequence predicate, int position) throws SqlException {
+            delegate.validateExpiryPredicateOnMetadata(executionContext, metadata, predicate, position);
         }
 
         @Override

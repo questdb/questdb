@@ -1091,6 +1091,13 @@ public interface CairoConfiguration {
 
     boolean isReadOnlyInstance();
 
+    /**
+     * When false, tables/materialized views with an EXPIRE ROWS policy are still queryable (the
+     * read-time filter still hides expired rows), but the background row-expiry cleanup job is not
+     * scheduled, so no rows are ever physically reclaimed.
+     */
+    boolean isRowExpiryEnabled();
+
     // Test-only seam, with no backing production property: always true in a running server, so
     // the optimiser always rewrites SELECT DISTINCT to GROUP BY. Tests override it to false in a
     // CairoConfiguration subclass to keep DISTINCT as a Distinct factory and reach

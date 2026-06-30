@@ -31,6 +31,8 @@ import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DefaultLocalCacheSnapshotFactory;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.MetadataCacheReader;
+import io.questdb.cairo.RowExpiryUtil;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TimestampDriver;
@@ -59,6 +61,9 @@ public class TablesFunctionFactory implements FunctionFactory {
     private static final int DEDUP_NAME_COLUMN = 5;
     private static final int DESIGNATED_TIMESTAMP_COLUMN = 2;
     private static final int DIRECTORY_NAME_COLUMN = 9;
+    // Row-expiry policy (45-46) - appended, keep at the end
+    private static final int EXPIRE_CLEANUP_EVERY_COLUMN = 46;
+    private static final int EXPIRE_CLAUSE_COLUMN = 45;
     // Base columns (0-11) - pre-existing, keep names
     private static final int ID_COLUMN = 0;
     private static final int IS_MAT_VIEW_COLUMN = 8;
@@ -373,6 +378,9 @@ public class TablesFunctionFactory implements FunctionFactory {
                         case TABLE_NAME -> table.getTableName();
                         case PARTITION_BY_COLUMN -> table.getPartitionByName();
                         case TTL_UNIT_COLUMN -> getTtlUnit(table.getTtlHoursOrMonths());
+                        case EXPIRE_CLAUSE_COLUMN -> RowExpiryUtil.displayPredicate(table.getExpiryPredicate());
+                        case EXPIRE_CLEANUP_EVERY_COLUMN ->
+                                RowExpiryUtil.formatCleanupEvery(table.getExpiryCleanupIntervalMicros());
                         case DESIGNATED_TIMESTAMP_COLUMN -> table.getTimestampName();
                         case DIRECTORY_NAME_COLUMN -> {
                             if (table.isSoftLink()) {
@@ -475,6 +483,9 @@ public class TablesFunctionFactory implements FunctionFactory {
         metadata.add(new TableColumnMetadata("replica_batch_size_p99", ColumnType.LONG));         // 42
         metadata.add(new TableColumnMetadata("replica_batch_size_max", ColumnType.LONG));         // 43
         metadata.add(new TableColumnMetadata("replica_more_pending", ColumnType.BOOLEAN));        // 44
+        // Row-expiry policy (45-46)
+        metadata.add(new TableColumnMetadata("expire_clause", ColumnType.STRING));             // 45
+        metadata.add(new TableColumnMetadata("expire_cleanup_every", ColumnType.STRING));         // 46
         METADATA = metadata;
     }
 }

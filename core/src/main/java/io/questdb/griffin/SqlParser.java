@@ -27,13 +27,17 @@ package io.questdb.griffin;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.IndexType;
+import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.RowExpiryUtil;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.mv.MatViewDefinition;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.griffin.engine.functions.json.JsonExtractTypedFunctionFactory;
@@ -81,6 +85,7 @@ import io.questdb.std.Os;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -157,6 +162,18 @@ public class SqlParser {
     private boolean createTableMode = false;
     private boolean createViewMode = false;
     private int digit;
+    // Track tables currently being wrapped by the row-expiry filter, so the synthetic inner
+    // "SELECT * FROM t WHERE ..." resolves "t" as a plain table instead of recursing forever.
+    // Case-sensitive: QuestDB table names are case-sensitive, so case-distinct sibling tables/views
+    // must each be guarded independently (a LowerCase set would wrongly conflate "T" and "t").
+    private final CharSequenceHashSet expiringTablesBeingExpanded = new CharSequenceHashSet();
+    // Designated timestamp column of the table whose EXPIRE ROWS predicate was last looked up (set by
+    // lookupExpiryPredicate), so the keep-filter rewrite can null-safely flip only timestamp comparisons.
+    private CharSequence expiryTimestampColumnName;
+    // Whether to apply the read-time row-expiry filter for the current parse. Set from the execution
+    // context at parse() entry; the cleanup job disables it on its context so its survivor query is not
+    // wrapped by the read filter (it uses its own authoritative keep-filter instead).
+    private boolean rowExpiryReadFilterEnabled = true;
     private boolean pivotMode = false;
     private boolean subQueryMode = false;
 
@@ -375,6 +392,274 @@ public class SqlParser {
         return CommonUtils.toHoursOrMonths(ttlValue, unit, valuePos);
     }
 
+    private static long strideToMicros(int multiple, char unit, int position) throws SqlException {
+        final long unitMicros = switch (unit) {
+            case 's' -> 1_000_000L;
+            case 'm' -> 60_000_000L;
+            case 'h' -> 3_600_000_000L;
+            case 'd' -> 86_400_000_000L;
+            case 'w' -> 604_800_000_000L;
+            default -> throw SqlException.$(position, "unsupported cleanup interval unit, expected s/m/h/d/w");
+        };
+        try {
+            // int * long can overflow for absurd values (e.g. 999999999w); fail cleanly instead of
+            // persisting a garbage (possibly negative) cleanup cadence.
+            final long micros = Math.multiplyExact((long) multiple, unitMicros);
+            if (micros <= 0) {
+                throw SqlException.$(position, "cleanup interval must be positive");
+            }
+            return micros;
+        } catch (ArithmeticException e) {
+            throw SqlException.$(position, "cleanup interval is too large");
+        }
+    }
+
+    /**
+     * Parses the optional row-expiry clause of CREATE TABLE:
+     * {@code EXPIRE ROWS WHEN <predicate> [CLEANUP EVERY <duration>]}.
+     * <p>
+     * The {@code EXPIRE} keyword has already been consumed by the caller. The predicate is captured
+     * as raw SQL text (everything between WHEN and CLEANUP/end-of-statement, tracking parenthesis
+     * depth) and stored on the builder unvalidated. Returns the next unconsumed token.
+     */
+    private CharSequence parseCreateTableExpireRows(
+            GenericLexer lexer,
+            CreateTableOperationBuilderImpl builder
+    ) throws SqlException {
+        final ExpireRowsClause clause = parseExpireRowsClause(lexer, true);
+        builder.setExpiryPredicate(clause.predicate);
+        builder.setExpiryCleanupIntervalMicros(clause.cleanupIntervalMicros);
+        return clause.nextTok;
+    }
+
+    /**
+     * Shared parser for the {@code ROWS WHEN <predicate> [CLEANUP EVERY <duration>]} body of an
+     * EXPIRE clause (the {@code EXPIRE} keyword itself has already been consumed by the caller).
+     * Used by both CREATE TABLE and ALTER TABLE SET EXPIRE.
+     * <p>
+     * The predicate is captured as raw SQL text: everything between WHEN and the next boundary,
+     * tracking parenthesis depth so a boundary keyword inside parentheses doesn't terminate it.
+     * Boundaries are CLEANUP (consumed here) and ';'/EOF. When {@code inCreateTable} is true, the
+     * clauses that may follow EXPIRE in CREATE TABLE (WITH / IN VOLUME / DEDUP[LICATE]) are also
+     * boundaries and the boundary token is returned to the caller in {@link ExpireRowsClause#nextTok}.
+     * Cleanup interval defaults to 1 hour when omitted.
+     */
+    public ExpireRowsClause parseExpireRowsClause(GenericLexer lexer, boolean inCreateTable) throws SqlException {
+        expectTok(lexer, "rows");
+        CharSequence tok = tok(lexer, "'when' or 'keep'");
+        final int predicateStart;
+        final String predicateSql;
+        boolean foundCleanup = false;
+
+        if (isKeepKeyword(tok)) {
+            // Relative retention modes (passthrough-mat-view-only, validated at create), stored encoded in
+            // the predicate slot and rewritten by the read filter:
+            //   KEEP LATEST [ON <ts>] PARTITION BY <cols>      -> latest row per key (LATEST ON)
+            //   KEEP [<N>] HIGHEST|LOWEST <col> [PARTITION BY <cols>] -> group max/min (or top-N) by a column
+            predicateStart = lexer.lastTokenPosition();
+            tok = tok(lexer, "'latest', 'highest', 'lowest' or a row count");
+            if (isLatestKeyword(tok)) {
+                tok = tok(lexer, "'on' or 'partition'");
+                String latestTs = "";
+                if (isOnKeyword(tok)) {
+                    // Optional "ON <ts>": captured and validated == the designated timestamp at create/alter
+                    // (a table-input LATEST ON requires it). Stored so SHOW CREATE can round-trip it.
+                    latestTs = Chars.toString(unquote(tok(lexer, "timestamp column name")));
+                    tok = tok(lexer, "'partition'");
+                }
+                if (!isPartitionKeyword(tok)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'partition' expected");
+                }
+                expectTok(lexer, "by");
+                final ColumnListCapture cap = captureKeepColumnList(lexer, inCreateTable);
+                if (cap.csv.isEmpty()) {
+                    throw SqlException.$(cap.startPos, "EXPIRE ROWS KEEP LATEST requires a PARTITION BY column list");
+                }
+                predicateSql = RowExpiryUtil.encodeKeepLatest(latestTs, cap.csv);
+                foundCleanup = cap.foundCleanup;
+                tok = cap.nextTok;
+            } else {
+                // KEEP [<N>] HIGHEST|LOWEST <col> [PARTITION BY <cols>]. Stored structurally and desugared to
+                // a window predicate at use (the designated timestamp is needed only for the top-N tiebreak).
+                int n = 0;
+                if (!isHighestKeyword(tok) && !isLowestKeyword(tok)) {
+                    try {
+                        n = Numbers.parseInt(tok);
+                    } catch (NumericException e) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "'latest', 'highest', 'lowest' or a row count expected");
+                    }
+                    if (n < 1) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "EXPIRE ROWS KEEP <N> requires a positive row count");
+                    }
+                    tok = tok(lexer, "'highest' or 'lowest'");
+                }
+                final boolean highest = isHighestKeyword(tok);
+                if (!highest && !isLowestKeyword(tok)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'highest' or 'lowest' expected");
+                }
+                final String col = Chars.toString(unquote(tok(lexer, "column name")));
+                tok = optTok(lexer);
+                String keysCsv = "";
+                if (tok != null && isPartitionKeyword(tok)) {
+                    expectTok(lexer, "by");
+                    final ColumnListCapture cap = captureKeepColumnList(lexer, inCreateTable);
+                    if (cap.csv.isEmpty()) {
+                        throw SqlException.$(cap.startPos, "EXPIRE ROWS KEEP ... PARTITION BY requires a column list");
+                    }
+                    keysCsv = cap.csv;
+                    foundCleanup = cap.foundCleanup;
+                    tok = cap.nextTok;
+                } else if (tok != null && isCleanupKeyword(tok)) {
+                    foundCleanup = true;
+                }
+                predicateSql = RowExpiryUtil.encodeKeepBy(n, highest, col, keysCsv);
+            }
+        } else {
+            lexer.unparseLast();
+            expectTok(lexer, "when");
+
+            predicateStart = lexer.getPosition();
+            int predicateEnd;
+            int depth = 0;
+            while (true) {
+                tok = optTok(lexer);
+                if (tok == null || Chars.equals(tok, ';')) {
+                    predicateEnd = tok == null ? lexer.getPosition() : lexer.lastTokenPosition();
+                    break;
+                }
+                if (depth == 0) {
+                    if (isCleanupKeyword(tok)) {
+                        // 'CLEANUP' is ambiguous: 'CLEANUP EVERY <dur>' ends the predicate, but a bare
+                        // column reference named "cleanup" (e.g. WHEN cleanup > 5) is predicate content.
+                        // Only treat CLEANUP as the boundary when it is followed by EVERY; otherwise keep
+                        // scanning (mirrors the IN -> VOLUME lookahead below).
+                        final int cleanupPos = lexer.lastTokenPosition();
+                        final CharSequence afterCleanup = optTok(lexer);
+                        if (afterCleanup != null && isEveryKeyword(afterCleanup)) {
+                            lexer.unparseLast(); // hand EVERY back so we parse CLEANUP EVERY below
+                            predicateEnd = cleanupPos;
+                            foundCleanup = true;
+                            break;
+                        }
+                        if (afterCleanup != null) {
+                            lexer.unparseLast();
+                        }
+                    } else if (inCreateTable && (isWithKeyword(tok) || isDedupKeyword(tok) || isDeduplicateKeyword(tok))) {
+                        predicateEnd = lexer.lastTokenPosition();
+                        break;
+                    } else if (inCreateTable && isInKeyword(tok)) {
+                        // 'IN' is ambiguous: 'IN VOLUME' ends the predicate, but '<col> IN (...)' is part of
+                        // it. Only treat IN as the boundary when it is followed by VOLUME; otherwise it is
+                        // predicate content and we keep scanning (the following '(' bumps the paren depth).
+                        final int inPos = lexer.lastTokenPosition();
+                        final CharSequence afterIn = optTok(lexer);
+                        if (afterIn != null && isVolumeKeyword(afterIn)) {
+                            lexer.unparseLast(); // hand VOLUME back so the caller parses IN VOLUME
+                            predicateEnd = inPos;
+                            break;
+                        }
+                        if (afterIn != null) {
+                            lexer.unparseLast();
+                        }
+                    }
+                }
+                if (Chars.equals(tok, '(')) {
+                    depth++;
+                } else if (Chars.equals(tok, ')')) {
+                    depth--;
+                    if (depth < 0) {
+                        // An unexpected ')' at depth 0 closes a paren that was never opened: the predicate is
+                        // malformed. Report at the offending ')' rather than swallowing the rest of the clause.
+                        throw SqlException.$(lexer.lastTokenPosition(), "unbalanced parentheses in EXPIRE ROWS predicate");
+                    }
+                }
+            }
+            if (depth != 0) {
+                // Reached the clause boundary / EOF with open parens still pending (e.g. CLEANUP/EOF got
+                // swallowed into the predicate text). Report at the predicate start so the user sees where
+                // the unbalanced expression began.
+                throw SqlException.$(predicateStart, "unbalanced parentheses in EXPIRE ROWS predicate");
+            }
+
+            final String rawPredicate = Chars.toString(lexer.getContent(), predicateStart, predicateEnd).trim();
+            if (rawPredicate.isEmpty()) {
+                throw SqlException.$(predicateStart, "EXPIRE ROWS WHEN predicate is empty");
+            }
+            // A predicate referencing a window function (e.g. v < max(v) OVER (...)) is illegal in a plain
+            // WHERE, so flag it for the projection-CASE read filter / cleanup instead.
+            predicateSql = predicateHasWindowFunction(rawPredicate) ? RowExpiryUtil.encodeWindow(rawPredicate) : rawPredicate;
+        }
+
+        final long cleanupIntervalMicros;
+        if (foundCleanup) {
+            expectTok(lexer, "every");
+            tok = tok(lexer, "cleanup interval value (e.g., 1h, 30m, 24h)");
+            final int multiple = CommonUtils.getStrideMultiple(tok, lexer.lastTokenPosition());
+            final char unit = CommonUtils.getStrideUnit(tok, lexer.lastTokenPosition());
+            cleanupIntervalMicros = strideToMicros(multiple, unit, lexer.lastTokenPosition());
+            // Fetch the next clause keyword (WITH / IN / DEDUP / ';' / EOF) for the caller.
+            tok = optTok(lexer);
+        } else {
+            cleanupIntervalMicros = RowExpiryUtil.DEFAULT_CLEANUP_INTERVAL_MICROS;
+            // tok already holds the boundary token (WITH / IN / DEDUP / ';' / null) — hand it back as-is.
+        }
+        return new ExpireRowsClause(predicateSql, predicateStart, cleanupIntervalMicros, tok);
+    }
+
+    /**
+     * Captures the raw column-list text after {@code PARTITION BY} in a KEEP clause, up to the next clause
+     * boundary (CLEANUP / ';' / EOF, plus WITH / IN VOLUME / DEDUP in CREATE TABLE). Shared by KEEP LATEST
+     * and KEEP HIGHEST/LOWEST.
+     */
+    private ColumnListCapture captureKeepColumnList(GenericLexer lexer, boolean inCreateTable) throws SqlException {
+        final int startPos = lexer.getPosition();
+        int end;
+        boolean foundCleanup = false;
+        CharSequence tok;
+        while (true) {
+            tok = optTok(lexer);
+            if (tok == null || Chars.equals(tok, ';')) {
+                end = tok == null ? lexer.getPosition() : lexer.lastTokenPosition();
+                break;
+            }
+            if (isCleanupKeyword(tok)) {
+                end = lexer.lastTokenPosition();
+                foundCleanup = true;
+                break;
+            }
+            // A column list cannot contain WITH/IN/DEDUP, so each unambiguously ends it (e.g. IN VOLUME).
+            if (inCreateTable && (isWithKeyword(tok) || isInKeyword(tok) || isDedupKeyword(tok) || isDeduplicateKeyword(tok))) {
+                end = lexer.lastTokenPosition();
+                break;
+            }
+        }
+        final ColumnListCapture capture = new ColumnListCapture();
+        capture.csv = Chars.toString(lexer.getContent(), startPos, end).trim();
+        capture.foundCleanup = foundCleanup;
+        capture.nextTok = tok;
+        capture.startPos = startPos;
+        return capture;
+    }
+
+    /**
+     * Whether {@code predicate} references a window function, detected by an {@code OVER (} token sequence.
+     * Window functions are illegal in a plain WHERE, so such a predicate is routed to the projection-CASE
+     * read filter. Re-lexes the predicate text only (no binding/metadata needed).
+     */
+    private boolean predicateHasWindowFunction(String predicate) throws SqlException {
+        final GenericLexer probe = viewLexers.next();
+        probe.of(predicate);
+        boolean prevOver = false;
+        CharSequence tok;
+        while ((tok = SqlUtil.fetchNext(probe)) != null) {
+            if (prevOver && Chars.equals(tok, '(')) {
+                return true;
+            }
+            prevOver = isOverKeyword(tok);
+        }
+        return false;
+    }
+
     public static ExpressionNode recursiveReplace(ExpressionNode node, ReplacingVisitor visitor) throws SqlException {
         if (node == null) {
             return null;
@@ -557,6 +842,7 @@ public class SqlParser {
     private void clearRecordedViews() {
         recordedViews.clear();
         viewsBeingCompiled.clear();
+        expiringTablesBeingExpanded.clear();
     }
 
     private void compileViewQuery(IQueryModel model, TableToken viewToken, int viewPosition) throws SqlException {
@@ -605,6 +891,393 @@ public class SqlParser {
         viewModel.setOriginatingViewNameExpr(viewExpr);
         viewModel.setViewNameExpr(viewExpr);
         return viewModel;
+    }
+
+    /**
+     * Rewrites a table reference that carries an EXPIRE ROWS policy into a nested
+     * {@code SELECT * FROM "t" WHERE <keep-filter>} sub-query, so expired rows become invisible to
+     * all reads. Mirrors {@link #compileViewQuery(IQueryModel, TableToken, int)} and the
+     * expiring-view draft's expandExpiringView. The caller MUST have already added {@code tableName}
+     * to {@link #expiringTablesBeingExpanded} so the synthetic inner {@code FROM "t"} resolves as a
+     * plain table rather than re-expanding (infinite recursion).
+     */
+    private void expandExpiringTable(
+            IQueryModel model,
+            CharSequence tableName,
+            String predicate,
+            CharSequence designatedTimestampColumn,
+            int position,
+            SqlParserCallback sqlParserCallback
+    ) throws SqlException {
+        if (RowExpiryUtil.isKeepLatest(predicate)) {
+            // Relative "KEEP LATEST" retention (passthrough mat views): hide all but the latest row per key
+            // by rewriting the reference into "SELECT * FROM "t" LATEST ON "<ts>" PARTITION BY <cols>". The
+            // PARTITION BY list is stored as raw text (quoting preserved); the timestamp is always the
+            // table's designated timestamp. LATEST ON cannot share a query level with WHERE, so isolating it
+            // in this inner sub-query is exactly right: any outer predicate filters the already-latest rows.
+            final CharSequence keys = RowExpiryUtil.keepLatestKeys(predicate);
+            final String latestSql = "SELECT * FROM \"" + tableName + "\" LATEST ON \""
+                    + designatedTimestampColumn + "\" PARTITION BY " + keys;
+            final GenericLexer latestLexer = viewLexers.next();
+            latestLexer.of(latestSql);
+            final IQueryModel latestSubQuery = parseAsSubQuery(latestLexer, null, false, sqlParserCallback, model.getDecls(), true);
+            model.setNestedModel(latestSubQuery);
+            model.setNestedModelIsSubQuery(true);
+            if (model.getAlias() == null) {
+                model.setAlias(literal(tableName, position));
+            }
+            return;
+        }
+
+        if (RowExpiryUtil.isKeepBy(predicate) || RowExpiryUtil.isWindow(predicate)) {
+            // Window-based retention (keep-max/min, top-N, or an explicit window WHEN). The keep-filter
+            // references a window function, illegal in a plain WHERE, so compute it as a boolean column in an
+            // inner projection over the WHOLE view and filter on it in the outer query. Base columns are
+            // enumerated so the synthetic keep column never leaks through the caller's SELECT *.
+            final String windowPredicate = RowExpiryUtil.windowPredicate(predicate, designatedTimestampColumn);
+            final String windowSql = "SELECT " + buildQuotedColumnList(tableName) + " FROM (SELECT *, CASE WHEN ("
+                    + windowPredicate + ") THEN false ELSE true END " + RowExpiryUtil.KEEP_COLUMN + " FROM \""
+                    + tableName + "\") WHERE " + RowExpiryUtil.KEEP_COLUMN;
+            final GenericLexer windowLexer = viewLexers.next();
+            windowLexer.of(windowSql);
+            final IQueryModel windowSubQuery = parseAsSubQuery(windowLexer, null, false, sqlParserCallback, model.getDecls(), true);
+            model.setNestedModel(windowSubQuery);
+            model.setNestedModelIsSubQuery(true);
+            if (model.getAlias() == null) {
+                model.setAlias(literal(tableName, position));
+            }
+            return;
+        }
+
+        // Quote the table name so names that need quoting (or look like keywords) parse correctly. The
+        // reference becomes "SELECT * FROM "t" WHERE <keep-filter>" so only rows that have NOT expired are
+        // visible. The keep-filter is parsed inline (so the sub-query model processes it like any WHERE);
+        // see keepFilterWhereText for the NULL/three-valued and partition-pruning details.
+        final boolean flip = isTimestampFlippablePredicate(predicate, designatedTimestampColumn, sqlParserCallback, model.getDecls());
+        final String syntheticSql = "SELECT * FROM \"" + tableName + "\" WHERE " + keepFilterWhereText(predicate, flip);
+
+        final GenericLexer subLexer = viewLexers.next();
+        subLexer.of(syntheticSql);
+
+        final IQueryModel subQuery = parseAsSubQuery(subLexer, null, false, sqlParserCallback, model.getDecls(), true);
+        if (flip) {
+            subQuery.setWhereClause(simplifyKeepFilter(subQuery.getWhereClause(), designatedTimestampColumn));
+        }
+        model.setNestedModel(subQuery);
+        model.setNestedModelIsSubQuery(true);
+        if (model.getAlias() == null) {
+            model.setAlias(literal(tableName, position));
+        }
+    }
+
+    /**
+     * Builds the quoted, comma-separated base column list of a policied table, for the window read-filter's
+     * outer projection (so the synthetic {@link RowExpiryUtil#KEEP_COLUMN} is not exposed through SELECT *).
+     * Reads from the in-memory metadata cache, falling back to the authoritative table metadata on a cache
+     * miss -- exactly as {@link #lookupExpiryPredicate} does. The two MUST agree: the read path reaches this
+     * only after {@code lookupExpiryPredicate} returned a (window/keep-by) predicate, which itself uses the
+     * fallback, so during the brief startup window before the cache hydrates the predicate is non-null while
+     * the cache has no entry; without the same fallback here the column list would be empty and the rewrite
+     * would emit {@code SELECT  FROM (...)} and fail every read of the view until hydration caught up.
+     */
+    private String buildQuotedColumnList(CharSequence tableName) {
+        final StringSink sink = new StringSink();
+        final TableToken tt = cairoEngine.getTableTokenIfExists(tableName);
+        if (tt == null) {
+            return sink.toString();
+        }
+        try (MetadataCacheReader metadataRO = cairoEngine.getMetadataCache().readLock()) {
+            final CairoTable table = metadataRO.getTable(tt);
+            if (table != null) {
+                final ObjList<CharSequence> names = table.getColumnNames();
+                for (int i = 0, n = names.size(); i < n; i++) {
+                    if (i > 0) {
+                        sink.putAscii(',');
+                    }
+                    sink.putAscii('"').put(names.getQuick(i)).putAscii('"');
+                }
+                return sink.toString();
+            }
+        }
+        // Cache miss (brief startup window before MetadataCache hydration): fall back to the authoritative
+        // table metadata so the column list matches the predicate that lookupExpiryPredicate already resolved.
+        try (TableMetadata metadata = cairoEngine.getTableMetadata(tt)) {
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                if (i > 0) {
+                    sink.putAscii(',');
+                }
+                sink.putAscii('"').put(metadata.getColumnName(i)).putAscii('"');
+            }
+        } catch (CairoException ignore) {
+            // Table concurrently dropped/renamed: getTableMetadata throws on open (before the loop), so the
+            // sink is empty; return that empty list and the caller's read fails closed rather than exposing
+            // rows (same posture as lookupExpiryPredicate treating this as "no policy").
+        }
+        return sink.toString();
+    }
+
+    /**
+     * Returns the inverse of an ordering-comparison operator ({@code <}->{@code >=}, {@code <=}->{@code >},
+     * {@code >}->{@code <=}, {@code >=}->{@code <}), so {@code NOT(a <op> b)} can be rewritten as the bare
+     * {@code a <inverse> b} that {@link WhereClauseParser} can prune partitions on. Returns null for any
+     * other operator (the caller then keeps the {@code NOT(...)} wrap, which is always correct).
+     */
+    private static CharSequence invertOrderingOperator(CharSequence op) {
+        if (Chars.equals(op, '<')) {
+            return ">=";
+        }
+        if (Chars.equals(op, "<=")) {
+            return ">";
+        }
+        if (Chars.equals(op, '>')) {
+            return "<=";
+        }
+        if (Chars.equals(op, ">=")) {
+            return "<";
+        }
+        return null;
+    }
+
+    /**
+     * Returns the keep-filter WHERE-clause text for an EXPIRE ROWS predicate — the rows that have NOT
+     * expired. A row expires only when the predicate is TRUE, so the keep-filter must keep rows for which
+     * the predicate is FALSE or NULL.
+     * <ul>
+     *     <li>{@code flip} (a designated-timestamp ordering comparison, see
+     *     {@link #isTimestampFlippablePredicate}): {@code NOT (predicate)}, which the caller then rewrites
+     *     in-place to the flipped bare comparison (e.g. {@code ts >= now()}) via {@link #simplifyKeepFilter}
+     *     so {@link WhereClauseParser} can extract a timestamp interval and prune partitions. Safe because
+     *     the timestamp is never NULL.</li>
+     *     <li>otherwise: {@code CASE WHEN (predicate) THEN false ELSE true END}, which keeps FALSE and NULL
+     *     rows for EVERY predicate shape. A plain {@code NOT(predicate)} would wrongly drop rows whose
+     *     predicate is UNKNOWN (NULL operand — QuestDB filtering is three-valued), and
+     *     {@code (predicate) IS NOT TRUE} is unreliable for composite booleans such as {@code IN}.</li>
+     * </ul>
+     */
+    private static String keepFilterWhereText(String predicate, boolean flip) {
+        return flip
+                ? "NOT (" + predicate + ")"
+                : "CASE WHEN (" + predicate + ") THEN false ELSE true END";
+    }
+
+    /**
+     * Builds the keep-filter node for ANDing into an UPDATE's WHERE (an UPDATE target cannot be wrapped in
+     * a sub-query — it needs row ids). Parses {@link #keepFilterWhereText} inline and applies the same
+     * timestamp flip the read path uses.
+     */
+    private ExpressionNode buildKeepFilterNode(
+            String predicate,
+            CharSequence designatedTimestampColumn,
+            SqlParserCallback sqlParserCallback,
+            LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
+    ) throws SqlException {
+        final boolean flip = isTimestampFlippablePredicate(predicate, designatedTimestampColumn, sqlParserCallback, decls);
+        final GenericLexer keepLexer = viewLexers.next();
+        keepLexer.of(keepFilterWhereText(predicate, flip));
+        final ExpressionNode node = expr(keepLexer, (IQueryModel) null, sqlParserCallback, decls);
+        return flip ? simplifyKeepFilter(node, designatedTimestampColumn) : node;
+    }
+
+    /**
+     * Whether the predicate is a designated-timestamp ordering comparison whose other operand references
+     * no column — i.e. the {@code ts < now()} shape, for which {@code NOT(predicate)} can be safely flipped
+     * to a bare comparison for partition pruning. Parses the predicate purely to inspect it (the node is
+     * discarded). Returns false (keep the always-correct CASE form) for everything else.
+     */
+    private boolean isTimestampFlippablePredicate(
+            String predicate,
+            CharSequence designatedTimestampColumn,
+            SqlParserCallback sqlParserCallback,
+            LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
+    ) throws SqlException {
+        if (designatedTimestampColumn == null) {
+            return false;
+        }
+        final GenericLexer probeLexer = viewLexers.next();
+        probeLexer.of(predicate);
+        final ExpressionNode pred = expr(probeLexer, (IQueryModel) null, sqlParserCallback, decls);
+        return pred != null && pred.type == ExpressionNode.OPERATION && pred.paramCount == 2
+                && invertOrderingOperator(pred.token) != null
+                && isNullSafeOrderingFlip(pred.lhs, pred.rhs, designatedTimestampColumn);
+    }
+
+    /**
+     * Rewrites a {@code NOT(<ordering comparison>)} keep-filter into the equivalent flipped comparison
+     * (e.g. {@code NOT(ts < now())} -> {@code ts >= now()}) so {@link WhereClauseParser} can extract a
+     * timestamp interval and prune partitions. Only applied when the caller has already established (via
+     * {@link #isTimestampFlippablePredicate}) that the comparison is on the never-NULL designated timestamp.
+     */
+    private static ExpressionNode simplifyKeepFilter(ExpressionNode keepFilter, CharSequence designatedTimestampColumn) {
+        if (keepFilter != null && keepFilter.paramCount == 1 && keepFilter.rhs != null
+                && Chars.equalsIgnoreCase(keepFilter.token, "not")) {
+            final ExpressionNode inner = keepFilter.rhs;
+            final CharSequence inverted = invertOrderingOperator(inner.token);
+            if (inverted != null && inner.type == ExpressionNode.OPERATION && inner.paramCount == 2
+                    && isNullSafeOrderingFlip(inner.lhs, inner.rhs, designatedTimestampColumn)) {
+                inner.token = inverted;
+                return inner;
+            }
+        }
+        return keepFilter;
+    }
+
+    /**
+     * Whether {@code NOT(a <op> b)} can be safely rewritten to the flipped bare comparison {@code a <inv> b}.
+     * QuestDB comparisons are two-valued: a NULL operand makes BOTH {@code a < b} and {@code a >= b} false, so
+     * {@code NOT(a < b)} (which is true when an operand is NULL) is NOT equivalent to {@code a >= b} (false)
+     * unless both operands are guaranteed non-null. The flip is therefore allowed only when one operand is the
+     * designated timestamp column (never NULL) and the other is <i>provably</i> non-NULL per
+     * {@link #isOperandProvablyNonNull} (a non-null literal, the now()/systimestamp()/sysdate() clock, or
+     * null-preserving timestamp arithmetic over non-null operands) — exactly the {@code ts < now()} shape the
+     * partition-pruning optimisation targets. Every other shape (including a column-free but possibly-NULL
+     * constant like {@code cast(null as timestamp)}) keeps the {@code NOT(...)}/CASE wrap, which is always
+     * correct (it just does not prune). Without this guard, a policy like {@code EXPIRE ROWS WHEN v < 2.0} on
+     * a nullable column would hide (and the cleanup job would delete) rows whose {@code v} is NULL even though
+     * they never expired.
+     */
+    private static boolean isNullSafeOrderingFlip(ExpressionNode a, ExpressionNode b, CharSequence designatedTimestampColumn) {
+        if (a == null || b == null || designatedTimestampColumn == null) {
+            return false;
+        }
+        return (isDesignatedTimestamp(a, designatedTimestampColumn) && isOperandProvablyNonNull(b))
+                || (isDesignatedTimestamp(b, designatedTimestampColumn) && isOperandProvablyNonNull(a));
+    }
+
+    private static boolean isDesignatedTimestamp(ExpressionNode node, CharSequence designatedTimestampColumn) {
+        // Case-sensitive exact match against the actual column name: a non-match merely skips the flip
+        // (keeps the always-correct NOT(...)), so being strict here can only cost a pruning opportunity.
+        return node.type == ExpressionNode.LITERAL && Chars.equals(node.token, designatedTimestampColumn);
+    }
+
+    /**
+     * Conservative "this expression can never evaluate to NULL" test, gating the null-unsafe timestamp flip
+     * (see {@link #isNullSafeOrderingFlip}). Only an allowlist is treated as provably non-null: a non-null
+     * constant literal; the nullary clock functions {@code now()/systimestamp()/sysdate()}; and the
+     * null-preserving timestamp functions / arithmetic operators (e.g. {@code dateadd}, {@code date_trunc},
+     * {@code timestamp_floor}, {@code +}, {@code -}, {@code *}) applied to provably-non-null operands.
+     * Everything else — a column (LITERAL), bind variable, the NULL literal, {@code cast(...)},
+     * {@code to_timestamp(...)}, or any unknown function — is treated as possibly-NULL, so the flip falls
+     * back to the always-correct CASE form. Being conservative here only costs a partition-pruning
+     * opportunity, never correctness. (Merely "references no column" is NOT enough: a column-free constant
+     * such as {@code cast(null as timestamp)} is still NULL, and flipping {@code NOT(ts < NULL)} to
+     * {@code ts >= NULL} would wrongly hide every row.)
+     */
+    private static boolean isOperandProvablyNonNull(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.CONSTANT) {
+            return !SqlKeywords.isNullKeyword(node.token);
+        }
+        if (node.type == ExpressionNode.FUNCTION || node.type == ExpressionNode.OPERATION) {
+            if (isNeverNullClockFunction(node.token)) {
+                return true;
+            }
+            if (!isNullPreservingTimestampExpr(node.token)) {
+                return false;
+            }
+            // null-preserving: non-null iff every operand is non-null (and there is at least one operand).
+            boolean hasOperand = false;
+            if (node.lhs != null) {
+                if (!isOperandProvablyNonNull(node.lhs)) {
+                    return false;
+                }
+                hasOperand = true;
+            }
+            if (node.rhs != null) {
+                if (!isOperandProvablyNonNull(node.rhs)) {
+                    return false;
+                }
+                hasOperand = true;
+            }
+            for (int i = 0, n = node.args.size(); i < n; i++) {
+                if (!isOperandProvablyNonNull(node.args.getQuick(i))) {
+                    return false;
+                }
+                hasOperand = true;
+            }
+            return hasOperand;
+        }
+        return false;
+    }
+
+    private static boolean isNeverNullClockFunction(CharSequence token) {
+        return Chars.equalsIgnoreCase(token, "now")
+                || Chars.equalsIgnoreCase(token, "systimestamp")
+                || Chars.equalsIgnoreCase(token, "sysdate");
+    }
+
+    private static boolean isNullPreservingTimestampExpr(CharSequence token) {
+        // null-in -> null-out, non-null-in -> non-null-out, so the result is non-null iff all operands are.
+        return Chars.equalsIgnoreCase(token, "dateadd")
+                || Chars.equalsIgnoreCase(token, "date_trunc")
+                || Chars.equalsIgnoreCase(token, "timestamp_floor")
+                || Chars.equalsIgnoreCase(token, "to_timezone")
+                || Chars.equalsIgnoreCase(token, "to_utc")
+                || (token != null && token.length() == 1
+                && (token.charAt(0) == '+' || token.charAt(0) == '-' || token.charAt(0) == '*'));
+    }
+
+    /**
+     * ANDs an EXPIRE ROWS keep-filter into an existing WHERE clause (used for UPDATE, whose target
+     * cannot be wrapped in a sub-query the way a SELECT reference can — it needs row ids). Returns the
+     * keep-filter alone when there is no existing WHERE.
+     */
+    private ExpressionNode andKeepFilter(ExpressionNode existingWhere, ExpressionNode keepFilter) {
+        if (existingWhere == null) {
+            return keepFilter;
+        }
+        final ExpressionNode and = expressionNodePool.next().of(ExpressionNode.OPERATION, "and", 0, existingWhere.position);
+        and.paramCount = 2;
+        and.lhs = existingWhere;
+        and.rhs = keepFilter;
+        return and;
+    }
+
+    /**
+     * Returns the EXPIRE ROWS predicate for the given table token, or null if the token is null, is not a
+     * materialized view (the only object type that can carry a policy), or carries no policy. Uses the
+     * in-memory metadata cache
+     * ({@link io.questdb.cairo.MetadataCache#readLock()} + map lookup): a shared read lock plus a
+     * hash-map get, no pool borrow, no file I/O on a cache hit. See class/PR notes for the
+     * cache-miss caveat.
+     */
+    private String lookupExpiryPredicate(TableToken tableToken) {
+        expiryTimestampColumnName = null;
+        // EXPIRE ROWS is materialized-view-only; require isMatView() (not merely !isView()) so a policy that
+        // ever leaks onto a plain table cannot silently hide its rows. Defense-in-depth: the compiler gate is
+        // the primary enforcement, this is the read-side last line.
+        if (tableToken == null || !tableToken.isMatView()) {
+            return null;
+        }
+        try (MetadataCacheReader metadataRO = cairoEngine.getMetadataCache().readLock()) {
+            final CairoTable table = metadataRO.getTable(tableToken);
+            if (table != null) {
+                final String predicate = table.getExpiryPredicate();
+                if (predicate == null || predicate.isEmpty()) {
+                    return null;
+                }
+                // Copy: the CairoTable's name view must not outlive the read lock we are about to release.
+                expiryTimestampColumnName = Chars.toString(table.getTimestampName());
+                return predicate;
+            }
+        }
+        // Cache miss for a resolvable table: the in-memory cache may not be hydrated yet (the brief
+        // startup window before MetadataCache.onStartupAsyncHydrator finishes). Fall back to the
+        // authoritative table metadata so the read filter is never silently skipped — that would
+        // otherwise expose expired rows until hydration caught up.
+        try (TableMetadata metadata = cairoEngine.getTableMetadata(tableToken)) {
+            final String predicate = metadata.getExpiryPredicate();
+            if (predicate == null || predicate.isEmpty()) {
+                return null;
+            }
+            final int tsIndex = metadata.getTimestampIndex();
+            expiryTimestampColumnName = tsIndex >= 0 ? Chars.toString(metadata.getColumnName(tsIndex)) : null;
+            return predicate;
+        } catch (CairoException e) {
+            // Table concurrently dropped/renamed, or its metadata is briefly unavailable: treat as no policy.
+            return null;
+        }
     }
 
     private CharSequence createColumnAlias(
@@ -1517,7 +2190,11 @@ public class SqlParser {
             if (enclosedInParentheses) {
                 expectTok(lexer, ')');
             } else {
-                // We expect nothing more when there are no parentheses.
+                // We expect nothing more when there are no parentheses. Trailing clauses such as
+                // EXPIRE ROWS / TIMESTAMP / PARTITION BY / TTL are only recognised when the SELECT is
+                // wrapped in parentheses ("AS ( SELECT ... ) EXPIRE ROWS ..."); without them the SELECT
+                // parser greedily consumes the trailing EXPIRE keyword as a table alias and reports the
+                // following token (ROWS) as unexpected, which still signals the malformed statement.
                 tok = optTok(lexer);
                 if (tok != null && !Chars.equals(tok, ';')) {
                     throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
@@ -1563,6 +2240,15 @@ public class SqlParser {
         }
 
         tok = sqlParserCallback.parseTtlSettings(lexer, tok, partitionBy, tableOpBuilder, true);
+
+        // Optional: EXPIRE ROWS WHEN <predicate> [CLEANUP EVERY <duration>]. Mirrors CREATE TABLE:
+        // it sits after the TTL/partition clauses and feeds the SAME CreateTableOperationBuilder
+        // fields (which the underlying CreateTableOperation persists to _meta), exactly like TTL.
+        // The predicate is captured here as raw text and validated structurally before the view is
+        // created (SqlCompilerImpl.validateCreateExpiryPredicate, against the SELECT's output columns).
+        if (tok != null && isExpireKeyword(tok)) {
+            tok = parseCreateTableExpireRows(lexer, tableOpBuilder);
+        }
 
         if (tok != null && isInKeyword(tok)) {
             parseInVolume(lexer, tableOpBuilder);
@@ -1752,6 +2438,14 @@ public class SqlParser {
                 tok = parseCreateTableFormat(lexer, builder);
                 formatSeen = true;
             }
+        }
+
+        // EXPIRE ROWS is only supported on materialized views (see CREATE MATERIALIZED VIEW); base tables use
+        // TTL + storage policies for retention. Checked here (outside the PARTITION BY block) so the specific
+        // message also fires for an un-partitioned CREATE TABLE / CTAS, where that block is skipped and EXPIRE
+        // would otherwise fall through to a generic "unexpected token".
+        if (tok != null && isExpireKeyword(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "EXPIRE ROWS is only supported on materialized views");
         }
         final boolean isWalEnabled = configuration.isWalSupported()
                 && PartitionBy.isPartitioned(builder.getPartitionByFromExpr())
@@ -2715,6 +3409,23 @@ public class SqlParser {
                 }
             } else if (tok != null && !isSemicolon(tok)) {
                 throw errUnexpected(lexer, tok);
+            }
+
+            // Row-expiry read filter on the UPDATE target: an UPDATE must not touch logically-expired
+            // rows, so AND the keep-filter into the WHERE. (Unlike a SELECT reference, an UPDATE target
+            // cannot be wrapped in a sub-query — it needs row ids — so we extend the WHERE instead.)
+            final ExpressionNode updateTarget = nestedModel.getTableNameExpr();
+            if (rowExpiryReadFilterEnabled && updateTarget != null && updateTarget.type == ExpressionNode.LITERAL
+                    && cairoEngine.getMetadataCache().mayHaveExpiryPolicy()) {
+                final TableToken tt = cairoEngine.getTableTokenIfExists(unquote(updateTarget.token));
+                final String predicate;
+                if (tt != null && !tt.isView() && cairoEngine.getMetadataCache().mayTableHaveExpiryPolicy(tt)
+                        && (predicate = lookupExpiryPredicate(tt)) != null) {
+                    nestedModel.setWhereClause(andKeepFilter(
+                            nestedModel.getWhereClause(),
+                            buildKeepFilterNode(predicate, expiryTimestampColumnName, sqlParserCallback, decls)
+                    ));
+                }
             }
 
             updateQueryModel.setNestedModel(fromModel);
@@ -4382,6 +5093,46 @@ public class SqlParser {
             default:
                 throw SqlException.$(expr.position, "function, literal or constant is expected");
         }
+
+        // Read-time row-expiry filter (approach A): if this resolved to a plain table (not a CTE,
+        // not a table-function) that carries an EXPIRE ROWS policy, transparently rewrite the
+        // reference into a nested "SELECT * FROM t WHERE <keep-filter>" so expired rows are hidden
+        // from every read. This is the single chokepoint for plain-table resolution: both the FROM
+        // branch (parseFromClause) and the JOIN branch funnel through parseSelectFrom, and the inner
+        // tables of sub-queries/CTE bodies recurse back here too. The CTE *reference* case set a
+        // nested model above (tableNameExpr stays null), so it is naturally skipped.
+        final ExpressionNode resolvedTableNameExpr = model.getTableNameExpr();
+        if (
+                rowExpiryReadFilterEnabled
+                        && resolvedTableNameExpr != null
+                        && resolvedTableNameExpr.type == ExpressionNode.LITERAL
+                        && cairoEngine.getMetadataCache().mayHaveExpiryPolicy()
+        ) {
+            // Normalise to the unquoted name so the recursion guard matches regardless of quoting:
+            // the outer reference may be "from t" while the synthetic inner is "from \"t\"".
+            final CharSequence unquotedName = unquote(resolvedTableNameExpr.token);
+            // Guard against the synthetic inner "SELECT * FROM t" re-expanding (infinite recursion).
+            if (!expiringTablesBeingExpanded.contains(unquotedName)) {
+                final TableToken tt = cairoEngine.getTableTokenIfExists(unquotedName);
+                final String predicate;
+                if (tt != null && !tt.isView() && cairoEngine.getMetadataCache().mayTableHaveExpiryPolicy(tt)
+                        && (predicate = lookupExpiryPredicate(tt)) != null) {
+                    final CharSequence designatedTimestampColumn = expiryTimestampColumnName;
+                    final int position = resolvedTableNameExpr.position;
+                    model.setTableNameExpr(null);
+                    // The set stores references, not copies, and unquote() of a quoted token yields a
+                    // view over the (transient) lexer buffer; store a stable String, like
+                    // viewsBeingCompiled does, so the key survives the nested parse.
+                    final String guardKey = Chars.toString(unquotedName);
+                    expiringTablesBeingExpanded.add(guardKey);
+                    try {
+                        expandExpiringTable(model, guardKey, predicate, designatedTimestampColumn, position, sqlParserCallback);
+                    } finally {
+                        expiringTablesBeingExpanded.remove(guardKey);
+                    }
+                }
+            }
+        }
     }
 
     private int parseSymbolCapacity(GenericLexer lexer) throws SqlException {
@@ -5392,6 +6143,10 @@ public class SqlParser {
         aliasSequenceMap.clear();
         pivotAliasMap.clear();
         clearRecordedViews();
+        // Hygiene: parse() always re-derives these from the execution context, but reset them here too so a
+        // reused parser never carries a stale row-expiry gate/timestamp between compilations.
+        rowExpiryReadFilterEnabled = true;
+        expiryTimestampColumnName = null;
     }
 
     ExpressionNode expr(
@@ -5428,6 +6183,8 @@ public class SqlParser {
     }
 
     ExecutionModel parse(GenericLexer lexer, SqlExecutionContext executionContext, SqlParserCallback sqlParserCallback) throws SqlException {
+        // Capture the read-filter toggle for this whole parse (the row-expiry cleanup job disables it).
+        rowExpiryReadFilterEnabled = executionContext == null || executionContext.isExpiryReadFilterEnabled();
         final CharSequence tok = tok(lexer, "'create', 'rename' or 'select'");
 
         if (isExplainKeyword(tok)) {
@@ -5526,6 +6283,35 @@ public class SqlParser {
             throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
         }
         return viewSql;
+    }
+
+    /**
+     * Result of {@link #captureKeepColumnList}: the raw PARTITION BY column list and the trailing boundary.
+     */
+    private static final class ColumnListCapture {
+        String csv;
+        boolean foundCleanup;
+        CharSequence nextTok;
+        int startPos;
+    }
+
+    /**
+     * Result of {@link #parseExpireRowsClause(GenericLexer, boolean)}: the captured raw predicate
+     * text, the cleanup interval in microseconds, and the next unconsumed token (the boundary
+     * keyword for the CREATE TABLE caller; null/';' for the ALTER caller).
+     */
+    public static final class ExpireRowsClause {
+        public final long cleanupIntervalMicros;
+        public final CharSequence nextTok;
+        public final String predicate;
+        public final int predicatePos;
+
+        public ExpireRowsClause(String predicate, int predicatePos, long cleanupIntervalMicros, CharSequence nextTok) {
+            this.predicate = predicate;
+            this.predicatePos = predicatePos;
+            this.cleanupIntervalMicros = cleanupIntervalMicros;
+            this.nextTok = nextTok;
+        }
     }
 
     public interface ReplacingVisitor {

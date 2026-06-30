@@ -26,12 +26,21 @@ package io.questdb.cairo;
 
 
 import io.questdb.std.CharSequenceObjMap;
+import io.questdb.std.LongList;
+import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public interface MetadataCacheReader extends QuietCloseable, Sinkable {
+    /**
+     * Appends {@code (token, predicate, cleanup-interval-micros)} for every materialized view that currently
+     * carries an EXPIRE ROWS policy, in a single pass over the cache. Lets the row-expiry cleanup job
+     * discover policied tables without snapshotting and re-looking-up the entire table registry each tick.
+     */
+    void collectPoliciedTables(ObjList<TableToken> tokensOut, ObjList<String> predicatesOut, LongList cleanupIntervalsOut);
+
     @Nullable
     CairoTable getTable(@NotNull TableToken tableToken);
 

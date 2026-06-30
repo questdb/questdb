@@ -460,6 +460,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int rndFunctionMemoryPageSize;
     private final int rollBufferLimit;
     private final int rollBufferSize;
+    private final boolean rowExpiryEnabled;
     private final long sequencerCheckInterval;
     private final PropWorkerPoolConfiguration sharedWorkerPoolNetworkConfiguration = new PropWorkerPoolConfiguration("shared-network");
     private final PropWorkerPoolConfiguration sharedWorkerPoolQueryConfiguration = new PropWorkerPoolConfiguration("shared-query");
@@ -1511,6 +1512,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             // reuse wal-apply defaults for mat view workers
             this.matViewEnabled = getBoolean(properties, env, PropertyKey.CAIRO_MAT_VIEW_ENABLED, true);
+            this.rowExpiryEnabled = getBoolean(properties, env, PropertyKey.CAIRO_ROW_EXPIRY_ENABLED, true);
             this.matViewMaxRefreshRetries = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_RETRIES, 10);
             this.matViewRefreshBusyRetryTimeout = getMillis(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_BUSY_RETRY_TIMEOUT, 1000);
             this.matViewRefreshBusyRetryLimit = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_BUSY_RETRY_LIMIT, 10);
@@ -5332,6 +5334,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isReadOnlyInstance() {
             return isReadOnlyInstance;
+        }
+
+        @Override
+        public boolean isRowExpiryEnabled() {
+            return rowExpiryEnabled;
         }
 
         @Override

@@ -1127,6 +1127,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.checkpoint.recovery.threadpool.max\tQDB_CAIRO_CHECKPOINT_RECOVERY_THREADPOOL_MAX\t12\tdefault\tfalse\tfalse\n" +
                                     "cairo.partition.encoder.parquet.min.compression.ratio\tQDB_CAIRO_PARTITION_ENCODER_PARQUET_MIN_COMPRESSION_RATIO\t1.2\tdefault\tfalse\tfalse\n" +
                                     "cairo.partition.encoder.parquet.o3.rewrite.unused.max.bytes\tQDB_CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES\t1073741824\tdefault\tfalse\tfalse\n" +
+                                    "cairo.row.expiry.enabled\tQDB_CAIRO_ROW_EXPIRY_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.partition.encoder.parquet.o3.rewrite.unused.ratio\tQDB_CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO\t0.5\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.apply.suspended.write.denied\tQDB_CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED\tfalse\tdefault\tfalse\ttrue\n" +
                                     "cairo.wal.apply.suspended.tables\tQDB_CAIRO_WAL_APPLY_SUSPENDED_TABLES\t\tdefault\tfalse\ttrue\n" +

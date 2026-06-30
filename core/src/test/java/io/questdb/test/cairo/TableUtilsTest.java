@@ -260,6 +260,10 @@ public class TableUtilsTest extends AbstractTest {
         testIsValidColumnName('%', false);
         testIsValidColumnName('~', false);
         testIsValidColumnName('\n', false);
+        // C0 control chars 0x10-0x1f (incl. 0x1f, the RowExpiryUtil.POLICY_SENTINEL) are rejected.
+        testIsValidColumnName((char) 0x10, false);
+        testIsValidColumnName((char) 0x1b, false);
+        testIsValidColumnName((char) 0x1f, false);
         Assert.assertFalse(TableUtils.isValidColumnName("..", 127));
         Assert.assertFalse(TableUtils.isValidColumnName(".", 127));
         Assert.assertFalse(TableUtils.isValidColumnName("t\u007Ftcsv", 127));
@@ -277,6 +281,9 @@ public class TableUtilsTest extends AbstractTest {
     @Test
     public void testIsValidTableName() {
         Assert.assertFalse(TableUtils.isValidTableName("?abcd", 127));
+        // C0 control chars 0x10-0x1f (incl. 0x1f, the RowExpiryUtil.POLICY_SENTINEL) are rejected.
+        Assert.assertFalse(TableUtils.isValidTableName("t" + (char) 0x1f + "t", 127));
+        Assert.assertFalse(TableUtils.isValidTableName("t" + (char) 0x10 + "t", 127));
         Assert.assertFalse(TableUtils.isValidTableName("", 127));
         Assert.assertFalse(TableUtils.isValidTableName(" ", 127));
         Assert.assertFalse(TableUtils.isValidTableName("./", 127));

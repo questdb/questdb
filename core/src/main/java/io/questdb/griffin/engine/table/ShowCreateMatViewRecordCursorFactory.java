@@ -252,6 +252,7 @@ public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFa
                     .putAscii('\n');
             sink.putAscii(") PARTITION BY ").put(table.getPartitionByName());
             ttlToSink(sink);
+            expireToSink(sink);
             inVolumeToSink(configuration, table, sink);
             putAdditional();
             sink.putAscii(';');
@@ -264,6 +265,12 @@ public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFa
         // overridden in ent, do not remove!
         protected void ttlToSink(CharSink<?> sink) {
             ShowCreateTableRecordCursorFactory.ttlToSink(table.getTtlHoursOrMonths(), sink);
+        }
+
+        // protected extension point (parallel to ttlToSink); ent may override, but currently does not --
+        // EXPIRE ROWS renders identically in OSS and ent. Keep it protected so an override stays possible.
+        protected void expireToSink(CharSink<?> sink) {
+            ShowCreateTableRecordCursorFactory.expireToSink(table.getExpiryPredicate(), table.getExpiryCleanupIntervalMicros(), sink);
         }
 
         public class ShowCreateMatViewRecord implements Record {

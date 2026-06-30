@@ -90,6 +90,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private boolean clockUseNow = false;
     private boolean cloneSymbolTables;
     private boolean containsSecret;
+    private boolean expiryReadFilterEnabled = true;
     private int intervalFunctionType;
     private int jitMode;
     private MemoryTracker memoryTracker;
@@ -359,6 +360,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public boolean isExpiryReadFilterEnabled() {
+        return expiryReadFilterEnabled;
+    }
+
+    @Override
     public boolean isParallelFilterEnabled() {
         return parallelFilterEnabled;
     }
@@ -490,6 +496,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void setCloneSymbolTables(boolean cloneSymbolTables) {
         this.cloneSymbolTables = cloneSymbolTables;
+    }
+
+    @Override
+    public void setExpiryReadFilterEnabled(boolean enabled) {
+        this.expiryReadFilterEnabled = enabled;
     }
 
     @Override

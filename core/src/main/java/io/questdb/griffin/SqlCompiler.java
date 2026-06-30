@@ -27,6 +27,7 @@ package io.questdb.griffin;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExpressionNode;
@@ -57,6 +58,57 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
      */
     boolean execute(final Operation op, SqlExecutionContext executionContext) throws SqlException, CairoException;
 
+    /**
+     * Returns the epoch-micros upper bound T when {@code predicate} is {@code <ts> < T} / {@code <ts> <= T}
+     * on the (micros) designated timestamp with a column-free T, else {@link io.questdb.std.Numbers#LONG_NULL}.
+     * Lets the row-expiry cleanup classify whole partitions by their bounds without a survivor scan; any
+     * non-matching shape or evaluation issue returns LONG_NULL so the caller falls back to the scan.
+     */
+    long expiryTimestampThresholdMicros(
+            SqlExecutionContext executionContext,
+            RecordMetadata metadata,
+            CharSequence predicate,
+            CharSequence timestampColumn
+    );
+
+    /**
+     * Returns true if {@code predicate} (a stored EXPIRE ROWS predicate) references the column at
+     * {@code columnIndex} in {@code metadata}. Used to reject DROP / RENAME / ALTER COLUMN TYPE on a column
+     * the predicate depends on: such a change would leave the stored predicate referencing a missing,
+     * renamed or retyped column and brick every read of the table (the predicate is re-parsed per read).
+     * Column names in the predicate are resolved via {@code metadata} so case and quoting match the
+     * predicate's original bind. Returns true (conservative — block the change) if the stored predicate no
+     * longer parses, so a corrupt predicate can never silently allow a bricking column op.
+     */
+    boolean expiryPredicateReferencesColumn(
+            RecordMetadata metadata,
+            CharSequence predicate,
+            int columnIndex
+    );
+
+    /**
+     * Returns true when the EXPIRE ROWS policy {@code predicate} is <b>monotonic</b>, i.e. safe for the
+     * background cleanup job to physically reclaim: a row it classifies as expired now can never re-enter the
+     * keep-set. Monotonic by construction: the relative modes (KEEP LATEST / KEEP HIGHEST/LOWEST / KEEP N) and
+     * any scalar/window {@code WHEN} predicate that is either clock-free (mat-view rows are immutable, so a
+     * clock-free predicate's per-row value never changes) or reduces to a designated-timestamp threshold
+     * ({@code ts < now()} / {@code ts <= T}). NOT monotonic: a predicate that references a non-deterministic
+     * clock in a non-threshold position (e.g. {@code ts > now()}), which un-expires rows as time advances.
+     * <p>
+     * The check is conservative — any doubt (parse/bind issue, a non-deterministic function it cannot prove
+     * monotonic) returns false, so cleanup is SKIPPED and the authoritative read filter alone enforces
+     * retention. Disk is not reclaimed for such a policy, but query results stay correct. {@code source} is the
+     * FROM source used to validate a window predicate (a quoted table name, or a parenthesised defining SELECT
+     * for a not-yet-created view); {@code metadata} is used to bind scalar predicates.
+     */
+    boolean isExpiryCleanupMonotonic(
+            SqlExecutionContext executionContext,
+            RecordMetadata metadata,
+            CharSequence source,
+            CharSequence predicate,
+            CharSequence timestampColumn
+    );
+
     ExecutionModel generateExecutionModel(CharSequence sqlText, SqlExecutionContext executionContext) throws SqlException;
 
     RecordCursorFactory generateSelectWithRetries(
@@ -71,6 +123,19 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
     CairoEngine getEngine();
 
     QueryBuilder query();
+
+    /**
+     * Validates an EXPIRE ROWS predicate structurally by parsing and binding it against {@code metadata}
+     * (the columns the object will have) and checking the result is a boolean expression, without touching
+     * any table. Used by CREATE TABLE / CREATE MATERIALIZED VIEW to reject a bad predicate before the
+     * object is created. Any parse/bind error is rewritten as a clear SqlException at {@code position}.
+     */
+    void validateExpiryPredicateOnMetadata(
+            SqlExecutionContext executionContext,
+            RecordMetadata metadata,
+            CharSequence predicate,
+            int position
+    ) throws SqlException;
 
     @TestOnly
     void setEnableJitNullChecks(boolean value);

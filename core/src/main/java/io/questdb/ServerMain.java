@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.DataID;
 import io.questdb.cairo.FlushQueryCacheJob;
+import io.questdb.cairo.RowExpiryCleanupJob;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewTimerJob;
@@ -557,6 +558,11 @@ public class ServerMain implements Closeable {
                             sharedPoolWrite.assign(walPurgeJob);
                             sharedPoolWrite.freeOnExit(walPurgeJob);
 
+                            // best-effort background row-expiry cleanup for EXPIRE ROWS tables/mat-views
+                            // (WAL-only; assigned to the shared WRITE pool => primary-only. Overridable so
+                            // Enterprise can keep restricting it to the primary, like mat-view jobs)
+                            setupRowExpiryCleanupJob(sharedPoolWrite, engine);
+
                             // wal apply job in the shared pool when there is no dedicated pool
                             if (walApplyEnabled && !config.getWalApplyPoolConfiguration().isEnabled()) {
                                 setupWalApplyJob(sharedPoolWrite, engine, sharedPoolQuery.getWorkerCount());
@@ -750,6 +756,14 @@ public class ServerMain implements Closeable {
 
     protected Job setupEngineMaintenanceJob(CairoEngine engine) {
         return new EngineMaintenanceJob(engine);
+    }
+
+    protected void setupRowExpiryCleanupJob(WorkerPool sharedPoolWrite, CairoEngine engine) {
+        if (engine.getConfiguration().isRowExpiryEnabled()) {
+            final RowExpiryCleanupJob rowExpiryCleanupJob = new RowExpiryCleanupJob(engine);
+            sharedPoolWrite.assign(rowExpiryCleanupJob);
+            sharedPoolWrite.freeOnExit(rowExpiryCleanupJob);
+        }
     }
 
     protected void setupMatViewJobs(WorkerPool mvWorkerPool, CairoEngine engine, int sharedQueryWorkerCount) {

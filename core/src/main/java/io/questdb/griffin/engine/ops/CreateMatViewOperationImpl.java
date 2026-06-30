@@ -105,6 +105,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     private final MatViewDefinition viewDefinition = new MatViewDefinition();
     private int baseTableTimestampType;
     private CreateTableOperationImpl createTableOperation;
+    private boolean passthrough;
     private int periodLength;
     private char periodLengthUnit;
     private long samplingInterval;
@@ -186,6 +187,20 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     @Override
     public CreateTableOperation getCreateTableOperation() {
         return createTableOperation;
+    }
+
+    // The row-expiry policy is parsed onto the underlying CreateTableOperation (mirroring TTL).
+    // It must be exposed on the TableStructure that CairoEngine.createMatView() hands to the _meta
+    // serializer, so delegate here exactly like getTtlHoursOrMonths(); otherwise CREATE MAT VIEW
+    // ... EXPIRE ROWS would silently drop the policy at create time.
+    @Override
+    public long getExpiryCleanupIntervalMicros() {
+        return createTableOperation.getExpiryCleanupIntervalMicros();
+    }
+
+    @Override
+    public String getExpiryPredicate() {
+        return createTableOperation.getExpiryPredicate();
     }
 
     @Override
@@ -299,7 +314,8 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                 periodLength,
                 periodLengthUnit,
                 periodDelay,
-                periodDelayUnit
+                periodDelayUnit,
+                passthrough
         );
     }
 
@@ -321,6 +337,11 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     @Override
     public boolean isMatView() {
         return true;
+    }
+
+    @Override
+    public boolean isPassthrough() {
+        return passthrough;
     }
 
     @Override
@@ -427,18 +448,31 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             }
         }
 
-        // We haven't found timestamp_floor() in SELECT.
+        // No SAMPLE BY and no timestamp_floor(): treat as a non-aggregating "passthrough" view
+        // (e.g. SELECT * FROM base) when the query has no aggregates/joins. Such a view copies base
+        // rows 1:1; samplingInterval becomes a refresh commit-chunk size (set later from the base
+        // partitioning in validateAndUpdateMetadataFromSelect), not an aggregation bucket.
         if (intervalExpr == null) {
-            throw SqlException.$(selectTextPosition, "TIMESTAMP column is not present in select list");
+            if (isPassthrough(functionFactoryCache, queryModel)) {
+                passthrough = true;
+            } else {
+                throw SqlException.$(selectTextPosition, "TIMESTAMP column is not present in select list");
+            }
         }
 
-        // Parse sampling interval expression.
-        final CharSequence interval = GenericLexer.unquote(intervalExpr);
-        final int samplingIntervalEnd = TimestampSamplerFactory.findPositiveIntervalEndIndex(interval, intervalPos, "sample");
-        assert samplingIntervalEnd < interval.length();
-        samplingInterval = TimestampSamplerFactory.parsePositiveInterval(interval, samplingIntervalEnd, intervalPos, "sample", Numbers.INT_NULL, ' ');
-        assert samplingInterval > 0;
-        samplingIntervalUnit = interval.charAt(samplingIntervalEnd);
+        if (passthrough) {
+            if (periodLength != 0) {
+                throw SqlException.$(selectTextPosition, "PERIOD is not supported for non-aggregating (passthrough) materialized views");
+            }
+        } else {
+            // Parse sampling interval expression.
+            final CharSequence interval = GenericLexer.unquote(intervalExpr);
+            final int samplingIntervalEnd = TimestampSamplerFactory.findPositiveIntervalEndIndex(interval, intervalPos, "sample");
+            assert samplingIntervalEnd < interval.length();
+            samplingInterval = TimestampSamplerFactory.parsePositiveInterval(interval, samplingIntervalEnd, intervalPos, "sample", Numbers.INT_NULL, ' ');
+            assert samplingInterval > 0;
+            samplingIntervalUnit = interval.charAt(samplingIntervalEnd);
+        }
 
         CairoEngine engine = sqlExecutionContext.getCairoEngine();
         try (TableMetadata baseTableMetadata = engine.getTableMetadata(baseTableToken)) {
@@ -508,7 +542,10 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             }
         }
         createTableOperation.validateAndUpdateMetadataFromSelect(selectMetadata, scanDirection);
-        updateMatViewTablePartitionBy(createTableOperation.getTimestampType());
+        if (passthrough) {
+            setPassthroughChunkInterval(baseTableMetadata.getPartitionBy());
+        }
+        updateMatViewTablePartitionBy(createTableOperation.getTimestampType(), baseTableMetadata.getPartitionBy());
         this.baseTableTimestampType = baseTableMetadata.getTimestampType();
     }
 
@@ -590,6 +627,67 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         return null;
     }
 
+    private boolean isPassthrough(FunctionFactoryCache functionFactoryCache, IQueryModel queryModel) {
+        // A non-aggregating projection over a single table (e.g. SELECT * FROM base [WHERE ...]).
+        // The caller has already established there is no SAMPLE BY / timestamp_floor(). Reject
+        // GROUP BY / DISTINCT / window (isNotPlainSelectModel), JOINs, and any aggregate in a column.
+        if (SqlUtil.isNotPlainSelectModel(queryModel)) {
+            return false;
+        }
+        if (queryModel.getJoinModels().size() > 1) {
+            return false;
+        }
+        // LATEST ON / UNION / GROUP BY / DISTINCT lower onto a NESTED model, which the top-level
+        // isNotPlainSelectModel() check above does not see. Walk the whole nested chain so a DERIVED view
+        // (e.g. SELECT * FROM base LATEST ON ts PARTITION BY k) is NOT misclassified as passthrough: its
+        // rows are not 1:1 with the base, so EXPIRE ROWS physical cleanup must never run on it.
+        for (IQueryModel m = queryModel; m != null; m = m.getNestedModel()) {
+            if (m.getLatestByType() != IQueryModel.LATEST_BY_NONE
+                    || m.getUnionModel() != null
+                    || m.getGroupBy().size() > 0
+                    || m.getJoinModels().size() > 1
+                    || m.getSelectModelType() == IQueryModel.SELECT_MODEL_DISTINCT) {
+                return false;
+            }
+        }
+        final ObjList<QueryColumn> cols = queryModel.getBottomUpColumns();
+        for (int i = 0, n = cols.size(); i < n; i++) {
+            if (!hasNoAggregates(functionFactoryCache, queryModel, i)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private void setPassthroughChunkInterval(int basePartitionBy) {
+        // Refresh commit-chunk size for a passthrough view. Correctness-neutral: it only bounds the
+        // size of each REPLACE_RANGE refresh batch (it is not an aggregation bucket). We mirror the
+        // base table's partition unit. NOTE: a single very dense base partition still commits as one
+        // batch, since the refresh step cannot subdivide below one sampler bucket.
+        switch (basePartitionBy) {
+            case PartitionBy.HOUR -> {
+                samplingInterval = 1;
+                samplingIntervalUnit = 'h';
+            }
+            case PartitionBy.WEEK -> {
+                samplingInterval = 7;
+                samplingIntervalUnit = 'd';
+            }
+            case PartitionBy.MONTH -> {
+                samplingInterval = 1;
+                samplingIntervalUnit = 'M';
+            }
+            case PartitionBy.YEAR -> {
+                samplingInterval = 1;
+                samplingIntervalUnit = 'y';
+            }
+            default -> { // DAY (and any non-time-unit partitioning)
+                samplingInterval = 1;
+                samplingIntervalUnit = 'd';
+            }
+        }
+    }
+
     private static @Nullable CharSequence resolveColumnName(ExpressionNode columnNode, IQueryModel queryModel) {
         final int dotIndex = Chars.indexOfLastUnquoted(columnNode.token, '.');
         if (dotIndex > -1) {
@@ -666,10 +764,21 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         }
     }
 
-    private void updateMatViewTablePartitionBy(int timestampType) throws SqlException {
+    private void updateMatViewTablePartitionBy(int timestampType, int basePartitionBy) throws SqlException {
         // Check if PARTITION BY wasn't specified in SQL, so that we need
         // to assign it based on the sampling interval.
         if (createTableOperation.getPartitionBy() == PartitionBy.NONE) {
+            if (passthrough) {
+                // Mirror the base table's partitioning so refresh REPLACE_RANGE and expiry DROP/REPLACE
+                // align to base partitions and per-partition row counts match the base.
+                final int viewPartitionBy = basePartitionBy != PartitionBy.NONE ? basePartitionBy : PartitionBy.DAY;
+                createTableOperation.setPartitionBy(viewPartitionBy);
+                final int ttlHoursOrMonths = createTableOperation.getTtlHoursOrMonths();
+                if (ttlHoursOrMonths != 0) {
+                    PartitionBy.validateTtlGranularity(viewPartitionBy, ttlHoursOrMonths, createTableOperation.getTtlPosition());
+                }
+                return;
+            }
             TimestampDriver timestampDriver = ColumnType.getTimestampDriver(timestampType);
             final TimestampSampler timestampSampler = TimestampSamplerFactory.getInstance(
                     timestampDriver,
