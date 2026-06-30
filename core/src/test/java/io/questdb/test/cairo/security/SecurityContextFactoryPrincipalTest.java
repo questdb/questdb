@@ -277,7 +277,11 @@ public class SecurityContextFactoryPrincipalTest {
     @Test
     public void testReadOnlyUsersAwareFactoryDefaultInterfaceReportsConfiguredPrincipal() {
         // the default branch (e.g. ILP, interface id other than HTTP/PGWIRE) yields an allow-all context
-        // that still reports the authenticated user, and is allow-all regardless of httpReadOnly
+        // that still reports the authenticated user, and is allow-all regardless of httpReadOnly.
+        // This unit test is the deliberate coverage for the named-principal ILP path: there is no e2e test
+        // because ILP has no query path to read current_user() back, and an ACL-disabled ILP connection
+        // authenticates anonymously (null principal -> the shared singleton), so a named principal reaches
+        // this branch only through a configured ILP authenticator.
         ReadOnlyUsersAwareSecurityContextFactory factory = new ReadOnlyUsersAwareSecurityContextFactory(false, null, true);
         SecurityContext context = factory.getInstance(principal("foo"), SecurityContextFactory.ILP);
         TestUtils.assertEquals("foo", context.getPrincipal());
