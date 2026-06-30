@@ -35,6 +35,10 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.VarcharTypeDriver;
+import io.questdb.cairo.arr.ArrayTypeDriver;
+import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.vm.Vm;
@@ -68,6 +72,7 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
+import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
@@ -78,6 +83,7 @@ import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
@@ -187,6 +193,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // restoreFromHead calls. Avoids per-call allocations on the restart and O3
     // head-hit paths.
     private final RestoredHeadState restoredHeadState = new RestoredHeadState();
+    // Reusable ARRAY read flyweight for the O3-rebuild disk stager
+    // (copyReaderRowToStaging): binds a view over the LV table reader's (data, aux)
+    // column memory for one row, which is immediately re-appended into the staging
+    // buffer, so a single instance is safe to reuse across rows and columns. Holds
+    // no native memory of its own.
+    private final BorrowedArray stagingArrayView = new BorrowedArray();
     // Per-worker staging buffer reused across cycles. Allocated lazily on the
     // first refresh of an LV whose output schema is fully supported by the
     // in-mem tier; reshaped (freed + reallocated) if the next LV's schema
@@ -513,9 +525,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
         // Decide whether the in-memory tier can be populated for this LV. Every
         // output column must be a type the tier can store (fixed-width, SYMBOL,
-        // STRING, BINARY, VARCHAR); an ARRAY output column falls back to disk-only.
-        // The staging buffer is reshaped on schema-mismatch; the LV's tier is
-        // lazily allocated on first use.
+        // STRING, BINARY, VARCHAR, ARRAY); an unsupported type (e.g. LONG256, UUID)
+        // falls back to disk-only. The staging buffer is reshaped on schema-mismatch;
+        // the LV's tier is lazily allocated on first use.
         RecordMetadata outMetadata = windowFactory.getMetadata();
         int cursorTimestampIndex = outMetadata.getTimestampIndex();
         if (cursorTimestampIndex < 0) {
@@ -601,7 +613,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             instance.setLastProcessedSeqTxn(advanceTo);
             // This path applies every cycle, so appliedWatermark tracks
             // lastProcessed and the in-mem tier stays a subset of disk (no
-            // un-flushed lead). It serves SYMBOL-output and var-length-output LVs;
+            // un-flushed lead). It serves lead-ineligible LVs (an unsupported output
+            // column type such as LONG256 / UUID, or no designated timestamp);
             // lead-eligible LVs take the refresh/flush split instead.
             instance.setAppliedWatermark(advanceTo);
             boolean lvConsumedPersisted = false;
@@ -669,8 +682,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // Publish the just-applied rows into the tier as a subset of disk
                 // (leadRowCount = 0). Failure to acquire a write slot is a
                 // non-fatal stall: the on-disk tier still advanced, the in-mem
-                // tier just trails this cycle. A fixed-width output schema (the only
-                // tier-populating shape, SYMBOL included since eager interning) is
+                // tier just trails this cycle. Any tier-populating output schema
+                // (fixed-width, SYMBOL via eager interning, or var-length) is
                 // lead-eligible and takes the refresh/flush split instead, so this
                 // disk-subset publish is effectively unreachable; kept defensively.
                 publishToInMemoryTier(instance, stagingMaxTs, lvAppliedSeqTxn, appendedRows, false);
@@ -2793,10 +2806,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     /**
      * Prepares the worker-local staging buffer and the LV's own in-memory tier
      * for the upcoming cycle. Returns {@code true} when both are usable for
-     * this LV (all output column types are fixed-width-supported); {@code false}
-     * when any column type is var-length or otherwise unsupported, in which case
-     * the cycle still writes to the on-disk tier but the in-mem tier stays
-     * empty / unallocated and reads fall back to {@code TableReader}.
+     * this LV (every output column type is one the tier can store - fixed-width,
+     * SYMBOL, STRING, BINARY, VARCHAR, ARRAY); {@code false} when any column type
+     * is unsupported (e.g. LONG256, UUID), in which case the cycle still writes to
+     * the on-disk tier but the in-mem tier stays empty / unallocated and reads fall
+     * back to {@code TableReader}.
      * <p>
      * The reusable {@code tierColumnTypes} member captures the output schema for
      * this cycle, doubling as the staging buffer's shape and the LV tier's
@@ -2805,13 +2819,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     /**
      * Computes (once, then caches) whether the LV's in-mem tier may serve an
      * un-flushed lead ahead of disk. Eligible when the output schema has a
-     * designated timestamp and is fully fixed-width (so the tier can store it).
-     * SYMBOL columns are eligible: the lead drain eager-interns them into the
-     * tier's symbol cache (LV-table-consistent ids), so the read path resolves the
-     * lead's symbols from RAM. Ineligible LVs (var-length output, or no designated
-     * timestamp) keep the tier a strict subset of disk: the refresh worker applies
-     * every cycle for them. Compiles the SELECT on the first call if needed (cached
-     * for the LV's lifetime).
+     * designated timestamp and every column is a type the tier can store
+     * (fixed-width, SYMBOL, STRING, BINARY, VARCHAR, ARRAY). SYMBOL columns are
+     * eligible: the lead drain eager-interns them into the tier's symbol cache
+     * (LV-table-consistent ids), so the read path resolves the lead's symbols from
+     * RAM. Ineligible LVs (an unsupported column type such as LONG256 / UUID, or no
+     * designated timestamp) keep the tier a strict subset of disk: the refresh worker
+     * applies every cycle for them. Compiles the SELECT on the first call if needed
+     * (cached for the LV's lifetime).
      */
     private boolean ensureLeadEligible(LiveViewInstance instance) throws SqlException {
         if (instance.isLeadEligibilityComputed()) {
@@ -2839,9 +2854,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             tierColumnTypes.add(outMetadata.getColumnType(i));
         }
         if (!LiveViewInMemoryBuffer.areColumnTypesSupported(tierColumnTypes)) {
-            // LV output schema contains a var-length / unsupported column type;
-            // skip the in-mem tier population for this LV. The cursor reads
-            // disk-only via TableReader.
+            // LV output schema contains a column type the tier cannot store (e.g.
+            // LONG256, UUID); skip the in-mem tier population for this LV. The
+            // cursor reads disk-only via TableReader.
             return false;
         }
         long pageSize = engine.getConfiguration().getLiveViewInMemoryBufferInitialBytes();
@@ -3131,7 +3146,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private void rebuildInMemoryTier(LiveViewInstance instance) {
         LiveViewInMemoryTier tier = instance.getInMemoryTier();
         if (tier == null) {
-            // Unsupported (var-length) output schema never allocates the tier.
+            // An unsupported output column type (e.g. LONG256, UUID) never allocates
+            // the tier.
             return;
         }
         // The O3 replay re-sequenced the on-disk symbol ids; the failed in-order
@@ -3249,12 +3265,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Copies one LV-table row's fixed-width columns into {@code stagingBuffer}
-     * at {@code dstRow}, reading directly from the reader's mapped column memory.
-     * Dispatches by the staging buffer's column type (which equals the LV output
-     * schema, 1:1 with the LV table column order). Only the in-mem tier's
-     * supported fixed-width types reach here - {@code stagingBuffer} is allocated
-     * only for such schemas.
+     * Copies one LV-table row into {@code stagingBuffer} at {@code dstRow}, reading
+     * directly from the reader's mapped column memory. Dispatches by the staging
+     * buffer's column type (which equals the LV output schema, 1:1 with the LV table
+     * column order). Handles every type the in-mem tier stores: fixed-width / SYMBOL
+     * write in place via {@code putXxx}; the variable-length STRING / BINARY / VARCHAR
+     * / ARRAY columns decode the value from the reader's (data, aux) column pair and
+     * re-append it into the staging buffer (which must therefore be filled in dense
+     * row order - it is, since the caller walks the window suffix ascending). The
+     * decoded var-length value is copied into {@code stagingBuffer} before the next
+     * read reuses the reader's flyweight, so reusing one {@link #stagingArrayView} is
+     * safe.
      */
     private void copyReaderRowToStaging(TableReader reader, int columnBase, long partitionRow, long dstRow) {
         for (int c = 0, n = stagingColumnTypes.size(); c < n; c++) {
@@ -3293,6 +3314,44 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 case ColumnType.BOOLEAN:
                     stagingBuffer.putBool(dstRow, c, col.getBool(partitionRow));
                     break;
+                case ColumnType.STRING: {
+                    // STRING .d/.i layout: aux holds the per-row 8-byte start offset
+                    // into the data payload. getStrA returns null for a null marker.
+                    final MemoryCR aux = reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, c) + 1);
+                    stagingBuffer.appendStr(c, dstRow, col.getStrA(aux.getLong(partitionRow << 3)));
+                    break;
+                }
+                case ColumnType.BINARY: {
+                    // BINARY .d/.i layout: aux holds the per-row 8-byte start offset.
+                    // getBin returns null for a null marker; len == 0 is a real empty.
+                    final MemoryCR aux = reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, c) + 1);
+                    stagingBuffer.appendBin(c, dstRow, col.getBin(aux.getLong(partitionRow << 3)));
+                    break;
+                }
+                case ColumnType.VARCHAR: {
+                    // VARCHAR (aux header + split data) decoded by VarcharTypeDriver;
+                    // getSplitValue returns null for a null marker and carries the
+                    // ascii flag.
+                    final MemoryCR aux = reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, c) + 1);
+                    stagingBuffer.appendVarchar(c, dstRow, VarcharTypeDriver.getSplitValue(aux, col, partitionRow, 1));
+                    break;
+                }
+                case ColumnType.ARRAY: {
+                    // ARRAY (aux header + shape/payload data) bound by BorrowedArray
+                    // over the reader's column pair, mirroring PageFrameMemoryRecord;
+                    // a zero-size aux entry decodes to a null ArrayView.
+                    final MemoryCR aux = reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, c) + 1);
+                    stagingArrayView.of(
+                            stagingColumnTypes.getQuick(c),
+                            aux.addressOf(0),
+                            aux.addressOf(0) + aux.size(),
+                            col.addressOf(0),
+                            col.addressOf(0) + col.size(),
+                            partitionRow
+                    );
+                    stagingBuffer.appendArray(c, dstRow, stagingArrayView);
+                    break;
+                }
                 default:
                     throw new UnsupportedOperationException(
                             "live view in-memory tier does not support column type: "

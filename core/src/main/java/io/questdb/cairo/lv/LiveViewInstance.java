@@ -191,12 +191,12 @@ public class LiveViewInstance implements QuietCloseable {
     // Lead eligibility (cached, schema-derived). True when every output column is a
     // type the in-mem tier can store (see LiveViewInMemoryBuffer.isColumnTypeSupported:
     // fixed-width, SYMBOL via eager interning, and the variable-length STRING / BINARY /
-    // VARCHAR types) and the output carries a designated timestamp, so the tier can hold
-    // an un-flushed lead the refresh worker serves ahead of disk. False keeps the tier a
-    // strict subset of disk - currently only an ARRAY output column, which the tier does
-    // not yet store. Computed once on the first refresh cycle after the compiled factory
-    // is ready, then cached. Volatile so the catalogue thread can read it without extra
-    // synchronisation; mutated only under the refresh latch.
+    // VARCHAR / ARRAY types) and the output carries a designated timestamp, so the tier
+    // can hold an un-flushed lead the refresh worker serves ahead of disk. False keeps
+    // the tier a strict subset of disk - an output column of a type the tier does not
+    // store (e.g. LONG256, UUID). Computed once on the first refresh cycle after the
+    // compiled factory is ready, then cached. Volatile so the catalogue thread can read
+    // it without extra synchronisation; mutated only under the refresh latch.
     private volatile boolean leadEligible;
     private volatile boolean leadEligibilityComputed;
     // In-RAM lead row count: the number of output rows refreshed into the in-mem
@@ -630,8 +630,8 @@ public class LiveViewInstance implements QuietCloseable {
 
     /**
      * @return the cached lead eligibility (every output column is a type the in-mem
-     * tier can store - fixed-width, SYMBOL, STRING, BINARY or VARCHAR - so the tier
-     * may serve an un-flushed lead ahead of disk). Meaningful only when
+     * tier can store - fixed-width, SYMBOL, STRING, BINARY, VARCHAR or ARRAY - so the
+     * tier may serve an un-flushed lead ahead of disk). Meaningful only when
      * {@link #isLeadEligibilityComputed()} returns {@code true}. See
      * {@link #leadEligible}.
      */

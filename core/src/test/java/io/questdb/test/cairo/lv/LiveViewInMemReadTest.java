@@ -759,6 +759,72 @@ public class LiveViewInMemReadTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testArrayPassthroughServesLeadFromRam() throws Exception {
+        // Passthrough DOUBLE[] output column: the tier carries the raw arrays from
+        // RAM via ArrayTypeDriver, so an array LV gets the same lead-serving
+        // behaviour as a purely-numeric one. Exercises the (data, aux) write path,
+        // the flush flyweight, the merge-record getArray accessor, and
+        // reset()/footprint end to end across the normal / null cases.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m AS " +
+                    "SELECT ts, arr, row_number() OVER () AS rn FROM base");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Cycle 1: three flushed rows on disk.
+                execute("INSERT INTO base (ts, arr) VALUES " +
+                        "('2026-05-12T00:00:01.000000Z', ARRAY[1.0, 2.0]), " +
+                        "('2026-05-12T00:00:02.000000Z', ARRAY[3.0]), " +
+                        "('2026-05-12T00:00:03.000000Z', ARRAY[4.0, 5.0, 6.0])");
+                drainWalQueue();
+                drainJob(job); // clock 0: first tick flushes the batch to disk
+
+                // Cycle 2: a 2-row un-flushed lead within FLUSH EVERY. One lead row
+                // carries NULL.
+                execute("INSERT INTO base (ts, arr) VALUES " +
+                        "('2026-05-12T00:00:04.000000Z', ARRAY[7.0, 8.0]), " +
+                        "('2026-05-12T00:00:05.000000Z', NULL)");
+                drainWalQueue();
+                drainJob(job); // clock still 0: refresh the lead, no flush
+            }
+
+            // The tier leads disk: all 5 rows are resident, 2 of them the lead.
+            InnerRead lead = readInner("SELECT * FROM lv");
+            Assert.assertTrue("var-size lead read must be routing-eligible", lead.routingEligible);
+            Assert.assertEquals("all rows served from the tier", 5, lead.inMemRowsServed);
+            Assert.assertEquals("two un-flushed lead rows served from RAM", 2, lead.leadRowsServed);
+
+            // size() folds the lead on top of the applied disk prefix.
+            try (
+                    RecordCursorFactory factory = select("SELECT * FROM lv");
+                    LiveViewRecordCursor cursor = openLvCursor(factory)
+            ) {
+                Assert.assertTrue(cursor.isRoutingEligible());
+                Assert.assertEquals("size() = applied rows on disk + un-flushed lead", 5, cursor.size());
+            }
+
+            // Differential oracle: the in-mem read (incl. the lead's arrays and the
+            // NULL row) equals a from-scratch recompute over base.
+            assertLvMatchesOracle("SELECT * FROM lv",
+                    "SELECT ts, arr, row_number() OVER () AS rn FROM base");
+
+            // Forcing the tier off drops to the applied prefix: the lead's arrays are
+            // absent from disk.
+            assertDiskOnlyMatchesOracle("SELECT * FROM lv",
+                    "SELECT ts, arr, row_number() OVER () AS rn FROM base LIMIT 3");
+
+            // A flush lands the lead on disk; the tier read then equals the
+            // disk-only read byte for byte.
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(1_000_000L);
+                drainJob(job);
+            }
+            drainWalQueue();
+            assertModeBMatchesDiskOnly("SELECT * FROM lv");
+        });
+    }
+
+    @Test
     public void testStringBinaryPassthroughServesLeadFromRam() throws Exception {
         // Passthrough STRING + BINARY output columns: the tier carries the raw
         // values from RAM, so a var-size LV gets the same lead-serving behaviour as

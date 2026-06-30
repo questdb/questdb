@@ -26,6 +26,9 @@ package io.questdb.cairo.lv;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.VarcharTypeDriver;
+import io.questdb.cairo.arr.ArrayTypeDriver;
+import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.vm.MemoryCARWImpl;
 import io.questdb.cairo.vm.api.MemoryCARW;
@@ -54,12 +57,14 @@ import io.questdb.std.str.Utf8Sequence;
  * Which column types the tier actually stores is governed solely by the per-type
  * support gate ({@link #isTierSupported}); the (data, aux) storage itself imposes
  * no further restriction. The gate admits fixed-width / SYMBOL columns (whose
- * {@code auxMem} slot is the stub) and the variable-length STRING / BINARY / VARCHAR
- * columns (whose {@code auxMem} buffer holds the per-row offset/header vector that
- * encoding needs - an 8-byte start offset into the appended {@code dataMem} payload
- * for STRING / BINARY, the 16-byte driver-owned header for VARCHAR). The remaining
- * variable-length type (ARRAY) layers on by widening that gate further and reusing
- * its type driver for the aux encoding.
+ * {@code auxMem} slot is the stub) and every variable-length type - STRING, BINARY,
+ * VARCHAR and ARRAY (whose {@code auxMem} buffer holds the per-row offset/header
+ * vector that encoding needs - an 8-byte start offset into the appended
+ * {@code dataMem} payload for STRING / BINARY, the 16-byte driver-owned header for
+ * VARCHAR and ARRAY). STRING / BINARY / VARCHAR reuse the data region's own reusable
+ * flyweights on read; ARRAY binds a per-column {@link BorrowedArray} over the
+ * {@code (auxMem, dataMem)} pair, exactly as {@code PageFrameMemoryRecord} does over
+ * its page addresses.
  * <p>
  * The slot's {@code rowCount} and {@code seamTs} bookkeeping is owned by the
  * caller: {@link #setRowCount(long)} bumps the row counter once all column
@@ -80,6 +85,13 @@ import io.questdb.std.str.Utf8Sequence;
  */
 public class LiveViewInMemoryBuffer implements QuietCloseable {
 
+    // Per-column ARRAY read flyweight, lazily allocated for ARRAY columns (null for
+    // every other type). BorrowedArray.of binds a view over the column's
+    // (auxMem, dataMem) pair without copying, exactly like
+    // PageFrameMemoryRecord.arrayBuffers binds over its page addresses; holding one
+    // per column lets a caller keep an ArrayView from one column live across a
+    // getArray on another. The flyweight owns no native memory of its own.
+    private final ObjList<BorrowedArray> arrayBuffers;
     // Secondary/aux region per column: a real MemoryCARWImpl holding the per-row
     // offset/header vector for a var-size column, the shared NullMemory.INSTANCE
     // stub for a fixed-width / SYMBOL column (whose payload lives wholly in
@@ -128,6 +140,9 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
         this.columnTypeSizes = new IntList(columnTypes.size());
         this.dataMem = new ObjList<>(columnTypes.size());
         this.auxMem = new ObjList<>(columnTypes.size());
+        // Lazily populated per ARRAY column on first read (borrowedArray); other
+        // entries stay null. Sized up front to avoid a grow on first bind.
+        this.arrayBuffers = new ObjList<>(columnTypes.size());
         this.newSymbolMaxIds = new int[columnTypes.size()];
         for (int i = 0, n = columnTypes.size(); i < n; i++) {
             int type = columnTypes.getQuick(i);
@@ -162,16 +177,21 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
         // column list that holds NullMemory.INSTANCE.
         Misc.freeObjList(auxMem);
         auxMem.clear();
+        // BorrowedArray holds no native memory (it is a flyweight over dataMem /
+        // auxMem); close() no-ops, so freeing the list only drops references, as
+        // PageFrameMemoryRecord does for its arrayBuffers.
+        Misc.freeObjList(arrayBuffers);
+        arrayBuffers.clear();
         columnTypes.clear();
         columnTypeSizes.clear();
     }
 
     /**
      * Returns true iff every column type in {@code columnTypes} is supported by
-     * the in-memory tier. Fixed-width types, SYMBOL (stored as INT), and the
-     * variable-length STRING, BINARY and VARCHAR types are supported; ARRAY still
-     * returns false. Used by {@code LiveViewRefreshJob} to decide whether to
-     * populate the tier for a given LV; unsupported schemas fall back to disk-only
+     * the in-memory tier. Fixed-width types, SYMBOL (stored as INT), and every
+     * variable-length type - STRING, BINARY, VARCHAR and ARRAY - are supported.
+     * Used by {@code LiveViewRefreshJob} to decide whether to populate the tier for
+     * a given LV; unsupported schemas (e.g. LONG256, UUID) fall back to disk-only
      * reads.
      */
     public static boolean areColumnTypesSupported(IntList columnTypes) {
@@ -194,7 +214,9 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
      * the tier's symbol cache (values new to the un-flushed lead); STRING and
      * BINARY are stored as an appended payload plus a per-row start-offset vector;
      * VARCHAR is stored via {@link VarcharTypeDriver} (appended payload plus the
-     * driver's 16-byte-per-row aux header).
+     * driver's 16-byte-per-row aux header); ARRAY is stored via
+     * {@link ArrayTypeDriver} (appended payload plus the driver's 16-byte-per-row
+     * aux header) and read back through a per-column {@link BorrowedArray}.
      */
     public static boolean isColumnTypeSupported(int columnType) {
         return isTierSupported(ColumnType.tagOf(columnType));
@@ -208,13 +230,27 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
         return columnTypes.getQuick(col);
     }
 
+    // Appends one ARRAY value as the next row of column col via ArrayTypeDriver:
+    // the driver writes its 16-byte-per-row aux header (CRC + offset + size) into
+    // auxMem and the shape + element payload into dataMem. appendValue handles a
+    // null array (a zero-size aux entry that BorrowedArray.of decodes back to a null
+    // ArrayView). The order assert catches a caller that writes rows out of order:
+    // the driver appends, so the aux cursor must sit at dstRow * ARRAY_AUX_WIDTH_BYTES
+    // before this row's header is appended.
+    void appendArray(int col, long dstRow, ArrayView value) {
+        final MemoryCARWImpl data = dataMem.getQuick(col);
+        final MemoryCARW aux = auxMem.getQuick(col);
+        assert (dstRow * ArrayTypeDriver.ARRAY_AUX_WIDTH_BYTES) == aux.getAppendOffset();
+        ArrayTypeDriver.appendValue(aux, data, value);
+    }
+
     // Appends one BINARY value as the next row of column col: the payload bytes go
     // to the tail of the dataMem region and the payload's start offset is appended
     // as the next 8-byte aux entry. putBin handles null (a negative length marker)
     // and distinguishes it from a real, empty (len == 0) value. The order assert
     // catches a caller that writes rows out of order: aux is append-only, so its
     // cursor must sit at dstRow * 8 before this row's offset is appended.
-    private void appendBin(int col, long dstRow, BinarySequence value) {
+    void appendBin(int col, long dstRow, BinarySequence value) {
         final MemoryCARWImpl data = dataMem.getQuick(col);
         final MemoryCARW aux = auxMem.getQuick(col);
         assert (dstRow << 3) == aux.getAppendOffset();
@@ -230,7 +266,7 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
     // order assert catches a caller that writes rows out of order: aux is
     // append-only, so its cursor must sit at dstRow * 8 before this row's offset is
     // appended.
-    private void appendStr(int col, long dstRow, CharSequence value) {
+    void appendStr(int col, long dstRow, CharSequence value) {
         final MemoryCARWImpl data = dataMem.getQuick(col);
         final MemoryCARW aux = auxMem.getQuick(col);
         assert (dstRow << 3) == aux.getAppendOffset();
@@ -246,11 +282,21 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
     // The order assert catches a caller that writes rows out of order: the driver
     // appends, so the aux cursor must sit at dstRow * VARCHAR_AUX_WIDTH_BYTES before
     // this row's header is appended.
-    private void appendVarchar(int col, long dstRow, Utf8Sequence value) {
+    void appendVarchar(int col, long dstRow, Utf8Sequence value) {
         final MemoryCARWImpl data = dataMem.getQuick(col);
         final MemoryCARW aux = auxMem.getQuick(col);
         assert (dstRow * VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES) == aux.getAppendOffset();
         VarcharTypeDriver.appendValue(aux, data, value);
+    }
+
+    // Lazily allocates and caches the per-column ARRAY read flyweight, mirroring
+    // PageFrameMemoryRecord.borrowedArray. Only ever called for ARRAY columns.
+    private BorrowedArray borrowedArray(int col) {
+        BorrowedArray ba = arrayBuffers.getQuiet(col);
+        if (ba == null) {
+            arrayBuffers.extendAndSet(col, ba = new BorrowedArray());
+        }
+        return ba;
     }
 
     private static boolean isTierSupported(int type) {
@@ -274,6 +320,7 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
             case ColumnType.STRING:
             case ColumnType.BINARY:
             case ColumnType.VARCHAR:
+            case ColumnType.ARRAY:
                 return true;
             default:
                 return false;
@@ -283,9 +330,9 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
     /**
      * Copies one row's values, column by column, from {@code src} into this
      * buffer. Fixed-width / SYMBOL columns overwrite in place at the absolute
-     * {@code dstRow} offset; STRING / BINARY / VARCHAR columns re-append the value
-     * read from {@code src}'s buffer getter (the value bytes are copied into this
-     * buffer's {@code dataMem} / {@code auxMem} before {@code src}'s flyweight is
+     * {@code dstRow} offset; STRING / BINARY / VARCHAR / ARRAY columns re-append the
+     * value read from {@code src}'s buffer getter (the value bytes are copied into
+     * this buffer's {@code dataMem} / {@code auxMem} before {@code src}'s flyweight is
      * reused), so {@code dstRow} must be the next dense append row. Caller is responsible
      * for advancing {@link #setRowCount(long)} after the row is written. Throws
      * {@link UnsupportedOperationException} on column types the tier does not store
@@ -333,6 +380,9 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
                 case ColumnType.VARCHAR:
                     appendVarchar(c, dstRow, src.getVarcharA(srcRow, c));
                     break;
+                case ColumnType.ARRAY:
+                    appendArray(c, dstRow, src.getArray(srcRow, c));
+                    break;
                 default:
                     throw new UnsupportedOperationException(
                             "live view in-memory tier does not support column type: " + ColumnType.nameOf(columnTypes.getQuick(c))
@@ -352,8 +402,9 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
      * {@link LiveViewSymbolCache}) before the slot is published, so the read path
      * can resolve them. STRING / BINARY columns append the value's payload to
      * {@code dataMem} and its start offset to {@code auxMem}; VARCHAR appends via
-     * {@link VarcharTypeDriver} (payload to {@code dataMem}, 16-byte header to
-     * {@code auxMem}). Either way {@code dstRow} must be the next dense append row.
+     * {@link VarcharTypeDriver} and ARRAY via {@link ArrayTypeDriver} (payload to
+     * {@code dataMem}, 16-byte header to {@code auxMem}). Either way {@code dstRow}
+     * must be the next dense append row.
      */
     public void copyRowFromRecord(Record record, long dstRow) {
         for (int c = 0, n = columnTypes.size(); c < n; c++) {
@@ -404,6 +455,11 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
                 case ColumnType.VARCHAR:
                     appendVarchar(c, dstRow, record.getVarcharA(c));
                     break;
+                case ColumnType.ARRAY:
+                    // Pass the full column type (carries dimensionality + element
+                    // type) so the record decodes the array shape correctly.
+                    appendArray(c, dstRow, record.getArray(c, columnTypes.getQuick(c)));
+                    break;
                 default:
                     throw new UnsupportedOperationException(
                             "live view in-memory tier does not support column type: " + ColumnType.nameOf(columnTypes.getQuick(c))
@@ -430,6 +486,27 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
             }
         }
         return sum;
+    }
+
+    // Resolves an ARRAY value: binds the column's per-column BorrowedArray over the
+    // (auxMem, dataMem) pair, exactly as PageFrameMemoryRecord.getArray binds over
+    // its page addresses. BorrowedArray.of decodes the per-row 16-byte aux entry
+    // (CRC + offset + size) and the dimensionality / element type from the column
+    // type, then points the flat view at the shape + payload in dataMem. A row the
+    // driver wrote as null (zero-size aux entry) decodes back to a null ArrayView.
+    // The view is reused per column, so two columns never clobber each other's array.
+    public ArrayView getArray(long row, int col) {
+        final BorrowedArray ba = borrowedArray(col);
+        final MemoryCARW aux = auxMem.getQuick(col);
+        final MemoryCARWImpl data = dataMem.getQuick(col);
+        return ba.of(
+                columnTypes.getQuick(col),
+                aux.addressOf(0),
+                aux.addressHi(),
+                data.addressOf(0),
+                data.addressHi(),
+                row
+        );
     }
 
     // Resolves a BINARY value: the per-row start offset lives in auxMem at

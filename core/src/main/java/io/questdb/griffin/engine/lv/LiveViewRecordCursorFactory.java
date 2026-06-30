@@ -175,9 +175,10 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
      *   <li>the projection keeps the timestamp ({@code timestampColumnIndex >= 0})
      *   - a timestamp-pruned read (e.g. an aggregate over the LV) cannot seam;</li>
      *   <li>every projected column is a type the tier can store (fixed-width,
-     *   SYMBOL, STRING, BINARY, VARCHAR) - an ARRAY column means no tier, so it
-     *   routes disk-only. SYMBOL columns are fine: the refresh worker stores
-     *   LV-table-space ids the disk reader resolves on read.</li>
+     *   SYMBOL, STRING, BINARY, VARCHAR, ARRAY) - an unsupported type (e.g. LONG256,
+     *   UUID) means no tier, so it routes disk-only. SYMBOL columns are fine: the
+     *   refresh worker stores LV-table-space ids the disk reader resolves on
+     *   read.</li>
      * </ul>
      * A {@code true} result is a capability flag, not a guarantee: a static plan
      * cannot see the runtime seqTxn fence, the tier's population state, a

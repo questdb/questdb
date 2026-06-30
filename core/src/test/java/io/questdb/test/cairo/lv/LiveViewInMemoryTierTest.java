@@ -27,9 +27,12 @@ package io.questdb.test.cairo.lv;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
+import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.lv.LiveViewInMemoryBuffer;
 import io.questdb.cairo.lv.LiveViewInMemoryTier;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.IntList;
 import io.questdb.std.str.Utf8Sequence;
@@ -386,6 +389,159 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testArrayRegionReallocMidFill() throws Exception {
+        // Long, growing 1-D arrays force both the dataMem payload region and the
+        // auxMem header region to realloc (moving their base addresses) mid-fill.
+        // The BorrowedArray-decoded reads must still resolve against the relocated
+        // blocks once the fill ends.
+        assertMemoryLeak(() -> {
+            IntList types = array1dSchema();
+            try (
+                    LiveViewInMemoryBuffer buf = new LiveViewInMemoryBuffer(types, 0, PAGE_SIZE);
+                    DirectArray a = new DirectArray(configuration)
+            ) {
+                ArrayRecord rec = new ArrayRecord();
+                final int rows = 8;
+                for (int r = 0; r < rows; r++) {
+                    // Each array spans several pages and grows per row, so the
+                    // payload region reallocs multiple times during the fill.
+                    set1d(a, doubleSeq(r, (int) PAGE_SIZE * (r + 1)));
+                    rec.of((r + 1) * 1_000_000L, a, null);
+                    buf.copyRowFromRecord(rec, r);
+                }
+                buf.setRowCount(rows);
+
+                for (int r = 0; r < rows; r++) {
+                    assertArray1dEquals(doubleSeq(r, (int) PAGE_SIZE * (r + 1)), buf.getArray(r, 1));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testArrayRoundTripThroughTier() throws Exception {
+        // Write DOUBLE[] (1-D) and DOUBLE[][] (2-D) rows - including a NULL array
+        // and an empty array - into a slot, publish, then read them back through the
+        // buffer's per-column BorrowedArray after a reader pins the published slot.
+        // Two array columns prove the per-column flyweight: an ArrayView from one
+        // column survives a getArray on the other (the reuse contract).
+        assertMemoryLeak(() -> {
+            IntList types = array1d2dSchema();
+            try (
+                    LiveViewInMemoryTier tier = new LiveViewInMemoryTier(types, 0, PAGE_SIZE);
+                    DirectArray a1 = new DirectArray(configuration);
+                    DirectArray a2 = new DirectArray(configuration)
+            ) {
+                int writeIdx = 1 - tier.getPublishedIdx();
+                LiveViewInMemoryBuffer slot = tier.tryAcquireWrite(writeIdx);
+                Assert.assertNotNull(slot);
+                ArrayRecord rec = new ArrayRecord();
+
+                // row 0: 1-D [1,2,3] + 2-D [[10,20],[30,40]].
+                set1d(a1, 1.0, 2.0, 3.0);
+                set2d(a2, 2, 2, 10.0, 20.0, 30.0, 40.0);
+                rec.of(1_000_000L, a1, a2);
+                slot.copyRowFromRecord(rec, 0);
+
+                // row 1: NULL 1-D + NULL 2-D.
+                a1.ofNull();
+                a2.ofNull();
+                rec.of(2_000_000L, a1, a2);
+                slot.copyRowFromRecord(rec, 1);
+
+                // row 2: empty 1-D [] + single-element 2-D [[7]].
+                set1d(a1);
+                set2d(a2, 1, 1, 7.0);
+                rec.of(3_000_000L, a1, a2);
+                slot.copyRowFromRecord(rec, 2);
+                slot.setRowCount(3);
+                tier.publishSwap(writeIdx);
+
+                int pin = tier.acquireRead();
+                Assert.assertEquals(writeIdx, pin);
+                LiveViewInMemoryBuffer r = tier.getSlot(pin);
+                Assert.assertEquals(3, r.rowCount());
+
+                // row 0: the 1-D and 2-D views are distinct per-column instances, so
+                // holding both at once does not clobber either.
+                ArrayView v1 = r.getArray(0, 1);
+                ArrayView v2 = r.getArray(0, 2);
+                assertArray1dEquals(new double[]{1.0, 2.0, 3.0}, v1);
+                Assert.assertEquals(2, v2.getDimCount());
+                Assert.assertEquals(2, v2.getDimLen(0));
+                Assert.assertEquals(2, v2.getDimLen(1));
+                Assert.assertEquals(10.0, v2.getDouble(0), 0.0);
+                Assert.assertEquals(20.0, v2.getDouble(1), 0.0);
+                Assert.assertEquals(30.0, v2.getDouble(2), 0.0);
+                Assert.assertEquals(40.0, v2.getDouble(3), 0.0);
+
+                // row 1: NULL arrays.
+                Assert.assertTrue(r.getArray(1, 1).isNull());
+                Assert.assertTrue(r.getArray(1, 2).isNull());
+
+                // row 2: empty 1-D (not null) + 2-D [[7]].
+                ArrayView e1 = r.getArray(2, 1);
+                Assert.assertFalse(e1.isNull());
+                Assert.assertTrue(e1.isEmpty());
+                ArrayView e2 = r.getArray(2, 2);
+                Assert.assertFalse(e2.isNull());
+                Assert.assertEquals(7.0, e2.getDouble(0), 0.0);
+
+                tier.releaseRead(pin);
+            }
+        });
+    }
+
+    @Test
+    public void testArraySlowPathSwapPreservesValues() throws Exception {
+        // The slow-path swap rebuilds a slot via copyRowFrom (buffer -> buffer),
+        // re-appending each retained ARRAY through the driver. Skipping rows
+        // (eviction) keeps the destination append dense, so the order assert holds
+        // and the copied values round-trip across the normal / null cases.
+        assertMemoryLeak(() -> {
+            IntList types = array1dSchema();
+            LiveViewInMemoryBuffer src = new LiveViewInMemoryBuffer(types, 0, PAGE_SIZE);
+            LiveViewInMemoryBuffer dst = new LiveViewInMemoryBuffer(types, 0, PAGE_SIZE);
+            try (DirectArray a = new DirectArray(configuration)) {
+                ArrayRecord rec = new ArrayRecord();
+                final int rows = 6;
+                for (int r = 0; r < rows; r++) {
+                    if (r % 3 == 0) {
+                        a.ofNull();
+                    } else {
+                        set1d(a, doubleSeq(r, r + 1));
+                    }
+                    rec.of((r + 1) * 1_000_000L, a, null);
+                    src.copyRowFromRecord(rec, r);
+                }
+                src.setRowCount(rows);
+
+                // Retain only the odd src rows, densely, into dst (mimics eviction).
+                long dstRow = 0;
+                for (int r = 1; r < rows; r += 2) {
+                    dst.copyRowFrom(src, r, dstRow);
+                    dstRow++;
+                }
+                dst.setRowCount(dstRow);
+                Assert.assertEquals(3, dst.rowCount());
+
+                dstRow = 0;
+                for (int r = 1; r < rows; r += 2) {
+                    if (r % 3 == 0) {
+                        Assert.assertTrue(dst.getArray(dstRow, 1).isNull());
+                    } else {
+                        assertArray1dEquals(doubleSeq(r, r + 1), dst.getArray(dstRow, 1));
+                    }
+                    dstRow++;
+                }
+            } finally {
+                src.close();
+                dst.close();
+            }
+        });
+    }
+
+    @Test
     public void testStringBinaryRegionReallocMidFill() throws Exception {
         // A value larger than the initial page forces the dataMem region to
         // realloc (moving its base address) mid-fill. The offset-based reads must
@@ -651,6 +807,30 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
         });
     }
 
+    private static IntList array1d2dSchema() {
+        IntList types = new IntList(3);
+        types.add(ColumnType.TIMESTAMP);
+        types.add(ColumnType.encodeArrayType(ColumnType.DOUBLE, 1));
+        types.add(ColumnType.encodeArrayType(ColumnType.DOUBLE, 2));
+        return types;
+    }
+
+    private static IntList array1dSchema() {
+        IntList types = new IntList(2);
+        types.add(ColumnType.TIMESTAMP);
+        types.add(ColumnType.encodeArrayType(ColumnType.DOUBLE, 1));
+        return types;
+    }
+
+    private static void assertArray1dEquals(double[] expected, ArrayView actual) {
+        Assert.assertFalse(actual.isNull());
+        Assert.assertEquals(1, actual.getDimCount());
+        Assert.assertEquals(expected.length, actual.getDimLen(0));
+        for (int i = 0; i < expected.length; i++) {
+            Assert.assertEquals("element " + i, expected[i], actual.getDouble(i), 0.0);
+        }
+    }
+
     private static void assertBinEquals(byte[] expected, BinarySequence actual) {
         Assert.assertNotNull(actual);
         Assert.assertEquals(expected.length, actual.length());
@@ -667,10 +847,41 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
         return b;
     }
 
+    private static double[] doubleSeq(int seed, int len) {
+        double[] a = new double[len];
+        for (int i = 0; i < len; i++) {
+            a[i] = seed + i + 0.5;
+        }
+        return a;
+    }
+
     private static String repeat(char c, int len) {
         char[] a = new char[len];
         java.util.Arrays.fill(a, c);
         return new String(a);
+    }
+
+    // Populates a 1-D DOUBLE[] in row-major order (empty when vals is empty).
+    private static void set1d(DirectArray a, double... vals) {
+        a.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 1));
+        a.setDimLen(0, vals.length);
+        a.applyShape();
+        MemoryA m = a.startMemoryA();
+        for (double v : vals) {
+            m.putDouble(v);
+        }
+    }
+
+    // Populates a 2-D DOUBLE[][] of shape (d0, d1) in row-major order.
+    private static void set2d(DirectArray a, int d0, int d1, double... vals) {
+        a.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 2));
+        a.setDimLen(0, d0);
+        a.setDimLen(1, d1);
+        a.applyShape();
+        MemoryA m = a.startMemoryA();
+        for (double v : vals) {
+            m.putDouble(v);
+        }
     }
 
     private static IntList singleLongCol() {
@@ -702,6 +913,31 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
         }
         // Odd rows are short (fully inlined); a longer row spills to the data region.
         return (r % 2 == 0) ? "v" + r : "v" + r + repeat('x', VarcharTypeDriver.VARCHAR_MAX_BYTES_FULLY_INLINED + r);
+    }
+
+    // Minimal single-row Record stub feeding copyRowFromRecord a TIMESTAMP (index
+    // 0) and up to two ARRAY columns (a 1-D at index 1, a 2-D at index 2). Rebind
+    // per row via of(); a null arr2d serves the 1-D-only schemas.
+    private static final class ArrayRecord implements Record {
+        private ArrayView arr1d;
+        private ArrayView arr2d;
+        private long ts;
+
+        @Override
+        public ArrayView getArray(int col, int columnType) {
+            return col == 1 ? arr1d : arr2d;
+        }
+
+        @Override
+        public long getTimestamp(int col) {
+            return ts;
+        }
+
+        void of(long ts, ArrayView arr1d, ArrayView arr2d) {
+            this.ts = ts;
+            this.arr1d = arr1d;
+            this.arr2d = arr2d;
+        }
     }
 
     // Minimal single-row Record stub feeding copyRowFromRecord a TIMESTAMP, a

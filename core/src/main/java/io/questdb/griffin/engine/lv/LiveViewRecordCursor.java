@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.lv;
 
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.lv.LiveViewInMemoryBuffer;
 import io.questdb.cairo.lv.LiveViewInMemoryTier;
 import io.questdb.cairo.lv.LiveViewInstance;
@@ -472,18 +473,43 @@ public class LiveViewRecordCursor implements RecordCursor {
      * so a committed id resolves against the disk reader's table and a lead-only id
      * against the tier's symbol cache.
      * <p>
-     * The STRING, BINARY and VARCHAR accessors read from the pinned buffer's per-row
-     * offset/header vector while in in-mem mode, mirroring the fixed-width accessors.
-     * The remaining var-length accessor (ARRAY) inherits the disk-only delegation:
-     * that column prevents the in-mem tier from being allocated in the first place
-     * (see {@link LiveViewInMemoryBuffer#areColumnTypesSupported}), so
-     * {@code inMemMode == true} is unreachable for LVs whose schema contains it.
+     * The STRING, BINARY, VARCHAR and ARRAY accessors read from the pinned buffer's
+     * per-row offset/header vector while in in-mem mode, mirroring the fixed-width
+     * accessors. ARRAY also overrides {@link #getArrayDouble1d2d}, the direct-index
+     * fast path a nested {@code SELECT arr[i] FROM (SELECT * FROM lv)} can reach
+     * through the routed cursor, so it reads from RAM too rather than delegating to
+     * the disk record.
      */
     private static class MergedRecord extends DelegatingRecord {
         private LiveViewInMemoryBuffer buffer;
         private long bufferRow;
         private RecordCursor cursor;
         private boolean inMemMode;
+
+        @Override
+        public ArrayView getArray(int col, int columnType) {
+            return inMemMode ? buffer.getArray(bufferRow, col) : super.getArray(col, columnType);
+        }
+
+        @Override
+        public double getArrayDouble1d2d(int col, int columnType, int idx0, int idx1) {
+            if (!inMemMode) {
+                return super.getArrayDouble1d2d(col, columnType, idx0, idx1);
+            }
+            // Mirror Record's default getArrayDouble1d2d over the buffer's array view
+            // (DelegatingRecord's override would otherwise index the disk record).
+            final ArrayView array = buffer.getArray(bufferRow, col);
+            if (array.isNull() || idx0 >= array.getDimLen(0)) {
+                return Double.NaN;
+            }
+            if (array.getDimCount() == 1) {
+                return array.getDouble(idx0);
+            }
+            if (idx1 >= array.getDimLen(1)) {
+                return Double.NaN;
+            }
+            return array.getDouble(idx0 * array.getStride(0) + idx1);
+        }
 
         @Override
         public BinarySequence getBin(int col) {

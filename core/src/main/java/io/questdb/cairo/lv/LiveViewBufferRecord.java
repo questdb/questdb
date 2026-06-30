@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.lv;
 
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.ObjList;
@@ -36,10 +37,9 @@ import io.questdb.std.str.Utf8Sequence;
  * the same way the refresh path feeds it a window-cursor record: the copier copies
  * the un-flushed lead rows out of the in-mem tier into the LV's {@code WalWriter}
  * row, so the byte-level serialisation matches the inline-apply write path exactly.
- * The fixed-width / SYMBOL accessors plus the STRING, BINARY and VARCHAR accessors
- * the tier stores are overridden; the remaining var-length accessor (ARRAY) inherits
- * the throwing default, which the copier never reaches because the tier rejects that
- * column type up front
+ * The fixed-width / SYMBOL accessors plus the STRING, BINARY, VARCHAR and ARRAY
+ * accessors the tier stores are overridden, each delegating to the buffer's typed
+ * getter, so the copier serialises every supported column type out of RAM
  * (see {@link LiveViewInMemoryBuffer#areColumnTypesSupported}).
  * <p>
  * Single-threaded, reused: {@link #of(LiveViewInMemoryBuffer, long)} rebinds the
@@ -53,6 +53,11 @@ public class LiveViewBufferRecord implements Record {
     // re-interns it into the WAL. Null (or a null per-column entry) for non-SYMBOL
     // columns; the copier only calls getSymA on a SYMBOL source column.
     private ObjList<LiveViewSymbolTable> symbolResolvers;
+
+    @Override
+    public ArrayView getArray(int col, int columnType) {
+        return buffer.getArray(row, col);
+    }
 
     @Override
     public BinarySequence getBin(int col) {
