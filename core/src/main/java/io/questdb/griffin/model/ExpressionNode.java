@@ -31,6 +31,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
 import io.questdb.std.ObjectPool;
@@ -365,6 +366,16 @@ public class ExpressionNode implements Mutable, Sinkable {
      * <p>The rewrite is purely structural: it relinks existing {@link ExpressionNode}
      * instances without allocating new nodes.</p>
      *
+     * <p>One numeric guard applies: a constant pair is not regrouped when one
+     * constant is integer-typed and the other floating-point. Combining them
+     * (e.g. {@code 3 + 0.0 -> 3.0}) widens the inner operation to floating point,
+     * so {@code (intCol + 3) + 0.0} would become {@code intCol + 3.0} and evaluate
+     * {@code intCol + 3} at double width -- silently dropping the INT overflow wrap
+     * the un-regrouped form (and the constant-folded literal) produces. Integer
+     * pairs stay correct because integer addition is associative modulo 2^32 and
+     * INT-to-LONG widening reads the same value via getLong(); floating pairs are
+     * already evaluated at floating-point width.</p>
+     *
      * @return {@code true} if this subtree is entirely constant (every leaf is a
      * constant and every interior node is a binary operation on constants),
      * {@code false} otherwise
@@ -417,26 +428,30 @@ public class ExpressionNode implements Mutable, Sinkable {
                 && lhs.token.equals(token)) {
             if (lhs.rhs.isConstantExpression) {
                 // Pattern A: (A op C1) op C2 → A op (C1 op C2)
-                ExpressionNode inner = lhs;
-                ExpressionNode a = inner.lhs;
-                ExpressionNode c1 = inner.rhs;
-                ExpressionNode c2 = rhs;
-                this.lhs = a;
-                this.rhs = inner;
-                inner.lhs = c1;
-                inner.rhs = c2;
-                inner.isConstantExpression = true;
+                if (!mixesIntegerAndFloatingPoint(lhs.rhs, rhs)) {
+                    ExpressionNode inner = lhs;
+                    ExpressionNode a = inner.lhs;
+                    ExpressionNode c1 = inner.rhs;
+                    ExpressionNode c2 = rhs;
+                    this.lhs = a;
+                    this.rhs = inner;
+                    inner.lhs = c1;
+                    inner.rhs = c2;
+                    inner.isConstantExpression = true;
+                }
             } else if (op.isCommutative() && lhs.lhs.isConstantExpression) {
                 // Pattern B: (C1 op A) op C2 → A op (C1 op C2)
-                ExpressionNode inner = lhs;
-                ExpressionNode c1 = inner.lhs;
-                ExpressionNode a = inner.rhs;
-                ExpressionNode c2 = rhs;
-                this.lhs = a;
-                this.rhs = inner;
-                inner.lhs = c1;
-                inner.rhs = c2;
-                inner.isConstantExpression = true;
+                if (!mixesIntegerAndFloatingPoint(lhs.lhs, rhs)) {
+                    ExpressionNode inner = lhs;
+                    ExpressionNode c1 = inner.lhs;
+                    ExpressionNode a = inner.rhs;
+                    ExpressionNode c2 = rhs;
+                    this.lhs = a;
+                    this.rhs = inner;
+                    inner.lhs = c1;
+                    inner.rhs = c2;
+                    inner.isConstantExpression = true;
+                }
             }
 
             return false;
@@ -447,21 +462,25 @@ public class ExpressionNode implements Mutable, Sinkable {
                 && rhs.token.equals(token)) {
             if (op.isCommutative() && rhs.rhs.isConstantExpression) {
                 // Mirror A: C2 op (A op C1) → A op (C2 op C1)
-                ExpressionNode inner = rhs;
-                ExpressionNode c2 = lhs;
-                this.lhs = inner.lhs;
-                inner.lhs = c2;
-                inner.isConstantExpression = true;
+                if (!mixesIntegerAndFloatingPoint(lhs, rhs.rhs)) {
+                    ExpressionNode inner = rhs;
+                    ExpressionNode c2 = lhs;
+                    this.lhs = inner.lhs;
+                    inner.lhs = c2;
+                    inner.isConstantExpression = true;
+                }
             } else if (rhs.lhs.isConstantExpression) {
                 // Mirror B: C2 op (C1 op A) → (C2 op C1) op A
-                ExpressionNode inner = rhs;
-                ExpressionNode c2 = lhs;
-                ExpressionNode c1 = inner.lhs;
-                this.rhs = inner.rhs;
-                this.lhs = inner;
-                inner.lhs = c2;
-                inner.rhs = c1;
-                inner.isConstantExpression = true;
+                if (!mixesIntegerAndFloatingPoint(lhs, rhs.lhs)) {
+                    ExpressionNode inner = rhs;
+                    ExpressionNode c2 = lhs;
+                    ExpressionNode c1 = inner.lhs;
+                    this.rhs = inner.rhs;
+                    this.lhs = inner;
+                    inner.lhs = c2;
+                    inner.rhs = c1;
+                    inner.isConstantExpression = true;
+                }
             }
         }
 
@@ -652,6 +671,62 @@ public class ExpressionNode implements Mutable, Sinkable {
             }
         }
         return true;
+    }
+
+    /**
+     * Reports whether a constant node resolves to a floating-point value. A
+     * constant arithmetic subtree is floating point when any of its leaves is,
+     * since +, -, *, / promote to floating point when either operand is. Used by
+     * {@link #reassociateConstants} to keep an integer constant from being
+     * regrouped with a floating-point one.
+     */
+    private static boolean isFloatingPointConstant(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == CONSTANT) {
+            return isFloatingPointConstantToken(node.token);
+        }
+        return isFloatingPointConstant(node.lhs) || isFloatingPointConstant(node.rhs);
+    }
+
+    /**
+     * Classifies a constant token as floating point, mirroring the type
+     * precedence in {@link io.questdb.griffin.FunctionParser} (INT, then LONG,
+     * then DOUBLE, then FLOAT): a token that parses as an integer is not floating
+     * point; otherwise it is floating point only if it parses as DOUBLE or FLOAT.
+     * A non-numeric token (string, geohash, type keyword, ...) is not floating
+     * point.
+     */
+    private static boolean isFloatingPointConstantToken(CharSequence token) {
+        try {
+            // parseLong accepts every token parseInt does, plus the 'L' suffix.
+            Numbers.parseLong(token);
+            return false;
+        } catch (NumericException notInteger) {
+            // not an integer literal; fall through
+        }
+        try {
+            Numbers.parseDouble(token);
+            return true;
+        } catch (NumericException notDouble) {
+            // not a double literal; fall through
+        }
+        try {
+            Numbers.parseFloat(token);
+            return true;
+        } catch (NumericException notFloat) {
+            return false;
+        }
+    }
+
+    /**
+     * Reports whether exactly one of the two constants is floating-point and the
+     * other integer. Regrouping such a pair would widen an integer operation to
+     * floating point and drop an INT overflow wrap; see {@link #reassociateConstants}.
+     */
+    private static boolean mixesIntegerAndFloatingPoint(ExpressionNode a, ExpressionNode b) {
+        return isFloatingPointConstant(a) != isFloatingPointConstant(b);
     }
 
     private static void toSink(CharSink<?> sink, ExpressionNode e) {

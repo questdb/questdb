@@ -54,6 +54,34 @@ public class ConstantReassociationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIntegerFloatingPointMixIsNotReassociated() throws Exception {
+        // Regrouping an integer constant with a floating-point one widens the
+        // inner operation to floating point. For an INT column that overflows,
+        // (col + intConst) wraps mod 2^32, but col + (intConst + floatConst) does
+        // not -- it evaluates at double width. The literal form folds the inner
+        // INT arithmetic and wraps, so reassociating only the column form makes
+        // the two disagree. These shapes must therefore stay un-regrouped.
+        assertReassociation("d + 3 + 0.0", "d + 3 + 0.0");
+        assertReassociation("d + 3 + 0.0f", "d + 3 + 0.0f");
+        assertReassociation("d * 3 * 2.0", "d * 3 * 2.0");
+        // Pattern B (commutative): (C1 op col) op floatConst
+        assertReassociation("(3 + d) + 0.0", "3 + d + 0.0");
+        // Mirror A (commutative): floatConst op (col op C1)
+        assertReassociation("0.0 + (d + 3)", "0.0 + (d + 3)");
+        // Mirror B (associative): floatConst op (C1 op col)
+        assertReassociation("0.0 + (3 + d)", "0.0 + (3 + d)");
+
+        // Same-category pairs still regroup. Integer pairs are safe because
+        // integer addition is associative modulo 2^32 and INT-to-LONG widening
+        // reads the same value via getLong(); floating pairs evaluate at floating
+        // point regardless of grouping.
+        assertReassociation("d + 3 + 4", "d + (3 + 4)");
+        assertReassociation("d + 3 + 4L", "d + (3 + 4L)");
+        assertReassociation("d + 1.0 + 2.0", "d + (1.0 + 2.0)");
+        assertReassociation("d + 1.0 + 2.0f", "d + (1.0 + 2.0f)");
+    }
+
+    @Test
     public void testLogicalAndOrReassociation() throws Exception {
         // AND — Pattern A: (col AND C1) AND C2
         assertReassociation("a and true and true", "a and (true and true)");

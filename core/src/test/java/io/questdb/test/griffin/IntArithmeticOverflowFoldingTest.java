@@ -106,6 +106,48 @@ public class IntArithmeticOverflowFoldingTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testImplicitDoublePromotionWrapsLikeConstantAndColumn() throws Exception {
+        // (intCol + intConst) + floatConst: the constant-reassociation pass used to
+        // regroup the column form into intCol + (intConst + floatConst), folding the
+        // two constants to a single DOUBLE and evaluating intCol + intConst at double
+        // width -- so an overflowing INT addition widened instead of wrapping. The
+        // literal form folds the inner INT arithmetic first (wrapping) and never
+        // regroups, so the two diverged. The reassociation now leaves an integer/
+        // floating-point constant pair un-regrouped, so both paths wrap alike. An
+        // explicit cast still widens, and a LONG constant still widens on both paths.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE u (y INT, a INT)");
+            execute("INSERT INTO u VALUES (2147483647, 100000)");
+
+            // implicit DOUBLE promotion wraps on both the constant and column paths
+            assertQuery("SELECT (2147483647 + 3) + 0.0 AS v").expectSize().returns("v\n-2.147483646E9\n");
+            assertQuery("SELECT (y + 3) + 0.0 AS v FROM u").expectSize().returns("v\n-2.147483646E9\n");
+
+            // commutative (constant on the left) and the mirror shape agree too
+            assertQuery("SELECT (3 + 2147483647) + 0.0 AS v").expectSize().returns("v\n-2.147483646E9\n");
+            assertQuery("SELECT (3 + y) + 0.0 AS v FROM u").expectSize().returns("v\n-2.147483646E9\n");
+            assertQuery("SELECT 0.0 + (2147483647 + 3) AS v").expectSize().returns("v\n-2.147483646E9\n");
+            assertQuery("SELECT 0.0 + (y + 3) AS v FROM u").expectSize().returns("v\n-2.147483646E9\n");
+
+            // FLOAT promotion wraps alike (-2147483646 rounds to -2.1474836E9)
+            assertQuery("SELECT (2147483647 + 3) + 0.0f AS v").expectSize().returns("v\n-2.1474836E9\n");
+            assertQuery("SELECT (y + 3) + 0.0f AS v FROM u").expectSize().returns("v\n-2.1474836E9\n");
+
+            // multiplication overflow under a DOUBLE promotion wraps alike
+            assertQuery("SELECT (100000 * 100000) * 2.0 AS v").expectSize().returns("v\n2.820130816E9\n");
+            assertQuery("SELECT (a * 100000) * 2.0 AS v FROM u").expectSize().returns("v\n2.820130816E9\n");
+
+            // an explicit wider cast still widens on both paths (unchanged)
+            assertQuery("SELECT (2147483647 + 3)::DOUBLE AS v").expectSize().returns("v\n2.14748365E9\n");
+            assertQuery("SELECT (y + 3)::DOUBLE AS v FROM u").expectSize().returns("v\n2.14748365E9\n");
+
+            // a LONG constant still combines and widens identically on both paths
+            assertQuery("SELECT (2147483647 + 3) + 0L AS v").expectSize().returns("v\n2147483650\n");
+            assertQuery("SELECT (y + 3) + 0L AS v FROM u").expectSize().returns("v\n2147483650\n");
+        });
+    }
+
+    @Test
     public void testRuntimeConstDivisionWrapsLikeColumnAndLiteral() throws Exception {
         // IntRuntimeConstFunction memoizes a composite runtime-const INT subtree. For + - *
         // (int) getLong() == getInt() (a modular ring homomorphism: the low 32 bits of the
