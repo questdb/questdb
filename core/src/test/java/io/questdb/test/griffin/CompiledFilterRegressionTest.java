@@ -1041,6 +1041,36 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInOperatorOverflowFoldMatchesJavaOnNarrowKeyWithLongElement() throws Exception {
+        // C4 regression: a narrow/INT KEY IN() list that mixes an overflowing INT-arithmetic
+        // element with a genuine-LONG element. The Java InLong path reads the INT element at
+        // the narrow key's width (getInt -> wrap), so the JIT must too. But
+        // markI64WidenFoldRoots used to fold ONE comparison width across the whole IN list,
+        // so a single coexisting LONG element (3000000000) promoted the list to I8 and WIDENED
+        // the overflowing INT element to its full-width product -- the JIT then read 10^12
+        // while the Java filter wrapped to -727379968 == the stored key, so the row matched in
+        // Java but not in the JIT. The width is now derived per element (key vs that element),
+        // so the INT element wraps (matching the key) while the LONG element stays at long
+        // width (and never matches the narrow key either way).
+        assertMemoryLeak(() -> {
+            execute("create table x as (select cast(-727379968 as int) c)"); // -727379968 = (int)(1000000*1000000)
+
+            // overflow-INT element coexists with a genuine-LONG element against the narrow key.
+            assertJitMatchesJava("x where c in (1000000 * 1000000, 3000000000)", true);        // RED on HEAD
+            assertJitMatchesJava("x where c in (3000000000, 1000000 * 1000000)", true);        // element order swapped
+            assertJitMatchesJava("x where c in (1, 1000000 * 1000000, 3000000000)", true);     // plus a plain element
+            assertJitMatchesJava("x where c not in (1000000 * 1000000, 3000000000)", true);    // inverse
+
+            // The Java (JIT-disabled) path is the oracle: c matches the wrapped INT element only.
+            Assert.assertEquals(1, runQuery("x where c in (1000000 * 1000000, 3000000000)"));
+            Assert.assertEquals(0, runQuery("x where c not in (1000000 * 1000000, 3000000000)"));
+
+            // control: an all-INT list against the narrow key already wrapped correctly.
+            assertJitMatchesJava("x where c in (1, 1000000 * 1000000)", true);
+        });
+    }
+
+    @Test
     public void testInOperatorSingleValue() throws Exception {
         // Tests single-value IN() which has a special unrolled code path in CompiledFilterIRSerializer
         final String ddl = "create table x as " +

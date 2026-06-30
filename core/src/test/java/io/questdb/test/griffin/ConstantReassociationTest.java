@@ -54,6 +54,44 @@ public class ConstantReassociationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDivisionModuloPairWrappingToIntNullIsNotReassociated() throws Exception {
+        // DivInt / RemInt are INT-typed and propagate INT_NULL just like + - *, so a
+        // constant pair element built with '/' or '%' that folds to the INT_NULL sentinel
+        // (-2^31) must keep the pair un-regrouped. The fold used to model only + - * & | ^,
+        // so a '/' or '%' element made intConstFold bail and the guard missed the poison;
+        // it now models '/' and '%' (a zero divisor folds to INT_NULL, like DivInt#getInt).
+
+        // division: 2147483647 + (2 / 2) = 2147483647 + 1 wraps to -2^31 == INT_NULL
+        assertReassociationNoOp("d + 2147483647 + (2 / 2)");
+        // modulo: 2147483646 + (5 % 3) = 2147483646 + 2 wraps to -2^31 == INT_NULL
+        assertReassociationNoOp("d + 2147483646 + (5 % 3)");
+
+        // control: a '/' element pair that does NOT hit the sentinel still regroups normally
+        assertReassociation("d + 1000 + (6 / 2)", "d + (1000 + 6 / 2)");
+    }
+
+    @Test
+    public void testIntegerDecimalMixIsNotReassociated() throws Exception {
+        // Regrouping an integer constant with a DECIMAL one widens the inner operation to
+        // DECIMAL. For an INT column that overflows, (col + intConst) wraps mod 2^32, but
+        // col + (intConst + decimalConst) does not -- it evaluates at DECIMAL width. The
+        // widening guard classified only DOUBLE / FLOAT, so a DECIMAL literal ('m' suffix)
+        // looked non-widening and the int/decimal pair regrouped. It now recognizes DECIMAL.
+        assertReassociationNoOp("d + 3 + 1.5m");
+        assertReassociationNoOp("d * 3 * 2.0m");
+        // Pattern B (commutative): (C1 op col) op decimalConst
+        assertReassociationNoOp("(3 + d) + 1.5m");
+        // Mirror A (commutative): decimalConst op (col op C1)
+        assertReassociationNoOp("1.5m + (d + 3)");
+        // Mirror B (associative): decimalConst op (C1 op col)
+        assertReassociationNoOp("1.5m + (3 + d)");
+
+        // Same-category DECIMAL pairs still regroup; a DECIMAL evaluates at DECIMAL width
+        // regardless of grouping.
+        assertReassociation("d + 1.5m + 2.5m", "d + (1.5m + 2.5m)");
+    }
+
+    @Test
     public void testIntegerFloatingPointMixIsNotReassociated() throws Exception {
         // Regrouping an integer constant with a floating-point one widens the
         // inner operation to floating point. For an INT column that overflows,
@@ -108,7 +146,7 @@ public class ConstantReassociationTest extends AbstractCairoTest {
         // minus binds as a unary operator, so neither operand is marked constant and the pair
         // never reaches the INT_NULL guard. It stays un-regrouped for that reason instead, and
         // still avoids the poison. (See the "unary-minus escapes the guard" note: safe because
-        // reassociation never fires here, not because integerPairFoldsToIntNull caught it.)
+        // reassociation never fires here, not because integerPairFoldsToNull caught it.)
         assertReassociation("d + -2147483647 + -1", "d + -(2147483647) + -(1)");
 
         // control: a pair that does NOT fold to INT_NULL still regroups normally
@@ -129,6 +167,23 @@ public class ConstantReassociationTest extends AbstractCairoTest {
 
         // OR — Mirror A: C2 OR (col OR C1) (commutative)
         assertReassociation("true or (a or false)", "a or (true or false)");
+    }
+
+    @Test
+    public void testLongPairWrappingToLongNullIsNotReassociated() throws Exception {
+        // A LONG (or INT+LONG) constant pair whose LONG-width fold lands exactly on the
+        // LONG_NULL sentinel (-2^63) must not be regrouped: col op (C1 op C2) = col op
+        // LONG_NULL poisons every row to NULL, while the left-associative form keeps the
+        // real wrapped value. intConstFold rejects LONG-range / L-suffixed literals, so the
+        // INT_NULL guard never saw a LONG pair; the guard now also folds at LONG width.
+
+        // 9223372036854775807 + 1 wraps to -2^63 == LONG_NULL
+        assertReassociationNoOp("l + 9223372036854775807 + 1");
+        // L-suffixed operands fold the same way: 9223372036854775806L + 2L -> LONG_NULL
+        assertReassociationNoOp("l + 9223372036854775806L + 2L");
+
+        // control: a LONG pair that does NOT hit the sentinel still regroups normally
+        assertReassociation("l + 9000000000000000000 + 100", "l + (9000000000000000000 + 100)");
     }
 
     @Test
@@ -216,6 +271,28 @@ public class ConstantReassociationTest extends AbstractCairoTest {
             sink.clear();
             node.toSink(sink);
             TestUtils.assertEquals(expectedExpr, sink);
+        }
+    }
+
+    /**
+     * Asserts that {@link ExpressionNode#reassociateConstants} leaves the parsed tree
+     * structurally unchanged (a no-op), comparing its canonical rendering before and
+     * after. Used for the guard cases that must NOT regroup; avoids hand-predicting the
+     * canonical string, and goes RED if the guard ever lets the regroup through.
+     */
+    private void assertReassociationNoOp(String inputExpr) throws SqlException {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            ExpressionTreeBuilder listener = new ExpressionTreeBuilder();
+            compiler.testParseExpression(inputExpr, listener);
+            ExpressionNode node = listener.poll();
+            assert node != null;
+            sink.clear();
+            node.toSink(sink);
+            final String before = sink.toString();
+            node.reassociateConstants(false);
+            sink.clear();
+            node.toSink(sink);
+            TestUtils.assertEquals("reassociation must be a no-op for: " + inputExpr, before, sink);
         }
     }
 }

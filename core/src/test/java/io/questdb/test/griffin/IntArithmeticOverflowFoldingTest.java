@@ -152,6 +152,61 @@ public class IntArithmeticOverflowFoldingTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReassociationDivModPairWrappingToIntNullWrapsLikeColumnAndLiteral() throws Exception {
+        // (intCol + C1) + (C2 / C3) -- the inner constant element uses '/' (DivInt) or
+        // '%' (RemInt). Both are INT-typed and propagate INT_NULL exactly like + - *, so a
+        // regrouped pair (C1 + (C2 op C3)) can land on the INT_NULL sentinel and poison the
+        // column to NULL. reassociateConstants modeled only + - * & | ^ when folding the
+        // pair, so a '/' or '%' element made the fold bail and the guard missed the poison.
+        // The fold now covers '/' and '%' (zero divisor -> INT_NULL), so the pair stays
+        // un-regrouped and both paths keep the real wrapped value.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x INT)");
+            execute("INSERT INTO t VALUES (2)");
+
+            // division: 2147483647 + (2 / 2) = 2147483647 + 1 wraps to -2^31 == INT_NULL
+            assertQuery("SELECT (2 + 2147483647) + (2 / 2) AS v").noLeakCheck().expectSize().returns("v\n-2147483646\n");
+            assertQuery("SELECT (x + 2147483647) + (2 / 2) AS v FROM t").noLeakCheck().expectSize().returns("v\n-2147483646\n");
+
+            // modulo: the regrouped pair 2147483647 + (7 % 2) = 2147483647 + 1 wraps to
+            // -2^31 == INT_NULL, while the left-associative x + 2147483647 = -2147483647 does
+            // NOT hit the sentinel, so the un-regrouped form keeps the real wrapped value.
+            assertQuery("SELECT (2 + 2147483647) + (7 % 2) AS v").noLeakCheck().expectSize().returns("v\n-2147483646\n");
+            assertQuery("SELECT (x + 2147483647) + (7 % 2) AS v FROM t").noLeakCheck().expectSize().returns("v\n-2147483646\n");
+
+            // control: a '/' element pair that does NOT hit the sentinel still regroups and stays correct
+            assertQuery("SELECT (2 + 1000) + (6 / 2) AS v").noLeakCheck().expectSize().returns("v\n1005\n");
+            assertQuery("SELECT (x + 1000) + (6 / 2) AS v FROM t").noLeakCheck().expectSize().returns("v\n1005\n");
+        });
+    }
+
+    @Test
+    public void testReassociationIntDecimalMixWrapsLikeColumnAndLiteral() throws Exception {
+        // (intCol + intConst) + decimalConst: the constant-reassociation pass used to regroup
+        // the column form into intCol + (intConst + decimalConst), folding the two constants to
+        // a single DECIMAL and evaluating intCol + intConst at DECIMAL width -- so an
+        // overflowing INT addition widened instead of wrapping. The literal form folds the
+        // inner INT arithmetic first (wrapping) and never regroups, so the two diverged. The
+        // widening guard classified only DOUBLE / FLOAT; it now recognizes DECIMAL ('m' suffix)
+        // too, so both paths wrap alike. A DECIMAL-only pair still combines.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ic INT)");
+            execute("INSERT INTO t VALUES (2)");
+
+            // implicit DECIMAL promotion wraps on both the constant and column paths
+            assertQuery("SELECT (2 + 2147483647) + 1.5m AS v").noLeakCheck().expectSize().returns("v\n-2147483645.5\n");
+            assertQuery("SELECT (ic + 2147483647) + 1.5m AS v FROM t").noLeakCheck().expectSize().returns("v\n-2147483645.5\n");
+
+            // commutative (constant on the left) and the mirror shape agree too
+            assertQuery("SELECT (2147483647 + ic) + 1.5m AS v FROM t").noLeakCheck().expectSize().returns("v\n-2147483645.5\n");
+            assertQuery("SELECT 1.5m + (ic + 2147483647) AS v FROM t").noLeakCheck().expectSize().returns("v\n-2147483645.5\n");
+
+            // a DECIMAL-only pair (no integer mixing) still combines and stays correct
+            assertQuery("SELECT (ic + 1.5m) + 2.5m AS v FROM t").noLeakCheck().expectSize().returns("v\n6.0\n");
+        });
+    }
+
+    @Test
     public void testReassociationIntPairWrappingToIntNullWrapsLikeColumnAndLiteral() throws Exception {
         // (intCol op C1) op C2 where the regrouped constant pair (C1 op C2) wraps exactly
         // onto the INT_NULL sentinel (-2^31). The constant-reassociation pass used to hoist
@@ -193,6 +248,29 @@ public class IntArithmeticOverflowFoldingTest extends AbstractCairoTest {
             // control: a pair that does not fold to INT_NULL still regroups and stays correct
             assertQuery("SELECT (5 + 3) + 4 AS v").noLeakCheck().expectSize().returns("v\n12\n");
             assertQuery("SELECT (i + 3) + 4 AS v FROM u").noLeakCheck().expectSize().returns("v\n12\n");
+        });
+    }
+
+    @Test
+    public void testReassociationLongPairWrappingToLongNullWrapsLikeColumnAndLiteral() throws Exception {
+        // (longCol + C1) + C2 where the regrouped LONG constant pair (C1 + C2) wraps exactly
+        // onto the LONG_NULL sentinel (-2^63). intConstFold rejects LONG-range / L-suffixed
+        // literals (parseInt throws), so the INT_NULL guard never saw a LONG pair and the
+        // poison slipped through: the column read LONG_NULL while the left-associative literal
+        // kept the real wrapped value. The guard now also folds at LONG width and blocks a pair
+        // that lands on LONG_NULL, so both paths agree. (This shape diverged before this PR too;
+        // it is the LONG-width sibling of the INT_NULL guard, fixed in the same place.)
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (lc LONG)");
+            execute("INSERT INTO t VALUES (5)");
+
+            // 9223372036854775807 + 1 wraps to -2^63 == LONG_NULL
+            assertQuery("SELECT (5 + 9223372036854775807) + 1 AS v").noLeakCheck().expectSize().returns("v\n-9223372036854775803\n");
+            assertQuery("SELECT (lc + 9223372036854775807) + 1 AS v FROM t").noLeakCheck().expectSize().returns("v\n-9223372036854775803\n");
+
+            // control: a LONG pair that does NOT hit the sentinel still regroups and stays correct
+            assertQuery("SELECT (5 + 9000000000000000000) + 100 AS v").noLeakCheck().expectSize().returns("v\n9000000000000000105\n");
+            assertQuery("SELECT (lc + 9000000000000000000) + 100 AS v FROM t").noLeakCheck().expectSize().returns("v\n9000000000000000105\n");
         });
     }
 

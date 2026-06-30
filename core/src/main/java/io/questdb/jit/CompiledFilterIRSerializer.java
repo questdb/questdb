@@ -1184,10 +1184,15 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * beneath it via {@link #genuineArithType}.
      * <p>
      * An IN / NOT IN list is an {@link ExpressionNode#FUNCTION} node, not an
-     * OPERATION, so it is let through to the boundary handling as well. Its
-     * operands live in {@code args} with {@code lhs} / {@code rhs} null for the
-     * multi-value form, so the comparison width is derived across all operands
-     * via {@link #foldCmpType}, which treats a non-numeric operand as identity
+     * OPERATION, so it is let through to the boundary handling as well. A value
+     * list of two or more elements keeps its operands in {@code args} as
+     * {@code [elements..., key]} (key last, {@code lhs} / {@code rhs} null); each
+     * element compares against the key independently (OR of equals), so its width
+     * is derived per element from key-vs-element via {@link #foldCmpType} -- a
+     * coexisting genuine-LONG element must not promote (and widen) an overflowing
+     * INT element that the key compares at INT width. The single-value form keeps
+     * its key / element in {@code lhs} / {@code rhs} (args empty) and is paired by
+     * the comparison handling, which treats a non-numeric operand as identity
      * rather than letting it absorb the width to UNDEFINED.
      */
     private void markI64WidenFoldRoots(ExpressionNode node, boolean underGenuineLong) {
@@ -1210,6 +1215,28 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             }
             markI64WidenFoldRoots(node.lhs, nodeGenuineLong);
             markI64WidenFoldRoots(node.rhs, nodeGenuineLong);
+            return;
+        }
+        // An IN value list (args = [elements..., key], the key last) is an OR of
+        // independent equality checks. Derive each element's fold width from
+        // key-vs-that-element, NOT from one width folded across the whole list: a
+        // narrow / INT key compares (and wraps, via getInt) an overflowing INT
+        // element even when a coexisting genuine-LONG element would, on its own, be
+        // read at long width. A single list-wide width would let that LONG element
+        // promote the INT element to I8 and widen it, diverging from the Java InLong
+        // path that wraps it. The single-value IN keeps its key / element in lhs /
+        // rhs (args empty) and falls through to the comparison handling below, which
+        // already pairs exactly those two.
+        if (node.type == ExpressionNode.FUNCTION && SqlKeywords.isInKeyword(node.token) && node.args.size() > 0) {
+            final ExpressionNode key = node.args.getLast();
+            final int keyType = genuineArithType(key);
+            for (int i = 0, n = node.args.size() - 1; i < n; i++) {
+                final ExpressionNode element = node.args.getQuick(i);
+                markI64WidenFoldRoots(element, foldCmpType(keyType, element) == I8_TYPE);
+            }
+            // The key reads at its own genuine width (a narrow / INT key wraps, a
+            // LONG key widens); the elements never promote it.
+            markI64WidenFoldRoots(key, false);
             return;
         }
         int cmpType = foldCmpType(UNDEFINED_CODE, node.lhs);
