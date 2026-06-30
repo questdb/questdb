@@ -155,7 +155,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                     try {
                         int resolvedPartitionBy = partitionBy == -1 ? PartitionBy.NONE : partitionBy;
                         if (resolvedPartitionBy == PartitionBy.NONE) {
-                            exportMode = ParquetExportMode.determineExportMode(rcf, false);
+                            exportMode = ParquetExportMode.determineExportMode(rcf, false, executionContext);
                         } else {
                             // Re-partitioning always requires a temp table
                             exportMode = ParquetExportMode.TEMP_TABLE;

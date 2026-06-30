@@ -125,7 +125,7 @@ public class PostingIndexO3ConcurrencyFuzzTest extends AbstractFuzzTest {
                 0.05,
                 0.05,
                 0.1,
-                0.0,
+                0.1,
                 1.0,
                 0.01,
                 0.01,
@@ -170,7 +170,7 @@ public class PostingIndexO3ConcurrencyFuzzTest extends AbstractFuzzTest {
                 0.1,   // colAddProb
                 0.05,
                 0.05,
-                0.0,
+                0.05,
                 1.0,
                 0.1,   // equalTsRowsProb
                 0.02,

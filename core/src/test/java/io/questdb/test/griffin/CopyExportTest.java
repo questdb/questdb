@@ -404,45 +404,6 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCopyParquetEmptyTable() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table all_types_empty (" +
-                    "bool_col boolean, " +
-                    "byte_col byte, " +
-                    "short_col short, " +
-                    "int_col int, " +
-                    "long_col long, " +
-                    "float_col float, " +
-                    "double_col double, " +
-                    "string_col string, " +
-                    "symbol_col symbol, " +
-                    "t_ns timestamp_ns, " +
-                    "d_array DOUBLE[], " +
-                    "ts timestamp" +
-                    ") timestamp(ts)");
-
-            CopyExportRunnable stmt = () ->
-                    runAndFetchCopyExportID("copy all_types_empty to 'all_types_empty' with format parquet", sqlExecutionContext);
-            CopyExportRunnable test = () ->
-                    assertEventually(() -> {
-                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
-                                .noLeakCheck()
-                                .expectSize()
-                                .returns("export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "all_types_empty.parquet" + "\t1\tfinished\n");
-                        assertQuery("select * from read_parquet('" + exportRoot + File.separator + "all_types_empty" + ".parquet')")
-                                .noLeakCheck()
-                                .timestamp("ts")
-                                .returns("""
-                                        bool_col\tbyte_col\tshort_col\tint_col\tlong_col\tfloat_col\tdouble_col\tstring_col\tsymbol_col\tt_ns\td_array\tts
-                                        """);
-                    });
-
-            testCopyExport(stmt, test);
-        });
-    }
-
-    @Test
     public void testCopyParquetDesignatedTimestampAfterDropColumn() throws Exception {
         // Regression test for designated timestamp detection in the batch
         // parquet encoder (create_partition_descriptor in jni.rs).
@@ -533,6 +494,96 @@ public class CopyExportTest extends AbstractCairoTest {
 
             testCopyExport(stmt, test);
         });
+    }
+
+    @Test
+    public void testCopyParquetEmptyTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table all_types_empty (" +
+                    "bool_col boolean, " +
+                    "byte_col byte, " +
+                    "short_col short, " +
+                    "int_col int, " +
+                    "long_col long, " +
+                    "float_col float, " +
+                    "double_col double, " +
+                    "string_col string, " +
+                    "symbol_col symbol, " +
+                    "t_ns timestamp_ns, " +
+                    "d_array DOUBLE[], " +
+                    "ts timestamp" +
+                    ") timestamp(ts)");
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID("copy all_types_empty to 'all_types_empty' with format parquet", sqlExecutionContext);
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "all_types_empty.parquet" + "\t1\tfinished\n");
+                        assertQuery("select * from read_parquet('" + exportRoot + File.separator + "all_types_empty" + ".parquet')")
+                                .noLeakCheck()
+                                .timestamp("ts")
+                                .returns("""
+                                        bool_col\tbyte_col\tshort_col\tint_col\tlong_col\tfloat_col\tdouble_col\tstring_col\tsymbol_col\tt_ns\td_array\tts
+                                        """);
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyParquetExportFixedToVarConvertedColumn() throws Exception {
+        // fixed->var lazy conversion (INT->STRING) over a parquet partition, exported via the
+        // DIRECT_PAGE_FRAME path. The exported file must hold the formatted strings, not the
+        // raw INT bytes reinterpreted as a var column.
+        assertMemoryLeak(() -> assertParquetExportOfConvertedColumn("INT", "(x * 3)::INT", "STRING", """
+                s\tts
+                3\t2024-01-01T00:00:00.000000Z
+                6\t2024-01-01T00:10:00.000000Z
+                9\t2024-01-01T00:20:00.000000Z
+                12\t2024-01-01T00:30:00.000000Z
+                15\t2024-01-01T00:40:00.000000Z
+                18\t2024-01-01T00:50:00.000000Z
+                """));
+    }
+
+    @Test
+    public void testCopyParquetExportSymbolToFixedConvertedColumn() throws Exception {
+        // symbol->fixed lazy conversion (SYMBOL->LONG; parquet stores the symbol as a UTF-8
+        // BYTE_ARRAY decoded as VARCHAR_SLICE) over a parquet partition, exported via the
+        // DIRECT_PAGE_FRAME path. (A symbol->VARCHAR export is layout-compatible and is fine;
+        // only conversions that change the fixed/var storage class are affected.)
+        assertMemoryLeak(() -> assertParquetExportOfConvertedColumn("SYMBOL", "(x * 3)::STRING", "LONG", """
+                s\tts
+                3\t2024-01-01T00:00:00.000000Z
+                6\t2024-01-01T00:10:00.000000Z
+                9\t2024-01-01T00:20:00.000000Z
+                12\t2024-01-01T00:30:00.000000Z
+                15\t2024-01-01T00:40:00.000000Z
+                18\t2024-01-01T00:50:00.000000Z
+                """));
+    }
+
+    @Test
+    public void testCopyParquetExportVarToFixedConvertedColumn() throws Exception {
+        // var->fixed lazy conversion (STRING->LONG) over a parquet partition, exported via the
+        // DIRECT_PAGE_FRAME path (COPY (SELECT *) -> determineExportMode -> DIRECT_PAGE_FRAME,
+        // which has no hasParquetConvertedColumns gate). The parquet decode buffer holds the
+        // source STRING layout; shipping it to the Rust encoder configured for LONG yields
+        // wrong values / silent data loss.
+        assertMemoryLeak(() -> assertParquetExportOfConvertedColumn("STRING", "(x * 3)::STRING", "LONG", """
+                s\tts
+                3\t2024-01-01T00:00:00.000000Z
+                6\t2024-01-01T00:10:00.000000Z
+                9\t2024-01-01T00:20:00.000000Z
+                12\t2024-01-01T00:30:00.000000Z
+                15\t2024-01-01T00:40:00.000000Z
+                18\t2024-01-01T00:50:00.000000Z
+                """));
     }
 
     @Test
@@ -3992,14 +4043,6 @@ public class CopyExportTest extends AbstractCairoTest {
         });
     }
 
-    private void assertParquetMatchesQuery(String query, String parquetPath) throws Exception {
-        StringSink expectedSink = new StringSink();
-        StringSink actualSink = new StringSink();
-        TestUtils.printSql(engine, sqlExecutionContext, query, expectedSink);
-        TestUtils.printSql(engine, sqlExecutionContext, "SELECT * FROM read_parquet('" + parquetPath + "')", actualSink);
-        TestUtils.assertEquals(expectedSink, actualSink);
-    }
-
     // Helper methods for copy export operations
     private static void runAndFetchCopyExportID(String copySql, SqlExecutionContext sqlExecutionContext) throws SqlException {
         try (
@@ -4055,6 +4098,48 @@ public class CopyExportTest extends AbstractCairoTest {
 
     private void assertEventually(TestUtils.EventualCode assertion) throws Exception {
         TestUtils.assertEventually(assertion, 5, exceptionTypesToCatch);
+    }
+
+    private void assertParquetExportOfConvertedColumn(String srcType, String srcValueExpr, String dstType, String expectedReadback) throws Exception {
+        // Seed a WAL table, convert its single partition to parquet, then ALTER the column
+        // type so the parquet partition carries a lazily-converted column. COPY (SELECT *)
+        // forces the DIRECT_PAGE_FRAME export path; read the exported file back via
+        // read_parquet (which reads the file as-is, with no lazy conversion) and compare to
+        // the converted values the normal query path produces.
+        execute("CREATE TABLE pt (s " + srcType + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("INSERT INTO pt SELECT " + srcValueExpr + " AS s, " +
+                "timestamp_sequence('2024-01-01T00:00:00.000000Z', 600_000_000) AS ts FROM long_sequence(6)");
+        drainWalQueue();
+        execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+        drainWalQueue();
+        execute("ALTER TABLE pt ALTER COLUMN s TYPE " + dstType);
+        drainWalQueue();
+
+        CopyExportRunnable stmt = () ->
+                runAndFetchCopyExportID("COPY (SELECT * FROM pt) TO 'converted_col_export' WITH FORMAT parquet", sqlExecutionContext);
+
+        CopyExportRunnable test = () ->
+                assertEventually(() -> {
+                    assertQuery("SELECT status FROM \"" + configuration.getSystemTableNamePrefix() + "copy_export_log\" LIMIT -1")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("status\nfinished\n");
+                    assertQuery("SELECT s, ts FROM read_parquet('" + exportRoot + File.separator + "converted_col_export.parquet')")
+                            .noLeakCheck()
+                            .expectSize()
+                            .timestamp("ts")
+                            .returns(expectedReadback);
+                });
+
+        testCopyExport(stmt, test);
+    }
+
+    private void assertParquetMatchesQuery(String query, String parquetPath) throws Exception {
+        StringSink expectedSink = new StringSink();
+        StringSink actualSink = new StringSink();
+        TestUtils.printSql(engine, sqlExecutionContext, query, expectedSink);
+        TestUtils.printSql(engine, sqlExecutionContext, "SELECT * FROM read_parquet('" + parquetPath + "')", actualSink);
+        TestUtils.assertEquals(expectedSink, actualSink);
     }
 
     private boolean exportFileExists(String fileName) {

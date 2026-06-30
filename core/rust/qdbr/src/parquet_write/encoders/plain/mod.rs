@@ -17,8 +17,8 @@ mod varlen;
 
 pub use fixed::{bytes_to_page, encode_fixed_len_bytes};
 pub use primitive::{
-    boolean_to_page, encode_boolean, encode_decimal, encode_designated_timestamp_strided,
-    encode_int_notnull, encode_int_nullable, encode_simd,
+    boolean_to_page, encode_boolean, encode_boolean_nullable, encode_decimal,
+    encode_designated_timestamp_strided, encode_int_notnull, encode_int_nullable, encode_simd,
 };
 pub use varlen::{
     binary_to_page, encode_binary, encode_string, encode_varchar, string_to_page, varchar_to_page,

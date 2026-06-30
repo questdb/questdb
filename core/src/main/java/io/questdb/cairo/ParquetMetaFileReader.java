@@ -116,6 +116,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
     // Column descriptor layout (32B each, starting at header offset 24)
     private static final int COL_DESC_COL_TYPE_OFF = 12;
     private static final int COL_DESC_ID_OFF = 8;
+    private static final int COL_DESC_MAX_DEF_LEVEL_OFF = 30;
     private static final int COL_DESC_NAME_LENGTH_OFF = 24;
     private static final int COL_DESC_NAME_OFFSET_OFF = 0;
     private static final int FOOTER_FEATURE_FLAGS_OFF = 32;
@@ -398,6 +399,17 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
             }
         }
         return -1;
+    }
+
+    /**
+     * Returns the parquet max definition level for the column. 0 means the field is
+     * Required (no definition-level stream, pages carry no nulls); a positive value
+     * means Optional. Legacy files (written before BYTE/SHORT/CHAR/SYMBOL became
+     * Optional) carry 0 here for those columns, so callers use this to detect a
+     * source file whose pages would be corrupt under a migrated Optional footer.
+     */
+    public int getColumnMaxDefLevel(int columnIndex) {
+        return Unsafe.getByte(columnDescriptorAddr(columnIndex) + COL_DESC_MAX_DEF_LEVEL_OFF) & 0xFF;
     }
 
     /**

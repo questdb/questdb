@@ -91,3 +91,11 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupBuff
 ) -> usize {
     offset_of!(ColumnChunkBuffers, aux_size)
 }
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupBuffers_chunkColumnTopOffset(
+    _env: JNIEnv,
+    _class: JClass,
+) -> usize {
+    offset_of!(ColumnChunkBuffers, column_top)
+}

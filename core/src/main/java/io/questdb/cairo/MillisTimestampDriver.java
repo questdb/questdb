@@ -66,7 +66,7 @@ import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MILLIS;
 public class MillisTimestampDriver implements TimestampDriver {
     public static final TimestampDriver INSTANCE = new MillisTimestampDriver();
     private final Clock clock = MillisecondClockImpl.INSTANCE;
-    private final ColumnTypeConverter.Fixed2VarConverter converterDate2Str = this::append;
+    private final ColumnTypeConverter.Fixed2VarConverter converterDate2Str = (addr, sink, unused1, unused2) -> append(addr, sink);
     private final ColumnTypeConverter.Var2FixedConverter<CharSequence> converterStr2Date = this::appendToMem;
 
     private MillisTimestampDriver() {

@@ -216,6 +216,11 @@ public class ParquetPartitionDecoder implements ParquetDecoder, QuietCloseable {
         return parquetMetaReader.getColumnId(columnIndex);
     }
 
+    @Override
+    public int getColumnType(int columnIndex) {
+        return parquetMetaReader.getColumnType(columnIndex);
+    }
+
     /**
      * Returns the parquet file address (for cache invalidation and export).
      * Equivalent to {@link ParquetFileDecoder#getFileAddr()}.

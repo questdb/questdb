@@ -59,6 +59,11 @@ public abstract class AbstractRecordMetadata implements RecordMetadata, Mutable 
     }
 
     @Override
+    public byte getColumnIndexType(int columnIndex) {
+        return getColumnMetadata(columnIndex).getIndexType();
+    }
+
+    @Override
     public TableColumnMetadata getColumnMetadata(int index) {
         return columnMetadata.getQuick(index);
     }
@@ -83,6 +88,10 @@ public abstract class AbstractRecordMetadata implements RecordMetadata, Mutable 
         return getColumnMetadata(columnIndex).getMetadata();
     }
 
+    public int getOriginalWriterIndex(int columnIndex) {
+        return getColumnMetadata(columnIndex).getOriginalWriterIndex();
+    }
+
     @Override
     public int getTimestampIndex() {
         return timestampIndex;
@@ -97,11 +106,6 @@ public abstract class AbstractRecordMetadata implements RecordMetadata, Mutable 
     public boolean hasColumn(int columnIndex) {
         final TableColumnMetadata columnMeta = columnMetadata.getQuiet(columnIndex);
         return columnMeta != null && !columnMeta.isDeleted();
-    }
-
-    @Override
-    public byte getColumnIndexType(int columnIndex) {
-        return getColumnMetadata(columnIndex).getIndexType();
     }
 
     @Override

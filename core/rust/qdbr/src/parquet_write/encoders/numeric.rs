@@ -107,7 +107,14 @@ where
     F: Fn(&[T], usize, Vec<u8>) -> Vec<u8>,
     MaxMin<P>: StatsUpdater<P, UNSIGNED_STATS>,
 {
-    assert_eq!(primitive_type.field_info.repetition, Repetition::Optional);
+    if primitive_type.field_info.repetition != Repetition::Optional {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "nullable encoder requires Optional repetition, got {:?} for column {}",
+            primitive_type.field_info.repetition,
+            primitive_type.field_info.name
+        ));
+    }
     let num_rows = column_top + slice.len();
     let mut null_count = 0;
     let write_stats = options.write_statistics;
@@ -216,7 +223,14 @@ where
     P: NativeType,
     T: Default + num_traits::AsPrimitive<P> + Debug,
 {
-    assert_eq!(primitive_type.field_info.repetition, Repetition::Required);
+    if primitive_type.field_info.repetition != Repetition::Required {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "notnull encoder requires Required repetition, got {:?} for column {}",
+            primitive_type.field_info.repetition,
+            primitive_type.field_info.name
+        ));
+    }
 
     let statistics = match (options.write_statistics, bloom_hashes) {
         (true, Some(h)) => {
@@ -575,7 +589,14 @@ pub fn slice_to_page_simd<T: SimdEncodable>(
     encoding: Encoding,
     bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<Page> {
-    assert_eq!(primitive_type.field_info.repetition, Repetition::Optional);
+    if primitive_type.field_info.repetition != Repetition::Optional {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "delta_binary_packed nullable encoder requires Optional repetition, got {:?} for column {}",
+            primitive_type.field_info.repetition,
+            primitive_type.field_info.name
+        ));
+    }
     let num_rows = column_top + slice.len();
 
     let mut buffer = vec![];

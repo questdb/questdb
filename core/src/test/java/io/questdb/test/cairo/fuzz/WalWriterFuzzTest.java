@@ -170,6 +170,18 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
+    public void testChunkedSequencerWriting() throws Exception {
+        Rnd rnd = generateRandom(LOG);
+        setTestParams(rnd);
+
+        fuzzer.setFuzzCounts(false, 5_000, 200, 20, 10, 20, rnd.nextInt(10), 5, 2, 0);
+        setFuzzProperties(rnd);
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
+        Assert.assertEquals(10, node1.getConfiguration().getDefaultSeqPartTxnCount());
+        runFuzz(rnd);
+    }
+
+    @Test
     public void testConvertPartitionToParquet() throws Exception {
         Rnd rnd = generateRandom(LOG);
         setTestParams(rnd);
@@ -182,7 +194,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 0.05,
                 0.05,
                 0.1,
-                0.0,
+                0.1,
                 1.0,
                 0.01,
                 0.01,
@@ -193,7 +205,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 0.8,
                 0.00,
                 0,
-                0.01,
+                0.1,
                 0.1,
                 0.01, // addCoveringIndexProb
                 0.1 // SET FORMAT PARQUET|NATIVE probability
@@ -217,7 +229,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 0.05,
                 0.05,
                 0.1,
-                0.0,
+                0.1,
                 1.0,
                 0.01,
                 0.01,
@@ -250,7 +262,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 0.05,
                 0.05,
                 0.1,
-                0.0,
+                0.1,
                 1.0,
                 0.01,
                 0.01,
@@ -268,18 +280,6 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
         );
         setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 10, 1000, 100, 3);
-        runFuzz(rnd);
-    }
-
-    @Test
-    public void testChunkedSequencerWriting() throws Exception {
-        Rnd rnd = generateRandom(LOG);
-        setTestParams(rnd);
-
-        fuzzer.setFuzzCounts(false, 5_000, 200, 20, 10, 20, rnd.nextInt(10), 5, 2, 0);
-        setFuzzProperties(rnd);
-        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
-        Assert.assertEquals(10, node1.getConfiguration().getDefaultSeqPartTxnCount());
         runFuzz(rnd);
     }
 

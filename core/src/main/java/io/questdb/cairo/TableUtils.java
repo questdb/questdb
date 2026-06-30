@@ -325,7 +325,8 @@ public final class TableUtils {
         if (existingIndex < 0) {
             throw CairoException.nonCritical().put("cannot change type, column '").put(columnName).put("' does not exist");
         }
-        String columnNameStr = columnMetadata.getQuick(existingIndex).getColumnName();
+        TableColumnMetadata existingMeta = columnMetadata.getQuick(existingIndex);
+        String columnNameStr = existingMeta.getColumnName();
         int columnIndex = columnMetadata.size();
         columnMetadata.add(
                 new TableColumnMetadata(
@@ -339,7 +340,8 @@ public final class TableUtils {
                         false,
                         existingIndex + 1, // replacing column index by convention can be 0 if not in use
                         symbolCacheFlag,
-                        symbolCapacity
+                        symbolCapacity,
+                        existingMeta.getOriginalWriterIndex()
                 )
         );
         columnMetadata.getQuick(existingIndex).markDeleted();
@@ -1035,6 +1037,28 @@ public final class TableUtils {
 
     public static long getPartitionTableSizeOffset(int symbolWriterCount) {
         return getSymbolWriterIndexOffset(symbolWriterCount);
+    }
+
+    /**
+     * Walks the replacingIndex chain starting from {@code writerIndex} and returns the
+     * root (oldest) writer index. Caps iterations at {@code columnCount}: a longer chain
+     * implies a cycle (e.g. A->B->A) from a corrupt metadata file and triggers a
+     * validation exception rather than spinning forever.
+     */
+    public static int getReplacingChainHead(MemoryR metaMem, int writerIndex, int columnCount) {
+        int origWriterIndex = writerIndex;
+        int ri = getReplacingColumnIndex(metaMem, writerIndex);
+        int hops = 0;
+        while (ri >= 0) {
+            if (++hops > columnCount) {
+                throw validationException(metaMem)
+                        .put("replacingIndex cycle detected starting at writer index ")
+                        .put(writerIndex);
+            }
+            origWriterIndex = ri;
+            ri = getReplacingColumnIndex(metaMem, ri);
+        }
+        return origWriterIndex;
     }
 
     public static int getReplacingColumnIndex(MemoryR metaMem, int columnIndex) {
@@ -1845,10 +1869,13 @@ public final class TableUtils {
                     }
 
                     final String columnName = metadata.getColumnName(columnIndex);
-                    final int columnId = metadata.getColumnMetadata(columnIndex).getWriterIndex();
+                    // Store the original writer index in the parquet file so that a later
+                    // parquet->native conversion can match columns by their original id even
+                    // after a column-type conversion has re-keyed the column.
+                    final int columnId = metadata.getColumnMetadata(columnIndex).getOriginalWriterIndex();
 
-                    final long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, columnId);
-                    final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, columnId);
+                    final long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, columnIndex);
+                    final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, columnIndex);
                     final long columnRowCount = (columnTop != -1) ? partitionRowCount - columnTop : 0;
                     final int parquetEncodingConfig = metadata.getColumnMetadata(columnIndex).getParquetEncodingConfig();
 
@@ -1873,7 +1900,7 @@ public final class TableUtils {
                             ff.madvise(columnAddr, columnSize, Files.POSIX_MADV_SEQUENTIAL);
 
                             // root symbol files use separate txn
-                            final long symbolTableNameTxn = columnVersionReader.getSymbolTableNameTxn(columnId);
+                            final long symbolTableNameTxn = columnVersionReader.getSymbolTableNameTxn(columnIndex);
 
                             offsetFileName(path.trimTo(pathSize), columnName, symbolTableNameTxn);
                             if (!ff.exists(path.$())) {
@@ -2738,10 +2765,31 @@ public final class TableUtils {
             boolean isSymbol = ColumnType.isSymbol(TableUtils.getColumnType(metaMem, i));
 
             if (replacingColumnIndex > -1 && replacingColumnIndex < columnCount - 1) {
-                // Replace the column index
-                targetList.set(3 * replacingColumnIndex, i);
-                targetList.set(3 * replacingColumnIndex + 1, nameOffset);
-                targetList.set(3 * replacingColumnIndex + 2, isSymbol ? denseSymbolIndex : -1);
+                // Find the slot where the replaced column currently lives.
+                // For a chain A→B→C, when C replaces B, B may already have been
+                // moved into A's slot by a prior replacement, and slot B holds a
+                // dead marker of the form (-prevReplacingIndex - 1). Decode the
+                // marker to hop directly to the next slot in the chain: the
+                // column that ended up at slot prevReplacingIndex is the one we
+                // need to follow. Continue until the slot is live (non-negative
+                // writer index); that slot holds the column we want to overwrite.
+                // This is O(chain length) instead of O(N) scan per replacement.
+                int targetSlot = replacingColumnIndex;
+                int marker = targetList.getQuick(3 * targetSlot);
+                int hops = 0;
+                while (marker < 0) {
+                    if (++hops > columnCount) {
+                        throw validationException(metaMem)
+                                .put("replacingIndex cycle detected in dead-marker chain at column ").put(i).put(", slot ").put(targetSlot);
+                    }
+                    targetSlot = -marker - 1;
+                    marker = targetList.getQuick(3 * targetSlot);
+                }
+
+                // Replace the column index at the found slot
+                targetList.set(3 * targetSlot, i);
+                targetList.set(3 * targetSlot + 1, nameOffset);
+                targetList.set(3 * targetSlot + 2, isSymbol ? denseSymbolIndex : -1);
 
                 targetList.add(-replacingColumnIndex - 1);
                 targetList.add(0);

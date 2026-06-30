@@ -167,6 +167,15 @@ public interface ParquetDecoder {
     int getColumnId(int columnIndex);
 
     /**
+     * Returns the QuestDB column type stored in the parquet file for the given
+     * parquet column index. Used by query-path lazy-conversion code to decide
+     * whether the stored type matches the table's current column type.
+     *
+     * @param columnIndex zero-based column index within the parquet file
+     */
+    int getColumnType(int columnIndex);
+
+    /**
      * Returns the base address of the parquet data file backing this decoder.
      * Used by the memory pool to detect when the underlying file changes and
      * the decoder needs to be re-initialized.
