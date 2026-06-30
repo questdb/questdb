@@ -307,11 +307,12 @@ public class QuestDBFacadeE2ETest extends AbstractBootstrapTest {
     /**
      * One borrowed handle, many sequential submits. Asserts:
      * - within a single lease the {@link Completion} is the reused field on the
-     *   handle (same instance every submit)
+     * handle (same instance every submit)
      * - bound values reach the server on every submit
-     * - re-borrowing from a size-1 pool hands back the same pre-allocated
-     *   handle (zero allocation) with its builder state reset, so a no-binds
-     *   query does not carry over the prior binds
+     * - re-borrowing from a size-1 pool reuses the pooled worker and its
+     * pre-allocated QueryImpl, with builder state reset, so a no-binds query
+     * does not carry over the prior binds (the returned lease is a fresh
+     * per-borrow handle wrapping that reused state)
      */
     @Test
     public void testManySequentialQueriesOnSameHandle() throws Exception {
@@ -323,10 +324,8 @@ public class QuestDBFacadeE2ETest extends AbstractBootstrapTest {
 
                 String config = "ws::addr=127.0.0.1:" + HTTP_PORT + ";";
                 try (QuestDB db = QuestDB.builder().fromConfig(config).queryPoolSize(1).build()) {
-                    Query firstHandle;
                     Completion firstCompletion;
                     try (Query handle = db.borrowQuery()) {
-                        firstHandle = handle;
                         firstCompletion = handle
                                 .sql("SELECT count() FROM seq")
                                 .handler(new CollectingHandler())
@@ -365,14 +364,14 @@ public class QuestDBFacadeE2ETest extends AbstractBootstrapTest {
                         }
                     }
 
-                    // Re-borrow from the size-1 pool: the same pre-allocated handle
-                    // comes back (zero allocation) and resetForBorrow() cleared the
+                    // Re-borrow from the size-1 pool: the pooled worker and its
+                    // reused QueryImpl come back, and resetForBorrow() cleared the
                     // prior SQL/binds/handler, so a no-binds query does not carry
-                    // over the earlier $1 binds.
+                    // over the earlier $1 binds. The lease is a fresh per-borrow
+                    // handle wrapping that reused state; QueryImplResetTest in the
+                    // client asserts the same-pooled-object reuse directly.
                     AtomicLong total = new AtomicLong();
                     try (Query handle = db.borrowQuery()) {
-                        Assert.assertSame("size-1 pool must hand back the same pre-allocated handle",
-                                firstHandle, handle);
                         handle.sql("SELECT count() FROM seq")
                                 .handler(new QwpColumnBatchHandler() {
                                     @Override
