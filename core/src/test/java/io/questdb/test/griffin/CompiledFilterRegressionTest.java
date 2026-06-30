@@ -963,6 +963,45 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInOperatorOverflowFoldMatchesJavaOnNarrowColumn() throws Exception {
+        // An overflowing INT arithmetic fold inside an IN() list against a NARROW integer
+        // key (INT/SHORT/BYTE). '=' (EqInt) wraps the fold mod 2^32 and the JIT emits the
+        // wrapped I4, but the Java IN path read the element via getLong() and WIDENED it to
+        // the full-width product. So IN disagreed with '=' even with the JIT off, and the
+        // JIT disagreed with the Java IN. InLongFunctionFactory now reads narrow-key IN
+        // elements at INT width (wrap), matching '='. The columns hold the wrapped image of
+        // each overflow product so the correct (wrapping) behaviour matches a row.
+        assertMemoryLeak(() -> {
+            // 1000000 * 1000000 = 10^12 wraps to INT -727379968; 3 * 1431655767 = 2^32 + 5
+            // wraps to INT 5 (matchable by SHORT/BYTE keys too).
+            execute("create table x as (select cast(-727379968 as int) i32b, " +
+                    "cast(5 as int) i32, cast(5 as short) i16, cast(5 as byte) i8)");
+
+            // INT key, canonical 10^12 product, JIT-vs-Java parity across IN forms.
+            assertJitMatchesJava("x where i32b in (1000000 * 1000000)", true);         // single value
+            assertJitMatchesJava("x where i32b in (1, 1000000 * 1000000)", true);      // two values
+            assertJitMatchesJava("x where i32b in (1, 2, 1000000 * 1000000)", true);   // multi value
+            assertJitMatchesJava("x where i32b not in (1, 1000000 * 1000000)", true);  // inverse
+            assertJitMatchesJava("x where i32b = 1000000 * 1000000", true);            // control: '='
+
+            // The Java (JIT-disabled) IN must agree with '=' -- it widened before the fix.
+            Assert.assertEquals(1, runQuery("x where i32b in (1000000 * 1000000)"));
+            Assert.assertEquals(1, runQuery("x where i32b = 1000000 * 1000000"));
+
+            // INT/SHORT/BYTE keys all wrap the element to 5 and match.
+            assertJitMatchesJava("x where i32 in (3 * 1431655767)", true);
+            assertJitMatchesJava("x where i16 in (3 * 1431655767)", true);
+            assertJitMatchesJava("x where i8 in (3 * 1431655767)", true);
+            Assert.assertEquals(1, runQuery("x where i32 in (3 * 1431655767)"));
+            Assert.assertEquals(1, runQuery("x where i16 in (3 * 1431655767)"));
+            Assert.assertEquals(1, runQuery("x where i8 in (3 * 1431655767)"));
+            Assert.assertEquals(1, runQuery("x where i32 = 3 * 1431655767"));
+            Assert.assertEquals(1, runQuery("x where i16 = 3 * 1431655767"));
+            Assert.assertEquals(1, runQuery("x where i8 = 3 * 1431655767"));
+        });
+    }
+
+    @Test
     public void testInOperatorSingleValue() throws Exception {
         // Tests single-value IN() which has a special unrolled code path in CompiledFilterIRSerializer
         final String ddl = "create table x as " +

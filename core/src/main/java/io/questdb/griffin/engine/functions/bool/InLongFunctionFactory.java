@@ -71,6 +71,11 @@ public class InLongFunctionFactory implements FunctionFactory {
         int constCount = 0;
         int runtimeConstCount = 0;
         final int argCount = args.size() - 1;
+        // When the key column (arg 0) is a narrow integer (INT/SHORT/BYTE), the value
+        // list is read at INT width so an overflowing INT arithmetic fold wraps exactly
+        // as '=' (EqInt) does, instead of widening to its full-width product via
+        // getLong(). For a LONG/TIMESTAMP key the elements still widen to long.
+        final boolean keyIsNarrowInt = isNarrowInt(ColumnType.tagOf(args.getQuick(0).getType()));
         for (int i = 1, n = args.size(); i < n; i++) {
             Function func = args.getQuick(i);
             switch (ColumnType.tagOf(func.getType())) {
@@ -103,23 +108,23 @@ public class InLongFunctionFactory implements FunctionFactory {
                     return new InLongSingleConstFunction(
                             args.getQuick(0),
                             parseValue(argPositions, args.getQuick(1),
-                                    1));
+                                    1, keyIsNarrowInt));
                 case 2:
                     return new InLongTwoConstFunction(
                             args.getQuick(0),
                             parseValue(
                                     argPositions,
                                     args.getQuick(1),
-                                    1),
+                                    1, keyIsNarrowInt),
                             parseValue(
                                     argPositions,
                                     args.getQuick(2),
-                                    2)
+                                    2, keyIsNarrowInt)
                     );
                 default:
                     DirectLongHashSet inVals = new DirectLongHashSet(argCount, MemoryTag.NATIVE_FUNC_RSS);
                     try {
-                        parseToLong(args, argPositions, inVals);
+                        parseToLong(args, argPositions, inVals, keyIsNarrowInt);
                         return new InLongConstFunction(args.getQuick(0), inVals);
                     } catch (Throwable e) {
                         Misc.free(inVals);
@@ -131,31 +136,41 @@ public class InLongFunctionFactory implements FunctionFactory {
         if (runtimeConstCount + constCount == argCount) {
             final IntList positions = new IntList();
             positions.addAll(argPositions);
-            return new InLongRuntimeConstFunction(args.getQuick(0), new ObjList<>(args), positions);
+            return new InLongRuntimeConstFunction(args.getQuick(0), new ObjList<>(args), positions, keyIsNarrowInt);
         }
 
         // have to copy, args is mutable
-        return new InLongVarFunction(new ObjList<>(args));
+        return new InLongVarFunction(new ObjList<>(args), keyIsNarrowInt);
+    }
+
+    private static boolean isNarrowInt(int typeTag) {
+        return typeTag == ColumnType.BYTE || typeTag == ColumnType.SHORT || typeTag == ColumnType.INT;
     }
 
     private static void parseToLong(
             ObjList<Function> args,
             IntList argPositions,
-            DirectLongHashSet outLongSet
+            DirectLongHashSet outLongSet,
+            boolean keyIsNarrowInt
     ) throws SqlException {
         for (int i = 1, n = args.size(); i < n; i++) {
-            outLongSet.add(parseValue(argPositions, args.getQuick(i), i));
+            outLongSet.add(parseValue(argPositions, args.getQuick(i), i, keyIsNarrowInt));
         }
     }
 
-    private static long parseValue(IntList argPositions, Function func, int i) throws SqlException {
+    private static long parseValue(IntList argPositions, Function func, int i, boolean keyIsNarrowInt) throws SqlException {
         long val;
         switch (ColumnType.tagOf(func.getType())) {
-            case ColumnType.TIMESTAMP:
-            case ColumnType.LONG:
             case ColumnType.INT:
             case ColumnType.SHORT:
             case ColumnType.BYTE:
+                // Match '=' on a narrow-integer key: read the element at INT width so an
+                // overflowing INT arithmetic wraps (getInt) instead of widening (getLong).
+                // intToLong preserves a genuine INT_NULL element as LONG_NULL.
+                val = keyIsNarrowInt ? Numbers.intToLong(func.getInt(null)) : func.getLong(null);
+                break;
+            case ColumnType.TIMESTAMP:
+            case ColumnType.LONG:
                 val = func.getLong(null);
                 break;
             case ColumnType.STRING:
@@ -218,15 +233,17 @@ public class InLongFunctionFactory implements FunctionFactory {
 
     private static class InLongRuntimeConstFunction extends NegatableBooleanFunction implements MultiArgFunction {
         private final DirectLongHashSet inSet;
+        private final boolean keyIsNarrowInt;
         private final Function keyFunc;
         private final IntList valueFunctionPositions;
         private final ObjList<Function> valueFunctions;
 
-        public InLongRuntimeConstFunction(Function keyFunc, ObjList<Function> valueFunctions, IntList valueFunctionPositions) {
+        public InLongRuntimeConstFunction(Function keyFunc, ObjList<Function> valueFunctions, IntList valueFunctionPositions, boolean keyIsNarrowInt) {
             this.keyFunc = keyFunc;
             // value functions also contain key function at 0 index.
             this.valueFunctions = valueFunctions;
             this.valueFunctionPositions = valueFunctionPositions;
+            this.keyIsNarrowInt = keyIsNarrowInt;
             this.inSet = new DirectLongHashSet(valueFunctions.size() - 1, MemoryTag.NATIVE_FUNC_RSS);
         }
 
@@ -251,7 +268,7 @@ public class InLongFunctionFactory implements FunctionFactory {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             MultiArgFunction.super.init(symbolTableSource, executionContext);
             inSet.clear();
-            parseToLong(valueFunctions, valueFunctionPositions, inSet);
+            parseToLong(valueFunctions, valueFunctionPositions, inSet, keyIsNarrowInt);
         }
 
         @Override
@@ -328,9 +345,11 @@ public class InLongFunctionFactory implements FunctionFactory {
 
     private static class InLongVarFunction extends NegatableBooleanFunction implements MultiArgFunction {
         private final ObjList<Function> args;
+        private final boolean keyIsNarrowInt;
 
-        public InLongVarFunction(ObjList<Function> args) {
+        public InLongVarFunction(ObjList<Function> args, boolean keyIsNarrowInt) {
             this.args = args;
+            this.keyIsNarrowInt = keyIsNarrowInt;
         }
 
         @Override
@@ -349,6 +368,10 @@ public class InLongFunctionFactory implements FunctionFactory {
                     case ColumnType.BYTE:
                     case ColumnType.SHORT:
                     case ColumnType.INT:
+                        // Match '=' on a narrow-integer key: read the element at INT width
+                        // (wrap) rather than widening an overflowing INT arithmetic via getLong().
+                        inVal = keyIsNarrowInt ? Numbers.intToLong(func.getInt(rec)) : func.getLong(rec);
+                        break;
                     case ColumnType.LONG:
                     case ColumnType.TIMESTAMP:
                         inVal = func.getLong(rec);

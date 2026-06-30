@@ -152,6 +152,44 @@ public class IntArithmeticOverflowFoldingTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReassociationIntPairWrappingToIntNullWrapsLikeColumnAndLiteral() throws Exception {
+        // (intCol op C1) op C2 where the regrouped constant pair (C1 op C2) wraps exactly
+        // onto the INT_NULL sentinel (-2^31). The constant-reassociation pass used to hoist
+        // that pair under the column -- intCol op (C1 op C2) = intCol op INT_NULL -- and
+        // AddInt/MulInt then return INT_NULL for every row, so the column poisoned to NULL.
+        // The fully-constant literal folds left-associatively and never regroups, keeping the
+        // real wrapped value. reassociateConstants now refuses to regroup an integer pair that
+        // folds to INT_NULL, so both paths agree. A pair that does not hit the sentinel still
+        // regroups and is unaffected.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE u (i INT, j INT)");
+            execute("INSERT INTO u VALUES (5, 2)");
+
+            // addition: 2147483647 + 1 wraps to -2^31 == INT_NULL
+            // Pattern A: (A op C1) op C2
+            assertQuery("SELECT (5 + 2147483647) + 1 AS v").noLeakCheck().expectSize().returns("v\n-2147483643\n");
+            assertQuery("SELECT (i + 2147483647) + 1 AS v FROM u").noLeakCheck().expectSize().returns("v\n-2147483643\n");
+            // Pattern B: (C1 op A) op C2 (commutative)
+            assertQuery("SELECT (2147483647 + 5) + 1 AS v").noLeakCheck().expectSize().returns("v\n-2147483643\n");
+            assertQuery("SELECT (2147483647 + i) + 1 AS v FROM u").noLeakCheck().expectSize().returns("v\n-2147483643\n");
+            // Mirror A: C2 op (A op C1) (commutative)
+            assertQuery("SELECT 1 + (5 + 2147483647) AS v").noLeakCheck().expectSize().returns("v\n-2147483643\n");
+            assertQuery("SELECT 1 + (i + 2147483647) AS v FROM u").noLeakCheck().expectSize().returns("v\n-2147483643\n");
+            // Mirror B: C2 op (C1 op A)
+            assertQuery("SELECT 1 + (2147483647 + 5) AS v").noLeakCheck().expectSize().returns("v\n-2147483643\n");
+            assertQuery("SELECT 1 + (2147483647 + i) AS v FROM u").noLeakCheck().expectSize().returns("v\n-2147483643\n");
+
+            // multiplication: 65536 * 32768 wraps to -2^31 == INT_NULL
+            assertQuery("SELECT (2 * 65536) * 32768 AS v").noLeakCheck().expectSize().returns("v\n0\n");
+            assertQuery("SELECT (j * 65536) * 32768 AS v FROM u").noLeakCheck().expectSize().returns("v\n0\n");
+
+            // control: a pair that does not fold to INT_NULL still regroups and stays correct
+            assertQuery("SELECT (5 + 3) + 4 AS v").noLeakCheck().expectSize().returns("v\n12\n");
+            assertQuery("SELECT (i + 3) + 4 AS v FROM u").noLeakCheck().expectSize().returns("v\n12\n");
+        });
+    }
+
+    @Test
     public void testRuntimeConstDivisionWrapsLikeColumnAndLiteral() throws Exception {
         // IntRuntimeConstFunction memoizes a composite runtime-const INT subtree. For + - *
         // (int) getLong() == getInt() (a modular ring homomorphism: the low 32 bits of the
