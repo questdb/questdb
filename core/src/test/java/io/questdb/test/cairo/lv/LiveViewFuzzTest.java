@@ -303,6 +303,28 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFuzzVarSize() throws Exception {
+        // Var-length passthrough tier coverage: an LV projecting STRING / VARCHAR /
+        // BINARY / DOUBLE[] columns straight through alongside row_number() OVER (),
+        // so SELECT * FROM lv routes through the in-mem tier (Mode B) and the tier
+        // must store and read back every var-length value. Three configs per run -
+        // in-order, O3, and O3 + restart - each with random backfill and a fresh
+        // random dataset, so the var-length (data, aux) write/read paths, the flush
+        // flyweight, and the O3 disk-stager rebuild are all exercised. After
+        // quiescence each run cross-checks three ways: the read-back equals the
+        // from-scratch recompute, Mode B is confirmed engaged, and the Mode B
+        // result is byte-identical to the forced disk-only path.
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1 + rnd.nextInt(4));
+        assertMemoryLeak(() -> {
+            final boolean backfill = rnd.nextBoolean();
+            runVarSizeFuzz(rnd, 120 + rnd.nextInt(160), false, false, backfill);
+            runVarSizeFuzz(rnd, 120 + rnd.nextInt(160), true, false, backfill);
+            runVarSizeFuzz(rnd, 120 + rnd.nextInt(160), true, true, backfill);
+        });
+    }
+
+    @Test
     public void testFuzzWidened() throws Exception {
         // Concentrated heavy corner: larger datasets with O3 + restart + backfill +
         // in-mem all on together, across every variant. Per-run symbol cardinality
@@ -605,6 +627,27 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
         };
     }
 
+    // A random ASCII string of length [minLen, maxLen], drawn from [a-zA-Z0-9]
+    // (no quote chars, so it embeds straight into a single-quoted SQL literal).
+    // Used to build the STRING / VARCHAR / BINARY var-length passthrough values
+    // for the var-size fuzz; maxLen up to 24 spans both the fully-inlined VARCHAR
+    // header and the split data-region path.
+    private static String randomAscii(Rnd rnd, int minLen, int maxLen) {
+        final int len = minLen + rnd.nextInt(maxLen - minLen + 1);
+        final StringBuilder sb = new StringBuilder(len);
+        for (int i = 0; i < len; i++) {
+            final int c = rnd.nextInt(62);
+            if (c < 26) {
+                sb.append((char) ('a' + c));
+            } else if (c < 52) {
+                sb.append((char) ('A' + c - 26));
+            } else {
+                sb.append((char) ('0' + c - 52));
+            }
+        }
+        return sb.toString();
+    }
+
     // Row indices [lo, lo+1, ..., hi-1], shuffled in place when o3 is set so
     // insertion order diverges from ts order (the source of out-of-order writes).
     private static int[] segmentOrder(Rnd rnd, int lo, int hi, boolean o3) {
@@ -625,6 +668,51 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
 
     private static int variantCount() {
         return DECIMAL_VARIANT + 1;
+    }
+
+    // Renders one INSERT value tuple for the four var-length passthrough columns
+    // (STRING, VARCHAR, BINARY, DOUBLE[]) - each an occasional NULL, else a random
+    // value. STRING/VARCHAR carry an empty string on some rows (a real value
+    // distinct from NULL) and range up to 24 chars so the run exercises both the
+    // inlined and the split VARCHAR path; BINARY rides a non-empty 'string'::binary
+    // cast; the array carries 1..5 doubles. The value bytes need not be
+    // reconstructible by the recompute - they are materialized once into the base
+    // table, and both the live view and the from-scratch recompute read them back
+    // from there.
+    private static String varSizeTuple(Rnd rnd) {
+        final StringBuilder sb = new StringBuilder();
+        if (rnd.nextInt(20) == 0) {
+            sb.append("null");
+        } else {
+            sb.append('\'').append(randomAscii(rnd, 0, 24)).append('\'');
+        }
+        sb.append(", ");
+        if (rnd.nextInt(20) == 0) {
+            sb.append("null");
+        } else {
+            sb.append('\'').append(randomAscii(rnd, 0, 24)).append('\'');
+        }
+        sb.append(", ");
+        if (rnd.nextInt(20) == 0) {
+            sb.append("null");
+        } else {
+            sb.append('\'').append(randomAscii(rnd, 1, 16)).append("'::binary");
+        }
+        sb.append(", ");
+        if (rnd.nextInt(20) == 0) {
+            sb.append("null");
+        } else {
+            sb.append("ARRAY[");
+            final int len = 1 + rnd.nextInt(5);
+            for (int j = 0; j < len; j++) {
+                if (j > 0) {
+                    sb.append(',');
+                }
+                sb.append(rnd.nextInt(1000)).append(".0");
+            }
+            sb.append(']');
+        }
+        return sb.toString();
     }
 
     // Builds a deterministic un-flushed lead on top of the already-applied state:
@@ -720,6 +808,26 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
                 sink.put(',').put(dLit[k]);
             }
             sink.put(')');
+        }
+        execute(sink);
+    }
+
+    // Inserts the var-length rows [from, to) of order (the shuffled segment) into
+    // the var-size base table in one commit. Mirrors insertCommit, but the base
+    // schema is (ts, vs, vv, vb, va) and each row's pre-rendered value tuple lives
+    // in tuple[k]. The commit-order shuffle is what produces O3.
+    private void insertVarSizeCommit(StringSink sink, int[] order, int from, int to, long[] tsv, String[] tuple) throws Exception {
+        if (from >= to) {
+            return;
+        }
+        sink.clear();
+        sink.put("INSERT INTO base (ts, vs, vv, vb, va) VALUES ");
+        for (int r = from; r < to; r++) {
+            final int k = order[r];
+            if (r > from) {
+                sink.put(',');
+            }
+            sink.put('(').put(tsv[k]).put("::timestamp,").put(tuple[k]).put(')');
         }
         execute(sink);
     }
@@ -1147,6 +1255,143 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
                 assertModeBMatchesDiskOnly("SELECT * FROM lv");
             }
         }
+
+        execute("DROP LIVE VIEW lv");
+        execute("DROP TABLE base");
+    }
+
+    // Differential fuzz for the var-length tier storage. The LV projects every
+    // var-length type the tier learned to store (STRING / VARCHAR / BINARY /
+    // DOUBLE[]) straight through, plus row_number() OVER () so SELECT * FROM lv
+    // routes through the in-mem tier (Mode B) - the var-length passthroughs are
+    // the subject under test, the window fn only makes the query a valid LV.
+    // Ingestion mirrors runFuzz (pre-CREATE backfill history, then per-commit O3
+    // refresh with optional quiescent restarts); after quiescence a top-up
+    // forward row guarantees the tier is populated, then the read-back is
+    // cross-checked against the recompute, Mode B is confirmed engaged, and the
+    // Mode B result is compared byte-for-byte against the forced disk-only path.
+    private void runVarSizeFuzz(Rnd rnd, int rowCount, boolean o3, boolean restart, boolean backfill) throws Exception {
+        // Pin the clock a day below the data, like runFuzz: a non-backfill view's
+        // lower bound is the CREATE moment, and O3 head-miss replay only re-emits
+        // rows at or above it, so the clock must sit below every data timestamp.
+        if (currentMicros < 0) {
+            setCurrentMicros(MicrosTimestampDriver.floor("2025-12-31T00:00:00.000000Z"));
+        }
+
+        final int stepMode = rnd.nextInt(3);
+        final int baseStepMax = stepMode == 0 ? 5_000_000 : stepMode == 1 ? 60_000_000 : 900_000_000;
+        final int dayJumpEvery = stepMode == 0 ? 20 : 12;
+
+        final String viewSql = "SELECT ts, vs, vv, vb, va, row_number() OVER () AS rn FROM base";
+        final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s "
+                + (backfill ? "BACKFILL " : "")
+                + "AS " + viewSql;
+
+        execute("DROP LIVE VIEW IF EXISTS lv");
+        execute("DROP TABLE IF EXISTS base");
+        execute("CREATE TABLE base (ts TIMESTAMP, vs STRING, vv VARCHAR, vb BINARY, va DOUBLE[]) "
+                + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+        LOG.info().$("LV var-size fuzz: rows=").$(rowCount).$(", stepMode=").$(stepMode)
+                .$(", o3=").$(o3).$(", restart=").$(restart).$(", backfill=").$(backfill)
+                .$(", sql=").$(viewSql).$();
+
+        // Strictly-unique, strictly-increasing timestamps so ts is a total order;
+        // each row's four var-length values are pre-rendered into tuple[k].
+        final long[] tsv = new long[rowCount];
+        final String[] tuple = new String[rowCount];
+        final int maxDayJumps = 30;
+        int dayJumps = 0;
+        long ts = MicrosTimestampDriver.floor("2026-01-01T00:00:00.000000Z");
+        for (int k = 0; k < rowCount; k++) {
+            ts += 1 + rnd.nextInt(baseStepMax);
+            if (dayJumps < maxDayJumps && rnd.nextInt(dayJumpEvery) == 0) {
+                ts += 86_400_000_000L;
+                dayJumps++;
+            }
+            tsv[k] = ts;
+            tuple[k] = varSizeTuple(rnd);
+        }
+
+        // Backfill captures pre-CREATE history: the earliest rows go before CREATE
+        // so the backfill floor sits at the global-min ts and no post-CREATE O3 row
+        // falls below it. Non-backfill: everything lands post-CREATE.
+        final int preCount = backfill ? rnd.nextInt(rowCount + 1) : 0;
+
+        final StringSink sink = new StringSink();
+        LiveViewRefreshJob job = null;
+        try {
+            if (preCount > 0) {
+                final int[] preOrder = segmentOrder(rnd, 0, preCount, o3);
+                final int[] cb = commitBounds(rnd, preOrder.length);
+                for (int c = 0; c + 1 < cb.length; c++) {
+                    insertVarSizeCommit(sink, preOrder, cb[c], cb[c + 1], tsv, tuple);
+                    drainWalQueue();
+                }
+            }
+
+            execute(createSql);
+            job = new LiveViewRefreshJob(0, engine, 1);
+
+            if (backfill) {
+                driveBackfillToCompletion(job, "lv");
+            }
+
+            if (preCount < rowCount) {
+                final int[] postOrder = segmentOrder(rnd, preCount, rowCount, o3);
+                final int[] cb = commitBounds(rnd, postOrder.length);
+                for (int c = 0; c + 1 < cb.length; c++) {
+                    insertVarSizeCommit(sink, postOrder, cb[c], cb[c + 1], tsv, tuple);
+                    drainWalQueue();
+                    refreshCycle(job);
+
+                    if (restart && rnd.nextInt(3) == 0) {
+                        LiveViewInstance inst = engine.getLiveViewRegistry().getViewInstance("lv");
+                        if (inst != null
+                                && inst.getStateReader().getBackfillState() == LiveViewState.BACKFILL_STATE_ACTIVE) {
+                            job = Misc.free(job);
+                            engine.getLiveViewRegistry().clear();
+                            engine.buildViewGraphs();
+                            job = new LiveViewRefreshJob(0, engine, 1);
+                        }
+                    }
+                }
+            }
+
+            driveRefreshToQuiescence(job);
+
+            // Top up with one clean forward row above the global max ts so the
+            // in-mem tier is guaranteed populated at the final read - a run that
+            // ended on a restart would otherwise leave the freshly-rebuilt tier
+            // empty, routing the read-back disk-only and leaving Mode B unexercised.
+            execute("INSERT INTO base (ts, vs, vv, vb, va) VALUES ("
+                    + (tsv[rowCount - 1] + 1) + "::timestamp, 'zz', 'yy', 'xx'::binary, ARRAY[1.0, 2.0])");
+            drainWalQueue();
+            refreshCycle(job);
+            driveRefreshToQuiescence(job);
+        } finally {
+            Misc.free(job);
+        }
+
+        // The oracle: the live view must equal the window query recomputed over the
+        // base table. ORDER BY 1 (the unique ts) gives both sides a total order and
+        // compares the var-length passthroughs cell by cell.
+        TestUtils.assertSqlCursors(
+                engine,
+                sqlExecutionContext,
+                "(" + viewSql + ") ORDER BY 1",
+                "(lv) ORDER BY 1",
+                LOG,
+                true
+        );
+
+        // Var-length read-back cross-checks, single-threaded now the worker is
+        // freed and the view is quiesced: SELECT * FROM lv actually routes through
+        // Mode B (the tier serves the var-length values from RAM), and the Mode B
+        // result is byte-identical to the forced disk-only path - so a tier that
+        // stored a var-length value wrong would diverge from the disk oracle here.
+        assertModeBEngaged();
+        assertModeBMatchesDiskOnly("SELECT * FROM lv");
 
         execute("DROP LIVE VIEW lv");
         execute("DROP TABLE base");

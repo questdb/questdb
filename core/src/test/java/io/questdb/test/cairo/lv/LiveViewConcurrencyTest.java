@@ -40,10 +40,13 @@ import io.questdb.griffin.engine.lv.LiveViewRecordCursor;
 import io.questdb.griffin.engine.lv.LiveViewRecordCursorFactory;
 import io.questdb.mp.Job;
 import io.questdb.std.Misc;
+import io.questdb.std.NumericException;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -88,7 +91,13 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *   the per-snapshot invariant - rows ts-ascending, rn a gapless 1..N sequence - so
  *   a stale-restamped pre-O3 row or a seam duplicate/gap fails the read. The
  *   cross-writer O3 drives the in-mem rebuild against the live Mode B readers (the
- *   both-slots-pinned skip path).</li>
+ *   both-slots-pinned skip path). The {@code VarSize} variant adds STRING + VARCHAR
+ *   passthrough columns so the reads also dereference the tier's var-length (data,
+ *   aux) regions - which realloc and move their base address on append - under the
+ *   same lock-free hand-off; the per-snapshot invariant extends to the var-length
+ *   values decoding back to their ts-derived form. No ARM-specific canary is needed
+ *   for it because, unlike the cross-slot symbol cache, var-length values live in
+ *   the per-slot buffers and are frozen while a reader pins the slot.</li>
  * </ul>
  * <p>
  * <b>Why the oracle stays deterministic despite the concurrency.</b> The premise of
@@ -240,6 +249,30 @@ public class LiveViewConcurrencyTest extends AbstractCairoTest {
         assertMemoryLeak(() -> runReaderChurnSoak(rnd, 4, 4, 800, true, true));
     }
 
+    @Test
+    public void testReaderChurnSoakVarSize() throws Exception {
+        // Reader-churn soak over an IN MEMORY view whose output carries var-length
+        // passthrough columns (STRING + VARCHAR) alongside row_number(), so the
+        // reads route through the in-mem tier (Mode B) and dereference the
+        // var-length (data, aux) regions per row while a refresh driver appends via
+        // the fast-path CAS and writers ingest - the lock-free read/publish
+        // hand-off the RFC risk callout flags, now with var-length buffers in play.
+        // Each read asserts a per-snapshot invariant: rows ts-ascending, rn a
+        // gapless 1..N sequence, and the STRING / VARCHAR passthroughs decoding
+        // back to their ts-derived values (vs == decimal ts, vv == 'v' + ts). So a
+        // torn var-length read - a stale base pointer after a region realloc, a
+        // seam duplicate/gap, a use-after-free - surfaces as a value mismatch or a
+        // crash, not silent corruption. No ARM-specific canary is needed here:
+        // unlike the symbol cache, which is shared across BOTH tier slots and grows
+        // concurrently with readers (hence its bounded-scan horizon and
+        // volatile-backed list), var-length values live in the PER-SLOT buffers,
+        // are copied per slot by the slow-path swap, and are frozen for a reader's
+        // lifetime once it pins the slot - so the existing slot-pin exclusivity
+        // protocol covers them with zero new cross-slot synchronization.
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        assertMemoryLeak(() -> runVarSizeReaderChurnSoak(rnd, 4, 4, 800));
+    }
+
     private static void appendRow(WalWriter walWriter, long ts, int symIdx, long iv, double xv) {
         TableWriter.Row row = walWriter.newRow(ts);
         if (symIdx < 0) {
@@ -319,6 +352,52 @@ public class LiveViewConcurrencyTest extends AbstractCairoTest {
                 break;
             }
         }
+    }
+
+    // Like newWriterThread, but for the var-size base table (ts, vs STRING,
+    // vv VARCHAR): writer w ingests the round-robin slice w, w+numWriters, ... Each
+    // row's var-length values are derived from its (unique) timestamp - vs is the
+    // decimal ts, vv is 'v' + the decimal ts - so a reader can decode them back and
+    // detect a torn var-length read. The cross-writer commit interleaving is what
+    // produces O3, which drives the in-mem tier rebuild against the live readers.
+    private Thread newVarSizeWriterThread(
+            int writerId,
+            int numWriters,
+            int rowCount,
+            int batch,
+            long[] tsv,
+            TableToken baseToken,
+            CyclicBarrier barrier,
+            ConcurrentLinkedQueue<Throwable> errors
+    ) {
+        return new Thread(() -> {
+            final StringSink strSink = new StringSink();
+            final Utf8StringSink vcSink = new Utf8StringSink();
+            try (WalWriter walWriter = engine.getWalWriter(baseToken)) {
+                barrier.await();
+                int sinceCommit = 0;
+                for (int k = writerId; k < rowCount; k += numWriters) {
+                    final long ts = tsv[k];
+                    final TableWriter.Row row = walWriter.newRow(ts);
+                    strSink.clear();
+                    strSink.put(ts);
+                    row.putStr(1, strSink); // vs STRING = decimal ts
+                    vcSink.clear();
+                    vcSink.put('v').put(ts);
+                    row.putVarchar(2, vcSink); // vv VARCHAR = 'v' + decimal ts
+                    row.append();
+                    if (++sinceCommit >= batch) {
+                        walWriter.commit();
+                        sinceCommit = 0;
+                    }
+                }
+                walWriter.commit();
+            } catch (Throwable th) {
+                errors.add(th);
+            } finally {
+                Path.clearThreadLocals();
+            }
+        }, "lv-varsize-writer-" + writerId);
     }
 
     // Builds a writer thread that owns its own WalWriter and ingests a round-robin
@@ -411,6 +490,56 @@ public class LiveViewConcurrencyTest extends AbstractCairoTest {
                 if (rn != expectedRn) {
                     throw new AssertionError("rn not a gapless 1..N sequence: expected=" + expectedRn
                             + ", actual=" + rn + ", ts=" + ts);
+                }
+                prevTs = ts;
+                expectedRn++;
+            }
+        }
+    }
+
+    // Opens a fresh cursor over the var-size row_number() view (columns ts, vs
+    // STRING, vv VARCHAR, rn) and drains it, asserting the per-snapshot invariant
+    // that holds for every consistent LV-table version: rows come back
+    // ts-ascending, rn is a gapless 1..N sequence, and the two var-length
+    // passthroughs decode back to their ts-derived values (vs == the decimal ts,
+    // vv == 'v' + the decimal ts). Reading vs/vv dereferences the tier's
+    // var-length (data, aux) regions, so a torn read - a stale base pointer after a
+    // realloc, a seam dup/gap, a use-after-free - surfaces as a value mismatch or a
+    // crash. The view is mid-flight, so the row count itself is not asserted here;
+    // the final single-threaded oracle validates the full contents after quiescence.
+    private void readVarSizeViewOnce() throws Exception {
+        try (
+                SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine);
+                SqlCompiler compiler = engine.getSqlCompiler();
+                RecordCursorFactory factory = compiler.compile("SELECT * FROM lv", ctx).getRecordCursorFactory();
+                RecordCursor cursor = factory.getCursor(ctx)
+        ) {
+            final Record record = cursor.getRecord();
+            long prevTs = Long.MIN_VALUE;
+            long expectedRn = 1;
+            while (cursor.hasNext()) {
+                final long ts = record.getLong(0);
+                final CharSequence vs = record.getStrA(1);
+                final Utf8Sequence vv = record.getVarcharA(2);
+                final long rn = record.getLong(3);
+                if (ts <= prevTs) {
+                    throw new AssertionError("ts not strictly ascending: prevTs=" + prevTs + ", ts=" + ts);
+                }
+                if (rn != expectedRn) {
+                    throw new AssertionError("rn not a gapless 1..N sequence: expected=" + expectedRn
+                            + ", actual=" + rn + ", ts=" + ts);
+                }
+                long decoded;
+                try {
+                    decoded = vs == null ? Long.MIN_VALUE : Numbers.parseLong(vs);
+                } catch (NumericException e) {
+                    throw new AssertionError("vs STRING passthrough not numeric: ts=" + ts + ", vs=" + vs);
+                }
+                if (decoded != ts) {
+                    throw new AssertionError("vs STRING passthrough mismatch: ts=" + ts + ", vs=" + vs);
+                }
+                if (vv == null || vv.size() == 0 || vv.byteAt(0) != 'v') {
+                    throw new AssertionError("vv VARCHAR passthrough mismatch: ts=" + ts + ", vv=" + vv);
                 }
                 prevTs = ts;
                 expectedRn++;
@@ -1146,6 +1275,126 @@ public class LiveViewConcurrencyTest extends AbstractCairoTest {
             // readers; this pins it deterministically post-quiescence.)
             assertModeALeadEngaged(viewSql, tsv[rowCount - 1]);
         }
+
+        execute("DROP LIVE VIEW lv");
+        execute("DROP TABLE base");
+    }
+
+    // Reader threads churn cursors over an IN MEMORY view whose output carries
+    // STRING + VARCHAR passthrough columns (plus row_number() so the reads route
+    // through the in-mem tier, Mode B) while the refresh driver appends via the
+    // fast-path CAS and writers ingest. This exercises the var-length tier read
+    // path - the aux-region offset vector and the payload data region, both of
+    // which realloc (and move their base address) on append - against the
+    // lock-free read/publish hand-off. The readers assert a per-snapshot invariant
+    // (ts ascending, rn gapless, vs/vv decoding back to their ts-derived values),
+    // so a torn var-length read surfaces as a value mismatch; the quiesced final
+    // state still matches the recompute.
+    private void runVarSizeReaderChurnSoak(Rnd rnd, int numWriters, int numReaders, int rowCount) throws Exception {
+        setCurrentMicros(MicrosTimestampDriver.floor(CLOCK_START));
+
+        final String viewSql = "SELECT ts, vs, vv, row_number() OVER () AS rn FROM base";
+        final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s AS " + viewSql;
+
+        execute("DROP LIVE VIEW IF EXISTS lv");
+        execute("DROP TABLE IF EXISTS base");
+        execute("CREATE TABLE base (ts TIMESTAMP, vs STRING, vv VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+        // Only the timestamps are used; vs/vv are derived from each row's ts by the
+        // writer. Reuse the shared generator for the strictly-unique ts stream.
+        final long[] tsv = new long[rowCount];
+        final int[] symIdx = new int[rowCount];
+        final long[] iv = new long[rowCount];
+        final double[] xv = new double[rowCount];
+        generateDataset(rnd, rowCount, tsv, symIdx, iv, xv);
+
+        execute(createSql);
+
+        LOG.info().$("LV concurrency var-size reader-churn soak: writers=").$(numWriters)
+                .$(", readers=").$(numReaders).$(", rows=").$(rowCount).$(", sql=").$(viewSql).$();
+
+        final TableToken baseToken = engine.verifyTableName("base");
+        final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
+        final LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1);
+        final AtomicBoolean running = new AtomicBoolean(true);
+        try {
+            // numWriters writers + the refresh driver, released together. Readers
+            // spin independently (no synchronized start needed) until running clears.
+            final CyclicBarrier barrier = new CyclicBarrier(numWriters + 1);
+            final Thread[] writers = new Thread[numWriters];
+            for (int w = 0; w < numWriters; w++) {
+                final int batch = 5 + rnd.nextInt(20);
+                writers[w] = newVarSizeWriterThread(w, numWriters, rowCount, batch, tsv, baseToken, barrier, errors);
+            }
+            final Thread driver = new Thread(() -> {
+                try {
+                    barrier.await();
+                    while (running.get()) {
+                        setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                        drainWalQueue();
+                        drainJob(job);
+                    }
+                } catch (Throwable th) {
+                    errors.add(th);
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            }, "lv-refresh-driver");
+
+            final Thread[] readers = new Thread[numReaders];
+            for (int r = 0; r < numReaders; r++) {
+                readers[r] = new Thread(() -> {
+                    try {
+                        while (running.get()) {
+                            readVarSizeViewOnce();
+                        }
+                    } catch (Throwable th) {
+                        errors.add(th);
+                    } finally {
+                        Path.clearThreadLocals();
+                    }
+                }, "lv-varsize-reader-" + r);
+            }
+
+            for (Thread t : writers) {
+                t.start();
+            }
+            driver.start();
+            for (Thread t : readers) {
+                t.start();
+            }
+            for (Thread t : writers) {
+                t.join();
+            }
+            running.set(false);
+            driver.join();
+            for (Thread t : readers) {
+                t.join();
+            }
+
+            if (!errors.isEmpty()) {
+                throw new RuntimeException("worker thread failed", errors.peek());
+            }
+
+            // Quiesce single-threaded, then assert the differential oracle below.
+            drainWalQueue();
+            driveRefreshToQuiescence(job);
+        } finally {
+            Misc.free(job);
+        }
+
+        TestUtils.assertSqlCursors(
+                engine,
+                sqlExecutionContext,
+                "(" + viewSql + ") ORDER BY 1",
+                "(lv) ORDER BY 1",
+                LOG,
+                true
+        );
+
+        // Guard against the soak silently passing on disk-only reads: confirm the
+        // quiesced production read path actually routes through Mode B.
+        assertModeBEngaged();
 
         execute("DROP LIVE VIEW lv");
         execute("DROP TABLE base");
