@@ -1392,6 +1392,22 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // rewrites only the affected partitions.
         final long replayLowTs = headMaxTs + 1;
         TableReader reader = waitForApply(baseToken, advanceTo);
+        if (reader.getSeqTxn() != advanceTo) {
+            // ApplyWal2TableJob has run ahead of the O3 trigger: the base reader
+            // snapshot already reflects seqTxns past advanceTo that the forward
+            // drain has not examined. Head-hit only re-reads base above headMaxTs,
+            // so a back-dated row below headMaxTs sitting in one of those
+            // unexamined seqTxns would be missed - and advancing the watermark to
+            // cover them would lose it permanently. Fall back to head-miss, which
+            // recomputes the whole view from the full snapshot and advances the
+            // watermark to exactly what it materialised. waitForApply guarantees
+            // reader.getSeqTxn() >= advanceTo, so this branch is the strictly-ahead
+            // case; head-hit proceeds only when the snapshot is exactly at the
+            // trigger (no unexamined seqTxns, so no gap and no duplicate).
+            reader.close();
+            o3HeadMissReplay(instance, windowFactory, baseToken, advanceTo);
+            return;
+        }
         boolean readerAttached = false;
         boolean restoredOk = false;
         long appendedRows = 0;
@@ -1571,6 +1587,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         final LiveViewWindow anchorWindow = instance.getAnchorWindow();
         final long viewLowerBoundTimestamp = instance.getDefinition().getViewLowerBoundTimestamp();
         TableReader reader = waitForApply(baseToken, advanceTo);
+        // The replay recomputes the whole view from the base reader's snapshot,
+        // which reflects every base row applied up to reader.getSeqTxn() - not
+        // just the O3 trigger seqTxn (advanceTo). When ApplyWal2TableJob has run
+        // ahead, that snapshot already incorporates seqTxns past advanceTo, and
+        // the head-miss scan from viewLowerBoundTimestamp materialises all of
+        // them. Advancing the watermarks to this effective seqTxn (rather than
+        // advanceTo) keeps the LV's processed/consumed point in step with what
+        // the replay actually wrote; otherwise the forward path re-reads those
+        // already-materialised seqTxns and a trailing in-order commit (e.g. a
+        // lone row at the global max) re-appends a duplicate row.
+        final long effectiveSeqTxn = reader.getSeqTxn();
         boolean readerAttached = false;
         long appendedRows = 0;
         long replayMaxTs = Numbers.LONG_NULL;
@@ -1670,7 +1697,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             // place rather than deleting it. See the replayMinTs
                             // declaration.
                             walWriter.commitLiveViewWithReplaceRange(
-                                    advanceTo,
+                                    effectiveSeqTxn,
                                     replayMinTs,
                                     Long.MAX_VALUE
                             );
@@ -1698,13 +1725,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 instance.setLvRowsTotal(lvReader.size());
             }
         }
-        instance.setLastProcessedSeqTxn(advanceTo);
-        instance.setAppliedWatermark(advanceTo);
+        instance.setLastProcessedSeqTxn(effectiveSeqTxn);
+        instance.setAppliedWatermark(effectiveSeqTxn);
         boolean lvConsumedPersisted = false;
         try {
             engine.advanceLiveViewConsumedSeqTxn(
                     instance.getLiveViewToken(),
-                    advanceTo,
+                    effectiveSeqTxn,
                     blockFileWriter,
                     path
             );
@@ -1712,7 +1739,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         } catch (CairoException e) {
             LOG.critical().$("could not advance live view consumed seqTxn after O3 replay [view=")
                     .$(viewName)
-                    .$(", advanceTo=").$(advanceTo)
+                    .$(", advanceTo=").$(effectiveSeqTxn)
                     .$(", error=").$safe(e.getFlyweightMessage()).I$();
             persistState(instance);
         }
@@ -1727,11 +1754,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // Pass 0 appendedRows: lvRowsTotal already includes them (sourced
             // from the on-disk size above), so adding them again would
             // double-count lvRowPosition. Mirrors the backfill-completion path.
-            maybeWriteHeadCheckpoint(instance, windowFactory, advanceTo, replayMaxTs, 0L);
+            maybeWriteHeadCheckpoint(instance, windowFactory, effectiveSeqTxn, replayMaxTs, 0L);
         }
         LOG.info().$("live view O3 head-miss replay completed [view=")
                 .$(viewName)
-                .$(", advanceTo=").$(advanceTo)
+                .$(", advanceTo=").$(effectiveSeqTxn)
                 .$(", rowsEmitted=").$(appendedRows).I$();
     }
 

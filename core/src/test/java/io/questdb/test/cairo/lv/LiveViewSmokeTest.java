@@ -12922,6 +12922,146 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testO3HeadHitUnderApplyAheadFallsBackToHeadMiss() throws Exception {
+        // Companion to testO3HeadMissReplayUnderApplyAheadDoesNotDuplicateTrailingRow
+        // for the head-hit branch. A head-hit-eligible O3 trigger (ts strictly above
+        // the stale head's maxTimestamp) would normally replay only the tail above
+        // the head. But when ApplyWal2TableJob has run ahead, the base snapshot
+        // already holds trailing seqTxns the forward drain has not examined; a
+        // head-hit replay reads base only above headMaxTs, so it would advance the
+        // watermark only to the trigger and let the forward path re-append a trailing
+        // global-max row (a duplicate, the same defect as the head-miss case). The
+        // fix detects the apply-ahead snapshot and falls back to a full head-miss
+        // recompute, which reads the whole snapshot and advances the watermark to it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // seqTxn 1: two in-order rows. A head lands at maxTs=20.
+                execute("INSERT INTO base (ts, x) VALUES " +
+                        "('2026-11-01T00:00:10.000000Z', 1), " +
+                        "('2026-11-01T00:00:20.000000Z', 2)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(lv);
+                final long headMaxTs20 = lv.getHeadCheckpointMaxTs();
+                Assert.assertEquals(
+                        MicrosFormatUtils.parseUTCTimestamp("2026-11-01T00:00:20.000000Z"),
+                        headMaxTs20
+                );
+
+                // seqTxn 2: in-order rows that move latestSeenTs to 40 without
+                // rewriting the head (cadence does not fire), so headMaxTs stays 20.
+                setCurrentMicros(150_000L);
+                execute("INSERT INTO base (ts, x) VALUES " +
+                        "('2026-11-01T00:00:30.000000Z', 3), " +
+                        "('2026-11-01T00:00:40.000000Z', 4)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                Assert.assertEquals("head must still sit at maxTs=20",
+                        headMaxTs20, lv.getHeadCheckpointMaxTs());
+
+                // seqTxn 3: O3 trigger at ts=25 (20 < 25 < 40, head-hit eligible).
+                // seqTxn 4: a lone trailing row at the global-max ts (100s). Both
+                // are committed and applied to the BASE before the refresh job runs
+                // again, with NO drainJob between them, so apply runs ahead of the
+                // O3 trigger and the forward drain never processes seqTxn 4 alone.
+                setCurrentMicros(400_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:25.000000Z', 5)");
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:01:40.000000Z', 6)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                // Six rows in ts order, row_number() a gapless 1..6. The bug left
+                // seven rows - the global-max row duplicated with rn 7.
+                assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tx\trn\n" +
+                        "2026-11-01T00:00:10.000000Z\t1\t1\n" +
+                        "2026-11-01T00:00:20.000000Z\t2\t2\n" +
+                        "2026-11-01T00:00:25.000000Z\t5\t3\n" +
+                        "2026-11-01T00:00:30.000000Z\t3\t4\n" +
+                        "2026-11-01T00:00:40.000000Z\t4\t5\n" +
+                        "2026-11-01T00:01:40.000000Z\t6\t6\n");
+                Assert.assertEquals(6L, lv.getLvRowsTotal());
+                assertQuery("SELECT count(*) AS count FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n6\n");
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testO3HeadMissReplayUnderApplyAheadDoesNotDuplicateTrailingRow() throws Exception {
+        // Regression for the concurrent-O3 permanent duplicate row
+        // (LiveViewConcurrencyTest#testMultiWalWriterInterleavingRowNumber). The bug
+        // needs only that ApplyWal2TableJob has applied base seqTxns PAST the O3
+        // trigger before the refresh job runs, which a multi-writer interleaving
+        // produces but a single writer can also stage deterministically. The
+        // head-miss replay reads the whole base snapshot - including a trailing
+        // in-order commit holding a lone row at the global-max ts - and materialises
+        // it, but the buggy path advanced the LV watermark only to the O3 trigger
+        // seqTxn. The forward path then re-read that trailing commit and re-appended
+        // the global-max row, leaving a permanent duplicate and a corrupted
+        // row_number() sequence. The fix advances the watermark to the seqTxn the
+        // replay's base snapshot actually reflects, so the trailing commit is not
+        // reprocessed.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // seqTxn 1: two in-order rows. Forward-processed; a head lands at
+                // maxTs=20 and latestSeenTs=20.
+                execute("INSERT INTO base (ts, x) VALUES " +
+                        "('2026-11-01T00:00:10.000000Z', 1), " +
+                        "('2026-11-01T00:00:20.000000Z', 2)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(lv);
+                Assert.assertNotEquals(Numbers.LONG_NULL, lv.getHeadCheckpointLvSeqTxn());
+
+                // seqTxn 2: a back-dated row at ts=15 (< headMaxTs=20), head-miss
+                // eligible. seqTxn 3: a lone row at the global-max ts (100s), in
+                // order. Both are committed and applied to the BASE before the
+                // refresh job runs again, so the replay's base reader sits at
+                // seqTxn 3 while the O3 trigger is only seqTxn 2 (apply ran ahead).
+                // There is NO drainJob between the two inserts, so the forward drain
+                // never processes seqTxn 3 on its own.
+                setCurrentMicros(200_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:15.000000Z', 3)");
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:01:40.000000Z', 4)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                // Exactly four rows, row_number() a gapless 1..4 in ts order. The
+                // bug produced five rows - the global-max row duplicated with rn 5.
+                assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tx\trn\n" +
+                        "2026-11-01T00:00:10.000000Z\t1\t1\n" +
+                        "2026-11-01T00:00:15.000000Z\t3\t2\n" +
+                        "2026-11-01T00:00:20.000000Z\t2\t3\n" +
+                        "2026-11-01T00:01:40.000000Z\t4\t4\n");
+                Assert.assertEquals(4L, lv.getLvRowsTotal());
+                assertQuery("SELECT count(*) AS count FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n4\n");
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testO3WithinSingleCommitIsReordered() throws Exception {
         // A single base commit whose rows are NOT in ts-ascending order must
         // not corrupt window state. The refresh worker reads raw (unsorted) WAL
