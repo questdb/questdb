@@ -42,6 +42,16 @@ import org.jetbrains.annotations.NotNull;
  * <p>
  * One shouldn't modify the data id in an unblank database as it may cause data loss.
  * </p>
+ * <p>
+ * Thread-safety: the in-memory UUID can be published by one thread (e.g. the replication
+ * downloader's {@link #initialize(long, long)} JNI up-call) and read by another (e.g. a booting
+ * backup scheduler gating on {@link #isInitialized()}). The 128-bit value is two longs, so a plain
+ * read could observe a torn half-written value or miss the publish entirely. All accessors that touch
+ * the {@code lo}/{@code hi} pair are therefore {@code synchronized} on this instance, reading/writing
+ * the pair as one critical section. The underlying {@link Uuid} fields are deliberately left
+ * non-volatile: that class is a hot, general-purpose value holder, so the synchronization is kept
+ * here where the one-writer/other-reader publication actually happens.
+ * </p>
  */
 public final class DataID implements Sinkable {
 
@@ -95,11 +105,11 @@ public final class DataID implements Sinkable {
         return id;
     }
 
-    public long getHi() {
+    public synchronized long getHi() {
         return id.getHi();
     }
 
-    public long getLo() {
+    public synchronized long getLo() {
         return id.getLo();
     }
 
@@ -112,7 +122,7 @@ public final class DataID implements Sinkable {
      * @return true if the value was initialized, or false if it could not be initialized
      * because it was already set.
      */
-    public boolean initialize(long lo, long hi) {
+    public synchronized boolean initialize(long lo, long hi) {
         if (isInitialized()) {
             return false;
         }
@@ -126,12 +136,12 @@ public final class DataID implements Sinkable {
      *
      * @return true if the data id is initialized.
      */
-    public boolean isInitialized() {
+    public synchronized boolean isInitialized() {
         return !Uuid.isNull(id.getLo(), id.getHi());
     }
 
     @Override
-    public void toSink(@NotNull CharSink<?> sink) {
+    public synchronized void toSink(@NotNull CharSink<?> sink) {
         id.toSink(sink);
     }
 
