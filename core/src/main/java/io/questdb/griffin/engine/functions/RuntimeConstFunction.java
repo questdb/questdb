@@ -47,8 +47,9 @@ import io.questdb.griffin.SqlExecutionContext;
  * function of that type would return. A flat hand-rolled getter table would have to reproduce all
  * of that by hand, which is exactly where a wrong-field read can sneak in. The one exception is
  * {@link IntRuntimeConstFunction#getLong}: an overflowing INT arithmetic arg wraps in getInt() but
- * widens in getLong(), so that subclass caches the widened value separately rather than re-deriving
- * it from the wrapped int (see its comments).
+ * widens in getLong(), so that subclass keeps the wrapped int from init() and fills the widened
+ * long lazily on the first LONG-promoting read rather than re-deriving it from the wrapped int (see
+ * its comments).
  * <p>
  * Transparent in plans ({@link #toPlan(PlanSink)} delegates to the argument).
  */
@@ -456,6 +457,7 @@ public interface RuntimeConstFunction extends UnaryFunction {
     final class IntRuntimeConstFunction extends IntFunction implements RuntimeConstFunction {
         private final Function arg;
         private long longValue;
+        private boolean longValueComputed;
         private int value;
 
         IntRuntimeConstFunction(Function arg) {
@@ -476,27 +478,39 @@ public interface RuntimeConstFunction extends UnaryFunction {
         public long getLong(Record rec) {
             // INT is the one foldable type whose getLong() is not a pure function of getInt():
             // an overflowing INT arithmetic arg (e.g. an INT*INT product) wraps mod 2^32 in
-            // getInt() but widens to the full-width product in getLong(), the dual behavior the
-            // constant folder preserves so a LONG-promoting context sees the un-wrapped value.
-            // The inherited IntFunction.getLong() would route through the cached getInt() and
-            // re-wrap, so cache and serve arg.getLong() directly.
+            // getInt() but widens to the full-width result in getLong(). For + - * the two agree
+            // on their low 32 bits (a modular ring homomorphism), but division breaks even that:
+            // (1000000 * 1000000) / 7 wraps to -103911424 under getInt() yet widens to
+            // 142857142857 under getLong(), whose low 32 bits (1123222089) are a different
+            // number. So the widened value cannot be derived from the cached int. Reading both
+            // getters in init() would evaluate the composite subtree twice; instead init() reads
+            // only getInt() and this getter fills the widened long lazily, the first time a
+            // LONG-promoting context asks for it, then serves it for the remaining rows. The lazy
+            // fill mutates state outside init(), so this subclass is not read thread-safe (see
+            // isThreadSafe()) and runs on a per-worker copy.
+            if (!longValueComputed) {
+                longValue = arg.getLong(null);
+                longValueComputed = true;
+            }
             return longValue;
         }
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             arg.init(symbolTableSource, executionContext);
-            // Cache each getter at its own width. (int) getLong() == getInt() for + - * (a
-            // modular ring homomorphism: the low 32 bits of the widened result equal the
-            // wrapped result), but NOT for division: getInt() divides the per-op-wrapped INT
-            // operands while getLong() divides the full-width ones, so e.g.
-            // (1000000 * 1000000) / 7 wraps to -103911424 under getInt() but widens to
-            // 142857142857 under getLong(), whose low 32 bits (1123222089) are a different
-            // number. Deriving one getter from the other would serve that wrong value, so read
-            // both. The arg is pure runtime-const arithmetic, so the double evaluation is
-            // once-per-cursor and side-effect free.
+            // Evaluate the composite subtree exactly once, at its native INT width. getLong()
+            // widens lazily on first use (see its comment), so only the rarer LONG-promoting read
+            // pays a second evaluation while the common INT read stays single-evaluation. NULL
+            // flows through unchanged: getInt() yields INT_NULL and getLong() yields LONG_NULL.
             value = arg.getInt(null);
-            longValue = arg.getLong(null);
+            longValueComputed = false;
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            // getLong() fills longValue lazily, mutating state outside init(), so a single
+            // instance cannot be shared across worker threads; each worker gets its own copy.
+            return false;
         }
     }
 
