@@ -85,26 +85,39 @@ import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
 /**
  * Live-view refresh job.
  * <p>
- * Disk-only refresh path: walks the base table's sequencer log forward from
+ * The refresh worker walks the base table's sequencer log forward from
  * {@code lastProcessedSeqTxn + 1}, opens each WAL segment via
- * {@link WalSegmentPageFrameCursor}, runs rows through the compiled SELECT's
- * filter + window cursor, and writes outputs to the live view's own WAL via
- * {@link WalWriter}. The job applies the just-written WAL block inline on
- * this worker via a dedicated {@link ApplyWal2TableJob} — the global apply
- * job's {@code doRun} skips LV tokens so it never races the inline apply.
- * Once apply commits, {@code lvConsumedSeqTxn} advances and {@code _lv.s}
- * persists atomically through {@code engine.advanceLiveViewConsumedSeqTxn}.
- * <p>
- * Sharp edges of the disk-only refresh path:
+ * {@link WalSegmentPageFrameCursor}, and runs rows through the compiled
+ * SELECT's filter + window cursor. Two cadences are decoupled:
  * <ul>
- *     <li>No checkpoints, no JIT filter path, no cold-skip / warm-replay branching.</li>
- *     <li>FLUSH EVERY enforces a minimum interval between LV WAL commits: a refresh
- *     that arrives within {@code flushEveryMicros} of the previous commit is skipped
- *     and the fallback scan retries on the next worker tick. Under high-rate base
- *     ingestion this batches many base notifications into one LV commit per FLUSH
- *     EVERY interval.</li>
+ *     <li><b>Refresh</b> appends the computed output rows to the N=2 in-memory
+ *     tier as an <i>un-flushed lead</i> — rows in RAM that the LV's on-disk
+ *     table does not yet hold. No WAL write happens on this path.</li>
+ *     <li><b>Flush</b>, on the {@code FLUSH EVERY} cadence, re-serialises the
+ *     lead into the live view's own WAL via {@link WalWriter}, then applies the
+ *     just-written block inline on this worker via a dedicated
+ *     {@link ApplyWal2TableJob} — the global apply job's {@code doRun} skips LV
+ *     tokens so it never races the inline apply. Once apply commits,
+ *     {@code lvConsumedSeqTxn} advances and {@code _lv.s} persists through
+ *     {@code engine.advanceLiveViewConsumedSeqTxn}, and the worker writes a
+ *     rolling head checkpoint under {@code _checkpoints/}.</li>
+ * </ul>
+ * The in-RAM lead carries no durability of its own: the base WAL purge floor
+ * stays at the applied point, so a crash before flush recovers the lead by
+ * replaying the retained base WAL forward on restart. Restart and out-of-order
+ * (O3) base commits both fall through to the latest head checkpoint and replay
+ * forward from it instead of from {@code viewLowerBoundTimestamp}; an O3 cycle
+ * discards the in-RAM lead and recomputes it from the rewritten disk.
+ * <p>
+ * Other behaviours of the refresh path:
+ * <ul>
+ *     <li>FLUSH EVERY enforces a minimum interval between LV WAL commits: a flush
+ *     that arrives within {@code flushEveryMicros} of the previous commit is
+ *     deferred and the fallback scan retries on the next worker tick. Under
+ *     high-rate base ingestion this batches many base notifications into one LV
+ *     commit per FLUSH EVERY interval.</li>
  *     <li>Schema-change detection still routes through {@code ApplyWal2TableJob} on
- *     the base table — non-DATA WAL events on the base are walked past by this job
+ *     the base table — this job walks past non-DATA WAL events on the base
  *     without modifying state, while invalidation flows via
  *     {@link CairoEngine#invalidateLiveViewsForBaseTable}.</li>
  *     <li>The LV's WAL block carries {@code maxBaseSeqTxnInBlock} on a dedicated
