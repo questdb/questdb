@@ -36,6 +36,6 @@ public class AllowAllSecurityContextFactory implements SecurityContextFactory {
 
     @Override
     public SecurityContext getInstance(@Transient @NotNull PrincipalContext principalContext, byte interfaceId) {
-        return AllowAllSecurityContext.INSTANCE;
+        return AllowAllSecurityContext.INSTANCE.forPrincipal(principalContext.getPrincipal());
     }
 }

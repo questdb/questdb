@@ -24,288 +24,35 @@
 
 package io.questdb.cairo.security;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SecurityContext;
-import io.questdb.cairo.TableToken;
-import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.engine.functions.catalogue.Constants;
-import io.questdb.std.ObjList;
-import org.jetbrains.annotations.NotNull;
 
-public class ReadOnlySecurityContext implements SecurityContext {
-    public static final ReadOnlySecurityContext INSTANCE = new ReadOnlySecurityContext(false);
-    public static final ReadOnlySecurityContext SETTINGS_READ_ONLY = new ReadOnlySecurityContext(true);
-
-    private final boolean settingsReadOnly;
+/**
+ * The concrete read-only security context. The shared singletons ({@link #INSTANCE} /
+ * {@link #SETTINGS_READ_ONLY}) are instances of this class, and {@code forPrincipal} derives further
+ * instances of it, so a derived context reports the authenticated user while preserving the read-only
+ * (and settings-read-only) behavior.
+ * <p>
+ * A subclass that overrides an {@code authorize*} or identity method (e.g. the mat view refresh context,
+ * which lets writes through to its own view) MUST also override {@link #newPrincipalContext} to return
+ * its own type. This class's {@code newPrincipalContext} returns a plain {@code ReadOnlySecurityContext},
+ * so {@code forPrincipal} on a subclass that does not override it would silently drop the override and
+ * downgrade the context to plain read-only. No factory calls {@code forPrincipal} on a subclass today, so
+ * this is a latent trap rather than a live bug.
+ */
+public class ReadOnlySecurityContext extends AbstractReadOnlySecurityContext {
+    public static final ReadOnlySecurityContext INSTANCE = new ReadOnlySecurityContext(false, Constants.USER_NAME);
+    public static final ReadOnlySecurityContext SETTINGS_READ_ONLY = new ReadOnlySecurityContext(true, Constants.USER_NAME);
 
     protected ReadOnlySecurityContext() {
-        this(false);
     }
 
-    private ReadOnlySecurityContext(boolean settingsReadOnly) {
-        this.settingsReadOnly = settingsReadOnly;
-    }
-
-    @Override
-    public void authorizeAlterMatViewSetRefreshLimit(TableToken tableToken) {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    protected ReadOnlySecurityContext(boolean settingsReadOnly, CharSequence principal) {
+        super(settingsReadOnly, principal);
     }
 
     @Override
-    public void authorizeAlterMatViewSetRefreshType(TableToken tableToken) {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeAlterTableAddColumn(TableToken tableToken) {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeAlterTableAddIndex(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeAlterTableAlterColumnCache(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeAlterTableAlterColumnType(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeAlterTableAlterSymbolCapacity(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeAlterTableAttachPartition(TableToken tableToken) {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeAlterTableConvertPartitionToNative(TableToken tableToken) {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeAlterTableConvertPartitionToParquet(TableToken tableToken) {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeAlterTableDedupDisable(TableToken tableToken) {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeAlterTableDedupEnable(TableToken tableToken) {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeAlterTableDetachPartition(TableToken tableToken) {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeAlterTableDropColumn(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeAlterTableDropIndex(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeAlterTableDropPartition(TableToken tableToken) {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeAlterTableRenameColumn(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeAlterTableSetFormat(TableToken tableToken) {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeAlterTableSetParam(TableToken tableToken) {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeAlterTableSetParquetSettings(TableToken tableToken) {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeAlterTableSetType(TableToken tableToken) {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeAlterView(TableToken tableToken) {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeCopyCancel(SecurityContext cancellingSecurityContext) {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeDatabaseBackup() {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeDatabaseSnapshot() {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeHttp() {
-    }
-
-    @Override
-    public void authorizeInsert(TableToken tableToken) {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeLineTcp() {
-    }
-
-    @Override
-    public void authorizeMatViewCreate() {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeMatViewDrop(TableToken tableToken) {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeMatViewRefresh(TableToken tableToken) {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizePGWire() {
-    }
-
-    @Override
-    public void authorizeRebaseWal(TableToken tableToken) {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeResumeWal(TableToken tableToken) {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeSelect(ViewDefinition viewDefinition) {
-    }
-
-    @Override
-    public void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
-    }
-
-    @Override
-    public void authorizeSelectOnAnyColumn(TableToken tableToken) {
-    }
-
-    @Override
-    public void authorizeSettings() {
-        if (settingsReadOnly) {
-            throw CairoException.authorization().put("The /settings endpoint is read-only").setCacheable(true);
-        }
-    }
-
-    @Override
-    public void authorizeSqlEngineAdmin() {
-    }
-
-    @Override
-    public void authorizeSystemAdmin() {
-    }
-
-    @Override
-    public void authorizeTableCreate() {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeTableDrop(TableToken tableToken) {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeTableReindex(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeTableRename(TableToken tableToken) {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeTableTruncate(TableToken tableToken) {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeTableUpdate(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeTableVacuum(TableToken tableToken) {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeViewCompile(TableToken tableToken) {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeViewCreate() {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void authorizeViewDrop(TableToken tableToken) {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
-    public void checkEntityEnabled() {
-    }
-
-    @Override
-    public CharSequence getPrincipal() {
-        return Constants.USER_NAME;
-    }
-
-    @Override
-    public boolean isQueryCancellationAllowed() {
-        return false;
-    }
-
-    @Override
-    public boolean isSystemAdmin() {
-        return true;
+    protected SecurityContext newPrincipalContext(CharSequence principal) {
+        return new ReadOnlySecurityContext(settingsReadOnly, principal);
     }
 }

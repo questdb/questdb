@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.NanosTimestampDriver;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
@@ -42,6 +43,7 @@ import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateStoreImpl;
 import io.questdb.cairo.mv.MatViewTimerJob;
 import io.questdb.cairo.mv.WalTxnRangeLoader;
+import io.questdb.cairo.security.AbstractPrincipalAwareSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -6171,6 +6173,48 @@ public class MatViewTest extends AbstractCairoTest {
                 try {
                     engine.execute("insert into y values('gbpusd', 1.320, '2024-09-10T12:01')", refreshExecutionContext);
                     Assert.fail();
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "Write permission denied");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRefreshExecutionContextForPrincipalKeepsViewScopedInsert() throws Exception {
+        // forPrincipal must NOT downgrade the mat view refresh context to a plain read-only context: its
+        // newPrincipalContext override returns this, so the view-scoped authorizeInsert (which lets writes
+        // through to the view's own table) survives the per-principal derivation. A plain
+        // ReadOnlySecurityContext would deny the view insert too.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table x (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            executeWithRewriteTimestamp(
+                    "create table y (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+
+            final MatViewRefreshSqlExecutionContext refreshExecutionContext = new MatViewRefreshSqlExecutionContext(engine, 0);
+
+            try (TableReader baseReader = engine.getReader("x")) {
+                refreshExecutionContext.of(baseReader);
+
+                final SecurityContext securityContext = refreshExecutionContext.getSecurityContext();
+                // forPrincipal returns the very same instance rather than deriving a plain read-only context
+                final SecurityContext derived = ((AbstractPrincipalAwareSecurityContext) securityContext).forPrincipal("alice");
+                Assert.assertSame(securityContext, derived);
+
+                // the view-scoped allowance survives the derivation: the view's own table stays writable...
+                derived.authorizeInsert(baseReader.getTableToken());
+                // ...while every other table stays denied (would also be denied by a plain downgrade, but the
+                // permitted case above is what proves the override was not dropped)
+                try {
+                    derived.authorizeInsert(engine.verifyTableName("y"));
+                    Assert.fail("expected write to a non-view table to be denied");
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "Write permission denied");
                 }

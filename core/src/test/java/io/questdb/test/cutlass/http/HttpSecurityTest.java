@@ -44,6 +44,18 @@ import org.junit.Test;
 
 public class HttpSecurityTest extends AbstractTest {
 
+    private static final HttpAuthenticatorFactory ANONYMOUS_AUTH_FACTORY = () -> new HttpAuthenticator() {
+        @Override
+        public boolean authenticate(HttpRequestHeader headers) {
+            return true;
+        }
+
+        @Override
+        public CharSequence getPrincipal() {
+            // no configured user: an authenticated but anonymous request
+            return null;
+        }
+    };
     private static final HttpAuthenticatorFactory DENY_ALL_AUTH_FACTORY = () -> new HttpAuthenticator() {
         @Override
         public boolean authenticate(HttpRequestHeader headers) {
@@ -100,6 +112,21 @@ public class HttpSecurityTest extends AbstractTest {
         testHttpClient.close();
         AbstractTest.tearDownStatic();
         assert Unsafe.getMemUsedByTag(MemoryTag.NATIVE_HTTP_CONN) == 0;
+    }
+
+    @Test
+    public void testAnonymousRequestReportsDefaultPrincipal() throws Exception {
+        // with no configured user the authenticator reports a null principal, so the factory keeps the
+        // shared singleton and current_user() reports the default "admin"
+        testHttpEndpoint(ANONYMOUS_AUTH_FACTORY, SecurityContext.AUTH_TYPE_NONE, SecurityContext.AUTH_TYPE_NONE, (code, sqlExecutionContext) ->
+                testHttpClient.assertGet(
+                        "/query",
+                        "{\"query\":\"select current_user()\",\"columns\":[{\"name\":\"current_user\",\"type\":\"STRING\"}],\"timestamp\":-1,\"dataset\":[[\"admin\"]],\"count\":1}",
+                        "select current_user()",
+                        null,
+                        null
+                )
+        );
     }
 
     @Test
@@ -531,6 +558,29 @@ public class HttpSecurityTest extends AbstractTest {
                         "notbar"
                 )
         );
+    }
+
+    @Test
+    public void testStaticHttpAuthenticatorFactory_principalReflectsConfiguredUser() throws Exception {
+        // current_user must report the configured http.user, not the hardcoded "admin" default.
+        // The web console queries the bare "current_user" form on load, so cover it as well as the call form.
+        StaticHttpAuthenticatorFactory factory = new StaticHttpAuthenticatorFactory("foo", "bar");
+        testHttpEndpoint(factory, SecurityContext.AUTH_TYPE_CREDENTIALS, SecurityContext.AUTH_TYPE_CREDENTIALS, (code, sqlExecutionContext) -> {
+            testHttpClient.assertGet(
+                    "/query",
+                    "{\"query\":\"select current_user()\",\"columns\":[{\"name\":\"current_user\",\"type\":\"STRING\"}],\"timestamp\":-1,\"dataset\":[[\"foo\"]],\"count\":1}",
+                    "select current_user()",
+                    "foo",
+                    "bar"
+            );
+            testHttpClient.assertGet(
+                    "/query",
+                    "{\"query\":\"select current_user\",\"columns\":[{\"name\":\"current_user\",\"type\":\"STRING\"}],\"timestamp\":-1,\"dataset\":[[\"foo\"]],\"count\":1}",
+                    "select current_user",
+                    "foo",
+                    "bar"
+            );
+        });
     }
 
     @Test

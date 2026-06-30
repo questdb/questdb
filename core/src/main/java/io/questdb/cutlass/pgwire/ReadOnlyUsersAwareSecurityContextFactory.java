@@ -26,9 +26,9 @@ package io.questdb.cutlass.pgwire;
 
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.security.PrincipalContext;
 import io.questdb.cairo.security.ReadOnlySecurityContext;
 import io.questdb.cairo.security.SecurityContextFactory;
-import io.questdb.cairo.security.PrincipalContext;
 import io.questdb.std.Chars;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
@@ -52,13 +52,14 @@ public final class ReadOnlyUsersAwareSecurityContextFactory implements SecurityC
 
     @Override
     public SecurityContext getInstance(@Transient @NotNull PrincipalContext principalContext, byte interfaceId) {
+        final CharSequence principal = principalContext.getPrincipal();
         return switch (interfaceId) {
             case SecurityContextFactory.HTTP -> httpReadOnly
-                    ? (settingsReadOnly ? ReadOnlySecurityContext.SETTINGS_READ_ONLY : ReadOnlySecurityContext.INSTANCE)
-                    : (settingsReadOnly ? AllowAllSecurityContext.SETTINGS_READ_ONLY : AllowAllSecurityContext.INSTANCE);
+                    ? (settingsReadOnly ? ReadOnlySecurityContext.SETTINGS_READ_ONLY : ReadOnlySecurityContext.INSTANCE).forPrincipal(principal)
+                    : (settingsReadOnly ? AllowAllSecurityContext.SETTINGS_READ_ONLY : AllowAllSecurityContext.INSTANCE).forPrincipal(principal);
             case SecurityContextFactory.PGWIRE ->
-                    isReadOnlyPgWireUser(principalContext.getPrincipal()) ? ReadOnlySecurityContext.INSTANCE : AllowAllSecurityContext.INSTANCE;
-            default -> AllowAllSecurityContext.INSTANCE;
+                    isReadOnlyPgWireUser(principal) ? ReadOnlySecurityContext.INSTANCE.forPrincipal(principal) : AllowAllSecurityContext.INSTANCE.forPrincipal(principal);
+            default -> AllowAllSecurityContext.INSTANCE.forPrincipal(principal);
         };
     }
 
