@@ -3500,6 +3500,49 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMasterHasIntervalFilterLoUnderflowKeepsSlaveRows() throws Exception {
+        // Mirror of testMasterHasIntervalFilterHiOverflowKeepsSlaveRows for the PRECEDING/lo side.
+        // A master designated-timestamp lower-bound filter pushes a finite interval lo into the
+        // slave's page-frame scan, shifted back by the window's PRECEDING offset. When that subtract
+        // underflows (a master bound near Long.MIN minus a PRECEDING offset) the slave interval used
+        // to wrap to a late bound and drop real slave rows. offsetIntervalLo now clamps to the open
+        // lower sentinel (LONG_NULL), so the slave is fully scanned and the window keeps its rows.
+        //
+        // The rows live at a modest date (so the per-row window lo does not underflow); only the
+        // filter bound sits near the nano min, isolating the interval-pushdown underflow.
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.NANO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.NANO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE master (val DOUBLE, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE slave (val DOUBLE, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY");
+
+            execute("INSERT INTO master(val, ts) VALUES (1.0, '2020-01-01T00:00:15.000000000Z'::TIMESTAMP_NS)");
+            execute("INSERT INTO slave(val, ts) VALUES (3.0, '2020-01-01T00:00:08.000000000Z'::TIMESTAMP_NS)");
+
+            // The bound is a raw nano count ~6.85s above Long.MIN (it renders as 1677-01-01T00:12:50Z);
+            // a date-string literal that low rounds away from the boundary, so the cast pins it exactly.
+            // The 10s PRECEDING offset underflows it. The slave at :08 falls in the master row's window
+            // [:05, :15], so the aggregate is 3.0. Before the clamp the slave interval wrapped to a
+            // year-2262 bound and dropped the row, so agg came back null.
+            assertQuery("""
+                    SELECT m.ts, sum(s.val) AS agg
+                    FROM master m
+                    WINDOW JOIN slave s
+                    RANGE BETWEEN 10 seconds PRECEDING AND 0 seconds FOLLOWING
+                    EXCLUDE PREVAILING
+                    WHERE m.ts >= (-9223372030000000000L)::TIMESTAMP_NS
+                    ORDER BY m.ts
+                    """)
+                    .withPlanContaining("Frame forward scan on: slave")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns("ts\tagg\n2020-01-01T00:00:15.000000000Z\t3.0\n");
+        });
+    }
+
+    @Test
     public void testMixedColumnReused() throws Exception {
         // timestamp types don't matter for this test
         Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
