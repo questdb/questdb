@@ -32,13 +32,14 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.Assert;
+import org.junit.Test;
+
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
-import org.junit.Assert;
-import org.junit.Test;
 
 /**
  * Regression test for the C3 upgrade-corruption bug. The fixture
