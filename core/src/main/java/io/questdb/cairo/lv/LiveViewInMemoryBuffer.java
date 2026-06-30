@@ -35,11 +35,13 @@ import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.cairo.vm.api.NullMemory;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.IntList;
+import io.questdb.std.Long256;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 
 /**
@@ -188,11 +190,11 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
 
     /**
      * Returns true iff every column type in {@code columnTypes} is supported by
-     * the in-memory tier. Fixed-width types, SYMBOL (stored as INT), and every
-     * variable-length type - STRING, BINARY, VARCHAR and ARRAY - are supported.
-     * Used by {@code LiveViewRefreshJob} to decide whether to populate the tier for
-     * a given LV; unsupported schemas (e.g. LONG256, UUID) fall back to disk-only
-     * reads.
+     * the in-memory tier. Fixed-width types (including LONG256, LONG128 and UUID),
+     * SYMBOL (stored as INT), and every variable-length type - STRING, BINARY,
+     * VARCHAR and ARRAY - are supported. Used by {@code LiveViewRefreshJob} to decide
+     * whether to populate the tier for a given LV; unsupported schemas (e.g. INTERVAL,
+     * DECIMAL) fall back to disk-only reads.
      */
     public static boolean areColumnTypesSupported(IntList columnTypes) {
         for (int i = 0, n = columnTypes.size(); i < n; i++) {
@@ -207,11 +209,13 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
     /**
      * Returns true iff a single column of {@code columnType} is supported by the
      * in-memory tier. Tags the type before the probe, so callers may pass a full
-     * column type. Fixed-width types are stored in place at {@code row << shift};
-     * SYMBOL is stored as INT, with the refresh worker eager-interning the value
-     * into the LV table's id space (see {@link LiveViewSymbolCache}) so the read
-     * path resolves it against the disk reader's symbol table (committed values) or
-     * the tier's symbol cache (values new to the un-flushed lead); STRING and
+     * column type. Fixed-width types are stored in place at {@code row << shift}
+     * (LONG256 at {@code row << 5}, LONG128 / UUID at {@code row << 4}, each with the
+     * aux region parked at the {@link NullMemory} stub); SYMBOL is stored as INT,
+     * with the refresh worker eager-interning the value into the LV table's id space
+     * (see {@link LiveViewSymbolCache}) so the read path resolves it against the disk
+     * reader's symbol table (committed values) or the tier's symbol cache (values new
+     * to the un-flushed lead); STRING and
      * BINARY are stored as an appended payload plus a per-row start-offset vector;
      * VARCHAR is stored via {@link VarcharTypeDriver} (appended payload plus the
      * driver's 16-byte-per-row aux header); ARRAY is stored via
@@ -317,6 +321,9 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
             case ColumnType.BYTE:
             case ColumnType.GEOBYTE:
             case ColumnType.BOOLEAN:
+            case ColumnType.LONG256:
+            case ColumnType.LONG128:
+            case ColumnType.UUID:
             case ColumnType.STRING:
             case ColumnType.BINARY:
             case ColumnType.VARCHAR:
@@ -370,6 +377,13 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
                 case ColumnType.GEOBYTE:
                 case ColumnType.BOOLEAN:
                     putByte(dstRow, c, src.getByte(srcRow, c));
+                    break;
+                case ColumnType.LONG256:
+                    putLong256(dstRow, c, src.getLong256A(srcRow, c));
+                    break;
+                case ColumnType.LONG128:
+                case ColumnType.UUID:
+                    putLong128(dstRow, c, src.getLong128Lo(srcRow, c), src.getLong128Hi(srcRow, c));
                     break;
                 case ColumnType.STRING:
                     appendStr(c, dstRow, src.getStrA(srcRow, c));
@@ -445,6 +459,13 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
                     break;
                 case ColumnType.BOOLEAN:
                     putBool(dstRow, c, record.getBool(c));
+                    break;
+                case ColumnType.LONG256:
+                    putLong256(dstRow, c, record.getLong256A(c));
+                    break;
+                case ColumnType.LONG128:
+                case ColumnType.UUID:
+                    putLong128(dstRow, c, record.getLong128Lo(c), record.getLong128Hi(c));
                     break;
                 case ColumnType.STRING:
                     appendStr(c, dstRow, record.getStrA(c));
@@ -545,6 +566,35 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
         return dataMem.getQuick(col).getLong(row << 3);
     }
 
+    // Resolves the high 64 bits of a LONG128 / UUID value: stored as two longs at
+    // the absolute offset row << 4 (lo first, hi at + 8), mirroring the on-disk
+    // 16-byte fixed-width layout PageFrameMemoryRecord.getLong128Hi reads.
+    public long getLong128Hi(long row, int col) {
+        return dataMem.getQuick(col).getLong((row << 4) + Long.BYTES);
+    }
+
+    // Resolves the low 64 bits of a LONG128 / UUID value (see getLong128Hi).
+    public long getLong128Lo(long row, int col) {
+        return dataMem.getQuick(col).getLong(row << 4);
+    }
+
+    // Renders a LONG256 value (4 longs at the absolute offset row << 5) into the
+    // given sink, mirroring the on-disk 32-byte fixed-width layout.
+    public void getLong256(long row, int col, CharSink<?> sink) {
+        dataMem.getQuick(col).getLong256(row << 5, sink);
+    }
+
+    // Resolves a LONG256 value (4 longs at the absolute offset row << 5). getLong256A
+    // / getLong256B return the dataMem column's own distinct reusable flyweights
+    // (long256A / long256B), so a caller may hold both at once for an A/B comparison.
+    public Long256 getLong256A(long row, int col) {
+        return dataMem.getQuick(col).getLong256A(row << 5);
+    }
+
+    public Long256 getLong256B(long row, int col) {
+        return dataMem.getQuick(col).getLong256B(row << 5);
+    }
+
     public short getShort(long row, int col) {
         return dataMem.getQuick(col).getShort(row << 1);
     }
@@ -633,6 +683,23 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
 
     public void putLong(long row, int col, long value) {
         dataMem.getQuick(col).putLong(row << 3, value);
+    }
+
+    // Stores a LONG128 / UUID value as two longs at the absolute offset row << 4
+    // (lo first, hi at + 8), the 16-byte fixed-width layout getLong128Lo / getLong128Hi
+    // read back. The aux region stays the NullMemory stub.
+    public void putLong128(long row, int col, long lo, long hi) {
+        final long offset = row << 4;
+        final MemoryCARWImpl data = dataMem.getQuick(col);
+        data.putLong(offset, lo);
+        data.putLong(offset + Long.BYTES, hi);
+    }
+
+    // Stores a LONG256 value (4 longs) at the absolute offset row << 5, the 32-byte
+    // fixed-width layout getLong256A / getLong256B read back. The aux region stays
+    // the NullMemory stub.
+    public void putLong256(long row, int col, Long256 value) {
+        dataMem.getQuick(col).putLong256(row << 5, value);
     }
 
     public void putShort(long row, int col, short value) {

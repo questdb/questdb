@@ -27,6 +27,7 @@ package io.questdb.cairo.lv;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Long256;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8Sequence;
 
@@ -132,6 +133,21 @@ public class LiveViewBufferRecord implements Record {
     @Override
     public long getLong(int col) {
         return buffer.getLong(row, col);
+    }
+
+    @Override
+    public long getLong128Hi(int col) {
+        return buffer.getLong128Hi(row, col);
+    }
+
+    @Override
+    public long getLong128Lo(int col) {
+        return buffer.getLong128Lo(row, col);
+    }
+
+    @Override
+    public Long256 getLong256A(int col) {
+        return buffer.getLong256A(row, col);
     }
 
     @Override

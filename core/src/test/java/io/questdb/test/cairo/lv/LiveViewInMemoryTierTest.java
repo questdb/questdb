@@ -35,6 +35,9 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.IntList;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.Numbers;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
@@ -807,6 +810,123 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testWideFixedWidthRoundTripThroughTier() throws Exception {
+        // Write the wide fixed-width types Phase 4 added - LONG256 (32 B), UUID and
+        // LONG128 (16 B each) - including a NULL row, into a slot, publish, then read
+        // them back through the buffer getters after a reader pins the published slot.
+        // Their aux region stays the NullMemory stub; the value lives wholly in dataMem
+        // at an absolute offset (row << 5 for LONG256, row << 4 for UUID / LONG128).
+        assertMemoryLeak(() -> {
+            IntList types = wideFixedWidthSchema();
+            try (LiveViewInMemoryTier tier = new LiveViewInMemoryTier(types, 0, PAGE_SIZE)) {
+                int writeIdx = 1 - tier.getPublishedIdx();
+                LiveViewInMemoryBuffer slot = tier.tryAcquireWrite(writeIdx);
+                Assert.assertNotNull(slot);
+                WideFixedRecord rec = new WideFixedRecord();
+
+                // row 0: normal values.
+                rec.of(1_000_000L, long256Of(1, 2, 3, 4), 0x1111L, 0x2222L, 0x3333L, 0x4444L);
+                slot.copyRowFromRecord(rec, 0);
+                // row 1: NULL for every wide column.
+                rec.of(2_000_000L, Long256Impl.NULL_LONG256, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL);
+                slot.copyRowFromRecord(rec, 1);
+                // row 2: another distinct set, including extreme long values.
+                rec.of(3_000_000L, long256Of(-1, Long.MAX_VALUE, Long.MIN_VALUE, 100), 0x5555L, 0x6666L, 0x7777L, 0x8888L);
+                slot.copyRowFromRecord(rec, 2);
+                slot.setRowCount(3);
+                tier.publishSwap(writeIdx);
+
+                int pin = tier.acquireRead();
+                Assert.assertEquals(writeIdx, pin);
+                LiveViewInMemoryBuffer r = tier.getSlot(pin);
+                Assert.assertEquals(3, r.rowCount());
+
+                // row 0: LONG256 A/B are distinct flyweights with equal value (holding
+                // both at once does not clobber either); UUID + LONG128 round-trip lo/hi.
+                Long256 a = r.getLong256A(0, 1);
+                Long256 b = r.getLong256B(0, 1);
+                Assert.assertNotSame(a, b);
+                assertLong256Equals(1, 2, 3, 4, a);
+                assertLong256Equals(1, 2, 3, 4, b);
+                Assert.assertEquals(0x1111L, r.getLong128Lo(0, 2));
+                Assert.assertEquals(0x2222L, r.getLong128Hi(0, 2));
+                Assert.assertEquals(0x3333L, r.getLong128Lo(0, 3));
+                Assert.assertEquals(0x4444L, r.getLong128Hi(0, 3));
+
+                // row 1: NULL across the board.
+                Assert.assertTrue(Long256Impl.isNull(r.getLong256A(1, 1)));
+                Assert.assertEquals(Numbers.LONG_NULL, r.getLong128Lo(1, 2));
+                Assert.assertEquals(Numbers.LONG_NULL, r.getLong128Hi(1, 2));
+                Assert.assertEquals(Numbers.LONG_NULL, r.getLong128Lo(1, 3));
+                Assert.assertEquals(Numbers.LONG_NULL, r.getLong128Hi(1, 3));
+
+                // row 2: distinct values, no cross-row bleed.
+                assertLong256Equals(-1, Long.MAX_VALUE, Long.MIN_VALUE, 100, r.getLong256A(2, 1));
+                Assert.assertEquals(0x5555L, r.getLong128Lo(2, 2));
+                Assert.assertEquals(0x6666L, r.getLong128Hi(2, 2));
+                Assert.assertEquals(0x7777L, r.getLong128Lo(2, 3));
+                Assert.assertEquals(0x8888L, r.getLong128Hi(2, 3));
+
+                tier.releaseRead(pin);
+            }
+        });
+    }
+
+    @Test
+    public void testWideFixedWidthSlowPathSwapPreservesValues() throws Exception {
+        // The slow-path swap rebuilds a slot via copyRowFrom (buffer -> buffer),
+        // re-writing each retained wide fixed-width value at its absolute offset.
+        // Skipping rows (eviction) keeps the destination dense, so the LONG256 / UUID
+        // / LONG128 values round-trip across the normal / null cases.
+        assertMemoryLeak(() -> {
+            IntList types = wideFixedWidthSchema();
+            LiveViewInMemoryBuffer src = new LiveViewInMemoryBuffer(types, 0, PAGE_SIZE);
+            LiveViewInMemoryBuffer dst = new LiveViewInMemoryBuffer(types, 0, PAGE_SIZE);
+            try {
+                WideFixedRecord rec = new WideFixedRecord();
+                final int rows = 6;
+                for (int r = 0; r < rows; r++) {
+                    if (r % 3 == 0) {
+                        rec.of((r + 1) * 1_000_000L, Long256Impl.NULL_LONG256, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL);
+                    } else {
+                        rec.of((r + 1) * 1_000_000L, long256Of(r, r + 1, r + 2, r + 3), 0x10L + r, 0x20L + r, 0x30L + r, 0x40L + r);
+                    }
+                    src.copyRowFromRecord(rec, r);
+                }
+                src.setRowCount(rows);
+
+                // Retain only the odd src rows, densely, into dst (mimics eviction).
+                long dstRow = 0;
+                for (int r = 1; r < rows; r += 2) {
+                    dst.copyRowFrom(src, r, dstRow);
+                    dstRow++;
+                }
+                dst.setRowCount(dstRow);
+                Assert.assertEquals(3, dst.rowCount());
+
+                dstRow = 0;
+                for (int r = 1; r < rows; r += 2) {
+                    if (r % 3 == 0) {
+                        Assert.assertTrue(Long256Impl.isNull(dst.getLong256A(dstRow, 1)));
+                        Assert.assertEquals(Numbers.LONG_NULL, dst.getLong128Lo(dstRow, 2));
+                        Assert.assertEquals(Numbers.LONG_NULL, dst.getLong128Hi(dstRow, 3));
+                    } else {
+                        assertLong256Equals(r, r + 1, r + 2, r + 3, dst.getLong256A(dstRow, 1));
+                        Assert.assertEquals(0x10L + r, dst.getLong128Lo(dstRow, 2));
+                        Assert.assertEquals(0x20L + r, dst.getLong128Hi(dstRow, 2));
+                        Assert.assertEquals(0x30L + r, dst.getLong128Lo(dstRow, 3));
+                        Assert.assertEquals(0x40L + r, dst.getLong128Hi(dstRow, 3));
+                    }
+                    dstRow++;
+                }
+            } finally {
+                src.close();
+                dst.close();
+            }
+        });
+    }
+
     private static IntList array1d2dSchema() {
         IntList types = new IntList(3);
         types.add(ColumnType.TIMESTAMP);
@@ -839,6 +959,13 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
         }
     }
 
+    private static void assertLong256Equals(long l0, long l1, long l2, long l3, Long256 actual) {
+        Assert.assertEquals("long0", l0, actual.getLong0());
+        Assert.assertEquals("long1", l1, actual.getLong1());
+        Assert.assertEquals("long2", l2, actual.getLong2());
+        Assert.assertEquals("long3", l3, actual.getLong3());
+    }
+
     private static byte[] bytesOf(int seed, int len) {
         byte[] b = new byte[len];
         for (int i = 0; i < len; i++) {
@@ -853,6 +980,12 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
             a[i] = seed + i + 0.5;
         }
         return a;
+    }
+
+    private static Long256 long256Of(long l0, long l1, long l2, long l3) {
+        Long256Impl v = new Long256Impl();
+        v.setAll(l0, l1, l2, l3);
+        return v;
     }
 
     private static String repeat(char c, int len) {
@@ -902,6 +1035,18 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
         IntList types = new IntList(2);
         types.add(ColumnType.TIMESTAMP);
         types.add(ColumnType.VARCHAR);
+        return types;
+    }
+
+    // TIMESTAMP + the three wide fixed-width types Phase 4 added: LONG256 (col 1),
+    // UUID (col 2) and LONG128 (col 3). UUID and LONG128 share the same 16-byte
+    // lo/hi storage and accessors but are distinct column types.
+    private static IntList wideFixedWidthSchema() {
+        IntList types = new IntList(4);
+        types.add(ColumnType.TIMESTAMP);
+        types.add(ColumnType.LONG256);
+        types.add(ColumnType.UUID);
+        types.add(ColumnType.LONG128);
         return types;
     }
 
@@ -998,6 +1143,48 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
         void of(long ts, Utf8Sequence varchar) {
             this.ts = ts;
             this.varchar = varchar;
+        }
+    }
+
+    // Minimal single-row Record stub feeding copyRowFromRecord a TIMESTAMP (col 0), a
+    // LONG256 (col 1), a UUID (col 2) and a LONG128 (col 3). UUID and LONG128 are read
+    // through the same getLong128Lo / getLong128Hi accessors, dispatched on the column
+    // index. Rebind per row via of().
+    private static final class WideFixedRecord implements Record {
+        private long l128Hi;
+        private long l128Lo;
+        private Long256 l256;
+        private long ts;
+        private long uuidHi;
+        private long uuidLo;
+
+        @Override
+        public long getLong128Hi(int col) {
+            return col == 2 ? uuidHi : l128Hi;
+        }
+
+        @Override
+        public long getLong128Lo(int col) {
+            return col == 2 ? uuidLo : l128Lo;
+        }
+
+        @Override
+        public Long256 getLong256A(int col) {
+            return l256;
+        }
+
+        @Override
+        public long getTimestamp(int col) {
+            return ts;
+        }
+
+        void of(long ts, Long256 l256, long uuidLo, long uuidHi, long l128Lo, long l128Hi) {
+            this.ts = ts;
+            this.l256 = l256;
+            this.uuidLo = uuidLo;
+            this.uuidHi = uuidHi;
+            this.l128Lo = l128Lo;
+            this.l128Hi = l128Hi;
         }
     }
 }

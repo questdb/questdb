@@ -40,9 +40,11 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.engine.table.PageFrameRecordCursor;
 import io.questdb.griffin.engine.table.TablePageFrameCursor;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Long256;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.TestOnly;
 
@@ -584,6 +586,35 @@ public class LiveViewRecordCursor implements RecordCursor {
         @Override
         public long getLong(int col) {
             return inMemMode ? buffer.getLong(bufferRow, col) : super.getLong(col);
+        }
+
+        @Override
+        public long getLong128Hi(int col) {
+            return inMemMode ? buffer.getLong128Hi(bufferRow, col) : super.getLong128Hi(col);
+        }
+
+        @Override
+        public long getLong128Lo(int col) {
+            return inMemMode ? buffer.getLong128Lo(bufferRow, col) : super.getLong128Lo(col);
+        }
+
+        @Override
+        public void getLong256(int col, CharSink<?> sink) {
+            if (inMemMode) {
+                buffer.getLong256(bufferRow, col, sink);
+            } else {
+                super.getLong256(col, sink);
+            }
+        }
+
+        @Override
+        public Long256 getLong256A(int col) {
+            return inMemMode ? buffer.getLong256A(bufferRow, col) : super.getLong256A(col);
+        }
+
+        @Override
+        public Long256 getLong256B(int col) {
+            return inMemMode ? buffer.getLong256B(bufferRow, col) : super.getLong256B(col);
         }
 
         @Override

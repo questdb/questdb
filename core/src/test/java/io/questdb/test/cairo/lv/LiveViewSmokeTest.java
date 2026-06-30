@@ -1049,10 +1049,11 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     // Drives an end-to-end live view whose OUTPUT schema carries a var-length /
-    // array column (VARCHAR / STRING / BINARY / DOUBLE[] / DOUBLE[][]) projected
-    // straight from the base table. All of these ride through the in-mem tier
-    // (tierSupported == true); a schema with a type the tier cannot store would pass
-    // false and fall back to disk-only reads. Either way the materialized rows reach
+    // array column (VARCHAR / STRING / BINARY / DOUBLE[] / DOUBLE[][]) or a wide
+    // fixed-width column (LONG256 / UUID) projected straight from the base table. All
+    // of these ride through the in-mem tier (tierSupported == true); a schema with a
+    // type the tier cannot store would pass false and fall back to disk-only reads.
+    // Either way the materialized rows reach
     // disk - via the tier's periodic flush flyweight for the supported types - and
     // this proves the disk path MATERIALIZES and READS BACK the var-length values correctly. It
     // cross-checks the LV against the same window recomputed straight over the base
@@ -3048,26 +3049,27 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testInMemTierBypassedForUnsupportedOutputSchema() throws Exception {
-        // LiveViewInMemoryBuffer does not store UUID columns; an LV that projects one
+        // LiveViewInMemoryBuffer does not store DECIMAL columns; an LV that projects one
         // falls through to disk-only reads. ensureStagingAndTier returns false, no
         // tier is allocated, but the on-disk path still produces correct results via
-        // TableReader. (STRING / BINARY / VARCHAR / ARRAY are now stored, so this uses
-        // a UUID column to pin the still-unsupported path.)
+        // TableReader. (STRING / BINARY / VARCHAR / ARRAY and the fixed-width LONG256 /
+        // LONG128 / UUID types are now stored, so this uses a DECIMAL column - persisted
+        // but still tier-unsupported - to pin the disk-only path.)
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, u UUID, x INT) " +
+            execute("CREATE TABLE base (ts TIMESTAMP, d DECIMAL(18, 6), x INT) " +
                     "TIMESTAMP(ts) PARTITION BY DAY WAL");
-            // The LV projects a UUID column, so the in-mem tier allocation is
+            // The LV projects a DECIMAL column, so the in-mem tier allocation is
             // skipped. PARTITION BY uses a fixed-width INT key so the LV-side
             // snapshot/restore contract applies (variable-length partition keys are
             // not yet supported by the codec used to serialise key bytes into
             // checkpoint blocks).
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
-                    "SELECT ts, u, x, row_number() OVER w AS rn FROM base " +
+                    "SELECT ts, d, x, row_number() OVER w AS rn FROM base " +
                     "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR DAILY '00:00')");
-            execute("INSERT INTO base (ts, u, x) VALUES " +
-                    "('2026-05-12T00:00:00.000001Z', '11111111-1111-1111-1111-111111111111', 1), " +
-                    "('2026-05-12T00:00:00.000002Z', '22222222-2222-2222-2222-222222222222', 2), " +
-                    "('2026-05-12T00:00:00.000003Z', '33333333-3333-3333-3333-333333333333', 1)");
+            execute("INSERT INTO base (ts, d, x) VALUES " +
+                    "('2026-05-12T00:00:00.000001Z', 1.500000m, 1), " +
+                    "('2026-05-12T00:00:00.000002Z', 2.500000m, 2), " +
+                    "('2026-05-12T00:00:00.000003Z', 3.500000m, 1)");
             drainWalQueue();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 drainJob(job);
@@ -3077,15 +3079,15 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
             Assert.assertNull(
-                    "UUID output schema must skip in-mem tier allocation",
+                    "DECIMAL output schema must skip in-mem tier allocation",
                     instance.getInMemoryTier()
             );
 
             // Reads still return correct results from disk.
-            assertQuery("SELECT ts, u, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tu\tx\trn\n" +
-                    "2026-05-12T00:00:00.000001Z\t11111111-1111-1111-1111-111111111111\t1\t1\n" +
-                    "2026-05-12T00:00:00.000002Z\t22222222-2222-2222-2222-222222222222\t2\t1\n" +
-                    "2026-05-12T00:00:00.000003Z\t33333333-3333-3333-3333-333333333333\t1\t2\n");
+            assertQuery("SELECT ts, d, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\td\tx\trn\n" +
+                    "2026-05-12T00:00:00.000001Z\t1.500000\t1\t1\n" +
+                    "2026-05-12T00:00:00.000002Z\t2.500000\t2\t1\n" +
+                    "2026-05-12T00:00:00.000003Z\t3.500000\t1\t2\n");
 
             // in_mem_bytes must read 0 since no tier was allocated.
             assertQuery("SELECT in_mem_bytes FROM live_views() WHERE view_name = 'lv'").noLeakCheck().noRandomAccess().returns("in_mem_bytes\n0\n");
@@ -3110,8 +3112,20 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLong256OutputRoundTrip() throws Exception {
+        // LONG256 is a wide (32-byte) fixed-width passthrough the tier now stores.
+        assertVarLengthOutputRoundTrip("LONG256", "rnd_long256()", true);
+    }
+
+    @Test
     public void testStringOutputRoundTrip() throws Exception {
         assertVarLengthOutputRoundTrip("STRING", "rnd_str(1, 12, 3)", true);
+    }
+
+    @Test
+    public void testUuidOutputRoundTrip() throws Exception {
+        // UUID is a 16-byte fixed-width passthrough the tier now stores.
+        assertVarLengthOutputRoundTrip("UUID", "rnd_uuid4()", true);
     }
 
     @Test
@@ -14031,27 +14045,28 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
         // scanForLaggingViews, the worker processes exactly three commits
         // then yields; the next FLUSH-EVERY pass drains the remainder.
         //
-        // A UUID output column keeps the view off the in-mem tier entirely - so
+        // A DECIMAL output column keeps the view off the in-mem tier entirely - so
         // it stays on the coupled refresh+flush cycle (not the lead path) and
         // lastProcessedSeqTxn advances per cycle, making the budget-bounded backlog
-        // drain directly observable. (STRING / BINARY / VARCHAR / ARRAY and SYMBOL
-        // output columns are now lead-eligible, so they would advance at flush
-        // instead.) The turn budget itself (in drainBaseWal) is shared by both paths.
+        // drain directly observable. (STRING / BINARY / VARCHAR / ARRAY, the
+        // fixed-width LONG256 / LONG128 / UUID types, and SYMBOL output columns are
+        // now lead-eligible, so they would advance at flush instead.) The turn budget
+        // itself (in drainBaseWal) is shared by both paths.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_REFRESH_TURN_MAX_COMMITS, 3);
         assertMemoryLeak(() -> {
             setCurrentMicros(0L);
-            execute("CREATE TABLE base (ts TIMESTAMP, x INT, u UUID) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, d DECIMAL(18, 6)) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
-                    "SELECT ts, x, u, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, d, row_number() OVER () AS rn FROM base");
 
             // Six separate base WAL commits - one INSERT per row so each
             // becomes its own sequencer txn for the refresh worker to walk.
-            execute("INSERT INTO base (ts, x, u) VALUES ('2026-04-01T00:00:01.000000Z', 1, '11111111-1111-1111-1111-111111111111')");
-            execute("INSERT INTO base (ts, x, u) VALUES ('2026-04-01T00:00:02.000000Z', 2, '11111111-1111-1111-1111-111111111111')");
-            execute("INSERT INTO base (ts, x, u) VALUES ('2026-04-01T00:00:03.000000Z', 3, '11111111-1111-1111-1111-111111111111')");
-            execute("INSERT INTO base (ts, x, u) VALUES ('2026-04-01T00:00:04.000000Z', 4, '11111111-1111-1111-1111-111111111111')");
-            execute("INSERT INTO base (ts, x, u) VALUES ('2026-04-01T00:00:05.000000Z', 5, '11111111-1111-1111-1111-111111111111')");
-            execute("INSERT INTO base (ts, x, u) VALUES ('2026-04-01T00:00:06.000000Z', 6, '11111111-1111-1111-1111-111111111111')");
+            execute("INSERT INTO base (ts, x, d) VALUES ('2026-04-01T00:00:01.000000Z', 1, 1.000000m)");
+            execute("INSERT INTO base (ts, x, d) VALUES ('2026-04-01T00:00:02.000000Z', 2, 1.000000m)");
+            execute("INSERT INTO base (ts, x, d) VALUES ('2026-04-01T00:00:03.000000Z', 3, 1.000000m)");
+            execute("INSERT INTO base (ts, x, d) VALUES ('2026-04-01T00:00:04.000000Z', 4, 1.000000m)");
+            execute("INSERT INTO base (ts, x, d) VALUES ('2026-04-01T00:00:05.000000Z', 5, 1.000000m)");
+            execute("INSERT INTO base (ts, x, d) VALUES ('2026-04-01T00:00:06.000000Z', 6, 1.000000m)");
             drainWalQueue();
 
             LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
@@ -15139,17 +15154,18 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     @Test
     public void testInMemTierSkipsAllocationForUnsupportedColumnTypes() throws Exception {
         // An LV whose output schema contains a column type the in-mem tier cannot
-        // store (UUID) skips tier allocation entirely. The cursor stays disk-only
+        // store (DECIMAL) skips tier allocation entirely. The cursor stays disk-only
         // with no pin, and reads pass through unchanged. The seam_ts routing
         // scaffolding in LiveViewRecordCursor exits via the {@code pinnedSlot == null}
-        // branch. (STRING / BINARY / VARCHAR / ARRAY are now stored, so this uses a
-        // UUID column to pin the still-unsupported path.)
+        // branch. (STRING / BINARY / VARCHAR / ARRAY and the fixed-width LONG256 /
+        // LONG128 / UUID types are now stored, so this uses a DECIMAL column -
+        // persisted but still tier-unsupported - to pin the disk-only path.)
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, x INT, u UUID) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, d DECIMAL(18, 6)) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
-                    "SELECT ts, x, u, row_number() OVER () AS rn FROM base WHERE x > 0");
+                    "SELECT ts, x, d, row_number() OVER () AS rn FROM base WHERE x > 0");
 
-            execute("INSERT INTO base (ts, x, u) VALUES ('2026-05-12T00:00:00.000001Z', 1, '11111111-1111-1111-1111-111111111111')");
+            execute("INSERT INTO base (ts, x, d) VALUES ('2026-05-12T00:00:00.000001Z', 1, 1.500000m)");
             drainWalQueue();
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
@@ -15158,11 +15174,11 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             }
 
             Assert.assertNull(
-                    "in-mem tier must not be allocated for an LV with a UUID output column",
+                    "in-mem tier must not be allocated for an LV with a DECIMAL output column",
                     instance.getInMemoryTier()
             );
             // Disk-only cursor must return the inserted row through SELECT.
-            assertQuery("SELECT x, u, rn FROM lv ORDER BY ts").noLeakCheck().expectSize().returns("x\tu\trn\n1\t11111111-1111-1111-1111-111111111111\t1\n");
+            assertQuery("SELECT x, d, rn FROM lv ORDER BY ts").noLeakCheck().expectSize().returns("x\td\trn\n1\t1.500000\t1\n");
 
             execute("DROP LIVE VIEW lv");
         });

@@ -525,7 +525,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
         // Decide whether the in-memory tier can be populated for this LV. Every
         // output column must be a type the tier can store (fixed-width, SYMBOL,
-        // STRING, BINARY, VARCHAR, ARRAY); an unsupported type (e.g. LONG256, UUID)
+        // STRING, BINARY, VARCHAR, ARRAY); an unsupported type (e.g. INTERVAL, DECIMAL)
         // falls back to disk-only. The staging buffer is reshaped on schema-mismatch;
         // the LV's tier is lazily allocated on first use.
         RecordMetadata outMetadata = windowFactory.getMetadata();
@@ -614,7 +614,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // This path applies every cycle, so appliedWatermark tracks
             // lastProcessed and the in-mem tier stays a subset of disk (no
             // un-flushed lead). It serves lead-ineligible LVs (an unsupported output
-            // column type such as LONG256 / UUID, or no designated timestamp);
+            // column type such as INTERVAL / DECIMAL, or no designated timestamp);
             // lead-eligible LVs take the refresh/flush split instead.
             instance.setAppliedWatermark(advanceTo);
             boolean lvConsumedPersisted = false;
@@ -2808,7 +2808,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * for the upcoming cycle. Returns {@code true} when both are usable for
      * this LV (every output column type is one the tier can store - fixed-width,
      * SYMBOL, STRING, BINARY, VARCHAR, ARRAY); {@code false} when any column type
-     * is unsupported (e.g. LONG256, UUID), in which case the cycle still writes to
+     * is unsupported (e.g. INTERVAL, DECIMAL), in which case the cycle still writes to
      * the on-disk tier but the in-mem tier stays empty / unallocated and reads fall
      * back to {@code TableReader}.
      * <p>
@@ -2823,7 +2823,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * (fixed-width, SYMBOL, STRING, BINARY, VARCHAR, ARRAY). SYMBOL columns are
      * eligible: the lead drain eager-interns them into the tier's symbol cache
      * (LV-table-consistent ids), so the read path resolves the lead's symbols from
-     * RAM. Ineligible LVs (an unsupported column type such as LONG256 / UUID, or no
+     * RAM. Ineligible LVs (an unsupported column type such as INTERVAL / DECIMAL, or no
      * designated timestamp) keep the tier a strict subset of disk: the refresh worker
      * applies every cycle for them. Compiles the SELECT on the first call if needed
      * (cached for the LV's lifetime).
@@ -2855,7 +2855,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         }
         if (!LiveViewInMemoryBuffer.areColumnTypesSupported(tierColumnTypes)) {
             // LV output schema contains a column type the tier cannot store (e.g.
-            // LONG256, UUID); skip the in-mem tier population for this LV. The
+            // INTERVAL, DECIMAL); skip the in-mem tier population for this LV. The
             // cursor reads disk-only via TableReader.
             return false;
         }
@@ -3146,7 +3146,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private void rebuildInMemoryTier(LiveViewInstance instance) {
         LiveViewInMemoryTier tier = instance.getInMemoryTier();
         if (tier == null) {
-            // An unsupported output column type (e.g. LONG256, UUID) never allocates
+            // An unsupported output column type (e.g. INTERVAL, DECIMAL) never allocates
             // the tier.
             return;
         }
@@ -3313,6 +3313,21 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     break;
                 case ColumnType.BOOLEAN:
                     stagingBuffer.putBool(dstRow, c, col.getBool(partitionRow));
+                    break;
+                case ColumnType.LONG256:
+                    // 32-byte fixed-width: getLong256A returns the reader column's own
+                    // flyweight, copied into the staging buffer before the next read.
+                    stagingBuffer.putLong256(dstRow, c, col.getLong256A(partitionRow << 5));
+                    break;
+                case ColumnType.LONG128:
+                case ColumnType.UUID:
+                    // 16-byte fixed-width: lo at row << 4, hi at + 8.
+                    stagingBuffer.putLong128(
+                            dstRow,
+                            c,
+                            col.getLong(partitionRow << 4),
+                            col.getLong((partitionRow << 4) + Long.BYTES)
+                    );
                     break;
                 case ColumnType.STRING: {
                     // STRING .d/.i layout: aux holds the per-row 8-byte start offset
