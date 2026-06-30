@@ -4294,6 +4294,44 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSchemaChangeColumnRenameInvalidatesOnlyReferencedColumn() throws Exception {
+        // Counterpart to testSchemaChangeNarrowsToReferencedColumns (which covers
+        // DROP COLUMN): a base RENAME COLUMN drops the old name, so a view that
+        // references the renamed column flips to INVALID via dependsOnMissingColumn,
+        // while a rename of a column the view never reads leaves it ACTIVE.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, y INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertFalse("LV must start valid", instance.isInvalid());
+
+            // Rename an unreferenced column — LV stays ACTIVE.
+            execute("ALTER TABLE base RENAME COLUMN y TO y2");
+            drainWalQueue();
+            Assert.assertFalse(
+                    "renaming an unreferenced column must not invalidate the LV",
+                    instance.isInvalid()
+            );
+
+            // Rename a referenced column (x) — LV flips to INVALID.
+            execute("ALTER TABLE base RENAME COLUMN x TO x2");
+            drainWalQueue();
+            Assert.assertTrue(
+                    "renaming a referenced column must invalidate the LV",
+                    instance.isInvalid()
+            );
+            Assert.assertTrue(
+                    "wrong invalidation reason [reason=" + instance.getInvalidationReason() + ']',
+                    Chars.contains(instance.getInvalidationReason(), "rename column operation")
+            );
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testDropLiveViewWritesDropSentinelDurably() throws Exception {
         // dropLiveView's first durable step writes _lv.drop and fsyncs it
         // before any in-memory or on-disk teardown, so a crash mid-drop leaves
@@ -14287,6 +14325,167 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 Assert.assertTrue(
                         "wrong message [msg=" + e.getFlyweightMessage() + ']',
                         Chars.contains(e.getFlyweightMessage(), "'as' expected")
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testRejectAlterLiveView() throws Exception {
+        // ALTER LIVE VIEW is not a supported statement: ALTER only branches on
+        // TABLE / MATERIALIZED VIEW / VIEW, so the LIVE keyword is rejected at
+        // parse time. (ALTER TABLE <lv> is a separate path, covered by
+        // LiveViewTest.testRejectAlterTable with "cannot modify live view".)
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            try {
+                execute("ALTER LIVE VIEW lv RENAME TO lv2");
+                Assert.fail("expected SqlException rejecting ALTER LIVE VIEW");
+            } catch (SqlException e) {
+                Assert.assertTrue(
+                        "wrong message [msg=" + e.getFlyweightMessage() + ']',
+                        Chars.contains(e.getFlyweightMessage(), "'table' or 'materialized' or 'view' expected")
+                );
+            }
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testRejectAnchorDailyUnquotedTimeOfDay() throws Exception {
+        // ANCHOR DAILY's time-of-day must be a quoted 'HH:MM' literal; a bare
+        // token is rejected by the OVER-clause parser before the rest of the
+        // CREATE is validated.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try {
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                        "SELECT ts, x, sum(x) OVER w AS s FROM base " +
+                        "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR DAILY 0900)");
+                Assert.fail("expected SqlException rejecting an unquoted ANCHOR DAILY time");
+            } catch (SqlException e) {
+                Assert.assertTrue(
+                        "wrong message [msg=" + e.getFlyweightMessage() + ']',
+                        Chars.contains(e.getFlyweightMessage(), "quoted 'HH:MM' expected after 'daily'")
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testRejectAnchorExpressionMissingExpression() throws Exception {
+        // ANCHOR EXPRESSION must be followed by an expression; the parser rejects
+        // a closing paren immediately after the keyword.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try {
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                        "SELECT ts, x, sum(x) OVER w AS s FROM base " +
+                        "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR EXPRESSION)");
+                Assert.fail("expected SqlException rejecting a missing ANCHOR EXPRESSION expression");
+            } catch (SqlException e) {
+                Assert.assertTrue(
+                        "wrong message [msg=" + e.getFlyweightMessage() + ']',
+                        Chars.contains(e.getFlyweightMessage(), "expression expected after 'anchor expression'")
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testRejectAnchorMissingKind() throws Exception {
+        // ANCHOR must be followed by EXPRESSION or DAILY; any other token (or
+        // none) is rejected by the OVER-clause parser.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try {
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                        "SELECT ts, x, sum(x) OVER w AS s FROM base " +
+                        "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR WEEKLY '00:00')");
+                Assert.fail("expected SqlException rejecting an unknown ANCHOR kind");
+            } catch (SqlException e) {
+                Assert.assertTrue(
+                        "wrong message [msg=" + e.getFlyweightMessage() + ']',
+                        Chars.contains(e.getFlyweightMessage(), "'expression' or 'daily' expected after 'anchor'")
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testRejectLimitInSelect() throws Exception {
+        // A LIMIT clause wraps the window factory so the live-view validation no
+        // longer sees a bare windowed scan; the LV select must be a simple scan
+        // of the base, so LIMIT is rejected.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try {
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                        "SELECT ts, x, row_number() OVER () AS rn FROM base LIMIT 10");
+                Assert.fail("expected SqlException rejecting LIMIT in the live view select");
+            } catch (SqlException e) {
+                Assert.assertTrue(
+                        "wrong message [msg=" + e.getFlyweightMessage() + ']',
+                        Chars.contains(e.getFlyweightMessage(), "live view select must contain at least one window function")
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testRejectMissingFlushEvery() throws Exception {
+        // FLUSH EVERY is mandatory and must be the first clause after the view
+        // name; omitting it is rejected at parse time.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try {
+                execute("CREATE LIVE VIEW lv AS " +
+                        "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                Assert.fail("expected SqlException rejecting a missing FLUSH EVERY clause");
+            } catch (SqlException e) {
+                Assert.assertTrue(
+                        "wrong message [msg=" + e.getFlyweightMessage() + ']',
+                        Chars.contains(e.getFlyweightMessage(), "'flush every <duration>' expected")
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testRejectShowCreateLiveViewOnTable() throws Exception {
+        // SHOW CREATE LIVE VIEW must name a live view, not a base table; naming a
+        // regular table is rejected during resolution.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try {
+                execute("SHOW CREATE LIVE VIEW base");
+                Assert.fail("expected SqlException rejecting SHOW CREATE LIVE VIEW on a table");
+            } catch (SqlException e) {
+                Assert.assertTrue(
+                        "wrong message [msg=" + e.getFlyweightMessage() + ']',
+                        Chars.contains(e.getFlyweightMessage(), "live view name expected, got table name")
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testRejectSubqueryInFrom() throws Exception {
+        // The live view select must read directly from a single base table; a
+        // subquery in the FROM clause is rejected (the parser requires a single
+        // base-table identifier in FROM).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try {
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                        "SELECT ts, x, row_number() OVER () AS rn FROM (SELECT * FROM base WHERE x > 0)");
+                Assert.fail("expected SqlException rejecting a subquery in FROM");
+            } catch (SqlException e) {
+                Assert.assertTrue(
+                        "wrong message [msg=" + e.getFlyweightMessage() + ']',
+                        Chars.contains(e.getFlyweightMessage(), "live view requires a single base table in FROM clause")
                 );
             }
         });
