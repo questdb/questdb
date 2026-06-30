@@ -253,6 +253,99 @@ public class QuestDBFacadeE2ETest extends AbstractBootstrapTest {
         });
     }
 
+    @Test(timeout = 60_000)
+    public void testHandlerCannotCloseOrAwaitOnWorkerThread() throws Exception {
+        // A result handler runs on the worker (dispatch) thread, so a reentrant
+        // close()/await() from inside it would block forever waiting for a
+        // terminal event only that thread can deliver. The reentrancy guard must
+        // turn that into an immediate IllegalStateException -- proving both that
+        // the handler really runs on the worker thread and that the worker is
+        // not deadlocked/leaked (the next borrow still works). The method-level
+        // timeout fails the test if the guard regresses into a deadlock.
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain server = startFragmented()) {
+                server.execute("CREATE TABLE rh(x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                server.execute("INSERT INTO rh SELECT x, x::TIMESTAMP FROM long_sequence(3)");
+                server.awaitTable("rh");
+
+                String config = "ws::addr=127.0.0.1:" + HTTP_PORT + ";";
+                try (QuestDB db = QuestDB.builder().fromConfig(config).queryPoolSize(1).build()) {
+                    AtomicReference<Throwable> closeOutcome = new AtomicReference<>();
+                    AtomicReference<Throwable> awaitOutcome = new AtomicReference<>();
+                    AtomicInteger rows = new AtomicInteger();
+
+                    try (Query q = db.borrowQuery()) {
+                        q.sql("SELECT x FROM rh").handler(new QwpColumnBatchHandler() {
+                            @Override
+                            public void onBatch(QwpColumnBatch batch) {
+                                rows.addAndGet(batch.getRowCount());
+                                // q is also the Completion (QueryLease implements both).
+                                // Both calls run on the worker thread and must throw.
+                                if (closeOutcome.get() == null) {
+                                    try {
+                                        q.close();
+                                        closeOutcome.set(new AssertionError("close() must throw from a handler"));
+                                    } catch (Throwable t) {
+                                        closeOutcome.set(t);
+                                    }
+                                    try {
+                                        // q is the Completion at runtime (QueryLease implements both).
+                                        ((Completion) q).await();
+                                        awaitOutcome.set(new AssertionError("await() must throw from a handler"));
+                                    } catch (Throwable t) {
+                                        awaitOutcome.set(t);
+                                    }
+                                }
+                            }
+
+                            @Override
+                            public void onEnd(long totalRows) {
+                            }
+
+                            @Override
+                            public void onError(byte status, String message) {
+                                Assert.fail("egress error: " + message);
+                            }
+                        }).submit().await();
+                    }
+
+                    Assert.assertEquals("the handler must have run (onBatch saw the rows)", 3, rows.get());
+                    Assert.assertTrue("close() from a handler must throw IllegalStateException, was: "
+                                    + closeOutcome.get(),
+                            closeOutcome.get() instanceof IllegalStateException);
+                    Assert.assertTrue("await() from a handler must throw IllegalStateException, was: "
+                                    + awaitOutcome.get(),
+                            awaitOutcome.get() instanceof IllegalStateException);
+                    Assert.assertTrue("the error must point at cancel() as the safe in-handler stop",
+                            ((IllegalStateException) closeOutcome.get()).getMessage().contains("cancel()"));
+
+                    // The worker must not be deadlocked or leaked: re-borrow from
+                    // the size-1 pool and run a normal query to completion.
+                    AtomicInteger reused = new AtomicInteger();
+                    try (Query q = db.borrowQuery()) {
+                        q.sql("SELECT x FROM rh").handler(new QwpColumnBatchHandler() {
+                            @Override
+                            public void onBatch(QwpColumnBatch batch) {
+                                reused.addAndGet(batch.getRowCount());
+                            }
+
+                            @Override
+                            public void onEnd(long totalRows) {
+                            }
+
+                            @Override
+                            public void onError(byte status, String message) {
+                                Assert.fail("egress error on reuse: " + message);
+                            }
+                        }).submit().await();
+                    }
+                    Assert.assertEquals("the worker must still be usable after the in-handler misuse",
+                            3, reused.get());
+                }
+            }
+        });
+    }
+
     @Test
     public void testQueryExceptionOnBadSql() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
