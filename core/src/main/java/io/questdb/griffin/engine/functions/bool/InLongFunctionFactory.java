@@ -239,8 +239,8 @@ public class InLongFunctionFactory implements FunctionFactory {
 
     private static class InLongRuntimeConstFunction extends NegatableBooleanFunction implements MultiArgFunction {
         private final DirectLongHashSet inSet;
-        private final boolean keyIsNarrowInt;
         private final Function keyFunc;
+        private final boolean keyIsNarrowInt;
         private final IntList valueFunctionPositions;
         private final ObjList<Function> valueFunctions;
 

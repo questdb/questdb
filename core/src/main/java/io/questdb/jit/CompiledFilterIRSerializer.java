@@ -512,6 +512,26 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     /**
+     * Folds one operand's {@link #genuineArithType} into a running
+     * comparison-width accumulator. Unlike {@link #promoteArithType}, a
+     * non-numeric ({@link #UNDEFINED_CODE}) operand is treated as identity
+     * rather than absorbing the result: an IN list keeps its column operand last
+     * in {@code args} (with {@code lhs} / {@code rhs} null in the multi-value
+     * form), so a plain promote seeded from the null operands would stay
+     * UNDEFINED and read a LONG-width fold as a wrapped I4.
+     */
+    private int foldCmpType(int cmpType, ExpressionNode operand) {
+        int operandType = genuineArithType(operand);
+        if (operandType == UNDEFINED_CODE) {
+            return cmpType;
+        }
+        if (cmpType == UNDEFINED_CODE) {
+            return operandType;
+        }
+        return promoteArithType(cmpType, operandType);
+    }
+
+    /**
      * Real arithmetic result type of a numeric subtree, evaluated with the
      * actual Java function types. Unlike {@link #arithExprType}, an overflowing
      * pure-constant INT subtree stays {@link #I4_TYPE} (the runtime MulInt /
@@ -535,26 +555,6 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         // Leaves (column / bind variable / constant) carry their real type
         // already; only the OPERATION fold-overflow shortcut differs.
         return arithExprType(node);
-    }
-
-    /**
-     * Folds one operand's {@link #genuineArithType} into a running
-     * comparison-width accumulator. Unlike {@link #promoteArithType}, a
-     * non-numeric ({@link #UNDEFINED_CODE}) operand is treated as identity
-     * rather than absorbing the result: an IN list keeps its column operand last
-     * in {@code args} (with {@code lhs} / {@code rhs} null in the multi-value
-     * form), so a plain promote seeded from the null operands would stay
-     * UNDEFINED and read a LONG-width fold as a wrapped I4.
-     */
-    private int foldCmpType(int cmpType, ExpressionNode operand) {
-        int operandType = genuineArithType(operand);
-        if (operandType == UNDEFINED_CODE) {
-            return cmpType;
-        }
-        if (cmpType == UNDEFINED_CODE) {
-            return operandType;
-        }
-        return promoteArithType(cmpType, operandType);
     }
 
     private static boolean isArithmeticOperation(ExpressionNode node) {
