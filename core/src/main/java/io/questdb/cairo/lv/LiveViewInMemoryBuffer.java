@@ -27,6 +27,8 @@ package io.questdb.cairo.lv;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.vm.MemoryCARWImpl;
+import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.cairo.vm.api.NullMemory;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -36,15 +38,22 @@ import io.questdb.std.QuietCloseable;
 
 /**
  * One slot of the N=2 live-view in-memory tier.
- * Holds a column-major slab of fixed-width values; one
- * {@link MemoryCARWImpl} per column, primary buffer only.
+ * Holds a column-major slab of values as a (data, aux) pair per column, mirroring
+ * {@code TableWriter}'s primary/secondary column model: {@link #dataMem} is the
+ * always-real primary buffer carrying the payload, and {@link #auxMem} is the
+ * optional secondary buffer carrying the per-row offset/header vector a
+ * variable-length column needs. A fixed-width / SYMBOL column writes its value
+ * into {@code dataMem} at the absolute offset {@code row << shift} and parks its
+ * {@code auxMem} slot at the shared {@link NullMemory#INSTANCE} stub (never
+ * written, read, or measured), exactly as {@code TableWriter} parks the secondary
+ * of a fixed-width column.
  * <p>
- * Variable-length columns (STRING / VARCHAR / BINARY) are not yet supported —
- * the buffer currently targets fixed-width output schemas (numeric window
- * functions over a numeric / timestamp / symbol-id row). Calling {@code put*}
- * with a column index typed as a var-length type throws
- * {@link UnsupportedOperationException}; var-length support layers on later
- * when an LV with a var-length output column ships.
+ * Which column types the tier actually stores is governed solely by the per-type
+ * support gate ({@link #isFixedWidthSupported}); the (data, aux) storage itself
+ * imposes no further restriction. Today the gate admits fixed-width / SYMBOL
+ * schemas only, so every {@code auxMem} slot is the stub; variable-length
+ * (STRING / VARCHAR / BINARY / ARRAY) support layers on by widening that gate and
+ * allocating a real aux buffer for those columns.
  * <p>
  * The slot's {@code rowCount} and {@code seamTs} bookkeeping is owned by the
  * caller: {@link #setRowCount(long)} bumps the row counter once all column
@@ -65,9 +74,18 @@ import io.questdb.std.QuietCloseable;
  */
 public class LiveViewInMemoryBuffer implements QuietCloseable {
 
+    // Secondary/aux region per column: a real MemoryCARWImpl holding the per-row
+    // offset/header vector for a var-size column, the shared NullMemory.INSTANCE
+    // stub for a fixed-width / SYMBOL column (whose payload lives wholly in
+    // dataMem at an absolute offset, with no aux vector). Typed ObjList<MemoryCARW>
+    // so it can hold the stub. Today every entry is the stub - see class javadoc.
+    private final ObjList<MemoryCARW> auxMem;
     private final IntList columnTypeSizes;
     private final IntList columnTypes;
-    private final ObjList<MemoryCARWImpl> columns;
+    // Primary/data region per column: always a real MemoryCARWImpl. Carries the
+    // value at row << shift for a fixed-width / SYMBOL column, or the appended
+    // payload bytes for a var-size column.
+    private final ObjList<MemoryCARWImpl> dataMem;
     // Per output column, the exclusive upper bound of the lead's new-symbol id band
     // as of this slot's publish - the slot's "symbol horizon". A reader bounds its
     // LiveViewSymbolCache key scan to [committedCount, newSymbolMaxIds[col]) so it
@@ -93,7 +111,8 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
     private long seamTs;
 
     /**
-     * @param columnTypes          column-type tags (per {@link ColumnType}); fixed-width types only
+     * @param columnTypes          column-type tags (per {@link ColumnType}); a var-size type
+     *                             gets a real aux buffer, a fixed-width / SYMBOL type the stub
      * @param timestampColumnIndex index of the designated timestamp column; used only for
      *                             reporting and routing in the tier above
      * @param pageSize             initial page size for each column buffer; grows on demand
@@ -101,18 +120,25 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
     public LiveViewInMemoryBuffer(IntList columnTypes, int timestampColumnIndex, long pageSize) {
         this.columnTypes = new IntList(columnTypes.size());
         this.columnTypeSizes = new IntList(columnTypes.size());
-        this.columns = new ObjList<>(columnTypes.size());
+        this.dataMem = new ObjList<>(columnTypes.size());
+        this.auxMem = new ObjList<>(columnTypes.size());
         this.newSymbolMaxIds = new int[columnTypes.size()];
         for (int i = 0, n = columnTypes.size(); i < n; i++) {
             int type = columnTypes.getQuick(i);
             this.columnTypes.add(type);
-            // Var-size types intentionally not supported yet — see class
-            // javadoc. Track the per-row footprint so allocation + slice copy stay
-            // honest; for var-size the entry is 0 and we will assert at the put
-            // site if the caller ever tries to write.
+            // Per-row footprint of the fixed-width primary write (row << shift); 0
+            // for a var-size column, whose payload size is not a fixed per-row
+            // stride but is tracked by the dataMem / auxMem append cursors instead.
             int sz = ColumnType.isVarSize(type) ? 0 : ColumnType.sizeOf(type);
             this.columnTypeSizes.add(sz);
-            this.columns.add(new MemoryCARWImpl(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_LIVE_VIEW_IN_MEM));
+            this.dataMem.add(new MemoryCARWImpl(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_LIVE_VIEW_IN_MEM));
+            // Var-size columns get a real aux buffer for the offset/header vector;
+            // fixed-width / SYMBOL columns park the secondary at the shared stub.
+            this.auxMem.add(
+                    ColumnType.isVarSize(type)
+                            ? new MemoryCARWImpl(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_LIVE_VIEW_IN_MEM)
+                            : NullMemory.INSTANCE
+            );
         }
         this.timestampColumnIndex = timestampColumnIndex;
         this.rowCount = 0;
@@ -123,8 +149,13 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
 
     @Override
     public void close() {
-        Misc.freeObjList(columns);
-        columns.clear();
+        Misc.freeObjList(dataMem);
+        dataMem.clear();
+        // NullMemory.close() is a no-op, so freeing a list that parks fixed-width
+        // columns at the shared stub is safe - exactly how TableWriter frees a
+        // column list that holds NullMemory.INSTANCE.
+        Misc.freeObjList(auxMem);
+        auxMem.clear();
         columnTypes.clear();
         columnTypeSizes.clear();
     }
@@ -308,38 +339,43 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
      */
     public long footprintBytes() {
         long sum = 0;
-        for (int i = 0, n = columns.size(); i < n; i++) {
-            sum += columns.getQuick(i).size();
+        for (int i = 0, n = dataMem.size(); i < n; i++) {
+            sum += dataMem.getQuick(i).size();
+            // Add the aux region only for var-size columns; a fixed-width column's
+            // aux is the NullMemory stub, whose size() throws.
+            if (ColumnType.isVarSize(columnTypes.getQuick(i))) {
+                sum += auxMem.getQuick(i).size();
+            }
         }
         return sum;
     }
 
     public boolean getBool(long row, int col) {
-        return columns.getQuick(col).getByte(row) != 0;
+        return dataMem.getQuick(col).getByte(row) != 0;
     }
 
     public byte getByte(long row, int col) {
-        return columns.getQuick(col).getByte(row);
+        return dataMem.getQuick(col).getByte(row);
     }
 
     public double getDouble(long row, int col) {
-        return columns.getQuick(col).getDouble(row << 3);
+        return dataMem.getQuick(col).getDouble(row << 3);
     }
 
     public float getFloat(long row, int col) {
-        return columns.getQuick(col).getFloat(row << 2);
+        return dataMem.getQuick(col).getFloat(row << 2);
     }
 
     public int getInt(long row, int col) {
-        return columns.getQuick(col).getInt(row << 2);
+        return dataMem.getQuick(col).getInt(row << 2);
     }
 
     public long getLong(long row, int col) {
-        return columns.getQuick(col).getLong(row << 3);
+        return dataMem.getQuick(col).getLong(row << 3);
     }
 
     public short getShort(long row, int col) {
-        return columns.getQuick(col).getShort(row << 1);
+        return dataMem.getQuick(col).getShort(row << 1);
     }
 
     public long getTimestamp(long row, int col) {
@@ -371,31 +407,31 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
     }
 
     public void putBool(long row, int col, boolean value) {
-        columns.getQuick(col).putByte(row, (byte) (value ? 1 : 0));
+        dataMem.getQuick(col).putByte(row, (byte) (value ? 1 : 0));
     }
 
     public void putByte(long row, int col, byte value) {
-        columns.getQuick(col).putByte(row, value);
+        dataMem.getQuick(col).putByte(row, value);
     }
 
     public void putDouble(long row, int col, double value) {
-        columns.getQuick(col).putDouble(row << 3, value);
+        dataMem.getQuick(col).putDouble(row << 3, value);
     }
 
     public void putFloat(long row, int col, float value) {
-        columns.getQuick(col).putFloat(row << 2, value);
+        dataMem.getQuick(col).putFloat(row << 2, value);
     }
 
     public void putInt(long row, int col, int value) {
-        columns.getQuick(col).putInt(row << 2, value);
+        dataMem.getQuick(col).putInt(row << 2, value);
     }
 
     public void putLong(long row, int col, long value) {
-        columns.getQuick(col).putLong(row << 3, value);
+        dataMem.getQuick(col).putLong(row << 3, value);
     }
 
     public void putShort(long row, int col, short value) {
-        columns.getQuick(col).putShort(row << 1, value);
+        dataMem.getQuick(col).putShort(row << 1, value);
     }
 
     public void putTimestamp(long row, int col, long value) {
@@ -405,13 +441,24 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
     /**
      * Resets row count and lead count to zero and clears the seam timestamp and
      * the stamped LV-table seqTxn. Column buffers retain their allocated pages so
-     * the next refill reuses memory.
+     * the next refill reuses memory. For var-size columns the append cursors of
+     * both the payload ({@code dataMem}) and the offset/header vector
+     * ({@code auxMem}) are rewound to zero so the next refill appends from the
+     * start; fixed-width columns need no rewind because they overwrite in place at
+     * an absolute offset (and their aux is the {@link NullMemory} stub, whose
+     * {@code jumpTo} throws).
      */
     public void reset() {
         rowCount = 0;
         seamTs = Numbers.LONG_NULL;
         lvSeqTxn = Numbers.LONG_NULL;
         leadRowCount = 0;
+        for (int c = 0, n = columnTypes.size(); c < n; c++) {
+            if (ColumnType.isVarSize(columnTypes.getQuick(c))) {
+                dataMem.getQuick(c).jumpTo(0);
+                auxMem.getQuick(c).jumpTo(0);
+            }
+        }
     }
 
     public long rowCount() {
