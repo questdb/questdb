@@ -255,6 +255,11 @@ public class LiveViewInMemoryTier implements QuietCloseable {
             failNextPublishSwap = null;
             throw injected;
         }
+        // Capture each SYMBOL column's lead horizon onto the slot before it becomes
+        // reader-visible. The sentinel-release CAS below is the happens-before edge
+        // a reader's acquireRead CAS pairs with, so the stamped horizon (and the
+        // backing arrays it bounds) publish to the reader safely.
+        stampSymbolHorizon(newPublishedIdx);
         publishedIdx = newPublishedIdx;
         long addr = refCountsAddr + ((long) newPublishedIdx) * Long.BYTES;
         long observed = Os.compareAndSwap(addr, RC_WRITER_SENTINEL, 0L);
@@ -291,6 +296,12 @@ public class LiveViewInMemoryTier implements QuietCloseable {
      * </ul>
      */
     public void releaseWriteWithoutPublish(int slotIdx) {
+        // The fast-path success branch makes the in-place-appended rows reader-
+        // visible here (publishedIdx unchanged); the error / both-pinned-skip
+        // branches release a slot no reader will see. Stamping the symbol horizon
+        // before the release CAS covers the visible case and is a harmless no-op
+        // for the others (the slot is not published, or its rows are unchanged).
+        stampSymbolHorizon(slotIdx);
         long addr = refCountsAddr + ((long) slotIdx) * Long.BYTES;
         long observed = Os.compareAndSwap(addr, RC_WRITER_SENTINEL, 0L);
         if (observed != RC_WRITER_SENTINEL) {
@@ -369,6 +380,22 @@ public class LiveViewInMemoryTier implements QuietCloseable {
             if (Os.compareAndSwap(addr, current, current - 1) == current) {
                 return;
             }
+        }
+    }
+
+    /**
+     * Stamps every SYMBOL output column's current lead horizon
+     * ({@link LiveViewSymbolCache#newSymbolMaxIdExclusive}) onto {@code slotIdx}.
+     * Runs on the writer thread under the slot's writer sentinel, just before the
+     * sentinel-release / publish CAS, so the snapshot is exact (the sole interner
+     * is not growing the lists at this instant) and a reader that pins the slot
+     * sees a stable, in-bounds horizon. A non-SYMBOL schema makes this a no-op.
+     */
+    private void stampSymbolHorizon(int slotIdx) {
+        final LiveViewInMemoryBuffer slot = slots[slotIdx];
+        for (int i = 0, n = symbolCache.symbolColumnCount(); i < n; i++) {
+            final int col = symbolCache.symbolColumnIndexAt(i);
+            slot.setNewSymbolMaxId(col, symbolCache.newSymbolMaxIdExclusive(col));
         }
     }
 

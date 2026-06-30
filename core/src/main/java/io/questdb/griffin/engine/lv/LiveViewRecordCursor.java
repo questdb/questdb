@@ -257,6 +257,7 @@ public class LiveViewRecordCursor implements RecordCursor {
                     (StaticSymbolTable) diskCursor.newSymbolTable(columnIndex),
                     symbolCache,
                     columnIndex,
+                    pinnedSlot.newSymbolMaxId(columnIndex),
                     true
             );
         }
@@ -448,6 +449,7 @@ public class LiveViewRecordCursor implements RecordCursor {
                     (StaticSymbolTable) diskCursor.getSymbolTable(columnIndex),
                     symbolCache,
                     columnIndex,
+                    pinnedSlot.newSymbolMaxId(columnIndex),
                     false
             );
             symbolTableOverlays.extendAndSet(columnIndex, overlay);

@@ -1178,7 +1178,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         final ObjList<LiveViewSymbolTable> resolvers = new ObjList<>(n);
         for (int c = 0; c < n; c++) {
             if (ColumnType.tagOf(outMetadata.getColumnType(c)) == ColumnType.SYMBOL) {
-                resolvers.add(new LiveViewSymbolTable().of(symbolReader.getSymbolTable(c), cache, c, false));
+                // Writer-side resolver: the refresh worker builds this while flushing,
+                // not interning, so the live horizon is exact and the whole lead band
+                // is the correct bound (the flush re-serialises every lead id).
+                resolvers.add(new LiveViewSymbolTable().of(
+                        symbolReader.getSymbolTable(c), cache, c, cache.newSymbolMaxIdExclusive(c), false));
             } else {
                 resolvers.add(null);
             }

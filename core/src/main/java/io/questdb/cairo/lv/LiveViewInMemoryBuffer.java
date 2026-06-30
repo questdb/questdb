@@ -68,6 +68,15 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
     private final IntList columnTypeSizes;
     private final IntList columnTypes;
     private final ObjList<MemoryCARWImpl> columns;
+    // Per output column, the exclusive upper bound of the lead's new-symbol id band
+    // as of this slot's publish - the slot's "symbol horizon". A reader bounds its
+    // LiveViewSymbolCache key scan to [committedCount, newSymbolMaxIds[col]) so it
+    // only resolves symbols that belong to the slot it pinned, never ids a later
+    // refresh cycle is concurrently interning (that unbounded scan would race the
+    // cache's backing-array growth - see LiveViewSymbolCache threading note). 0 for
+    // non-SYMBOL columns and before the first stamp. The tier stamps it under the
+    // writer sentinel just before publish.
+    private final int[] newSymbolMaxIds;
     private final int timestampColumnIndex;
     // Number of trailing rows in this slot that are NOT yet on the LV's on-disk
     // tier (the un-flushed lead). Rows [rowCount - leadRowCount, rowCount) are
@@ -93,6 +102,7 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
         this.columnTypes = new IntList(columnTypes.size());
         this.columnTypeSizes = new IntList(columnTypes.size());
         this.columns = new ObjList<>(columnTypes.size());
+        this.newSymbolMaxIds = new int[columnTypes.size()];
         for (int i = 0, n = columnTypes.size(); i < n; i++) {
             int type = columnTypes.getQuick(i);
             this.columnTypes.add(type);
@@ -348,6 +358,18 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
         return lvSeqTxn;
     }
 
+    /**
+     * Exclusive upper bound of the lead's new-symbol id band for {@code col} as of
+     * this slot's publish - the slot's symbol horizon. A reader bounds its
+     * {@link LiveViewSymbolCache} key scan to {@code [committedCount, horizon)} so
+     * it only resolves symbols that belong to this slot, never ids a later refresh
+     * cycle is concurrently interning. 0 for non-SYMBOL columns. Stamped under the
+     * writer sentinel before publish; see {@link #setNewSymbolMaxId}.
+     */
+    public int newSymbolMaxId(int col) {
+        return newSymbolMaxIds[col];
+    }
+
     public void putBool(long row, int col, boolean value) {
         columns.getQuick(col).putByte(row, (byte) (value ? 1 : 0));
     }
@@ -406,6 +428,17 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
 
     public void setLvSeqTxn(long lvSeqTxn) {
         this.lvSeqTxn = lvSeqTxn;
+    }
+
+    /**
+     * Stamps {@code col}'s symbol horizon - the exclusive upper bound of the lead's
+     * new-symbol id band - onto this slot. The tier calls it under the writer
+     * sentinel just before the slot becomes reader-visible (publish / sentinel
+     * release), so a reader that pins the slot sees a stable, in-bounds horizon via
+     * the slot-pin CAS happens-before edge. See {@link #newSymbolMaxId}.
+     */
+    public void setNewSymbolMaxId(int col, int maxIdExclusive) {
+        newSymbolMaxIds[col] = maxIdExclusive;
     }
 
     public void setRowCount(long rowCount) {

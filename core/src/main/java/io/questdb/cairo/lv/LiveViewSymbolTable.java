@@ -54,6 +54,11 @@ public class LiveViewSymbolTable implements StaticSymbolTable, QuietCloseable {
     private StaticSymbolTable base;
     private LiveViewSymbolCache cache;
     private int column;
+    // Exclusive upper bound of the lead's new-symbol id band - the pinned slot's
+    // symbol horizon, captured at the slot's publish. Bounds keyOf's cache scan and
+    // sizes getSymbolCount() so a reader never resolves or indexes past the ids its
+    // slot carries (see LiveViewSymbolCache threading note).
+    private int maxNewIdExclusive;
     private boolean ownsBase;
 
     @Override
@@ -73,7 +78,7 @@ public class LiveViewSymbolTable implements StaticSymbolTable, QuietCloseable {
 
     @Override
     public int getSymbolCount() {
-        return Math.max(base.getSymbolCount(), cache.newSymbolMaxIdExclusive(column));
+        return Math.max(base.getSymbolCount(), maxNewIdExclusive);
     }
 
     @Override
@@ -82,19 +87,23 @@ public class LiveViewSymbolTable implements StaticSymbolTable, QuietCloseable {
         if (k != SymbolTable.VALUE_NOT_FOUND) {
             return k;
         }
-        return cache.newSymbolKeyOf(column, value, base.getSymbolCount());
+        return cache.newSymbolKeyOf(column, value, base.getSymbolCount(), maxNewIdExclusive);
     }
 
     /**
-     * Binds this overlay to a disk symbol table for {@code column}. {@code ownsBase}
-     * is {@code true} when {@code base} is a freshly cloned table this overlay must
-     * close (the {@code newSymbolTable} path), {@code false} when it is borrowed
-     * from a live cursor (the {@code getSymbolTable} path).
+     * Binds this overlay to a disk symbol table for {@code column}.
+     * {@code maxNewIdExclusive} is the pinned slot's symbol horizon
+     * ({@link LiveViewInMemoryBuffer#newSymbolMaxId}), which bounds the cache scan
+     * and the symbol count. {@code ownsBase} is {@code true} when {@code base} is a
+     * freshly cloned table this overlay must close (the {@code newSymbolTable}
+     * path), {@code false} when it is borrowed from a live cursor (the
+     * {@code getSymbolTable} path).
      */
-    public LiveViewSymbolTable of(StaticSymbolTable base, LiveViewSymbolCache cache, int column, boolean ownsBase) {
+    public LiveViewSymbolTable of(StaticSymbolTable base, LiveViewSymbolCache cache, int column, int maxNewIdExclusive, boolean ownsBase) {
         this.base = base;
         this.cache = cache;
         this.column = column;
+        this.maxNewIdExclusive = maxNewIdExclusive;
         this.ownsBase = ownsBase;
         return this;
     }

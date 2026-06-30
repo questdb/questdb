@@ -27,6 +27,7 @@ package io.questdb.test.cairo.lv;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.lv.LiveViewSymbolCache;
+import io.questdb.cairo.lv.LiveViewSymbolTable;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.api.MemoryR;
@@ -37,6 +38,7 @@ import org.junit.Test;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Concurrency unit coverage for {@link LiveViewSymbolCache}. The cache is a
@@ -53,6 +55,18 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * {@code LiveViewInMemReadTest} never run a reader against a concurrently
  * interning worker. This test exercises the read methods against a worker that
  * is actively growing the cache's per-column id-to-string lists.
+ * <p>
+ * It also pins down the memory-safety contract of the bounded scan: a reader must
+ * bound {@code newSymbolKeyOf} to a symbol horizon published with a happens-before
+ * edge (in production the slot-pin CAS; here an {@link AtomicInteger} release /
+ * acquire), never to the list's live {@code size()}. The horizon is at most the
+ * list size when it was published, so the backing array the reader observes is at
+ * least that long even while the worker concurrently grows and reallocates the
+ * list - the index stays in bounds without a lock. Bounding to a live size read
+ * instead is the bug this guards against: on a weak-memory host (ARM) the reader
+ * could observe the bumped size paired with the old, shorter array and index out
+ * of bounds. So this doubles as an ARM-CI canary for the bounded read path and as
+ * a guard on the append-only {@code id -> string} invariant.
  */
 public class LiveViewSymbolCacheConcurrencyTest {
 
@@ -132,14 +146,17 @@ public class LiveViewSymbolCacheConcurrencyTest {
         // throw (ArrayIndexOutOfBounds / NPE) nor return a torn id; any id the
         // key lookup returns must round-trip back to the same string.
         //
-        // newSymbolKeyOf scans up to the cache's live list size, which the worker
-        // grows concurrently. On a TSO host (x86) the worker's array-store-then-
-        // size-store ordering keeps an observed size paired with a backing array
-        // at least that large, so the index stays in bounds and this passes; the
-        // out-of-bounds hazard surfaces only on a weak-memory host (ARM). The test
-        // therefore doubles as an ARM-CI canary and as a guard against any future
-        // change that breaks the append-only id->string invariant the read path
-        // relies on (which would also fail on x86).
+        // Each reader bounds its newSymbolKeyOf scan to a horizon the worker
+        // publishes through an AtomicInteger release after the matching intern -
+        // the unit-level stand-in for the production slot-pin CAS, which publishes
+        // the slot's stamped symbol horizon to a reader. The horizon is at most the
+        // list size when it was published, so the backing array the reader observes
+        // is at least that long; every index stays in bounds even as the worker
+        // reallocates the list under it. On a weak-memory host (ARM) a scan bounded
+        // to the live size() instead could observe the bumped size with the old,
+        // shorter array and go out of bounds - the regression this guards. So this
+        // doubles as an ARM-CI canary and as a guard on the append-only id->string
+        // invariant the read path relies on.
         final IntList columnTypes = new IntList();
         columnTypes.add(ColumnType.SYMBOL);
         final LiveViewSymbolCache cache = new LiveViewSymbolCache(columnTypes);
@@ -148,6 +165,9 @@ public class LiveViewSymbolCacheConcurrencyTest {
         final int numReaders = 4;
         final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
         final AtomicBoolean writerDone = new AtomicBoolean(false);
+        // The lead's symbol horizon, published with release semantics after each
+        // intern; readers read it with acquire semantics and never scan past it.
+        final AtomicInteger publishedHorizon = new AtomicInteger(0);
         final CyclicBarrier barrier = new CyclicBarrier(numReaders + 1);
 
         final Thread writer = new Thread(() -> {
@@ -155,6 +175,11 @@ public class LiveViewSymbolCacheConcurrencyTest {
                 barrier.await();
                 for (int i = 0; i < internCount; i++) {
                     cache.intern(COL, "v" + i, NOT_FOUND_READER);
+                    // Publish the new horizon (id i was just assigned, so the list
+                    // size is now i + 1). The release pairs with the readers'
+                    // acquire so a reader bounding to this value observes a backing
+                    // array at least this long.
+                    publishedHorizon.set(i + 1);
                 }
             } catch (Throwable th) {
                 errors.add(th);
@@ -171,9 +196,10 @@ public class LiveViewSymbolCacheConcurrencyTest {
                     barrier.await();
                     int probe = seed;
                     while (!writerDone.get()) {
-                        // Raw int-key resolution over the whole lead band, the
-                        // racy live-size scan the WHERE/GROUP BY path drives.
-                        final int key = cache.newSymbolKeyOf(COL, "v" + probe, 0);
+                        // Acquire-read the published horizon, then bound the scan to
+                        // it - the WHERE/GROUP BY raw-int-key path, memory-safe.
+                        final int horizon = publishedHorizon.get();
+                        final int key = cache.newSymbolKeyOf(COL, "v" + probe, 0, horizon);
                         if (key != SymbolTable.VALUE_NOT_FOUND) {
                             // A found id must resolve back to the same string.
                             final CharSequence resolved = cache.newSymbolValueOf(COL, key);
@@ -182,10 +208,9 @@ public class LiveViewSymbolCacheConcurrencyTest {
                                         + ", probe=" + probe + ", resolved=" + resolved);
                             }
                         }
-                        // Id-keyed resolution near the growing frontier (getSymA).
-                        final int maxId = cache.newSymbolMaxIdExclusive(COL);
-                        if (maxId > 0) {
-                            cache.newSymbolValueOf(COL, maxId - 1);
+                        // Id-keyed resolution at the published frontier (getSymA).
+                        if (horizon > 0) {
+                            cache.newSymbolValueOf(COL, horizon - 1);
                         }
                         probe += numReaders;
                         if (probe >= internCount) {
@@ -212,5 +237,50 @@ public class LiveViewSymbolCacheConcurrencyTest {
         }
         // Sanity: every distinct value was interned exactly once.
         Assert.assertEquals(internCount, cache.newSymbolMaxIdExclusive(COL));
+    }
+
+    @Test
+    public void testOverlayBoundsKeyScanToSlotHorizon() {
+        // Deterministic guard that the overlay bounds its key scan to the pinned
+        // slot's symbol horizon, not the cache's live list size. A value a later
+        // refresh cycle interned (past the slot horizon) must resolve to
+        // VALUE_NOT_FOUND for that slot, and the overlay's symbol count must reflect
+        // the horizon, not the grown size. This is the over-scan a revert to the
+        // live-size scan would reintroduce - caught here on any host (the
+        // memory-safety angle of the same revert needs a weak-memory host; see
+        // testConcurrentInternAndReadDoNotRace).
+        final IntList columnTypes = new IntList();
+        columnTypes.add(ColumnType.SYMBOL);
+        final LiveViewSymbolCache cache = new LiveViewSymbolCache(columnTypes);
+
+        // A slot publishes after interning v0, v1, v2 -> ids 0, 1, 2; horizon = 3.
+        Assert.assertEquals(0, cache.intern(COL, "v0", NOT_FOUND_READER));
+        Assert.assertEquals(1, cache.intern(COL, "v1", NOT_FOUND_READER));
+        Assert.assertEquals(2, cache.intern(COL, "v2", NOT_FOUND_READER));
+        final int slotHorizon = cache.newSymbolMaxIdExclusive(COL);
+        Assert.assertEquals(3, slotHorizon);
+
+        final LiveViewSymbolTable overlay = new LiveViewSymbolTable()
+                .of(NOT_FOUND_READER, cache, COL, slotHorizon, false);
+
+        // In-band lead values resolve, and the count covers the horizon.
+        Assert.assertEquals(0, overlay.keyOf("v0"));
+        Assert.assertEquals(2, overlay.keyOf("v2"));
+        Assert.assertEquals(3, overlay.getSymbolCount());
+
+        // A later cycle interns v3, v4 -> ids 3, 4, growing the cache past the
+        // slot's horizon.
+        Assert.assertEquals(3, cache.intern(COL, "v3", NOT_FOUND_READER));
+        Assert.assertEquals(4, cache.intern(COL, "v4", NOT_FOUND_READER));
+
+        // The slot's overlay still only sees its own band: later-cycle values are
+        // invisible and the count is unchanged - the bound is the slot horizon, not
+        // the now-larger live size.
+        Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, overlay.keyOf("v3"));
+        Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, overlay.keyOf("v4"));
+        Assert.assertEquals(3, overlay.getSymbolCount());
+
+        // Sanity: an in-band value still resolves after the cache grew.
+        Assert.assertEquals(1, overlay.keyOf("v1"));
     }
 }

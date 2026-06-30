@@ -64,11 +64,26 @@ import io.questdb.std.QuietCloseable;
  * Threading: the refresh worker is the only writer ({@link #intern},
  * {@link #anchor}, {@link #onFlush}, {@link #onO3}). Cursors read only the
  * append-only {@code id -> string} lists ({@link #newSymbolValueOf},
- * {@link #newSymbolKeyOf}, {@link #newSymbolMaxIdExclusive}) through a
- * {@link LiveViewSymbolTable} overlay. The lists are append-only and a stored id
- * is always assigned before the slot that carries it is published, so the
- * tier-slot acquire/release CAS supplies the happens-before edge that makes a
- * concurrent read of an already-assigned id safe.
+ * {@link #newSymbolKeyOf}) through a {@link LiveViewSymbolTable} overlay. The
+ * lists are append-only and a stored id is always assigned before the slot that
+ * carries it is published, so the tier-slot acquire/release CAS supplies the
+ * happens-before edge that makes a concurrent read of an already-assigned id
+ * safe.
+ * <p>
+ * A reader must never scan or index past its pinned slot's symbol horizon - the
+ * exclusive id bound stamped on the slot at publish (see
+ * {@link LiveViewInMemoryBuffer#newSymbolMaxId}). {@link #intern} grows a list
+ * through {@code ObjList.extendAndSet}, which reallocates the backing array with
+ * no memory barrier; a reader that bounded its scan to the list's <em>live</em>
+ * {@code size()} could, on a weak-memory host, observe the bumped size paired
+ * with the old, shorter array and index out of bounds. Bounding instead to the
+ * slot horizon keeps every index at or below the array length that existed when
+ * the slot published (the lists only grow), and the slot-pin CAS publishes that
+ * array state to the reader - so the scan stays in bounds without a lock or a
+ * volatile size. That is why {@link #newSymbolKeyOf} takes an explicit
+ * {@code toId} and the overlay sources it from the slot, never from a live
+ * {@link #newSymbolMaxIdExclusive} read (which the tier itself reads writer-side
+ * only, to stamp the horizon).
  * <p>
  * Memory: {@link #idToString} accumulates one immutable string per distinct
  * value that has ever passed through the lead (it is never cleared, so a pinned
@@ -176,17 +191,25 @@ public class LiveViewSymbolCache implements QuietCloseable {
 
     /**
      * Linear-scans the lead's new-symbol ids of {@code col} in {@code [fromId,
-     * size)} for {@code value}, returning its id or {@link SymbolTable#VALUE_NOT_FOUND}.
+     * toId)} for {@code value}, returning its id or {@link SymbolTable#VALUE_NOT_FOUND}.
      * The overlay calls this only after the disk symbol table failed to find the
-     * value, with {@code fromId} the disk reader's committed count, so the scan
-     * covers just the un-flushed lead band (committed values resolve via disk).
+     * value, with {@code fromId} the disk reader's committed count and {@code toId}
+     * the pinned slot's symbol horizon, so the scan covers just that slot's
+     * un-flushed lead band (committed values resolve via disk).
+     * <p>
+     * {@code toId} must be the slot horizon stamped at publish, not a live
+     * {@link #newSymbolMaxIdExclusive} read: it is at most the list size when the
+     * slot published, and the slot-pin CAS publishes a backing array at least that
+     * long to the reader, so every {@link ObjList#getQuick} for {@code i < toId}
+     * stays in bounds even while the writer concurrently grows (and reallocates)
+     * the list. See the class threading note.
      */
-    public int newSymbolKeyOf(int col, CharSequence value, int fromId) {
+    public int newSymbolKeyOf(int col, CharSequence value, int fromId, int toId) {
         final ObjList<CharSequence> list = idToString.getQuick(col);
         if (list == null) {
             return SymbolTable.VALUE_NOT_FOUND;
         }
-        for (int i = Math.max(0, fromId), n = list.size(); i < n; i++) {
+        for (int i = Math.max(0, fromId); i < toId; i++) {
             final CharSequence s = list.getQuick(i);
             if (s != null && Chars.equals(s, value)) {
                 return i;
@@ -196,9 +219,11 @@ public class LiveViewSymbolCache implements QuietCloseable {
     }
 
     /**
-     * One past the highest new-symbol id assigned for {@code col}. The overlay
-     * folds it into {@code getSymbolCount()} so a static-symbol consumer sizes
-     * its key space to cover the lead.
+     * One past the highest new-symbol id assigned for {@code col}. Read writer-side
+     * only - the tier calls it under the writer sentinel to stamp the slot's symbol
+     * horizon at publish (see {@link LiveViewInMemoryBuffer#setNewSymbolMaxId}). A
+     * reader bounds its scan to that stamped horizon, never to this live value (the
+     * class threading note explains why a live read is not memory-safe).
      */
     public int newSymbolMaxIdExclusive(int col) {
         final ObjList<CharSequence> list = idToString.getQuick(col);
@@ -236,6 +261,24 @@ public class LiveViewSymbolCache implements QuietCloseable {
      */
     public void onO3() {
         clearWindowMaps();
+    }
+
+    /**
+     * Number of SYMBOL output columns the cache holds an {@code id -> string} list
+     * for. The tier iterates these to stamp each column's symbol horizon onto a
+     * slot at publish (see {@link #symbolColumnIndexAt}).
+     */
+    public int symbolColumnCount() {
+        return symbolColumns.size();
+    }
+
+    /**
+     * Output-column index of the {@code i}-th SYMBOL column, {@code i} in
+     * {@code [0, symbolColumnCount())}. Lets the tier stamp per-column symbol
+     * horizons without exposing the backing list.
+     */
+    public int symbolColumnIndexAt(int i) {
+        return symbolColumns.getQuick(i);
     }
 
     private void clearWindowMaps() {
