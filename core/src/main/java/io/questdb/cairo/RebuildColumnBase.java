@@ -25,6 +25,8 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -41,6 +43,7 @@ import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 import static io.questdb.cairo.TableUtils.lockName;
 
 public abstract class RebuildColumnBase implements Closeable, Mutable {
+    private static final Log LOG = LogFactory.getLog(RebuildColumnBase.class);
     static final int REBUILD_ALL_COLUMNS = -1;
     protected final CairoConfiguration configuration;
     protected final String unsupportedTableMessage = "Table does not have any indexes";
@@ -232,6 +235,12 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
                         final long partitionTimestamp = PartitionBy.parsePartitionDirName(partitionName, metadata.getTimestampType(), partitionBy);
                         int partitionIndex = txReader.findAttachedPartitionIndexByLoTimestamp(partitionTimestamp);
                         if (partitionIndex > -1L) {
+                            if (txReader.isPartitionParquet(partitionIndex)) {
+                                // No local .d to rebuild from (folded into the parquet); reject
+                                // rather than wipe an index we cannot recreate.
+                                throw CairoException.nonCritical()
+                                        .put("cannot reindex parquet partition [partition=").put(partitionName).put(']');
+                            }
                             reindexPartition(
                                     ff,
                                     metadata,
@@ -245,6 +254,14 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
                         }
                     } else {
                         for (int partitionIndex = txReader.getPartitionCount() - 1; partitionIndex > -1; partitionIndex--) {
+                            if (txReader.isPartitionParquet(partitionIndex)) {
+                                // No local .d to rebuild from; skip so the existing index survives and
+                                // the native partitions still get reindexed.
+                                LOG.info().$("skipping parquet partition during reindex, index left intact [path=").$(path)
+                                        .$(", ts=").$ts(ColumnType.getTimestampDriver(metadata.getTimestampType()), txReader.getPartitionTimestampByIndex(partitionIndex))
+                                        .I$();
+                                continue;
+                            }
                             reindexPartition(
                                     ff,
                                     metadata,
