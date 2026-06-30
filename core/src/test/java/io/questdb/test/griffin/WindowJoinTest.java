@@ -3459,6 +3459,47 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMasterHasIntervalFilterHiOverflowKeepsSlaveRows() throws Exception {
+        // A master designated-timestamp filter pushes a finite interval hi into the slave's
+        // page-frame scan, shifted by the window's hi offset. When that shift overflows (a master
+        // bound near Long.MAX plus a FOLLOWING offset) the slave interval used to wrap to an early
+        // bound and drop real slave rows. offsetIntervalHi now clamps to the open sentinel, so the
+        // slave is fully scanned and the window keeps its rows.
+        //
+        // The rows live at a modest date (so the per-row window hi does not overflow); only the
+        // filter bound sits near the nano max, isolating the interval-pushdown overflow.
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.NANO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.NANO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE master (val DOUBLE, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE slave (val DOUBLE, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY");
+
+            execute("INSERT INTO master(val, ts) VALUES (1.0, '2020-01-01T00:00:05.000000000Z'::TIMESTAMP_NS)");
+            execute("INSERT INTO slave(val, ts) VALUES (3.0, '2020-01-01T00:00:08.000000000Z'::TIMESTAMP_NS)");
+
+            // The bound at :12 sits ~4.85s below the nano max (2262-04-11T23:47:16.854775807Z), so
+            // the 10s FOLLOWING offset overflows it. The slave at :08 falls in the master row's
+            // window [:05, :15], so the aggregate is 3.0. Before the clamp the slave interval wrapped
+            // to a year-1677 bound and dropped the row, so agg came back null.
+            assertQuery("""
+                    SELECT m.ts, sum(s.val) AS agg
+                    FROM master m
+                    WINDOW JOIN slave s
+                    RANGE BETWEEN 0 seconds PRECEDING AND 10 seconds FOLLOWING
+                    EXCLUDE PREVAILING
+                    WHERE m.ts <= '2262-04-11T23:47:12.000000000Z'::TIMESTAMP_NS
+                    ORDER BY m.ts
+                    """)
+                    .withPlanContaining("Frame forward scan on: slave")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns("ts\tagg\n2020-01-01T00:00:05.000000000Z\t3.0\n");
+        });
+    }
+
+    @Test
     public void testMixedColumnReused() throws Exception {
         // timestamp types don't matter for this test
         Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);

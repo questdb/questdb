@@ -604,25 +604,39 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     }
 
     // Shifts a master interval's upper bound into the slave's resolution and adds the frame's hi
-    // offset, leaving open-ended bounds/offsets as their sentinel.
+    // offset, leaving open-ended bounds/offsets as their sentinel. On overflow the wrapped result is
+    // a smaller upper bound that skips real slave rows, so clamp to the open upper sentinel (a safe
+    // superset that over-scans rather than dropping data).
     private long offsetIntervalHi(long hi, long hiOffset, TimestampDriver driver) {
         if (hiOffset == Numbers.LONG_NULL || hiOffset == Long.MAX_VALUE) {
             return hiOffset;
         }
         if (hi != Numbers.LONG_NULL && hi != Long.MAX_VALUE) {
-            return timestampDriver.from(hi, driver.getTimestampType()) + hiOffset;
+            final long base = timestampDriver.from(hi, driver.getTimestampType());
+            final long result = base + hiOffset;
+            if (((base ^ result) & (hiOffset ^ result)) < 0) {
+                return Long.MAX_VALUE;
+            }
+            return result;
         }
         return hi;
     }
 
     // Shifts a master interval's lower bound into the slave's resolution and subtracts the frame's lo
-    // offset, leaving open-ended bounds/offsets as their sentinel.
+    // offset, leaving open-ended bounds/offsets as their sentinel. On overflow the wrapped result is
+    // a larger lower bound that skips real slave rows, so clamp to the open lower sentinel (a safe
+    // superset that over-scans rather than dropping data).
     private long offsetIntervalLo(long lo, long loOffset, TimestampDriver driver) {
         if (loOffset == Numbers.LONG_NULL || loOffset == Long.MAX_VALUE) {
             return loOffset;
         }
         if (lo != Numbers.LONG_NULL && lo != Long.MAX_VALUE) {
-            return timestampDriver.from(lo, driver.getTimestampType()) - loOffset;
+            final long base = timestampDriver.from(lo, driver.getTimestampType());
+            final long result = base - loOffset;
+            if (((base ^ loOffset) & (base ^ result)) < 0) {
+                return Numbers.LONG_NULL;
+            }
+            return result;
         }
         return lo;
     }

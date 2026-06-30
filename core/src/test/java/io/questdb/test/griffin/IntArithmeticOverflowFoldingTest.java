@@ -47,12 +47,12 @@ public class IntArithmeticOverflowFoldingTest extends AbstractCairoTest {
             execute("INSERT INTO t VALUES (839759)");
 
             // plain INT projection wraps mod 2^32 on both paths
-            assertQuery("SELECT 839759::INT * 330972L::SHORT AS v").expectSize().returns("v\n-1530480668\n");
-            assertQuery("SELECT x::INT * 330972L::SHORT AS v FROM t").expectSize().returns("v\n-1530480668\n");
+            assertQuery("SELECT 839759::INT * 330972L::SHORT AS v").noLeakCheck().expectSize().returns("v\n-1530480668\n");
+            assertQuery("SELECT x::INT * 330972L::SHORT AS v FROM t").noLeakCheck().expectSize().returns("v\n-1530480668\n");
 
             // the offending comparison: false on both paths (was true for the folded LONG)
-            assertQuery("SELECT (839759::INT * 330972L::SHORT) > 2 AS v").expectSize().returns("v\nfalse\n");
-            assertQuery("SELECT (x::INT * 330972L::SHORT) > 2 AS v FROM t").expectSize().returns("v\nfalse\n");
+            assertQuery("SELECT (839759::INT * 330972L::SHORT) > 2 AS v").noLeakCheck().expectSize().returns("v\nfalse\n");
+            assertQuery("SELECT (x::INT * 330972L::SHORT) > 2 AS v FROM t").noLeakCheck().expectSize().returns("v\nfalse\n");
         });
     }
 
@@ -62,20 +62,24 @@ public class IntArithmeticOverflowFoldingTest extends AbstractCairoTest {
             execute("CREATE TABLE u (y INT)");
             execute("INSERT INTO u VALUES (2147483647)");
 
-            // LONG / DOUBLE / DATE targets hold the un-wrapped value, constant and column alike
-            assertQuery("SELECT (2147483647 + 3)::LONG AS v").expectSize().returns("v\n2147483650\n");
-            assertQuery("SELECT (y + 3)::LONG AS v FROM u").expectSize().returns("v\n2147483650\n");
+            // LONG / DOUBLE / DATE / TIMESTAMP targets hold the un-wrapped value, constant and column alike
+            assertQuery("SELECT (2147483647 + 3)::LONG AS v").noLeakCheck().expectSize().returns("v\n2147483650\n");
+            assertQuery("SELECT (y + 3)::LONG AS v FROM u").noLeakCheck().expectSize().returns("v\n2147483650\n");
 
-            assertQuery("SELECT (2147483647 + 3)::DOUBLE AS v").expectSize().returns("v\n2.14748365E9\n");
-            assertQuery("SELECT (y + 3)::DOUBLE AS v FROM u").expectSize().returns("v\n2.14748365E9\n");
+            assertQuery("SELECT (2147483647 + 3)::DOUBLE AS v").noLeakCheck().expectSize().returns("v\n2.14748365E9\n");
+            assertQuery("SELECT (y + 3)::DOUBLE AS v FROM u").noLeakCheck().expectSize().returns("v\n2.14748365E9\n");
 
-            assertQuery("SELECT (2147483647 + 3)::DATE AS v").expectSize().returns("v\n1970-01-25T20:31:23.650Z\n");
-            assertQuery("SELECT (y + 3)::DATE AS v FROM u").expectSize().returns("v\n1970-01-25T20:31:23.650Z\n");
+            assertQuery("SELECT (2147483647 + 3)::DATE AS v").noLeakCheck().expectSize().returns("v\n1970-01-25T20:31:23.650Z\n");
+            assertQuery("SELECT (y + 3)::DATE AS v FROM u").noLeakCheck().expectSize().returns("v\n1970-01-25T20:31:23.650Z\n");
+
+            // TIMESTAMP (micros) widens directly, not only via to_utc()
+            assertQuery("SELECT (2147483647 + 3)::TIMESTAMP AS v").noLeakCheck().expectSize().returns("v\n1970-01-01T00:35:47.483650Z\n");
+            assertQuery("SELECT (y + 3)::TIMESTAMP AS v FROM u").noLeakCheck().expectSize().returns("v\n1970-01-01T00:35:47.483650Z\n");
 
             // FLOAT widens too: the wrapped INT (-2147483646) would print negative; the widened
             // value (2147483650) rounds to the nearest float, +2.14748365E9.
-            assertQuery("SELECT (2147483647 + 3)::FLOAT AS v").expectSize().returns("v\n2.14748365E9\n");
-            assertQuery("SELECT (y + 3)::FLOAT AS v FROM u").expectSize().returns("v\n2.14748365E9\n");
+            assertQuery("SELECT (2147483647 + 3)::FLOAT AS v").noLeakCheck().expectSize().returns("v\n2.14748365E9\n");
+            assertQuery("SELECT (y + 3)::FLOAT AS v FROM u").noLeakCheck().expectSize().returns("v\n2.14748365E9\n");
         });
     }
 
@@ -93,15 +97,15 @@ public class IntArithmeticOverflowFoldingTest extends AbstractCairoTest {
             execute("INSERT INTO u VALUES (2147483647)");
 
             // 2147483647 + 1 wraps to -2147483648 == INT_NULL; getLong() holds 2147483648.
-            assertQuery("SELECT (2147483647 + 1)::LONG AS v").expectSize().returns("v\n2147483648\n");
-            assertQuery("SELECT (y + 1)::LONG AS v FROM u").expectSize().returns("v\n2147483648\n");
+            assertQuery("SELECT (2147483647 + 1)::LONG AS v").noLeakCheck().expectSize().returns("v\n2147483648\n");
+            assertQuery("SELECT (y + 1)::LONG AS v FROM u").noLeakCheck().expectSize().returns("v\n2147483648\n");
 
             // A different product that also wraps to exactly -2^31: 65536 * 32768.
-            assertQuery("SELECT (65536 * 32768)::LONG AS v").expectSize().returns("v\n2147483648\n");
+            assertQuery("SELECT (65536 * 32768)::LONG AS v").noLeakCheck().expectSize().returns("v\n2147483648\n");
 
             // The plain INT projection still wraps mod 2^32 on both paths.
-            assertQuery("SELECT 2147483647 + 1 AS v").expectSize().returns("v\nnull\n");
-            assertQuery("SELECT y + 1 AS v FROM u").expectSize().returns("v\nnull\n");
+            assertQuery("SELECT 2147483647 + 1 AS v").noLeakCheck().expectSize().returns("v\nnull\n");
+            assertQuery("SELECT y + 1 AS v FROM u").noLeakCheck().expectSize().returns("v\nnull\n");
         });
     }
 
@@ -120,30 +124,30 @@ public class IntArithmeticOverflowFoldingTest extends AbstractCairoTest {
             execute("INSERT INTO u VALUES (2147483647, 100000)");
 
             // implicit DOUBLE promotion wraps on both the constant and column paths
-            assertQuery("SELECT (2147483647 + 3) + 0.0 AS v").expectSize().returns("v\n-2.147483646E9\n");
-            assertQuery("SELECT (y + 3) + 0.0 AS v FROM u").expectSize().returns("v\n-2.147483646E9\n");
+            assertQuery("SELECT (2147483647 + 3) + 0.0 AS v").noLeakCheck().expectSize().returns("v\n-2.147483646E9\n");
+            assertQuery("SELECT (y + 3) + 0.0 AS v FROM u").noLeakCheck().expectSize().returns("v\n-2.147483646E9\n");
 
             // commutative (constant on the left) and the mirror shape agree too
-            assertQuery("SELECT (3 + 2147483647) + 0.0 AS v").expectSize().returns("v\n-2.147483646E9\n");
-            assertQuery("SELECT (3 + y) + 0.0 AS v FROM u").expectSize().returns("v\n-2.147483646E9\n");
-            assertQuery("SELECT 0.0 + (2147483647 + 3) AS v").expectSize().returns("v\n-2.147483646E9\n");
-            assertQuery("SELECT 0.0 + (y + 3) AS v FROM u").expectSize().returns("v\n-2.147483646E9\n");
+            assertQuery("SELECT (3 + 2147483647) + 0.0 AS v").noLeakCheck().expectSize().returns("v\n-2.147483646E9\n");
+            assertQuery("SELECT (3 + y) + 0.0 AS v FROM u").noLeakCheck().expectSize().returns("v\n-2.147483646E9\n");
+            assertQuery("SELECT 0.0 + (2147483647 + 3) AS v").noLeakCheck().expectSize().returns("v\n-2.147483646E9\n");
+            assertQuery("SELECT 0.0 + (y + 3) AS v FROM u").noLeakCheck().expectSize().returns("v\n-2.147483646E9\n");
 
             // FLOAT promotion wraps alike (-2147483646 rounds to -2.1474836E9)
-            assertQuery("SELECT (2147483647 + 3) + 0.0f AS v").expectSize().returns("v\n-2.1474836E9\n");
-            assertQuery("SELECT (y + 3) + 0.0f AS v FROM u").expectSize().returns("v\n-2.1474836E9\n");
+            assertQuery("SELECT (2147483647 + 3) + 0.0f AS v").noLeakCheck().expectSize().returns("v\n-2.1474836E9\n");
+            assertQuery("SELECT (y + 3) + 0.0f AS v FROM u").noLeakCheck().expectSize().returns("v\n-2.1474836E9\n");
 
             // multiplication overflow under a DOUBLE promotion wraps alike
-            assertQuery("SELECT (100000 * 100000) * 2.0 AS v").expectSize().returns("v\n2.820130816E9\n");
-            assertQuery("SELECT (a * 100000) * 2.0 AS v FROM u").expectSize().returns("v\n2.820130816E9\n");
+            assertQuery("SELECT (100000 * 100000) * 2.0 AS v").noLeakCheck().expectSize().returns("v\n2.820130816E9\n");
+            assertQuery("SELECT (a * 100000) * 2.0 AS v FROM u").noLeakCheck().expectSize().returns("v\n2.820130816E9\n");
 
             // an explicit wider cast still widens on both paths (unchanged)
-            assertQuery("SELECT (2147483647 + 3)::DOUBLE AS v").expectSize().returns("v\n2.14748365E9\n");
-            assertQuery("SELECT (y + 3)::DOUBLE AS v FROM u").expectSize().returns("v\n2.14748365E9\n");
+            assertQuery("SELECT (2147483647 + 3)::DOUBLE AS v").noLeakCheck().expectSize().returns("v\n2.14748365E9\n");
+            assertQuery("SELECT (y + 3)::DOUBLE AS v FROM u").noLeakCheck().expectSize().returns("v\n2.14748365E9\n");
 
             // a LONG constant still combines and widens identically on both paths
-            assertQuery("SELECT (2147483647 + 3) + 0L AS v").expectSize().returns("v\n2147483650\n");
-            assertQuery("SELECT (y + 3) + 0L AS v FROM u").expectSize().returns("v\n2147483650\n");
+            assertQuery("SELECT (2147483647 + 3) + 0L AS v").noLeakCheck().expectSize().returns("v\n2147483650\n");
+            assertQuery("SELECT (y + 3) + 0L AS v FROM u").noLeakCheck().expectSize().returns("v\n2147483650\n");
         });
     }
 
@@ -163,31 +167,31 @@ public class IntArithmeticOverflowFoldingTest extends AbstractCairoTest {
             execute("INSERT INTO x VALUES (1000000, 1000000, 7, 0)");
 
             // literal and column forms read the division at INT width: -103911424
-            assertQuery("SELECT ((1000000 * 1000000) / 7) + ai AS v FROM x").expectSize().returns("v\n-103911424\n");
-            assertQuery("SELECT ((a * b) / c) + ai AS v FROM x").expectSize().returns("v\n-103911424\n");
+            assertQuery("SELECT ((1000000 * 1000000) / 7) + ai AS v FROM x").noLeakCheck().expectSize().returns("v\n-103911424\n");
+            assertQuery("SELECT ((a * b) / c) + ai AS v FROM x").noLeakCheck().expectSize().returns("v\n-103911424\n");
 
             // the bind (runtime-const) form must agree, not serve the widened low 32 bits
             bindVariableService.clear();
             bindVariableService.setStr("b0", "1000000");
             bindVariableService.setStr("b1", "1000000");
             bindVariableService.setStr("b2", "7");
-            assertQuery("SELECT ((:b0::INT * :b1::INT) / :b2::INT) + ai AS v FROM x").expectSize().returns("v\n-103911424\n");
+            assertQuery("SELECT ((:b0::INT * :b1::INT) / :b2::INT) + ai AS v FROM x").noLeakCheck().expectSize().returns("v\n-103911424\n");
 
             // a LONG-promoting context still reads the widened division on every path
-            assertQuery("SELECT ((1000000 * 1000000) / 7)::LONG AS v FROM x").expectSize().returns("v\n142857142857\n");
-            assertQuery("SELECT ((a * b) / c)::LONG AS v FROM x").expectSize().returns("v\n142857142857\n");
+            assertQuery("SELECT ((1000000 * 1000000) / 7)::LONG AS v FROM x").noLeakCheck().expectSize().returns("v\n142857142857\n");
+            assertQuery("SELECT ((a * b) / c)::LONG AS v FROM x").noLeakCheck().expectSize().returns("v\n142857142857\n");
             bindVariableService.clear();
             bindVariableService.setStr("b0", "1000000");
             bindVariableService.setStr("b1", "1000000");
             bindVariableService.setStr("b2", "7");
-            assertQuery("SELECT ((:b0::INT * :b1::INT) / :b2::INT)::LONG AS v FROM x").expectSize().returns("v\n142857142857\n");
+            assertQuery("SELECT ((:b0::INT * :b1::INT) / :b2::INT)::LONG AS v FROM x").noLeakCheck().expectSize().returns("v\n142857142857\n");
 
             // NULL flows through unchanged: a null divisor yields a null quotient
             bindVariableService.clear();
             bindVariableService.setStr("b0", "1000000");
             bindVariableService.setStr("b1", "1000000");
             bindVariableService.setStr("b2", null);
-            assertQuery("SELECT ((:b0::INT * :b1::INT) / :b2::INT) + ai AS v FROM x").expectSize().returns("v\nnull\n");
+            assertQuery("SELECT ((:b0::INT * :b1::INT) / :b2::INT) + ai AS v FROM x").noLeakCheck().expectSize().returns("v\nnull\n");
         });
     }
 
@@ -207,22 +211,22 @@ public class IntArithmeticOverflowFoldingTest extends AbstractCairoTest {
 
             // (-166478 * 17161) overflows INT: getInt() wraps to +1438038338, getLong() widens to
             // -2856928958; the outer LONG multiply must see the widened value, so * 6 == -17141573748.
-            assertQuery("SELECT (-166478 * 17161::SHORT) * nL AS v FROM x").expectSize().returns("v\n-17141573748\n");
-            assertQuery("SELECT (a * 17161::SHORT) * nL AS v FROM x").expectSize().returns("v\n-17141573748\n");
+            assertQuery("SELECT (-166478 * 17161::SHORT) * nL AS v FROM x").noLeakCheck().expectSize().returns("v\n-17141573748\n");
+            assertQuery("SELECT (a * 17161::SHORT) * nL AS v FROM x").noLeakCheck().expectSize().returns("v\n-17141573748\n");
             bindVariableService.clear();
             bindVariableService.setStr("b0", "-166478");
-            assertQuery("SELECT (:b0::INT * 17161::SHORT) * nL AS v FROM x").expectSize().returns("v\n-17141573748\n");
+            assertQuery("SELECT (:b0::INT * 17161::SHORT) * nL AS v FROM x").noLeakCheck().expectSize().returns("v\n-17141573748\n");
 
             // A direct ::LONG cast of the memoized constant widens identically on both paths.
-            assertQuery("SELECT (a * 17161::SHORT)::LONG AS v FROM x").expectSize().returns("v\n-2856928958\n");
+            assertQuery("SELECT (a * 17161::SHORT)::LONG AS v FROM x").noLeakCheck().expectSize().returns("v\n-2856928958\n");
             bindVariableService.clear();
             bindVariableService.setStr("b0", "-166478");
-            assertQuery("SELECT (:b0::INT * 17161::SHORT)::LONG AS v FROM x").expectSize().returns("v\n-2856928958\n");
+            assertQuery("SELECT (:b0::INT * 17161::SHORT)::LONG AS v FROM x").noLeakCheck().expectSize().returns("v\n-2856928958\n");
 
             // NULL flows through the wrapper unchanged: a null operand yields a null product.
             bindVariableService.clear();
             bindVariableService.setStr("b0", null);
-            assertQuery("SELECT (:b0::INT * 17161::SHORT) * nL AS v FROM x").expectSize().returns("v\nnull\n");
+            assertQuery("SELECT (:b0::INT * 17161::SHORT) * nL AS v FROM x").noLeakCheck().expectSize().returns("v\nnull\n");
         });
     }
 
@@ -234,9 +238,9 @@ public class IntArithmeticOverflowFoldingTest extends AbstractCairoTest {
 
             // PR #4824 use case: seconds * 1_000_000 must not overflow into the timestamp
             assertQuery("SELECT to_utc(1720468802 * 1000000, 'Europe/Berlin') AS v")
-                    .expectSize().returns("v\n2024-07-08T18:00:02.000000Z\n");
+                    .noLeakCheck().expectSize().returns("v\n2024-07-08T18:00:02.000000Z\n");
             assertQuery("SELECT to_utc(sec * 1000000, 'Europe/Berlin') AS v FROM s")
-                    .expectSize().returns("v\n2024-07-08T18:00:02.000000Z\n");
+                    .noLeakCheck().expectSize().returns("v\n2024-07-08T18:00:02.000000Z\n");
         });
     }
 }

@@ -251,19 +251,19 @@ public class LatestByTest extends AbstractCairoTest {
 
             final String empty = "ts\tc2\tc3\n";
             // self-comparison on a non-key column
-            assertQuery("SELECT * FROM t WHERE c2 < c2 LATEST ON ts PARTITION BY c3").timestamp("ts").returns(empty);
-            assertQuery("SELECT * FROM t WHERE c2 > c2 LATEST ON ts PARTITION BY c3").timestamp("ts").returns(empty);
+            assertQuery("SELECT * FROM t WHERE c2 < c2 LATEST ON ts PARTITION BY c3").noLeakCheck().timestamp("ts").returns(empty);
+            assertQuery("SELECT * FROM t WHERE c2 > c2 LATEST ON ts PARTITION BY c3").noLeakCheck().timestamp("ts").returns(empty);
             // self-comparison on the designated timestamp
-            assertQuery("SELECT * FROM t WHERE ts > ts LATEST ON ts PARTITION BY c3").timestamp("ts").returns(empty);
+            assertQuery("SELECT * FROM t WHERE ts > ts LATEST ON ts PARTITION BY c3").noLeakCheck().timestamp("ts").returns(empty);
             // self-comparison on the partition key
-            assertQuery("SELECT * FROM t WHERE c3 != c3 LATEST ON ts PARTITION BY c3").timestamp("ts").returns(empty);
+            assertQuery("SELECT * FROM t WHERE c3 != c3 LATEST ON ts PARTITION BY c3").noLeakCheck().timestamp("ts").returns(empty);
             // AND of self-comparisons
-            assertQuery("SELECT * FROM t WHERE c2 < c2 AND ts > ts LATEST ON ts PARTITION BY c3").timestamp("ts").returns(empty);
+            assertQuery("SELECT * FROM t WHERE c2 < c2 AND ts > ts LATEST ON ts PARTITION BY c3").noLeakCheck().timestamp("ts").returns(empty);
             // a folded literal-only constant-false term
-            assertQuery("SELECT * FROM t WHERE 1 > 2 LATEST ON ts PARTITION BY c3").timestamp("ts").returns(empty);
+            assertQuery("SELECT * FROM t WHERE 1 > 2 LATEST ON ts PARTITION BY c3").noLeakCheck().timestamp("ts").returns(empty);
             // with ORDER BY and LIMIT riding along (the fuzzer shapes)
-            assertQuery("SELECT * FROM t WHERE c2 < c2 LATEST ON ts PARTITION BY c3 ORDER BY ts ASC").timestamp("ts").returns(empty);
-            assertQuery("SELECT * FROM t WHERE c2 < c2 LATEST ON ts PARTITION BY c3 LIMIT 10").timestamp("ts").returns(empty);
+            assertQuery("SELECT * FROM t WHERE c2 < c2 LATEST ON ts PARTITION BY c3 ORDER BY ts ASC").noLeakCheck().timestamp("ts").returns(empty);
+            assertQuery("SELECT * FROM t WHERE c2 < c2 LATEST ON ts PARTITION BY c3 LIMIT 10").noLeakCheck().timestamp("ts").returns(empty);
         });
     }
 
@@ -290,6 +290,7 @@ public class LatestByTest extends AbstractCairoTest {
             // the generateLatestByTableQuery path (which already clears latestBy on a
             // constant-false runtime filter). It must agree with the folded literal form.
             assertQuery("SELECT * FROM t WHERE :b0 LATEST ON ts PARTITION BY c3")
+                    .noLeakCheck()
                     .timestamp("ts")
                     .returns("ts\tc2\tc3\n");
         });
