@@ -240,6 +240,101 @@ public class LiveViewSymbolCacheConcurrencyTest {
     }
 
     @Test
+    public void testReaderPinnedToStaleHorizonSeesNoTornValue() throws Exception {
+        // Torn-VALUE canary (companion to testConcurrentInternAndReadDoNotRace,
+        // which pins index safety). A reader pins its slot horizon ONCE, then keeps
+        // resolving in-band values while the worker interns far past that horizon,
+        // reallocating the backing array many times without the reader re-acquiring
+        // a fresh publish. Every in-band value (id < the pinned horizon) was
+        // assigned before the pin, so it must always resolve - never a spurious
+        // VALUE_NOT_FOUND. The cache's id->string list is a ConcurrentCharSequenceList,
+        // which release-stores each reallocated array and acquire-loads it on every
+        // read, so a reader that picks up a new array also sees the copied elements.
+        // With a plain ObjList the array store has no fence, so on a weak-memory host
+        // (ARM) the reader could observe the new array before the copies and read a
+        // stale null at an in-bounds id. x86/TSO cannot exhibit it - this is an
+        // ARM-CI canary.
+        final IntList columnTypes = new IntList();
+        columnTypes.add(ColumnType.SYMBOL);
+        final LiveViewSymbolCache cache = new LiveViewSymbolCache(columnTypes);
+
+        final int internCount = 2_000_000;
+        final int warmup = 256;
+        final int numReaders = 4;
+        final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
+        final AtomicBoolean writerDone = new AtomicBoolean(false);
+        final AtomicInteger publishedHorizon = new AtomicInteger(0);
+        final CyclicBarrier barrier = new CyclicBarrier(numReaders + 1);
+
+        final Thread writer = new Thread(() -> {
+            try {
+                barrier.await();
+                for (int i = 0; i < internCount; i++) {
+                    cache.intern(COL, "v" + i, NOT_FOUND_READER);
+                    publishedHorizon.set(i + 1); // release
+                }
+            } catch (Throwable th) {
+                errors.add(th);
+            } finally {
+                writerDone.set(true);
+            }
+        }, "lv-symbol-cache-writer");
+
+        final Thread[] readers = new Thread[numReaders];
+        for (int r = 0; r < numReaders; r++) {
+            final int seed = r;
+            readers[r] = new Thread(() -> {
+                try {
+                    barrier.await();
+                    // Pin a warmup horizon once and never re-acquire, so the worker's
+                    // later reallocations are not ordered to this reader by a fresh
+                    // publish - only the list's own release/acquire can make them safe.
+                    int pinned;
+                    while ((pinned = publishedHorizon.get()) < warmup && !writerDone.get()) {
+                        Thread.onSpinWait();
+                    }
+                    if (pinned <= 0) {
+                        return; // writer finished before warmup - cannot happen at 2M
+                    }
+                    int probe = seed % pinned;
+                    while (!writerDone.get()) {
+                        // id probe < pinned, so it was interned before the pin: must resolve.
+                        final int key = cache.newSymbolKeyOf(COL, "v" + probe, 0, pinned);
+                        if (key != probe) {
+                            throw new AssertionError("torn in-band miss: probe=" + probe
+                                    + ", pinned=" + pinned + ", key=" + key);
+                        }
+                        final CharSequence resolved = cache.newSymbolValueOf(COL, probe);
+                        if (resolved == null || !("v" + probe).contentEquals(resolved)) {
+                            throw new AssertionError("torn id->value: probe=" + probe
+                                    + ", resolved=" + resolved);
+                        }
+                        probe += numReaders;
+                        if (probe >= pinned) {
+                            probe -= pinned;
+                        }
+                    }
+                } catch (Throwable th) {
+                    errors.add(th);
+                }
+            }, "lv-symbol-cache-reader-" + r);
+        }
+
+        writer.start();
+        for (Thread t : readers) {
+            t.start();
+        }
+        writer.join();
+        for (Thread t : readers) {
+            t.join();
+        }
+
+        if (!errors.isEmpty()) {
+            throw new AssertionError("symbol cache torn-value race", errors.peek());
+        }
+    }
+
+    @Test
     public void testOverlayBoundsKeyScanToSlotHorizon() {
         // Deterministic guard that the overlay bounds its key scan to the pinned
         // slot's symbol horizon, not the cache's live list size. A value a later

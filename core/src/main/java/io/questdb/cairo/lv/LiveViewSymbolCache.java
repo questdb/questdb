@@ -72,18 +72,27 @@ import io.questdb.std.QuietCloseable;
  * <p>
  * A reader must never scan or index past its pinned slot's symbol horizon - the
  * exclusive id bound stamped on the slot at publish (see
- * {@link LiveViewInMemoryBuffer#newSymbolMaxId}). {@link #intern} grows a list
- * through {@code ObjList.extendAndSet}, which reallocates the backing array with
- * no memory barrier; a reader that bounded its scan to the list's <em>live</em>
- * {@code size()} could, on a weak-memory host, observe the bumped size paired
- * with the old, shorter array and index out of bounds. Bounding instead to the
- * slot horizon keeps every index at or below the array length that existed when
- * the slot published (the lists only grow), and the slot-pin CAS publishes that
- * array state to the reader - so the scan stays in bounds without a lock or a
- * volatile size. That is why {@link #newSymbolKeyOf} takes an explicit
- * {@code toId} and the overlay sources it from the slot, never from a live
+ * {@link LiveViewInMemoryBuffer#newSymbolMaxId}). The {@code id -> string} lists
+ * are {@link ConcurrentCharSequenceList}s; {@link #intern} grows one through
+ * {@link ConcurrentCharSequenceList#extendAndSet}, which reallocates the backing
+ * array. A reader that bounded its scan to the list's <em>live</em> {@code size()}
+ * could, on a weak-memory host, observe the bumped size paired with the old,
+ * shorter array and index out of bounds. Bounding instead to the slot horizon
+ * keeps every index at or below the array length that existed when the slot
+ * published (the lists only grow), and the slot-pin CAS publishes that array
+ * state to the reader - so the scan stays in bounds without a lock or a volatile
+ * size. That is why {@link #newSymbolKeyOf} takes an explicit {@code toId} and the
+ * overlay sources it from the slot, never from a live
  * {@link #newSymbolMaxIdExclusive} read (which the tier itself reads writer-side
  * only, to stamp the horizon).
+ * <p>
+ * The horizon bound gives index safety; {@link ConcurrentCharSequenceList} adds
+ * value safety. A later refresh cycle can reallocate a list after the reader's
+ * slot published - a reallocation the slot-pin CAS does not order to the reader -
+ * so the list release-stores each new array and acquire-loads it on every read.
+ * A reader that observes a new array thus also observes the element copies that
+ * filled it, never a stale null at an in-bounds id (which a plain {@link ObjList},
+ * storing the array with no fence, would expose as a transient spurious miss).
  * <p>
  * Memory: {@link #idToString} accumulates one immutable string per distinct
  * value that has ever passed through the lead (it is never cleared, so a pinned
@@ -95,7 +104,7 @@ public class LiveViewSymbolCache implements QuietCloseable {
     // Per output column, null for non-SYMBOL columns. Read by cursor overlays;
     // append-only, indexed by absolute LV-table symbol id (null gaps for ids
     // that only ever existed as committed values, which resolve via disk).
-    private final ObjList<ObjList<CharSequence>> idToString;
+    private final ObjList<ConcurrentCharSequenceList> idToString;
     // Per output column, the next symbol id to assign to a value new to the lead.
     // Anchored at or above the committed symbol count each drain; advances per
     // new value. Persists across drain ticks within a flush window.
@@ -113,7 +122,7 @@ public class LiveViewSymbolCache implements QuietCloseable {
         this.nextNewId = new IntList(n);
         for (int i = 0; i < n; i++) {
             if (ColumnType.tagOf(columnTypes.getQuick(i)) == ColumnType.SYMBOL) {
-                idToString.add(new ObjList<>());
+                idToString.add(new ConcurrentCharSequenceList());
                 windowNewToId.add(new CharSequenceIntHashMap());
                 symbolColumns.add(i);
             } else {
@@ -139,7 +148,7 @@ public class LiveViewSymbolCache implements QuietCloseable {
     @Override
     public void close() {
         for (int i = 0, n = idToString.size(); i < n; i++) {
-            ObjList<CharSequence> list = idToString.getQuick(i);
+            ConcurrentCharSequenceList list = idToString.getQuick(i);
             if (list != null) {
                 list.clear();
             }
@@ -200,22 +209,17 @@ public class LiveViewSymbolCache implements QuietCloseable {
      * {@code toId} must be the slot horizon stamped at publish, not a live
      * {@link #newSymbolMaxIdExclusive} read: it is at most the list size when the
      * slot published, and the slot-pin CAS publishes a backing array at least that
-     * long to the reader, so every {@link ObjList#getQuick} for {@code i < toId}
-     * stays in bounds even while the writer concurrently grows (and reallocates)
-     * the list. See the class threading note.
+     * long to the reader, so every read for {@code i < toId} stays in bounds even
+     * while the writer concurrently grows (and reallocates) the list. See the class
+     * threading note.
      */
     public int newSymbolKeyOf(int col, CharSequence value, int fromId, int toId) {
-        final ObjList<CharSequence> list = idToString.getQuick(col);
+        final ConcurrentCharSequenceList list = idToString.getQuick(col);
         if (list == null) {
             return SymbolTable.VALUE_NOT_FOUND;
         }
-        for (int i = Math.max(0, fromId); i < toId; i++) {
-            final CharSequence s = list.getQuick(i);
-            if (s != null && Chars.equals(s, value)) {
-                return i;
-            }
-        }
-        return SymbolTable.VALUE_NOT_FOUND;
+        final int id = list.indexOf(value, fromId, toId);
+        return id < 0 ? SymbolTable.VALUE_NOT_FOUND : id;
     }
 
     /**
@@ -226,7 +230,7 @@ public class LiveViewSymbolCache implements QuietCloseable {
      * class threading note explains why a live read is not memory-safe).
      */
     public int newSymbolMaxIdExclusive(int col) {
-        final ObjList<CharSequence> list = idToString.getQuick(col);
+        final ConcurrentCharSequenceList list = idToString.getQuick(col);
         return list == null ? 0 : list.size();
     }
 
@@ -236,11 +240,8 @@ public class LiveViewSymbolCache implements QuietCloseable {
      * the disk symbol table). Read by cursors.
      */
     public CharSequence newSymbolValueOf(int col, int id) {
-        if (id < 0) {
-            return null;
-        }
-        final ObjList<CharSequence> list = idToString.getQuick(col);
-        return list != null && id < list.size() ? list.getQuick(id) : null;
+        final ConcurrentCharSequenceList list = idToString.getQuick(col);
+        return list != null ? list.valueOf(id) : null;
     }
 
     /**
