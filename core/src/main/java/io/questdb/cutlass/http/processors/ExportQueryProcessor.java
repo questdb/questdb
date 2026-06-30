@@ -696,6 +696,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         state.getExportModel().isStatisticsEnabled(),
                         state.getExportModel().getParquetVersion(),
                         state.getExportModel().isRawArrayEncoding(),
+                        sqlExecutionContext.getCairoEngine().getConfiguration().isParquetExportFailOnInvalidUtf16(),
                         nowTimestampType,
                         now,
                         state.descending,

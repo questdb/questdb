@@ -22,6 +22,7 @@ fn write_options() -> WriteOptions {
         raw_array_encoding: false,
         min_compression_ratio: 0.0,
         bloom_filter_fpp: DEFAULT_BLOOM_FILTER_FPP,
+        strict_utf16: false,
     }
 }
 

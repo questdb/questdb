@@ -802,6 +802,80 @@ public class CopyExportTest extends AbstractCairoTest {
         });
     }
 
+    // Export side defaults to lossy: SQL COPY TO PARQUET on a row that carries
+    // a lone UTF-16 surrogate must succeed. The destination parquet file
+    // contains U+FFFD in place of the unpaired code unit. Byte-level proof of
+    // the U+FFFD substitution lives in the Rust unit tests and in
+    // ExpParquetExportTest.testParquetExportInvalidUtf16LossyByDefault; here we
+    // only verify that the end-to-end COPY job reaches the `finished` state.
+    @Test
+    public void testCopyParquetInvalidUtf16LossyByDefault() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE wtf16_lossy (s STRING, ts TIMESTAMP) " +
+                            "TIMESTAMP(ts) PARTITION BY DAY WAL"
+            );
+            execute(
+                    "INSERT INTO wtf16_lossy VALUES " +
+                            "(0xDFDA::char::string, '2020-01-01T00:00:00.000000Z')"
+            );
+            drainWalQueue();
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID(
+                            "COPY wtf16_lossy TO 'wtf16_lossy' WITH FORMAT parquet",
+                            sqlExecutionContext
+                    );
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() ->
+                            assertQuery("SELECT status FROM \"sys.copy_export_log\" LIMIT -1")
+                                    .noLeakCheck()
+                                    .expectSize()
+                                    .returns("status\nfinished\n")
+                    );
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    // Strict mode opt-in (via cairo.parquet.export.fail.on.invalid.utf16=true):
+    // SQL COPY TO PARQUET must fail when the source contains an unpaired
+    // surrogate instead of silently substituting U+FFFD. The export-side flag
+    // defaults to lossy precisely because the alternative is loud failure on
+    // ad-hoc downloads; operators who want loud failures opt in here.
+    @Test
+    public void testCopyParquetInvalidUtf16StrictRejects() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARQUET_EXPORT_FAIL_ON_INVALID_UTF16, true);
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE wtf16_strict (s STRING, ts TIMESTAMP) " +
+                            "TIMESTAMP(ts) PARTITION BY DAY WAL"
+            );
+            execute(
+                    "INSERT INTO wtf16_strict VALUES " +
+                            "(0xDFDA::char::string, '2020-01-01T00:00:00.000000Z')"
+            );
+            drainWalQueue();
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID(
+                            "COPY wtf16_strict TO 'wtf16_strict' WITH FORMAT parquet",
+                            sqlExecutionContext
+                    );
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() ->
+                            assertQuery("SELECT status FROM \"sys.copy_export_log\" LIMIT -1")
+                                    .noLeakCheck()
+                                    .expectSize()
+                                    .returns("status\nfailed\n")
+                    );
+
+            testCopyExport(stmt, test);
+        });
+    }
+
     @Test
     public void testCopyParquetLargeTable() throws Exception {
         assertMemoryLeak(() -> {

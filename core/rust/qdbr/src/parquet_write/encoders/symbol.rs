@@ -37,7 +37,7 @@ use parquet2::write::DynIter;
 
 use qdb_core::col_type::{ColumnType, ColumnTypeTag};
 
-use crate::parquet::error::{fmt_err, ParquetErrorReason, ParquetResult};
+use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_write::encoders::helpers::{
     column_chunk_row_count, lock_bloom_set, page_row_windows, partition_chunk_slice,
     rows_per_primitive_page, write_utf8_from_utf16_iter, FlatValidity,
@@ -127,7 +127,7 @@ pub fn encode(
     let (dict_buffer, dict_entry_count, value_ranges) = {
         let mut bloom_guard = lock_bloom_set(bloom_set.as_ref())?;
         let bloom = bloom_guard.as_deref_mut();
-        prepare_symbol_dictionary(&global_info, offsets, chars, bloom)?
+        prepare_symbol_dictionary(&global_info, offsets, chars, bloom, options.strict_utf16)?
     };
 
     let rows_per_page = rows_per_primitive_page(&options, primitive_type.physical_type);
@@ -200,6 +200,7 @@ pub(crate) fn prepare_symbol_dictionary(
     offsets: &[u64],
     chars: &[u8],
     bloom_hashes: Option<&mut HashSet<u64>>,
+    strict_utf16: bool,
 ) -> ParquetResult<(Vec<u8>, usize, Vec<Range<usize>>)> {
     let (dict_buffer, value_ranges) = build_dict_buffer(
         &global_info.used_keys,
@@ -207,6 +208,7 @@ pub(crate) fn prepare_symbol_dictionary(
         offsets,
         chars,
         bloom_hashes,
+        strict_utf16,
     )?;
     let dict_entry_count = if global_info.used_keys.is_empty() {
         0
@@ -315,6 +317,7 @@ fn read_symbol_to_utf8(
     chars: &[u8],
     qdb_global_offset: usize,
     dest: &mut Vec<u8>,
+    strict_utf16: bool,
 ) -> ParquetResult<usize> {
     let utf16_bytes = get_symbol_utf16_bytes(chars, qdb_global_offset).ok_or_else(|| {
         fmt_err!(
@@ -327,8 +330,13 @@ fn read_symbol_to_utf8(
         .chunks_exact(2)
         .map(|b| u16::from_le_bytes([b[0], b[1]]));
 
-    let utf8_len = write_utf8_from_utf16_iter(dest, utf16_iter)
-        .map_err(|e| ParquetErrorReason::Utf16Decode(e).into_err())?;
+    // Match the error wording produced by the STRING dict path in
+    // rle_dictionary::varlen so callers see a single, consistent diagnostic
+    // ("invalid UTF-16 data in string column") regardless of whether the
+    // source column was STRING or SYMBOL. From parquet's perspective SYMBOL
+    // is encoded as a STRING logical type, so the wording stays accurate.
+    let utf8_len = write_utf8_from_utf16_iter(dest, utf16_iter, strict_utf16)
+        .map_err(|e| fmt_err!(Layout, "invalid UTF-16 data in string column: {e}"))?;
     Ok(utf8_len)
 }
 
@@ -338,6 +346,7 @@ fn build_dict_buffer(
     offsets: &[u64],
     chars: &[u8],
     mut bloom_hashes: Option<&mut HashSet<u64>>,
+    strict_utf16: bool,
 ) -> ParquetResult<(Vec<u8>, Vec<Range<usize>>)> {
     let end_value = if used_keys.is_empty() { 0 } else { max_key + 1 };
 
@@ -357,7 +366,8 @@ fn build_dict_buffer(
                 fmt_err!(Layout, "could not find symbol with key {key} in global map")
             })? as usize;
 
-            let utf8_len = read_symbol_to_utf8(chars, qdb_global_offset, &mut dict_buffer)?;
+            let utf8_len =
+                read_symbol_to_utf8(chars, qdb_global_offset, &mut dict_buffer, strict_utf16)?;
             let value_range = (key_index + 4)..(key_index + 4 + utf8_len);
             let utf8_buf = &dict_buffer[value_range.clone()];
 
@@ -476,6 +486,7 @@ mod tests {
             raw_array_encoding: false,
             bloom_filter_fpp: 0.01,
             min_compression_ratio: 0.0,
+            strict_utf16: false,
         }
     }
 
@@ -846,7 +857,7 @@ mod tests {
         let used_keys: HashSet<u32> = [0, 1, 2, 3].into_iter().collect();
         let global_info = SymbolGlobalInfo { used_keys, max_key: 3 };
         let (dict_buffer, _entry_count, value_ranges) =
-            prepare_symbol_dictionary(&global_info, &offsets, &chars, None).expect("dict");
+            prepare_symbol_dictionary(&global_info, &offsets, &chars, None, false).expect("dict");
 
         let page_values: Vec<i32> = vec![3, 0, -1, 1, 0, 2, 3, -1, 1, 0, 3];
         let null_count = page_values.iter().filter(|&&k| k < 0).count();
@@ -909,6 +920,67 @@ mod tests {
         assert_eq!(
             page_binary_stats(&pages[1]),
             (b"hi".to_vec(), b"lo".to_vec(), 1)
+        );
+    }
+
+    /// Construct a symbol-map character buffer containing a single symbol
+    /// whose UTF-16 form is the lone low surrogate 0xDFDA. Cannot use
+    /// `serialize_as_symbols` because that takes `&str`, which is valid
+    /// UTF-8 and therefore cannot contain unpaired surrogates.
+    fn lone_surrogate_symbol_map() -> (Vec<u8>, Vec<u64>) {
+        let mut chars: Vec<u8> = Vec::new();
+        // 4-byte length prefix: 1 u16 code unit.
+        chars.extend_from_slice(&1u32.to_le_bytes());
+        // The lone low surrogate, little-endian.
+        chars.extend_from_slice(&0xDFDAu16.to_le_bytes());
+        (chars, vec![0u64])
+    }
+
+    /// T7a - Symbol path lossy default: encoding a SYMBOL column whose
+    /// dictionary entry contains a lone surrogate must succeed and produce
+    /// U+FFFD in the output. Covers `write_utf8_from_utf16_iter` (the
+    /// iterator-form helper) which the slice-form unit tests don't exercise.
+    #[test]
+    fn symbol_lossy_substitutes_unpaired_surrogate() {
+        let (chars, offsets) = lone_surrogate_symbol_map();
+        let keys: Vec<i32> = vec![0];
+        let col = make_symbol_column(&keys, &chars, &offsets, 0);
+        let pages = encode(
+            &[col],
+            0,
+            keys.len(),
+            &primitive_type(),
+            write_options(),
+            None,
+        )
+        .expect("lossy default must succeed for symbol with lone surrogate");
+        // First page is the dictionary; its buffer must contain U+FFFD's
+        // UTF-8 bytes 0xEF 0xBF 0xBD.
+        let dict_body = match &pages[0] {
+            Page::Dict(d) => d.buffer.as_slice(),
+            _ => panic!("expected dictionary page at index 0"),
+        };
+        assert!(
+            dict_body.windows(3).any(|w| w == [0xEF, 0xBF, 0xBD]),
+            "dictionary must contain U+FFFD UTF-8 bytes; dict_body={dict_body:?}"
+        );
+    }
+
+    /// T7b - Symbol path strict mode: same setup, `strict_utf16: true`, must
+    /// surface the same error message that STRING columns produce so the
+    /// user-visible error is consistent across column types.
+    #[test]
+    fn symbol_strict_rejects_unpaired_surrogate() {
+        let (chars, offsets) = lone_surrogate_symbol_map();
+        let keys: Vec<i32> = vec![0];
+        let col = make_symbol_column(&keys, &chars, &offsets, 0);
+        let opts = WriteOptions { strict_utf16: true, ..write_options() };
+        let result = encode(&[col], 0, keys.len(), &primitive_type(), opts, None);
+        let err = result.expect_err("strict mode must reject lone surrogate");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("invalid UTF-16 data in string column"),
+            "symbol strict error must match STRING wording for cross-type consistency; got: {msg}"
         );
     }
 }
