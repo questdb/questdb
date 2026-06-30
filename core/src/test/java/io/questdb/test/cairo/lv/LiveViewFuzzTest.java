@@ -108,11 +108,44 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
     private static final int[] DECIMAL_PRECISION = {2, 4, 9, 18, 38, 60};
     private static final int[] DECIMAL_SCALE = {0, 0, 3, 2, 6, 0};
     private static final int DECIMAL_VARIANT = 7;
+    // Extended variants past the all-variant loop. variantCount() stays at the
+    // base set, so the for-v loops never reach these; their dedicated @Test
+    // methods drive them directly. RANGE_* exercise the bounded-RANGE
+    // monotonic-deque maintenance path (distinct from the ROWS ring buffer);
+    // LAG_* exercise the lag ZERO_PASS window. Values are contiguous past
+    // DECIMAL_VARIANT so projection() can switch on them.
+    private static final int RANGE_SUM_VARIANT = 8;
+    private static final int RANGE_AVG_VARIANT = 9;
+    private static final int RANGE_FIRST_VALUE_VARIANT = 10;
+    private static final int LAG_VARIANT = 11;
+    private static final int LAG_OFFSET_VARIANT = 12;
+    // Anchored-window fuzz variants (driven via runAnchoredFuzz): sum, avg,
+    // count, max, row_number over a named WINDOW carrying ANCHOR EXPRESSION.
+    private static final int ANCHORED_VARIANT_COUNT = 5;
     private static final int MAX_FRAME = 20;
     private static final String[] SYMBOLS = {
             "AA", "BB", "CC", "DD", "EE", "FF", "GG", "HH",
             "II", "JJ", "KK", "LL", "MM", "NN", "OO", "PP"
     };
+
+    @Test
+    public void testFuzzAnchored() throws Exception {
+        // Differential fuzz for anchored (ANCHOR EXPRESSION) windows. The anchor
+        // resets the cumulative aggregate whenever the anchor expression changes
+        // value in ts order. The fuzz uses a MONOTONIC anchor (timestamp_floor),
+        // so "reset on change" is identical to "partition by the bucket value" -
+        // the oracle is therefore the equivalent (sym, bucket)-partitioned regular
+        // window recomputed over the base. Driven under O3 plus optional restart
+        // and optional backfill, so the anchor map rebuild on head-miss / head-hit
+        // replay and across a restart is cross-checked against the recompute.
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1 + rnd.nextInt(4));
+        assertMemoryLeak(() -> {
+            for (int v = 0; v < ANCHORED_VARIANT_COUNT; v++) {
+                runAnchoredFuzz(rnd, v, 120 + rnd.nextInt(180), rnd.nextBoolean(), rnd.nextBoolean());
+            }
+        });
+    }
 
     @Test
     public void testFuzzBackfill() throws Exception {
@@ -156,6 +189,22 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             for (int v = 0; v < variantCount(); v++) {
                 runFuzz(rnd, v, 160, false, false, false, rnd.nextBoolean());
+            }
+        });
+    }
+
+    @Test
+    public void testFuzzLag() throws Exception {
+        // lag() and lag(, k) are ZERO_PASS partitioned windows. The recompute
+        // oracle holds because lag over a unique-ts total order is a deterministic
+        // function of the row set. Fuzzed under O3 plus optional restart and
+        // optional backfill, so the per-partition lookback state survives the
+        // head replay and checkpoint restore paths.
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1 + rnd.nextInt(4));
+        assertMemoryLeak(() -> {
+            for (int v = LAG_VARIANT; v <= LAG_OFFSET_VARIANT; v++) {
+                runFuzz(rnd, v, 120 + rnd.nextInt(160), true, rnd.nextBoolean(), rnd.nextBoolean(), rnd.nextBoolean());
             }
         });
     }
@@ -238,6 +287,22 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFuzzRangeFrame() throws Exception {
+        // Bounded RANGE frames exercise the monotonic-deque maintenance path,
+        // distinct from the ROWS ring buffer the other aggregate variants use. The
+        // recompute oracle holds identically: a bounded RANGE frame over a
+        // unique-ts total order is a deterministic function of the row set. Fuzzed
+        // under O3 plus optional restart and optional backfill.
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1 + rnd.nextInt(4));
+        assertMemoryLeak(() -> {
+            for (int v = RANGE_SUM_VARIANT; v <= RANGE_FIRST_VALUE_VARIANT; v++) {
+                runFuzz(rnd, v, 120 + rnd.nextInt(160), true, rnd.nextBoolean(), rnd.nextBoolean(), rnd.nextBoolean());
+            }
+        });
+    }
+
+    @Test
     public void testFuzzWidened() throws Exception {
         // Concentrated heavy corner: larger datasets with O3 + restart + backfill +
         // in-mem all on together, across every variant. Per-run symbol cardinality
@@ -251,6 +316,38 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
                 runFuzz(rnd, v, 300 + rnd.nextInt(400), true, true, true, true);
             }
         });
+    }
+
+    // Oracle (plain query over the base) for an anchored fuzz variant: the anchor
+    // reset is replicated by adding the monotonic bucket to a regular window's
+    // PARTITION BY, with the window's natural default frame (UNBOUNDED PRECEDING TO
+    // CURRENT ROW). For a monotonic anchor this is semantically identical to the
+    // anchored live-view query over a unique-ts total order.
+    private static String anchoredOracleProjection(int variant, String bucket) {
+        final String part = "PARTITION BY sym, " + bucket + " ORDER BY ts";
+        return switch (variant) {
+            case 0 -> "ts, sym, i, sum(i) OVER (" + part + ") AS v";
+            case 1 -> "ts, sym, x, avg(x) OVER (" + part + ") AS v";
+            case 2 -> "ts, sym, count() OVER (" + part + ") AS v";
+            case 3 -> "ts, sym, i, max(i) OVER (" + part + ") AS v";
+            case 4 -> "ts, sym, row_number() OVER (" + part + ") AS v";
+            default -> throw new IllegalArgumentException("anchored variant=" + variant);
+        };
+    }
+
+    // The live-view projection for an anchored fuzz variant: an unbounded
+    // cumulative aggregate (or ranking) over a named WINDOW that carries the
+    // ANCHOR EXPRESSION (declared by the caller). Inline ANCHOR is rejected at
+    // CREATE, so the anchor must live on a named WINDOW.
+    private static String anchoredViewProjection(int variant) {
+        return switch (variant) {
+            case 0 -> "ts, sym, i, sum(i) OVER w AS v";
+            case 1 -> "ts, sym, x, avg(x) OVER w AS v";
+            case 2 -> "ts, sym, count() OVER w AS v";
+            case 3 -> "ts, sym, i, max(i) OVER w AS v";
+            case 4 -> "ts, sym, row_number() OVER w AS v";
+            default -> throw new IllegalArgumentException("anchored variant=" + variant);
+        };
     }
 
     // Mode A read-back cross-check: with a known un-flushed lead resident, the
@@ -474,13 +571,19 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
     // shape is grammar-legal in a live view and deterministic under a
     // unique-timestamp total order. The fuzzed set is exactly the window shapes
     // that carry the incremental-snapshot contract: PARTITION BY rows-frame
-    // sum/max/min/first_value/count/avg, plus ranking OVER (). Un-partitioned
+    // sum/max/min/first_value/count/avg, plus ranking OVER (), the bounded-RANGE
+    // counterparts (the monotonic-deque path), and lag()/lag(,k). Un-partitioned
     // aggregate windows and last_value over a CURRENT ROW frame are rejected at
     // CREATE (no snapshot support), so they are not fuzzed here. min reuses Max's
     // migrated MaxMinOver* classes, so it carries the same snapshot contract. N is
-    // the bounded-frame radius.
+    // the bounded-frame radius (rows for ROWS frames; minutes for RANGE frames;
+    // the lookback offset for lag).
     private static String projection(int variant, int n) {
         final String frame = "PARTITION BY sym ORDER BY ts ROWS BETWEEN " + n + " PRECEDING AND CURRENT ROW";
+        // Bounded RANGE frame: the radius is a time interval (n minutes), so the
+        // captured row count varies with the per-run ts step. The frame is over
+        // the designated timestamp and deterministic under a unique-ts total order.
+        final String rangeFrame = "PARTITION BY sym ORDER BY ts RANGE BETWEEN '" + n + "' MINUTE PRECEDING AND CURRENT ROW";
         return switch (variant) {
             case 0 -> "ts, sym, i, sum(i) OVER (" + frame + ") AS v";
             case 1 -> "ts, sym, i, max(i) OVER (" + frame + ") AS v";
@@ -489,6 +592,15 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
             case 4 -> "ts, sym, x, avg(x) OVER (" + frame + ") AS v";
             case 5 -> "ts, sym, row_number() OVER () AS rn";
             case 6 -> "ts, sym, i, min(i) OVER (" + frame + ") AS v";
+            case RANGE_SUM_VARIANT -> "ts, sym, i, sum(i) OVER (" + rangeFrame + ") AS v";
+            case RANGE_AVG_VARIANT -> "ts, sym, x, avg(x) OVER (" + rangeFrame + ") AS v";
+            case RANGE_FIRST_VALUE_VARIANT -> "ts, sym, i, first_value(i) OVER (" + rangeFrame + ") AS v";
+            // lag is frame-independent, but a live view rejects a bare unbounded
+            // window (no ANCHOR), so it carries a bounded ROWS frame here. Both the
+            // live view and the oracle use this identical SQL, so the frame (which
+            // lag ignores) never changes the cross-check.
+            case LAG_VARIANT -> "ts, sym, i, lag(i) OVER (" + frame + ") AS v";
+            case LAG_OFFSET_VARIANT -> "ts, sym, i, lag(i, " + (1 + (n & 3)) + ") OVER (" + frame + ") AS v";
             default -> throw new IllegalArgumentException("variant=" + variant);
         };
     }
@@ -636,6 +748,142 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
             drainJob(job);
         }
         drainWalQueue();
+    }
+
+    // Differential fuzz for an anchored window variant. Mirrors runFuzz's
+    // ingestion shape (pre-CREATE backfill history, then per-commit O3 refresh
+    // with optional quiescent restarts) but cross-checks against a DISTINCT oracle
+    // SQL: the anchored live view vs. the equivalent (sym, bucket)-partitioned
+    // regular window over the base. O3 is always on (segmentOrder shuffles), so
+    // the anchor map is rebuilt on head-miss / head-hit replay and is verified to
+    // agree with the from-scratch recompute after quiescence.
+    private void runAnchoredFuzz(
+            Rnd rnd,
+            int variant,
+            int rowCount,
+            boolean restart,
+            boolean backfill
+    ) throws Exception {
+        // Pin the clock a day below the data, like runFuzz: a non-backfill view's
+        // lower bound is the CREATE moment, and O3 head-miss replay only re-emits
+        // rows at or above it, so the clock must sit below every data timestamp.
+        if (currentMicros < 0) {
+            setCurrentMicros(MicrosTimestampDriver.floor("2025-12-31T00:00:00.000000Z"));
+        }
+
+        // A monotonic anchor: timestamp_floor is non-decreasing in ts, so the
+        // anchor value changes exactly at bucket boundaries and never repeats.
+        // "Reset on change" is then identical to "partition by the bucket value",
+        // which is what the oracle does. '1h' yields frequent resets, '1d' coarse
+        // ones; both are exercised across a run batch.
+        final String bucket = rnd.nextBoolean() ? "timestamp_floor('1h', ts)" : "timestamp_floor('1d', ts)";
+        final int symCount = 1 + rnd.nextInt(SYMBOLS.length);
+        final int stepMode = rnd.nextInt(3);
+        final int baseStepMax = stepMode == 0 ? 5_000_000 : stepMode == 1 ? 60_000_000 : 900_000_000;
+        final int dayJumpEvery = stepMode == 0 ? 20 : 12;
+
+        final String viewSql = "SELECT " + anchoredViewProjection(variant) + " FROM base "
+                + "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION " + bucket + ")";
+        final String oracleSql = "SELECT " + anchoredOracleProjection(variant, bucket) + " FROM base";
+        final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
+                + (backfill ? "BACKFILL " : "")
+                + "AS " + viewSql;
+
+        execute("DROP LIVE VIEW IF EXISTS lv");
+        execute("DROP TABLE IF EXISTS base");
+        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+        LOG.info().$("LV anchored fuzz: variant=").$(variant).$(", rows=").$(rowCount)
+                .$(", symCount=").$(symCount).$(", stepMode=").$(stepMode)
+                .$(", restart=").$(restart).$(", backfill=").$(backfill)
+                .$(", bucket=").$(bucket).$(", sql=").$(viewSql).$();
+
+        // Strictly-unique, strictly-increasing timestamps so ts is a total order;
+        // random symbols and values with occasional NULLs.
+        final long[] tsv = new long[rowCount];
+        final int[] symIdx = new int[rowCount];
+        final long[] iv = new long[rowCount];
+        final double[] xv = new double[rowCount];
+        final boolean[] xNull = new boolean[rowCount];
+        final int maxDayJumps = 30;
+        int dayJumps = 0;
+        long ts = MicrosTimestampDriver.floor("2026-01-01T00:00:00.000000Z");
+        for (int k = 0; k < rowCount; k++) {
+            ts += 1 + rnd.nextInt(baseStepMax);
+            if (dayJumps < maxDayJumps && rnd.nextInt(dayJumpEvery) == 0) {
+                ts += 86_400_000_000L;
+                dayJumps++;
+            }
+            tsv[k] = ts;
+            symIdx[k] = rnd.nextInt(20) == 0 ? -1 : rnd.nextInt(symCount);
+            iv[k] = rnd.nextInt(20) == 0 ? Numbers.LONG_NULL : (rnd.nextInt(2001) - 1000);
+            xNull[k] = rnd.nextInt(20) == 0;
+            xv[k] = rnd.nextDouble() * 1000.0;
+        }
+
+        // Backfill captures pre-CREATE history: put the earliest rows before CREATE
+        // so the backfill floor sits at the global-min ts and no post-CREATE O3 row
+        // falls below it. Non-backfill: everything lands post-CREATE.
+        final int preCount = backfill ? rnd.nextInt(rowCount + 1) : 0;
+
+        final StringSink sink = new StringSink();
+        LiveViewRefreshJob job = null;
+        try {
+            if (preCount > 0) {
+                final int[] preOrder = segmentOrder(rnd, 0, preCount, true);
+                final int[] cb = commitBounds(rnd, preOrder.length);
+                for (int c = 0; c + 1 < cb.length; c++) {
+                    insertCommit(sink, preOrder, cb[c], cb[c + 1], tsv, symIdx, iv, xv, xNull, null);
+                    drainWalQueue();
+                }
+            }
+
+            execute(createSql);
+            job = new LiveViewRefreshJob(0, engine, 1);
+
+            if (backfill) {
+                driveBackfillToCompletion(job, "lv");
+            }
+
+            if (preCount < rowCount) {
+                final int[] postOrder = segmentOrder(rnd, preCount, rowCount, true);
+                final int[] cb = commitBounds(rnd, postOrder.length);
+                for (int c = 0; c + 1 < cb.length; c++) {
+                    insertCommit(sink, postOrder, cb[c], cb[c + 1], tsv, symIdx, iv, xv, xNull, null);
+                    drainWalQueue();
+                    refreshCycle(job);
+
+                    if (restart && rnd.nextInt(3) == 0) {
+                        LiveViewInstance inst = engine.getLiveViewRegistry().getViewInstance("lv");
+                        if (inst != null
+                                && inst.getStateReader().getBackfillState() == LiveViewState.BACKFILL_STATE_ACTIVE) {
+                            job = Misc.free(job);
+                            engine.getLiveViewRegistry().clear();
+                            engine.buildViewGraphs();
+                            job = new LiveViewRefreshJob(0, engine, 1);
+                        }
+                    }
+                }
+            }
+
+            driveRefreshToQuiescence(job);
+        } finally {
+            Misc.free(job);
+        }
+
+        // The oracle: the anchored live view must equal the equivalent
+        // (sym, bucket)-partitioned window recomputed over the base table.
+        TestUtils.assertSqlCursors(
+                engine,
+                sqlExecutionContext,
+                "(" + oracleSql + ") ORDER BY 1",
+                "(lv) ORDER BY 1",
+                LOG,
+                true
+        );
+
+        execute("DROP LIVE VIEW lv");
+        execute("DROP TABLE base");
     }
 
     private void runFuzz(

@@ -240,6 +240,24 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
         throw new IllegalStateException("compiled factory does not contain a WindowRecordCursorFactory");
     }
 
+    // Flips a single byte in an on-disk file (used to corrupt a head .cp payload
+    // so a restore trips the CRC check). Mirrors the helper in
+    // LiveViewCheckpointTest.
+    private static void overwriteByteInFile(CairoConfiguration configuration, Path path, long offset, byte value) {
+        try (MemoryCMARW mem = Vm.getCMARWInstance()) {
+            mem.of(
+                    configuration.getFilesFacade(),
+                    path.$(),
+                    configuration.getFilesFacade().getPageSize(),
+                    offset + Byte.BYTES,
+                    MemoryTag.MMAP_DEFAULT,
+                    CairoConfiguration.O_NONE
+            );
+            mem.putByte(offset, value);
+            mem.sync(false);
+        }
+    }
+
     // Drives a partitioned bounded-frame avg(DECIMAL) live view: asserts the
     // windowed average is correct (also proving CREATE-accept), then performs a
     // byte-exact snapshot/restore round-trip of the function's partition state
@@ -11936,6 +11954,93 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRestoreCorruptHeadCheckpointReplaysFromHeadMiss() throws Exception {
+        // A head .cp whose payload byte is flipped fails the CRC check on restore.
+        // That is corruption, not a version break: the restore must unlink the .cp,
+        // clear the head metadata, and fall through to head-miss replay WITHOUT
+        // invalidating the view - the on-disk tier is untouched, so the LV keeps
+        // serving the rows it already materialised. Counterpart to
+        // testRestoreKeyShapeMismatchReplaysFromHeadMiss, which reaches the same
+        // recovery via a structural key-shape mismatch rather than a CRC failure.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            execute("INSERT INTO base (ts, sym, x) VALUES " +
+                    "('2026-06-01T00:00:00.000000Z', 'a', 1.0), " +
+                    "('2026-06-01T01:00:00.000000Z', 'a', 2.0)");
+            drainWalQueue();
+
+            final long headLvSeqTxn;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                drainWalQueue();
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                headLvSeqTxn = instance.getHeadCheckpointLvSeqTxn();
+                Assert.assertNotEquals(Numbers.LONG_NULL, headLvSeqTxn);
+            }
+
+            // The LV has already materialised the cumulative sums to its on-disk
+            // tier before any corruption.
+            assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
+                    "2026-06-01T00:00:00.000000Z\ta\t1.0\n" +
+                    "2026-06-01T01:00:00.000000Z\ta\t3.0\n");
+
+            // Flip a byte inside the head .cp payload (past the file header) so the
+            // restore trips the CRC check.
+            try (Path lvDir = new Path()) {
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                lvDir.of(engine.getConfiguration().getDbRoot()).concat(instance.getLiveViewToken()).slash();
+                try (Path cpPath = new Path()) {
+                    cpPath.of(lvDir).concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME).slash();
+                    LiveViewCheckpointWriter.appendCpFileName(cpPath, headLvSeqTxn);
+                    overwriteByteInFile(
+                            engine.getConfiguration(),
+                            cpPath,
+                            LiveViewCheckpointWriter.FILE_HEADER_SIZE + 8,
+                            (byte) 0xAB
+                    );
+                }
+            }
+
+            // Restart: clear the registry and rebuild from on-disk. The startup
+            // sweep re-stamps the head lvSeqTxn from the filename.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            final LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(reloaded);
+            Assert.assertEquals(headLvSeqTxn, reloaded.getHeadCheckpointLvSeqTxn());
+            Assert.assertFalse("LV must still be valid pre-refresh", reloaded.isInvalid());
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+
+            Assert.assertTrue("the restore was attempted on the first post-restart cycle", reloaded.isCheckpointRestoreAttempted());
+            Assert.assertFalse(
+                    "a CRC failure is corruption, not a version break - the LV must NOT be invalidated",
+                    reloaded.isInvalid()
+            );
+            Assert.assertEquals(
+                    "the corrupt head .cp was unlinked and head metadata cleared (head-miss routing)",
+                    Numbers.LONG_NULL,
+                    reloaded.getHeadCheckpointLvSeqTxn()
+            );
+
+            // The failed restore left the on-disk tier untouched: the LV still
+            // reads the same cumulative sums it computed before the corruption.
+            assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
+                    "2026-06-01T00:00:00.000000Z\ta\t1.0\n" +
+                    "2026-06-01T01:00:00.000000Z\ta\t3.0\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testRestartRestoresRankFromHeadCheckpoint() throws Exception {
         // rank() is now snapshot-capable. End-to-end check that a
         // refresh cycle writes a head .cp, a simulated restart re-discovers
@@ -14094,6 +14199,100 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRejectPartitionByInvalidUnit() throws Exception {
+        // PARTITION BY accepts only HOUR/DAY/WEEK/MONTH/YEAR; any other unit (here
+        // MINUTE) is rejected at parse time before the LV table is created.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try {
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s PARTITION BY MINUTE AS " +
+                        "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                Assert.fail("expected SqlException rejecting PARTITION BY MINUTE");
+            } catch (SqlException e) {
+                Assert.assertTrue(
+                        "wrong message [msg=" + e.getFlyweightMessage() + ']',
+                        Chars.contains(e.getFlyweightMessage(), "or 'YEAR' expected")
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testRejectFlushEveryInvalidDurationValue() throws Exception {
+        // A FLUSH EVERY token with no leading digits cannot be parsed as a
+        // duration value.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try {
+                execute("CREATE LIVE VIEW lv FLUSH EVERY foo AS " +
+                        "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                Assert.fail("expected SqlException rejecting an invalid FLUSH EVERY duration value");
+            } catch (SqlException e) {
+                Assert.assertTrue(
+                        "wrong message [msg=" + e.getFlyweightMessage() + ']',
+                        Chars.contains(e.getFlyweightMessage(), "invalid duration value")
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testRejectFlushEveryInvalidDurationQualifier() throws Exception {
+        // A numeric FLUSH EVERY value carrying an unrecognised unit (only
+        // ms/s/m/h/d are valid) is rejected.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try {
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 5w AS " +
+                        "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                Assert.fail("expected SqlException rejecting an invalid FLUSH EVERY duration qualifier");
+            } catch (SqlException e) {
+                Assert.assertTrue(
+                        "wrong message [msg=" + e.getFlyweightMessage() + ']',
+                        Chars.contains(e.getFlyweightMessage(), "invalid duration qualifier")
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testRejectInMemoryInvalidDurationQualifier() throws Exception {
+        // The IN MEMORY duration goes through the same duration parser as FLUSH
+        // EVERY, so an unrecognised unit is rejected there too.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try {
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 5w AS " +
+                        "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                Assert.fail("expected SqlException rejecting an invalid IN MEMORY duration qualifier");
+            } catch (SqlException e) {
+                Assert.assertTrue(
+                        "wrong message [msg=" + e.getFlyweightMessage() + ']',
+                        Chars.contains(e.getFlyweightMessage(), "invalid duration qualifier")
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testRejectMissingAsKeyword() throws Exception {
+        // The view-level clauses must be followed by AS before the SELECT.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try {
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s " +
+                        "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                Assert.fail("expected SqlException rejecting a missing AS keyword");
+            } catch (SqlException e) {
+                Assert.assertTrue(
+                        "wrong message [msg=" + e.getFlyweightMessage() + ']',
+                        Chars.contains(e.getFlyweightMessage(), "'as' expected")
+                );
+            }
+        });
+    }
+
+    @Test
     public void testShowCreateEmitsResolvedPartitionByForDefault() throws Exception {
         // When PARTITION BY is omitted, the LV inherits the base's scheme. SHOW
         // CREATE emits the resolved value (not a missing clause), so re-executing
@@ -14154,6 +14353,47 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     "SELECT ts, x, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR DAILY '09:30' 'America/New_York')");
             execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testRejectAnchorDailyMalformedTimeOfDay() throws Exception {
+        // ANCHOR DAILY's time-of-day literal must be 'HH:MM'. A token without the
+        // colon cannot be parsed; the ORDER BY ts is valid, so the time-of-day
+        // parse is the only thing that can fail.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try {
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                        "SELECT ts, x, sum(x) OVER w AS s FROM base " +
+                        "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR DAILY '0900')");
+                Assert.fail("expected SqlException rejecting a malformed ANCHOR DAILY time");
+            } catch (SqlException e) {
+                Assert.assertTrue(
+                        "wrong message [msg=" + e.getFlyweightMessage() + ']',
+                        Chars.contains(e.getFlyweightMessage(), "ANCHOR DAILY expects 'HH:MM'")
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testRejectAnchorDailyTimeOfDayOutOfRange() throws Exception {
+        // ANCHOR DAILY 'HH:MM' must be a real wall-clock time; 99:99 is out of
+        // range.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try {
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                        "SELECT ts, x, sum(x) OVER w AS s FROM base " +
+                        "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR DAILY '99:99')");
+                Assert.fail("expected SqlException rejecting an out-of-range ANCHOR DAILY time");
+            } catch (SqlException e) {
+                Assert.assertTrue(
+                        "wrong message [msg=" + e.getFlyweightMessage() + ']',
+                        Chars.contains(e.getFlyweightMessage(), "ANCHOR DAILY 'HH:MM' out of range")
+                );
+            }
         });
     }
 

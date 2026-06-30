@@ -121,6 +121,19 @@ public class LiveViewConcurrencyTest extends AbstractCairoTest {
     private static final String[] SYMBOLS = {"AA", "BB", "CC", "DD"};
 
     @Test
+    public void testConcurrentCheckpointDuringRefresh() throws Exception {
+        // A checkpoint-agent thread cycles startCheckpoint/endCheckpoint on the
+        // view (the DatabaseCheckpointAgent freeze handshake) while a refresh
+        // driver maintains the view and writers ingest. The freeze gate must
+        // serialise against the worker: each frozen turn is skipped and resumes
+        // after endCheckpoint, so no _lv.s / on-disk tier advance is torn. After
+        // every thread joins and the refresh quiesces single-threaded, the view
+        // still equals the from-scratch recompute.
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        assertMemoryLeak(() -> runCheckpointDuringRefresh(rnd, 4, 800));
+    }
+
+    @Test
     public void testConcurrentCreateDuringIngestion() throws Exception {
         // CREATE LIVE VIEW ... BACKFILL races concurrent base ingestion.
         final Rnd rnd = TestUtils.generateRandom(LOG);
@@ -128,10 +141,34 @@ public class LiveViewConcurrencyTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConcurrentDropDuringBackfill() throws Exception {
+        // DROP LIVE VIEW races a refresh driver that is still driving the BACKFILL
+        // sweep while writers ingest the suffix. This tears down the backfill state
+        // (sweep cursor, rolling .bcp checkpoints, in-mem tier) mid-sweep, a path
+        // the non-backfill DROP-during-refresh test never reaches. Whatever the
+        // interleaving, the drop must leave the registry empty and the base table
+        // intact, with no leak or crash.
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        assertMemoryLeak(() -> runDropDuringBackfill(rnd, 4, 700));
+    }
+
+    @Test
     public void testConcurrentDropDuringRefresh() throws Exception {
         // DROP LIVE VIEW races a refresh-driver thread pumping the refresh job.
         final Rnd rnd = TestUtils.generateRandom(LOG);
         assertMemoryLeak(() -> runDropDuringRefresh(rnd, 4, 700));
+    }
+
+    @Test
+    public void testConcurrentMultiViewRefresh() throws Exception {
+        // Two live views with different shapes over the same base, maintained by a
+        // single refresh driver while four writers ingest concurrently. One base
+        // commit fans out to both views (getViewsForBaseTable) and each carries its
+        // own per-view refresh latch, so the driver advances both independently
+        // under the cross-writer O3 stream. After quiescence both views must equal
+        // their from-scratch recomputes.
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        assertMemoryLeak(() -> runMultiViewConcurrent(rnd, 4, 800));
     }
 
     @Test
@@ -381,6 +418,121 @@ public class LiveViewConcurrencyTest extends AbstractCairoTest {
         }
     }
 
+    // A checkpoint-agent thread cycles startCheckpoint/endCheckpoint on the view
+    // (the DatabaseCheckpointAgent freeze handshake) while a refresh driver
+    // maintains it and writers ingest. The freeze gate serialises against the
+    // worker; the try/finally guarantees endCheckpoint so a freeze never leaks and
+    // blocks the final quiescence drive. After all threads join and the refresh
+    // quiesces single-threaded, the view equals the from-scratch recompute.
+    private void runCheckpointDuringRefresh(Rnd rnd, int numWriters, int rowCount) throws Exception {
+        setCurrentMicros(MicrosTimestampDriver.floor(CLOCK_START));
+
+        final int n = 1 + rnd.nextInt(8);
+        final String viewSql = "SELECT " + projection(0, n) + " FROM base";
+        final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s AS " + viewSql;
+
+        execute("DROP LIVE VIEW IF EXISTS lv");
+        execute("DROP TABLE IF EXISTS base");
+        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+        final long[] tsv = new long[rowCount];
+        final int[] symIdx = new int[rowCount];
+        final long[] iv = new long[rowCount];
+        final double[] xv = new double[rowCount];
+        generateDataset(rnd, rowCount, tsv, symIdx, iv, xv);
+
+        execute(createSql);
+
+        LOG.info().$("LV concurrency checkpoint-during-refresh: writers=").$(numWriters)
+                .$(", rows=").$(rowCount).$(", n=").$(n).$(", sql=").$(viewSql).$();
+
+        final TableToken baseToken = engine.verifyTableName("base");
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+        Assert.assertNotNull(instance);
+        final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
+        final LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1);
+        final AtomicBoolean running = new AtomicBoolean(true);
+        try {
+            // numWriters writers + the refresh driver + the checkpoint agent,
+            // released together so the freeze lands while ingestion and refresh
+            // are both in flight.
+            final CyclicBarrier barrier = new CyclicBarrier(numWriters + 2);
+            final Thread[] writers = new Thread[numWriters];
+            for (int w = 0; w < numWriters; w++) {
+                final int batch = 5 + rnd.nextInt(20);
+                writers[w] = newWriterThread(w, numWriters, 0, rowCount, batch, tsv, symIdx, iv, xv, baseToken, barrier, errors);
+            }
+            final Thread driver = new Thread(() -> {
+                try {
+                    barrier.await();
+                    while (running.get()) {
+                        setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                        drainWalQueue();
+                        drainJob(job);
+                    }
+                } catch (Throwable th) {
+                    errors.add(th);
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            }, "lv-refresh-driver");
+            final Thread agent = new Thread(() -> {
+                try {
+                    barrier.await();
+                    while (running.get()) {
+                        // Mirror DatabaseCheckpointAgent: freeze, (the per-LV file
+                        // copy would run here), unfreeze. The finally guarantees
+                        // endCheckpoint regardless of how the freeze interleaves.
+                        instance.startCheckpoint(instance.getStateReader().getAppliedWatermark());
+                        try {
+                            Thread.yield();
+                        } finally {
+                            instance.endCheckpoint();
+                        }
+                    }
+                } catch (Throwable th) {
+                    errors.add(th);
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            }, "lv-checkpoint-agent");
+
+            for (Thread t : writers) {
+                t.start();
+            }
+            driver.start();
+            agent.start();
+            for (Thread t : writers) {
+                t.join();
+            }
+            running.set(false);
+            driver.join();
+            agent.join();
+
+            if (!errors.isEmpty()) {
+                throw new RuntimeException("worker thread failed", errors.peek());
+            }
+
+            // Quiesce single-threaded (no agent), then assert the oracle below.
+            drainWalQueue();
+            driveRefreshToQuiescence(job);
+        } finally {
+            Misc.free(job);
+        }
+
+        TestUtils.assertSqlCursors(
+                engine,
+                sqlExecutionContext,
+                "(" + viewSql + ") ORDER BY 1",
+                "(lv) ORDER BY 1",
+                LOG,
+                true
+        );
+
+        execute("DROP LIVE VIEW lv");
+        execute("DROP TABLE base");
+    }
+
     private void runConcurrent(
             Rnd rnd,
             int variant,
@@ -582,6 +734,104 @@ public class LiveViewConcurrencyTest extends AbstractCairoTest {
         execute("DROP TABLE base");
     }
 
+    // DROP LIVE VIEW races a refresh driver that is still driving the BACKFILL
+    // sweep while writers ingest the suffix. The earliest rows are pre-committed so
+    // the sweep has real history to chew through when the drop lands mid-sweep. The
+    // contract is a clean teardown of the backfill state (sweep cursor, rolling
+    // .bcp checkpoints, in-mem tier): registry empty, base intact, no leak.
+    private void runDropDuringBackfill(Rnd rnd, int numWriters, int rowCount) throws Exception {
+        setCurrentMicros(MicrosTimestampDriver.floor(CLOCK_START));
+
+        final int n = 1 + rnd.nextInt(8);
+        final String viewSql = "SELECT " + projection(0, n) + " FROM base";
+        final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s BACKFILL AS " + viewSql;
+
+        execute("DROP LIVE VIEW IF EXISTS lv");
+        execute("DROP TABLE IF EXISTS base");
+        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+        final long[] tsv = new long[rowCount];
+        final int[] symIdx = new int[rowCount];
+        final long[] iv = new long[rowCount];
+        final double[] xv = new double[rowCount];
+        generateDataset(rnd, rowCount, tsv, symIdx, iv, xv);
+
+        // Pre-commit the earliest half so BACKFILL captures a non-trivial history
+        // (the sweep is still running when the DROP lands). The remaining suffix is
+        // ingested concurrently with the drop.
+        final int preCount = Math.max(1, rowCount / 2);
+        final TableToken baseToken = engine.verifyTableName("base");
+        try (WalWriter walWriter = engine.getWalWriter(baseToken)) {
+            for (int k = 0; k < preCount; k++) {
+                appendRow(walWriter, tsv[k], symIdx[k], iv[k], xv[k]);
+            }
+            walWriter.commit();
+        }
+        drainWalQueue();
+
+        execute(createSql);
+
+        LOG.info().$("LV concurrency DROP-during-backfill: writers=").$(numWriters)
+                .$(", rows=").$(rowCount).$(", n=").$(n).$(", preCount=").$(preCount)
+                .$(", sql=").$(viewSql).$();
+
+        final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
+        final LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1);
+        final AtomicBoolean refreshing = new AtomicBoolean(true);
+        try {
+            // numWriters writers + the refresh driver + this (main) thread, released
+            // together, so by the time the main thread fires the DROP the writers
+            // are ingesting and the driver is driving the backfill sweep.
+            final CyclicBarrier barrier = new CyclicBarrier(numWriters + 2);
+            final Thread[] writers = new Thread[numWriters];
+            for (int w = 0; w < numWriters; w++) {
+                final int batch = 5 + rnd.nextInt(20);
+                writers[w] = newWriterThread(w, numWriters, preCount, rowCount, batch, tsv, symIdx, iv, xv, baseToken, barrier, errors);
+            }
+            final Thread driver = new Thread(() -> {
+                try {
+                    barrier.await();
+                    while (refreshing.get()) {
+                        setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                        drainWalQueue();
+                        drainJob(job); // drives both the backfill sweep and forward refresh
+                    }
+                } catch (Throwable th) {
+                    errors.add(th);
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            }, "lv-refresh-driver");
+
+            for (Thread t : writers) {
+                t.start();
+            }
+            driver.start();
+            barrier.await();
+            execute("DROP LIVE VIEW lv"); // races the in-flight backfill + ingestion
+
+            for (Thread t : writers) {
+                t.join();
+            }
+            refreshing.set(false);
+            driver.join();
+
+            if (!errors.isEmpty()) {
+                throw new RuntimeException("worker thread failed", errors.peek());
+            }
+        } finally {
+            Misc.free(job);
+        }
+
+        // Clean teardown: the view is gone from the registry and the base table
+        // survived intact. No leak - assertMemoryLeak wraps the whole run.
+        Assert.assertFalse(engine.getLiveViewRegistry().hasView("lv"));
+        drainWalQueue();
+        assertQuery("SELECT count(*) FROM base").noRandomAccess().expectSize().returns("count\n" + rowCount + "\n");
+
+        execute("DROP TABLE base");
+    }
+
     // DROP LIVE VIEW races a refresh-driver thread that keeps pumping the refresh job
     // while writers ingest. The refresh job swallows per-view failures
     // (handleRefreshFailure), so a torn-down view never throws into the driver - the
@@ -667,6 +917,89 @@ public class LiveViewConcurrencyTest extends AbstractCairoTest {
         drainWalQueue();
         assertQuery("SELECT count(*) FROM base").noRandomAccess().expectSize().returns("count\n" + rowCount + "\n");
 
+        execute("DROP TABLE base");
+    }
+
+    // Two live views with different shapes over the same base, maintained by a
+    // single refresh driver while writers ingest concurrently. One base commit
+    // fans out to both views; each carries its own per-view refresh latch, so the
+    // driver advances them independently under the cross-writer O3 stream. After
+    // quiescence both views equal their from-scratch recomputes.
+    private void runMultiViewConcurrent(Rnd rnd, int numWriters, int rowCount) throws Exception {
+        setCurrentMicros(MicrosTimestampDriver.floor(CLOCK_START));
+
+        final int n = 1 + rnd.nextInt(8);
+        final String view1Sql = "SELECT " + projection(0, n) + " FROM base"; // sum
+        final String view2Sql = "SELECT " + projection(1, n) + " FROM base"; // row_number
+
+        execute("DROP LIVE VIEW IF EXISTS lv1");
+        execute("DROP LIVE VIEW IF EXISTS lv2");
+        execute("DROP TABLE IF EXISTS base");
+        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+        final long[] tsv = new long[rowCount];
+        final int[] symIdx = new int[rowCount];
+        final long[] iv = new long[rowCount];
+        final double[] xv = new double[rowCount];
+        generateDataset(rnd, rowCount, tsv, symIdx, iv, xv);
+
+        execute("CREATE LIVE VIEW lv1 FLUSH EVERY 100ms IN MEMORY 60s AS " + view1Sql);
+        execute("CREATE LIVE VIEW lv2 FLUSH EVERY 100ms IN MEMORY 60s AS " + view2Sql);
+
+        LOG.info().$("LV concurrency multi-view: writers=").$(numWriters)
+                .$(", rows=").$(rowCount).$(", n=").$(n).$();
+
+        final TableToken baseToken = engine.verifyTableName("base");
+        final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
+        final LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1);
+        final AtomicBoolean ingesting = new AtomicBoolean(true);
+        try {
+            final CyclicBarrier barrier = new CyclicBarrier(numWriters + 1);
+            final Thread[] writers = new Thread[numWriters];
+            for (int w = 0; w < numWriters; w++) {
+                final int batch = 5 + rnd.nextInt(20);
+                writers[w] = newWriterThread(w, numWriters, 0, rowCount, batch, tsv, symIdx, iv, xv, baseToken, barrier, errors);
+            }
+            final Thread driver = new Thread(() -> {
+                try {
+                    barrier.await();
+                    while (ingesting.get()) {
+                        setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                        drainWalQueue();
+                        drainJob(job);
+                    }
+                } catch (Throwable th) {
+                    errors.add(th);
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            }, "lv-refresh-driver");
+
+            for (Thread t : writers) {
+                t.start();
+            }
+            driver.start();
+            for (Thread t : writers) {
+                t.join();
+            }
+            ingesting.set(false);
+            driver.join();
+
+            if (!errors.isEmpty()) {
+                throw new RuntimeException("worker thread failed", errors.peek());
+            }
+
+            drainWalQueue();
+            driveRefreshToQuiescence(job);
+        } finally {
+            Misc.free(job);
+        }
+
+        TestUtils.assertSqlCursors(engine, sqlExecutionContext, "(" + view1Sql + ") ORDER BY 1", "(lv1) ORDER BY 1", LOG, true);
+        TestUtils.assertSqlCursors(engine, sqlExecutionContext, "(" + view2Sql + ") ORDER BY 1", "(lv2) ORDER BY 1", LOG, true);
+
+        execute("DROP LIVE VIEW lv1");
+        execute("DROP LIVE VIEW lv2");
         execute("DROP TABLE base");
     }
 
