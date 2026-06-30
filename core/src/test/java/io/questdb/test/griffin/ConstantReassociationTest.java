@@ -82,6 +82,41 @@ public class ConstantReassociationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIntegerPairWrappingToIntNullIsNotReassociated() throws Exception {
+        // An integer constant pair whose INT-width fold lands exactly on the INT_NULL
+        // sentinel (-2^31) must not be regrouped. Hoisting it under the column as
+        // col op (C1 op C2) = col op INT_NULL makes AddInt / MulInt return INT_NULL for
+        // every row, while the left-associative (and fully-constant literal) form keeps
+        // the real wrapped value. The query-level oracle lives in
+        // IntArithmeticOverflowFoldingTest.testReassociationIntPairWrappingToIntNullWrapsLikeColumnAndLiteral;
+        // this pins the same guard structurally, one level closer to the rewrite.
+
+        // addition: 2147483647 + 1 wraps to -2^31 == INT_NULL -- stays un-regrouped in every pattern.
+        // Pattern A: (A op C1) op C2
+        assertReassociation("d + 2147483647 + 1", "d + 2147483647 + 1");
+        // Pattern B: (C1 op A) op C2 (commutative) -- the column is NOT moved to the front
+        assertReassociation("(2147483647 + d) + 1", "2147483647 + d + 1");
+        // Mirror A: C2 op (A op C1) (commutative)
+        assertReassociation("1 + (d + 2147483647)", "1 + (d + 2147483647)");
+        // Mirror B: C2 op (C1 op A)
+        assertReassociation("1 + (2147483647 + d)", "1 + (2147483647 + d)");
+
+        // multiplication: 65536 * 32768 wraps to -2^31 == INT_NULL
+        assertReassociation("d * 65536 * 32768", "d * 65536 * 32768");
+
+        // negative-constant pair: -2147483647 + -1 also folds to -2^31 == INT_NULL, but the
+        // minus binds as a unary operator, so neither operand is marked constant and the pair
+        // never reaches the INT_NULL guard. It stays un-regrouped for that reason instead, and
+        // still avoids the poison. (See the "unary-minus escapes the guard" note: safe because
+        // reassociation never fires here, not because integerPairFoldsToIntNull caught it.)
+        assertReassociation("d + -2147483647 + -1", "d + -(2147483647) + -(1)");
+
+        // control: a pair that does NOT fold to INT_NULL still regroups normally
+        assertReassociation("d + 2147483647 + 2", "d + (2147483647 + 2)");
+        assertReassociation("(2147483647 + d) + 2", "d + (2147483647 + 2)");
+    }
+
+    @Test
     public void testLogicalAndOrReassociation() throws Exception {
         // AND — Pattern A: (col AND C1) AND C2
         assertReassociation("a and true and true", "a and (true and true)");

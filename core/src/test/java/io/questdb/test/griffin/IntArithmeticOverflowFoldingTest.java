@@ -183,6 +183,13 @@ public class IntArithmeticOverflowFoldingTest extends AbstractCairoTest {
             assertQuery("SELECT (2 * 65536) * 32768 AS v").noLeakCheck().expectSize().returns("v\n0\n");
             assertQuery("SELECT (j * 65536) * 32768 AS v FROM u").noLeakCheck().expectSize().returns("v\n0\n");
 
+            // negative-constant pair: -2147483647 + -1 also folds to -2^31 == INT_NULL, but each minus
+            // binds as a unary operator, so neither operand is marked constant and the pair never
+            // reaches the reassociation guard. It stays un-regrouped for that reason, so both paths keep
+            // the real wrapped value (-2147483643) rather than poisoning every row to NULL.
+            assertQuery("SELECT (5 + -2147483647) + -1 AS v").noLeakCheck().expectSize().returns("v\n-2147483643\n");
+            assertQuery("SELECT (i + -2147483647) + -1 AS v FROM u").noLeakCheck().expectSize().returns("v\n-2147483643\n");
+
             // control: a pair that does not fold to INT_NULL still regroups and stays correct
             assertQuery("SELECT (5 + 3) + 4 AS v").noLeakCheck().expectSize().returns("v\n12\n");
             assertQuery("SELECT (i + 3) + 4 AS v FROM u").noLeakCheck().expectSize().returns("v\n12\n");
