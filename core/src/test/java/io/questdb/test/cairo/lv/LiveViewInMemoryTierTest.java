@@ -25,10 +25,15 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.lv.LiveViewInMemoryBuffer;
 import io.questdb.cairo.lv.LiveViewInMemoryTier;
+import io.questdb.cairo.sql.Record;
+import io.questdb.std.BinarySequence;
 import io.questdb.std.IntList;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.griffin.engine.TestBinarySequence;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -377,9 +382,209 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testStringBinaryRegionReallocMidFill() throws Exception {
+        // A value larger than the initial page forces the dataMem region to
+        // realloc (moving its base address) mid-fill. The offset-based reads must
+        // still resolve correctly against the relocated block once the fill ends.
+        assertMemoryLeak(() -> {
+            IntList types = strBinSchema();
+            try (LiveViewInMemoryBuffer buf = new LiveViewInMemoryBuffer(types, 0, PAGE_SIZE)) {
+                VarSizeRecord rec = new VarSizeRecord();
+                final int rows = 8;
+                for (int r = 0; r < rows; r++) {
+                    // Each string is several pages long and grows per row, so the
+                    // region reallocs multiple times during the fill.
+                    String s = repeat((char) ('a' + r), (int) PAGE_SIZE * (r + 1));
+                    byte[] b = bytesOf(r + 1, 3 * (int) PAGE_SIZE);
+                    rec.of((r + 1) * 1_000_000L, s, new TestBinarySequence().of(b));
+                    buf.copyRowFromRecord(rec, r);
+                }
+                buf.setRowCount(rows);
+
+                for (int r = 0; r < rows; r++) {
+                    String s = repeat((char) ('a' + r), (int) PAGE_SIZE * (r + 1));
+                    byte[] b = bytesOf(r + 1, 3 * (int) PAGE_SIZE);
+                    TestUtils.assertEquals(s, buf.getStrA(r, 1));
+                    Assert.assertEquals(s.length(), buf.getStrLen(r, 1));
+                    assertBinEquals(b, buf.getBin(r, 2));
+                    Assert.assertEquals(b.length, buf.getBinLen(r, 2));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testStringBinaryRoundTripThroughTier() throws Exception {
+        // Write STRING + BINARY rows (including NULL and a real, empty value) into
+        // a slot, publish, then read them back through the buffer getters after a
+        // reader pins the published slot.
+        assertMemoryLeak(() -> {
+            IntList types = strBinSchema();
+            try (LiveViewInMemoryTier tier = new LiveViewInMemoryTier(types, 0, PAGE_SIZE)) {
+                int writeIdx = 1 - tier.getPublishedIdx();
+                LiveViewInMemoryBuffer slot = tier.tryAcquireWrite(writeIdx);
+                Assert.assertNotNull(slot);
+                VarSizeRecord rec = new VarSizeRecord();
+                rec.of(1_000_000L, "hello", new TestBinarySequence().of(new byte[]{1, 2, 3}));
+                slot.copyRowFromRecord(rec, 0);
+                rec.of(2_000_000L, null, null); // NULL string + NULL binary
+                slot.copyRowFromRecord(rec, 1);
+                rec.of(3_000_000L, "", new TestBinarySequence().of(new byte[0])); // empties (distinct from null)
+                slot.copyRowFromRecord(rec, 2);
+                slot.setRowCount(3);
+                tier.publishSwap(writeIdx);
+
+                int pin = tier.acquireRead();
+                Assert.assertEquals(writeIdx, pin);
+                LiveViewInMemoryBuffer r = tier.getSlot(pin);
+                Assert.assertEquals(3, r.rowCount());
+
+                // row 0: normal values; A and B views are distinct instances.
+                TestUtils.assertEquals("hello", r.getStrA(0, 1));
+                TestUtils.assertEquals("hello", r.getStrB(0, 1));
+                Assert.assertEquals(5, r.getStrLen(0, 1));
+                assertBinEquals(new byte[]{1, 2, 3}, r.getBin(0, 2));
+                Assert.assertEquals(3, r.getBinLen(0, 2));
+
+                // row 1: NULL string + NULL binary.
+                Assert.assertNull(r.getStrA(1, 1));
+                Assert.assertEquals(TableUtils.NULL_LEN, r.getStrLen(1, 1));
+                Assert.assertNull(r.getBin(1, 2));
+                Assert.assertEquals(TableUtils.NULL_LEN, r.getBinLen(1, 2));
+
+                // row 2: empty string + empty binary - distinct from null.
+                TestUtils.assertEquals("", r.getStrA(2, 1));
+                Assert.assertEquals(0, r.getStrLen(2, 1));
+                Assert.assertNotNull(r.getBin(2, 2));
+                assertBinEquals(new byte[0], r.getBin(2, 2));
+                Assert.assertEquals(0, r.getBinLen(2, 2));
+
+                tier.releaseRead(pin);
+            }
+        });
+    }
+
+    @Test
+    public void testStringBinarySlowPathSwapPreservesValues() throws Exception {
+        // The slow-path swap rebuilds a slot via copyRowFrom (buffer -> buffer),
+        // re-appending each retained var-size value. Skipping rows (eviction)
+        // keeps the destination append dense, so the order assert holds and the
+        // copied values round-trip.
+        assertMemoryLeak(() -> {
+            IntList types = strBinSchema();
+            LiveViewInMemoryBuffer src = new LiveViewInMemoryBuffer(types, 0, PAGE_SIZE);
+            LiveViewInMemoryBuffer dst = new LiveViewInMemoryBuffer(types, 0, PAGE_SIZE);
+            try {
+                VarSizeRecord rec = new VarSizeRecord();
+                final int rows = 6;
+                for (int r = 0; r < rows; r++) {
+                    String s = (r % 3 == 0) ? null : "v" + r + repeat('x', r);
+                    byte[] b = (r % 4 == 0) ? null : bytesOf(r + 7, r);
+                    rec.of((r + 1) * 1_000_000L, s, b == null ? null : new TestBinarySequence().of(b));
+                    src.copyRowFromRecord(rec, r);
+                }
+                src.setRowCount(rows);
+
+                // Retain only the odd src rows, densely, into dst (mimics eviction).
+                long dstRow = 0;
+                for (int r = 1; r < rows; r += 2) {
+                    dst.copyRowFrom(src, r, dstRow);
+                    dstRow++;
+                }
+                dst.setRowCount(dstRow);
+                Assert.assertEquals(3, dst.rowCount());
+
+                dstRow = 0;
+                for (int r = 1; r < rows; r += 2) {
+                    String s = (r % 3 == 0) ? null : "v" + r + repeat('x', r);
+                    byte[] b = (r % 4 == 0) ? null : bytesOf(r + 7, r);
+                    if (s == null) {
+                        Assert.assertNull(dst.getStrA(dstRow, 1));
+                    } else {
+                        TestUtils.assertEquals(s, dst.getStrA(dstRow, 1));
+                    }
+                    if (b == null) {
+                        Assert.assertNull(dst.getBin(dstRow, 2));
+                    } else {
+                        assertBinEquals(b, dst.getBin(dstRow, 2));
+                    }
+                    dstRow++;
+                }
+            } finally {
+                src.close();
+                dst.close();
+            }
+        });
+    }
+
+    private static void assertBinEquals(byte[] expected, BinarySequence actual) {
+        Assert.assertNotNull(actual);
+        Assert.assertEquals(expected.length, actual.length());
+        for (int i = 0; i < expected.length; i++) {
+            Assert.assertEquals("byte " + i, expected[i], actual.byteAt(i));
+        }
+    }
+
+    private static byte[] bytesOf(int seed, int len) {
+        byte[] b = new byte[len];
+        for (int i = 0; i < len; i++) {
+            b[i] = (byte) (seed + i);
+        }
+        return b;
+    }
+
+    private static String repeat(char c, int len) {
+        char[] a = new char[len];
+        java.util.Arrays.fill(a, c);
+        return new String(a);
+    }
+
     private static IntList singleLongCol() {
         IntList types = new IntList(1);
         types.add(ColumnType.LONG);
         return types;
+    }
+
+    private static IntList strBinSchema() {
+        IntList types = new IntList(3);
+        types.add(ColumnType.TIMESTAMP);
+        types.add(ColumnType.STRING);
+        types.add(ColumnType.BINARY);
+        return types;
+    }
+
+    // Minimal single-row Record stub feeding copyRowFromRecord a TIMESTAMP, a
+    // STRING, and a BINARY column (indexes 0, 1, 2). Rebind per row via of().
+    private static final class VarSizeRecord implements Record {
+        private BinarySequence bin;
+        private CharSequence str;
+        private long ts;
+
+        @Override
+        public BinarySequence getBin(int col) {
+            return bin;
+        }
+
+        @Override
+        public CharSequence getStrA(int col) {
+            return str;
+        }
+
+        @Override
+        public CharSequence getStrB(int col) {
+            return str;
+        }
+
+        @Override
+        public long getTimestamp(int col) {
+            return ts;
+        }
+
+        void of(long ts, CharSequence str, BinarySequence bin) {
+            this.ts = ts;
+            this.str = str;
+            this.bin = bin;
+        }
     }
 }

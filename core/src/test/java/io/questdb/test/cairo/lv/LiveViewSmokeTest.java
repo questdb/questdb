@@ -1050,19 +1050,20 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     // Drives an end-to-end live view whose OUTPUT schema carries a var-length /
     // array column (VARCHAR / STRING / BINARY / DOUBLE[] / DOUBLE[][]) projected
-    // straight from the base table. The fixed-width in-memory tier cannot store
-    // such a schema (LiveViewInMemoryBuffer.areColumnTypesSupported returns
-    // false), so the LV falls back to disk-only reads. The prior coverage only
-    // asserted, negatively, that the tier is skipped; this proves the disk-only
-    // path actually MATERIALIZES and READS BACK the var-length values correctly.
-    // It cross-checks the LV against the same window recomputed straight over the
-    // base (a differential oracle that also compares the passthrough v column
-    // cell by cell) after three phases: in-order ingestion, an O3 head-miss
-    // replay that re-materializes the affected rows via REPLACE_RANGE, and a
-    // simulated restart that rehydrates the window state from the head .cp. The
-    // window function (sum over an anchored unbounded frame) only makes the query
-    // a valid LV; the v column is the subject under test.
-    private void assertDiskOnlyVarLengthOutputRoundTrip(String colTypeDdl, String vExpr) throws Exception {
+    // straight from the base table. STRING and BINARY ride through the in-mem tier
+    // (tierSupported == true); VARCHAR and the array types are not yet stored, so
+    // those LVs fall back to disk-only reads (tierSupported == false). Either way
+    // the materialized rows reach disk - directly for the disk-only schemas, or via
+    // the tier's periodic flush flyweight for STRING / BINARY - and this proves the
+    // disk path MATERIALIZES and READS BACK the var-length values correctly. It
+    // cross-checks the LV against the same window recomputed straight over the base
+    // (a differential oracle that also compares the passthrough v column cell by
+    // cell) after three phases: in-order ingestion, an O3 head-miss replay that
+    // re-materializes the affected rows via REPLACE_RANGE, and a simulated restart
+    // that rehydrates the window state from the head .cp. The window function (sum
+    // over an anchored unbounded frame) only makes the query a valid LV; the v
+    // column is the subject under test.
+    private void assertVarLengthOutputRoundTrip(String colTypeDdl, String vExpr, boolean tierSupported) throws Exception {
         assertMemoryLeak(() -> {
             // Pin the clock below the data before CREATE so viewLowerBoundTimestamp
             // (the non-backfill floor) sits under every row; otherwise the O3
@@ -1090,14 +1091,23 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 drainJob(job);
                 drainWalQueue();
 
-                // The var-length / array output schema must skip the in-mem tier.
                 LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
                 Assert.assertNotNull(instance);
-                Assert.assertNull(
-                        "var-length / array output schema must skip the in-mem tier",
-                        instance.getInMemoryTier()
-                );
-                assertDiskOnlyVarLengthLvMatchesRecompute();
+                if (tierSupported) {
+                    // STRING / BINARY now ride through the in-mem tier; the periodic
+                    // flush serializes them back to disk via the flush flyweight,
+                    // so this oracle exercises that path across the phases below.
+                    Assert.assertNotNull(
+                            "STRING / BINARY output schema must allocate the in-mem tier",
+                            instance.getInMemoryTier()
+                    );
+                } else {
+                    Assert.assertNull(
+                            "VARCHAR / array output schema must skip the in-mem tier",
+                            instance.getInMemoryTier()
+                    );
+                }
+                assertVarLengthLvMatchesRecompute();
 
                 // Phase 2: O3. Every ts sits a half-second below a phase-1 ts and
                 // strictly under the 39s watermark, so the whole batch is
@@ -1115,7 +1125,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 setCurrentMicros(500_000L);
                 drainJob(job);
                 drainWalQueue();
-                assertDiskOnlyVarLengthLvMatchesRecompute();
+                assertVarLengthLvMatchesRecompute();
             }
 
             // Phase 3: simulated restart. Rebuild the registry from on-disk state,
@@ -1128,19 +1138,19 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 setCurrentMicros(750_000L);
                 drainJob(job);
             }
-            assertDiskOnlyVarLengthLvMatchesRecompute();
+            assertVarLengthLvMatchesRecompute();
 
             execute("DROP LIVE VIEW lv");
         });
     }
 
-    // The differential oracle for assertDiskOnlyVarLengthOutputRoundTrip: the LV
-    // must equal the same window recomputed directly over the base table.
-    // ORDER BY sym, ts gives both sides a total order (timestamps are unique);
-    // genericStringMatch tolerates the SYMBOL-vs-STRING passthrough rendering.
-    // The recompute's plain PARTITION BY sym ORDER BY ts unbounded-preceding sum
-    // equals the LV's anchored sum because all data falls within a single day.
-    private void assertDiskOnlyVarLengthLvMatchesRecompute() throws SqlException {
+    // The differential oracle for assertVarLengthOutputRoundTrip: the LV must equal
+    // the same window recomputed directly over the base table. ORDER BY sym, ts
+    // gives both sides a total order (timestamps are unique); genericStringMatch
+    // tolerates the SYMBOL-vs-STRING passthrough rendering. The recompute's plain
+    // PARTITION BY sym ORDER BY ts unbounded-preceding sum equals the LV's anchored
+    // sum because all data falls within a single day.
+    private void assertVarLengthLvMatchesRecompute() throws SqlException {
         TestUtils.assertSqlCursors(
                 engine,
                 sqlExecutionContext,
@@ -3085,28 +3095,28 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDiskOnlyBinaryOutputRoundTrip() throws Exception {
-        assertDiskOnlyVarLengthOutputRoundTrip("BINARY", "rnd_bin(4, 20, 3)");
+    public void testBinaryOutputRoundTrip() throws Exception {
+        assertVarLengthOutputRoundTrip("BINARY", "rnd_bin(4, 20, 3)", true);
     }
 
     @Test
     public void testDiskOnlyDouble2dArrayOutputRoundTrip() throws Exception {
-        assertDiskOnlyVarLengthOutputRoundTrip("DOUBLE[][]", "rnd_double_array(2, 0)");
+        assertVarLengthOutputRoundTrip("DOUBLE[][]", "rnd_double_array(2, 0)", false);
     }
 
     @Test
     public void testDiskOnlyDoubleArrayOutputRoundTrip() throws Exception {
-        assertDiskOnlyVarLengthOutputRoundTrip("DOUBLE[]", "rnd_double_array(1, 0)");
-    }
-
-    @Test
-    public void testDiskOnlyStringOutputRoundTrip() throws Exception {
-        assertDiskOnlyVarLengthOutputRoundTrip("STRING", "rnd_str(1, 12, 3)");
+        assertVarLengthOutputRoundTrip("DOUBLE[]", "rnd_double_array(1, 0)", false);
     }
 
     @Test
     public void testDiskOnlyVarcharOutputRoundTrip() throws Exception {
-        assertDiskOnlyVarLengthOutputRoundTrip("VARCHAR", "rnd_varchar(1, 12, 3)");
+        assertVarLengthOutputRoundTrip("VARCHAR", "rnd_varchar(1, 12, 3)", false);
+    }
+
+    @Test
+    public void testStringOutputRoundTrip() throws Exception {
+        assertVarLengthOutputRoundTrip("STRING", "rnd_str(1, 12, 3)", true);
     }
 
     @Test
@@ -15128,14 +15138,14 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testInMemTierSkipsAllocationForUnsupportedColumnTypes() throws Exception {
-        // An LV whose output schema contains a column type
-        // the fixed-width in-mem tier cannot store (STRING / VARCHAR /
-        // BINARY / ARRAY) skips tier allocation entirely. The cursor stays
-        // disk-only with no pin, and reads pass through unchanged. The
+        // An LV whose output schema contains a column type the in-mem tier cannot
+        // yet store (VARCHAR / ARRAY) skips tier allocation entirely. The cursor
+        // stays disk-only with no pin, and reads pass through unchanged. The
         // seam_ts routing scaffolding in LiveViewRecordCursor exits via the
-        // {@code pinnedSlot == null} branch.
+        // {@code pinnedSlot == null} branch. (STRING / BINARY are now stored, so
+        // this uses VARCHAR to pin the still-unsupported path.)
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, x INT, s STRING) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, s VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
                     "SELECT ts, x, s, row_number() OVER () AS rn FROM base WHERE x > 0");
 
@@ -15148,7 +15158,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             }
 
             Assert.assertNull(
-                    "in-mem tier must not be allocated for an LV with a STRING output column",
+                    "in-mem tier must not be allocated for an LV with a VARCHAR output column",
                     instance.getInMemoryTier()
             );
             // Disk-only cursor must return the inserted row through SELECT.

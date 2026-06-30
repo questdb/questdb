@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.vm.MemoryCARWImpl;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.cairo.vm.api.NullMemory;
+import io.questdb.std.BinarySequence;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -49,11 +50,13 @@ import io.questdb.std.QuietCloseable;
  * of a fixed-width column.
  * <p>
  * Which column types the tier actually stores is governed solely by the per-type
- * support gate ({@link #isFixedWidthSupported}); the (data, aux) storage itself
- * imposes no further restriction. Today the gate admits fixed-width / SYMBOL
- * schemas only, so every {@code auxMem} slot is the stub; variable-length
- * (STRING / VARCHAR / BINARY / ARRAY) support layers on by widening that gate and
- * allocating a real aux buffer for those columns.
+ * support gate ({@link #isTierSupported}); the (data, aux) storage itself imposes
+ * no further restriction. The gate admits fixed-width / SYMBOL columns (whose
+ * {@code auxMem} slot is the stub) and the variable-length STRING and BINARY
+ * columns (whose {@code auxMem} buffer holds an 8-byte-per-row vector of start
+ * offsets into the appended {@code dataMem} payload). The remaining variable-length
+ * types (VARCHAR / ARRAY) layer on by widening that gate further and reusing their
+ * type drivers for the aux encoding.
  * <p>
  * The slot's {@code rowCount} and {@code seamTs} bookkeeping is owned by the
  * caller: {@link #setRowCount(long)} bumps the row counter once all column
@@ -162,16 +165,16 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
 
     /**
      * Returns true iff every column type in {@code columnTypes} is supported by
-     * the in-memory tier. The tier ships fixed-width-only — variable-length
-     * STRING / VARCHAR / BINARY columns and ARRAY return false. SYMBOL is
-     * supported (stored as INT). Used by {@code LiveViewRefreshJob} to decide
-     * whether to populate the tier for a given LV; unsupported schemas fall
-     * back to disk-only reads.
+     * the in-memory tier. Fixed-width types, SYMBOL (stored as INT), and the
+     * variable-length STRING and BINARY types are supported; VARCHAR and ARRAY
+     * still return false. Used by {@code LiveViewRefreshJob} to decide whether to
+     * populate the tier for a given LV; unsupported schemas fall back to disk-only
+     * reads.
      */
     public static boolean areColumnTypesSupported(IntList columnTypes) {
         for (int i = 0, n = columnTypes.size(); i < n; i++) {
             int type = ColumnType.tagOf(columnTypes.getQuick(i));
-            if (!isFixedWidthSupported(type)) {
+            if (!isTierSupported(type)) {
                 return false;
             }
         }
@@ -180,15 +183,16 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
 
     /**
      * Returns true iff a single column of {@code columnType} is supported by the
-     * in-memory tier (fixed-width). Tags the type before the width probe, so
-     * callers may pass a full column type. SYMBOL is supported (stored as INT);
-     * the refresh worker eager-interns the value into the LV table's id space (see
-     * {@link LiveViewSymbolCache}) and stores that id, so the read path resolves it
-     * against the disk reader's symbol table (committed values) or the tier's
-     * symbol cache (values new to the un-flushed lead).
+     * in-memory tier. Tags the type before the probe, so callers may pass a full
+     * column type. Fixed-width types are stored in place at {@code row << shift};
+     * SYMBOL is stored as INT, with the refresh worker eager-interning the value
+     * into the LV table's id space (see {@link LiveViewSymbolCache}) so the read
+     * path resolves it against the disk reader's symbol table (committed values) or
+     * the tier's symbol cache (values new to the un-flushed lead); STRING and
+     * BINARY are stored as an appended payload plus a per-row start-offset vector.
      */
     public static boolean isColumnTypeSupported(int columnType) {
-        return isFixedWidthSupported(ColumnType.tagOf(columnType));
+        return isTierSupported(ColumnType.tagOf(columnType));
     }
 
     public int columnCount() {
@@ -199,7 +203,38 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
         return columnTypes.getQuick(col);
     }
 
-    private static boolean isFixedWidthSupported(int type) {
+    // Appends one BINARY value as the next row of column col: the payload bytes go
+    // to the tail of the dataMem region and the payload's start offset is appended
+    // as the next 8-byte aux entry. putBin handles null (a negative length marker)
+    // and distinguishes it from a real, empty (len == 0) value. The order assert
+    // catches a caller that writes rows out of order: aux is append-only, so its
+    // cursor must sit at dstRow * 8 before this row's offset is appended.
+    private void appendBin(int col, long dstRow, BinarySequence value) {
+        final MemoryCARWImpl data = dataMem.getQuick(col);
+        final MemoryCARW aux = auxMem.getQuick(col);
+        assert (dstRow << 3) == aux.getAppendOffset();
+        final long off = data.getAppendOffset();
+        data.putBin(value);
+        aux.putLong(off);
+    }
+
+    // Appends one STRING value as the next row of column col: the 4-byte length
+    // prefix + UTF-16 payload goes to the tail of the dataMem region and the
+    // payload's start offset is appended as the next 8-byte aux entry. putStr
+    // stores a null marker for a null value that getStrA reports back as null. The
+    // order assert catches a caller that writes rows out of order: aux is
+    // append-only, so its cursor must sit at dstRow * 8 before this row's offset is
+    // appended.
+    private void appendStr(int col, long dstRow, CharSequence value) {
+        final MemoryCARWImpl data = dataMem.getQuick(col);
+        final MemoryCARW aux = auxMem.getQuick(col);
+        assert (dstRow << 3) == aux.getAppendOffset();
+        final long off = data.getAppendOffset();
+        data.putStr(value);
+        aux.putLong(off);
+    }
+
+    private static boolean isTierSupported(int type) {
         switch (type) {
             case ColumnType.LONG:
             case ColumnType.TIMESTAMP:
@@ -217,6 +252,8 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
             case ColumnType.BYTE:
             case ColumnType.GEOBYTE:
             case ColumnType.BOOLEAN:
+            case ColumnType.STRING:
+            case ColumnType.BINARY:
                 return true;
             default:
                 return false;
@@ -224,12 +261,16 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
     }
 
     /**
-     * Copies one row's fixed-width values, column by column, from {@code src}
-     * into this buffer. Caller is responsible for advancing
-     * {@link #setRowCount(long)} after the row is written. Throws
-     * {@link UnsupportedOperationException} on var-length column types, which
-     * the tier does not support — callers should check
-     * {@link #areColumnTypesSupported(IntList)} before deciding to use the tier.
+     * Copies one row's values, column by column, from {@code src} into this
+     * buffer. Fixed-width / SYMBOL columns overwrite in place at the absolute
+     * {@code dstRow} offset; STRING / BINARY columns re-append the value read from
+     * {@code src}'s buffer getter (the value bytes are copied into this buffer's
+     * {@code dataMem} / {@code auxMem} before {@code src}'s flyweight is reused),
+     * so {@code dstRow} must be the next dense append row. Caller is responsible
+     * for advancing {@link #setRowCount(long)} after the row is written. Throws
+     * {@link UnsupportedOperationException} on column types the tier does not store
+     * — callers should check {@link #areColumnTypesSupported(IntList)} before
+     * deciding to use the tier.
      */
     public void copyRowFrom(LiveViewInMemoryBuffer src, long srcRow, long dstRow) {
         for (int c = 0, n = columnTypes.size(); c < n; c++) {
@@ -263,6 +304,12 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
                 case ColumnType.BOOLEAN:
                     putByte(dstRow, c, src.getByte(srcRow, c));
                     break;
+                case ColumnType.STRING:
+                    appendStr(c, dstRow, src.getStrA(srcRow, c));
+                    break;
+                case ColumnType.BINARY:
+                    appendBin(c, dstRow, src.getBin(srcRow, c));
+                    break;
                 default:
                     throw new UnsupportedOperationException(
                             "live view in-memory tier does not support column type: " + ColumnType.nameOf(columnTypes.getQuick(c))
@@ -272,15 +319,17 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
     }
 
     /**
-     * Copies one row's fixed-width values from the given {@code record} into
-     * this buffer. The {@code metadata} must match {@link #columnTypes} the
-     * buffer was constructed with — the caller is responsible for ensuring
-     * shape compatibility (this is the staging-buffer path in
+     * Copies one row's values from the given {@code record} into this buffer. The
+     * record's column types must match {@link #columnTypes} the buffer was
+     * constructed with — the caller is responsible for ensuring shape
+     * compatibility (this is the staging-buffer path in
      * {@code LiveViewRefreshJob}). SYMBOL columns store the record's raw int (a
      * base WAL-segment-local id) here; the refresh worker immediately overwrites
      * those columns with eager-interned, LV-table-consistent ids (see
      * {@link LiveViewSymbolCache}) before the slot is published, so the read path
-     * can resolve them.
+     * can resolve them. STRING / BINARY columns append the value's payload to
+     * {@code dataMem} and its start offset to {@code auxMem}, so {@code dstRow}
+     * must be the next dense append row.
      */
     public void copyRowFromRecord(Record record, long dstRow) {
         for (int c = 0, n = columnTypes.size(); c < n; c++) {
@@ -322,6 +371,12 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
                 case ColumnType.BOOLEAN:
                     putBool(dstRow, c, record.getBool(c));
                     break;
+                case ColumnType.STRING:
+                    appendStr(c, dstRow, record.getStrA(c));
+                    break;
+                case ColumnType.BINARY:
+                    appendBin(c, dstRow, record.getBin(c));
+                    break;
                 default:
                     throw new UnsupportedOperationException(
                             "live view in-memory tier does not support column type: " + ColumnType.nameOf(columnTypes.getQuick(c))
@@ -350,6 +405,18 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
         return sum;
     }
 
+    // Resolves a BINARY value: the per-row start offset lives in auxMem at
+    // row << 3, the payload (8-byte length + bytes) in dataMem at that offset.
+    // Returns null for a null marker; a real, empty (len == 0) value is distinct.
+    // The returned BinarySequence is the dataMem column's own reusable bsview.
+    public BinarySequence getBin(long row, int col) {
+        return dataMem.getQuick(col).getBin(auxMem.getQuick(col).getLong(row << 3));
+    }
+
+    public long getBinLen(long row, int col) {
+        return dataMem.getQuick(col).getBinLen(auxMem.getQuick(col).getLong(row << 3));
+    }
+
     public boolean getBool(long row, int col) {
         return dataMem.getQuick(col).getByte(row) != 0;
     }
@@ -376,6 +443,22 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
 
     public short getShort(long row, int col) {
         return dataMem.getQuick(col).getShort(row << 1);
+    }
+
+    // Resolves a STRING value: the per-row start offset lives in auxMem at
+    // row << 3, the payload (4-byte length + UTF-16) in dataMem at that offset.
+    // Returns null for a null marker. getStrA / getStrB return the dataMem column's
+    // own distinct reusable views (csviewA / csviewB), so a caller may hold both.
+    public CharSequence getStrA(long row, int col) {
+        return dataMem.getQuick(col).getStrA(auxMem.getQuick(col).getLong(row << 3));
+    }
+
+    public CharSequence getStrB(long row, int col) {
+        return dataMem.getQuick(col).getStrB(auxMem.getQuick(col).getLong(row << 3));
+    }
+
+    public int getStrLen(long row, int col) {
+        return dataMem.getQuick(col).getStrLen(auxMem.getQuick(col).getLong(row << 3));
     }
 
     public long getTimestamp(long row, int col) {

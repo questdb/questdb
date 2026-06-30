@@ -38,6 +38,7 @@ import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.engine.table.PageFrameRecordCursor;
 import io.questdb.griffin.engine.table.TablePageFrameCursor;
+import io.questdb.std.BinarySequence;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -470,18 +471,28 @@ public class LiveViewRecordCursor implements RecordCursor {
      * so a committed id resolves against the disk reader's table and a lead-only id
      * against the tier's symbol cache.
      * <p>
-     * Var-length accessors (STRING / VARCHAR / BINARY / ARRAY) inherit the
-     * disk-only delegation. Those columns prevent the in-mem tier from being
-     * allocated in the first place
-     * (see {@link LiveViewInMemoryBuffer#areColumnTypesSupported}), so
-     * {@code inMemMode == true} is unreachable for LVs whose schema contains
-     * them.
+     * The STRING and BINARY accessors read from the pinned buffer's per-row offset
+     * vector while in in-mem mode, mirroring the fixed-width accessors. The
+     * remaining var-length accessors (VARCHAR / ARRAY) inherit the disk-only
+     * delegation: those columns prevent the in-mem tier from being allocated in the
+     * first place (see {@link LiveViewInMemoryBuffer#areColumnTypesSupported}), so
+     * {@code inMemMode == true} is unreachable for LVs whose schema contains them.
      */
     private static class MergedRecord extends DelegatingRecord {
         private LiveViewInMemoryBuffer buffer;
         private long bufferRow;
         private RecordCursor cursor;
         private boolean inMemMode;
+
+        @Override
+        public BinarySequence getBin(int col) {
+            return inMemMode ? buffer.getBin(bufferRow, col) : super.getBin(col);
+        }
+
+        @Override
+        public long getBinLen(int col) {
+            return inMemMode ? buffer.getBinLen(bufferRow, col) : super.getBinLen(col);
+        }
 
         @Override
         public boolean getBool(int col) {
@@ -564,6 +575,21 @@ public class LiveViewRecordCursor implements RecordCursor {
         @Override
         public short getShort(int col) {
             return inMemMode ? buffer.getShort(bufferRow, col) : super.getShort(col);
+        }
+
+        @Override
+        public CharSequence getStrA(int col) {
+            return inMemMode ? buffer.getStrA(bufferRow, col) : super.getStrA(col);
+        }
+
+        @Override
+        public CharSequence getStrB(int col) {
+            return inMemMode ? buffer.getStrB(bufferRow, col) : super.getStrB(col);
+        }
+
+        @Override
+        public int getStrLen(int col) {
+            return inMemMode ? buffer.getStrLen(bufferRow, col) : super.getStrLen(col);
         }
 
         @Override

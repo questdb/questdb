@@ -25,6 +25,7 @@
 package io.questdb.cairo.lv;
 
 import io.questdb.cairo.sql.Record;
+import io.questdb.std.BinarySequence;
 import io.questdb.std.ObjList;
 
 /**
@@ -34,9 +35,10 @@ import io.questdb.std.ObjList;
  * the same way the refresh path feeds it a window-cursor record: the copier copies
  * the un-flushed lead rows out of the in-mem tier into the LV's {@code WalWriter}
  * row, so the byte-level serialisation matches the inline-apply write path exactly.
- * Only the fixed-width column accessors the tier stores are overridden; all other
- * {@link Record} methods inherit the throwing defaults, which the copier never
- * reaches because the tier rejects unsupported column types up front
+ * The fixed-width / SYMBOL accessors plus the STRING and BINARY accessors the tier
+ * stores are overridden; the remaining var-length accessors (VARCHAR / ARRAY)
+ * inherit the throwing defaults, which the copier never reaches because the tier
+ * rejects those column types up front
  * (see {@link LiveViewInMemoryBuffer#areColumnTypesSupported}).
  * <p>
  * Single-threaded, reused: {@link #of(LiveViewInMemoryBuffer, long)} rebinds the
@@ -50,6 +52,16 @@ public class LiveViewBufferRecord implements Record {
     // re-interns it into the WAL. Null (or a null per-column entry) for non-SYMBOL
     // columns; the copier only calls getSymA on a SYMBOL source column.
     private ObjList<LiveViewSymbolTable> symbolResolvers;
+
+    @Override
+    public BinarySequence getBin(int col) {
+        return buffer.getBin(row, col);
+    }
+
+    @Override
+    public long getBinLen(int col) {
+        return buffer.getBinLen(row, col);
+    }
 
     @Override
     public boolean getBool(int col) {
@@ -119,6 +131,16 @@ public class LiveViewBufferRecord implements Record {
     @Override
     public short getShort(int col) {
         return buffer.getShort(row, col);
+    }
+
+    @Override
+    public CharSequence getStrA(int col) {
+        return buffer.getStrA(row, col);
+    }
+
+    @Override
+    public int getStrLen(int col) {
+        return buffer.getStrLen(row, col);
     }
 
     @Override
