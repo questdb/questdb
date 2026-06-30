@@ -26,11 +26,14 @@ package io.questdb.test.cairo.lv;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.lv.LiveViewInMemoryBuffer;
 import io.questdb.cairo.lv.LiveViewInMemoryTier;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.IntList;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.griffin.engine.TestBinarySequence;
 import io.questdb.test.tools.TestUtils;
@@ -518,6 +521,136 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testVarcharRegionReallocMidFill() throws Exception {
+        // Long, growing values force both the dataMem payload region and the
+        // auxMem header region to realloc (moving their base addresses) mid-fill.
+        // The driver-decoded reads must still resolve against the relocated blocks
+        // once the fill ends.
+        assertMemoryLeak(() -> {
+            IntList types = varcharSchema();
+            try (LiveViewInMemoryBuffer buf = new LiveViewInMemoryBuffer(types, 0, PAGE_SIZE)) {
+                VarcharRecord rec = new VarcharRecord();
+                final int rows = 8;
+                for (int r = 0; r < rows; r++) {
+                    // Each value is several pages long and grows per row, so the
+                    // split-path payload region reallocs multiple times.
+                    String s = repeat((char) ('a' + r), (int) PAGE_SIZE * (r + 1));
+                    rec.of((r + 1) * 1_000_000L, new Utf8String(s));
+                    buf.copyRowFromRecord(rec, r);
+                }
+                buf.setRowCount(rows);
+
+                for (int r = 0; r < rows; r++) {
+                    String s = repeat((char) ('a' + r), (int) PAGE_SIZE * (r + 1));
+                    TestUtils.assertEquals(s, buf.getVarcharA(r, 1));
+                    Assert.assertEquals(s.length(), buf.getVarcharSize(r, 1));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testVarcharRoundTripThroughTier() throws Exception {
+        // Write VARCHAR rows (NULL, an empty value, a short fully-inlined value, and
+        // a value that exceeds VARCHAR_MAX_BYTES_FULLY_INLINED so it spills into the
+        // dataMem payload via the split path) into a slot, publish, then read them
+        // back through the buffer getters after a reader pins the published slot.
+        assertMemoryLeak(() -> {
+            // A value long enough to force the split (non-inlined) path.
+            String longValue = repeat('z', VarcharTypeDriver.VARCHAR_MAX_BYTES_FULLY_INLINED + 10);
+            IntList types = varcharSchema();
+            try (LiveViewInMemoryTier tier = new LiveViewInMemoryTier(types, 0, PAGE_SIZE)) {
+                int writeIdx = 1 - tier.getPublishedIdx();
+                LiveViewInMemoryBuffer slot = tier.tryAcquireWrite(writeIdx);
+                Assert.assertNotNull(slot);
+                VarcharRecord rec = new VarcharRecord();
+                rec.of(1_000_000L, new Utf8String("hi")); // short, fully inlined
+                slot.copyRowFromRecord(rec, 0);
+                rec.of(2_000_000L, null); // NULL
+                slot.copyRowFromRecord(rec, 1);
+                rec.of(3_000_000L, new Utf8String("")); // empty - distinct from null
+                slot.copyRowFromRecord(rec, 2);
+                rec.of(4_000_000L, new Utf8String(longValue)); // split path
+                slot.copyRowFromRecord(rec, 3);
+                slot.setRowCount(4);
+                tier.publishSwap(writeIdx);
+
+                int pin = tier.acquireRead();
+                Assert.assertEquals(writeIdx, pin);
+                LiveViewInMemoryBuffer r = tier.getSlot(pin);
+                Assert.assertEquals(4, r.rowCount());
+
+                // row 0: short inlined value; A and B views are distinct instances.
+                TestUtils.assertEquals("hi", r.getVarcharA(0, 1));
+                TestUtils.assertEquals("hi", r.getVarcharB(0, 1));
+                Assert.assertEquals(2, r.getVarcharSize(0, 1));
+
+                // row 1: NULL.
+                Assert.assertNull(r.getVarcharA(1, 1));
+                Assert.assertNull(r.getVarcharB(1, 1));
+                Assert.assertEquals(TableUtils.NULL_LEN, r.getVarcharSize(1, 1));
+
+                // row 2: empty value - distinct from null.
+                Assert.assertNotNull(r.getVarcharA(2, 1));
+                TestUtils.assertEquals("", r.getVarcharA(2, 1));
+                Assert.assertEquals(0, r.getVarcharSize(2, 1));
+
+                // row 3: long value forced through the split (data-region) path.
+                TestUtils.assertEquals(longValue, r.getVarcharA(3, 1));
+                Assert.assertEquals(longValue.length(), r.getVarcharSize(3, 1));
+
+                tier.releaseRead(pin);
+            }
+        });
+    }
+
+    @Test
+    public void testVarcharSlowPathSwapPreservesValues() throws Exception {
+        // The slow-path swap rebuilds a slot via copyRowFrom (buffer -> buffer),
+        // re-appending each retained VARCHAR through the driver. Skipping rows
+        // (eviction) keeps the destination append dense, so the order assert holds
+        // and the copied values round-trip across the inlined / split / null cases.
+        assertMemoryLeak(() -> {
+            IntList types = varcharSchema();
+            LiveViewInMemoryBuffer src = new LiveViewInMemoryBuffer(types, 0, PAGE_SIZE);
+            LiveViewInMemoryBuffer dst = new LiveViewInMemoryBuffer(types, 0, PAGE_SIZE);
+            try {
+                VarcharRecord rec = new VarcharRecord();
+                final int rows = 6;
+                for (int r = 0; r < rows; r++) {
+                    String s = varcharValue(r);
+                    rec.of((r + 1) * 1_000_000L, s == null ? null : new Utf8String(s));
+                    src.copyRowFromRecord(rec, r);
+                }
+                src.setRowCount(rows);
+
+                // Retain only the odd src rows, densely, into dst (mimics eviction).
+                long dstRow = 0;
+                for (int r = 1; r < rows; r += 2) {
+                    dst.copyRowFrom(src, r, dstRow);
+                    dstRow++;
+                }
+                dst.setRowCount(dstRow);
+                Assert.assertEquals(3, dst.rowCount());
+
+                dstRow = 0;
+                for (int r = 1; r < rows; r += 2) {
+                    String s = varcharValue(r);
+                    if (s == null) {
+                        Assert.assertNull(dst.getVarcharA(dstRow, 1));
+                    } else {
+                        TestUtils.assertEquals(s, dst.getVarcharA(dstRow, 1));
+                    }
+                    dstRow++;
+                }
+            } finally {
+                src.close();
+                dst.close();
+            }
+        });
+    }
+
     private static void assertBinEquals(byte[] expected, BinarySequence actual) {
         Assert.assertNotNull(actual);
         Assert.assertEquals(expected.length, actual.length());
@@ -554,6 +687,23 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
         return types;
     }
 
+    private static IntList varcharSchema() {
+        IntList types = new IntList(2);
+        types.add(ColumnType.TIMESTAMP);
+        types.add(ColumnType.VARCHAR);
+        return types;
+    }
+
+    // Per-row VARCHAR value mixing the null, fully-inlined and split (data-region)
+    // cases so a slow-path swap exercises every encoding branch.
+    private static String varcharValue(int r) {
+        if (r % 3 == 0) {
+            return null;
+        }
+        // Odd rows are short (fully inlined); a longer row spills to the data region.
+        return (r % 2 == 0) ? "v" + r : "v" + r + repeat('x', VarcharTypeDriver.VARCHAR_MAX_BYTES_FULLY_INLINED + r);
+    }
+
     // Minimal single-row Record stub feeding copyRowFromRecord a TIMESTAMP, a
     // STRING, and a BINARY column (indexes 0, 1, 2). Rebind per row via of().
     private static final class VarSizeRecord implements Record {
@@ -585,6 +735,33 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
             this.ts = ts;
             this.str = str;
             this.bin = bin;
+        }
+    }
+
+    // Minimal single-row Record stub feeding copyRowFromRecord a TIMESTAMP and a
+    // VARCHAR column (indexes 0, 1). Rebind per row via of().
+    private static final class VarcharRecord implements Record {
+        private long ts;
+        private Utf8Sequence varchar;
+
+        @Override
+        public long getTimestamp(int col) {
+            return ts;
+        }
+
+        @Override
+        public Utf8Sequence getVarcharA(int col) {
+            return varchar;
+        }
+
+        @Override
+        public Utf8Sequence getVarcharB(int col) {
+            return varchar;
+        }
+
+        void of(long ts, Utf8Sequence varchar) {
+            this.ts = ts;
+            this.varchar = varchar;
         }
     }
 }

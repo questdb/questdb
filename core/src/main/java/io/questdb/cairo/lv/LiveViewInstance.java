@@ -188,14 +188,15 @@ public class LiveViewInstance implements QuietCloseable {
     // gating role for O3 head-hit and (b) trailing this in {@code _lv.s} would
     // add a write per commit.
     private volatile long latestSeenTs = Numbers.LONG_NULL;
-    // Lead eligibility (cached, schema-derived). True when the LV's output schema is
-    // fully fixed-width AND carries no SYMBOL column, so the in-mem tier can hold an
-    // un-flushed lead the refresh worker serves ahead of disk. False keeps the tier a
-    // strict subset of disk: var-length output (no tier at all) or a SYMBOL output
-    // column (the tier would hold segment-local ids the read path cannot resolve until
-    // eager interning lands). Computed once on the first refresh cycle after the
-    // compiled factory is ready, then cached. Volatile so the catalogue thread can
-    // read it without extra synchronisation; mutated only under the refresh latch.
+    // Lead eligibility (cached, schema-derived). True when every output column is a
+    // type the in-mem tier can store (see LiveViewInMemoryBuffer.isColumnTypeSupported:
+    // fixed-width, SYMBOL via eager interning, and the variable-length STRING / BINARY /
+    // VARCHAR types) and the output carries a designated timestamp, so the tier can hold
+    // an un-flushed lead the refresh worker serves ahead of disk. False keeps the tier a
+    // strict subset of disk - currently only an ARRAY output column, which the tier does
+    // not yet store. Computed once on the first refresh cycle after the compiled factory
+    // is ready, then cached. Volatile so the catalogue thread can read it without extra
+    // synchronisation; mutated only under the refresh latch.
     private volatile boolean leadEligible;
     private volatile boolean leadEligibilityComputed;
     // In-RAM lead row count: the number of output rows refreshed into the in-mem
@@ -628,10 +629,11 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
-     * @return the cached lead eligibility (output schema fully fixed-width and
-     * SYMBOL-free, so the in-mem tier may serve an un-flushed lead ahead of disk).
-     * Meaningful only when {@link #isLeadEligibilityComputed()} returns
-     * {@code true}. See {@link #leadEligible}.
+     * @return the cached lead eligibility (every output column is a type the in-mem
+     * tier can store - fixed-width, SYMBOL, STRING, BINARY or VARCHAR - so the tier
+     * may serve an un-flushed lead ahead of disk). Meaningful only when
+     * {@link #isLeadEligibilityComputed()} returns {@code true}. See
+     * {@link #leadEligible}.
      */
     public boolean isLeadEligible() {
         return leadEligible;

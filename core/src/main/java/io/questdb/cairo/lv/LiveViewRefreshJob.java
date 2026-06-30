@@ -511,9 +511,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // ingested before CREATE, which production does not do.
         final long viewLowerBoundTimestamp = instance.getDefinition().getViewLowerBoundTimestamp();
 
-        // Decide whether the in-memory tier can be populated
-        // for this LV. Only LVs whose output schema is fully fixed-width are
-        // supported in this phase; var-length columns fall back to disk-only.
+        // Decide whether the in-memory tier can be populated for this LV. Every
+        // output column must be a type the tier can store (fixed-width, SYMBOL,
+        // STRING, BINARY, VARCHAR); an ARRAY output column falls back to disk-only.
         // The staging buffer is reshaped on schema-mismatch; the LV's tier is
         // lazily allocated on first use.
         RecordMetadata outMetadata = windowFactory.getMetadata();

@@ -42,6 +42,7 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.TestOnly;
 
 /**
@@ -471,12 +472,12 @@ public class LiveViewRecordCursor implements RecordCursor {
      * so a committed id resolves against the disk reader's table and a lead-only id
      * against the tier's symbol cache.
      * <p>
-     * The STRING and BINARY accessors read from the pinned buffer's per-row offset
-     * vector while in in-mem mode, mirroring the fixed-width accessors. The
-     * remaining var-length accessors (VARCHAR / ARRAY) inherit the disk-only
-     * delegation: those columns prevent the in-mem tier from being allocated in the
-     * first place (see {@link LiveViewInMemoryBuffer#areColumnTypesSupported}), so
-     * {@code inMemMode == true} is unreachable for LVs whose schema contains them.
+     * The STRING, BINARY and VARCHAR accessors read from the pinned buffer's per-row
+     * offset/header vector while in in-mem mode, mirroring the fixed-width accessors.
+     * The remaining var-length accessor (ARRAY) inherits the disk-only delegation:
+     * that column prevents the in-mem tier from being allocated in the first place
+     * (see {@link LiveViewInMemoryBuffer#areColumnTypesSupported}), so
+     * {@code inMemMode == true} is unreachable for LVs whose schema contains it.
      */
     private static class MergedRecord extends DelegatingRecord {
         private LiveViewInMemoryBuffer buffer;
@@ -611,6 +612,21 @@ public class LiveViewRecordCursor implements RecordCursor {
         @Override
         public long getTimestamp(int col) {
             return inMemMode ? buffer.getLong(bufferRow, col) : super.getTimestamp(col);
+        }
+
+        @Override
+        public Utf8Sequence getVarcharA(int col) {
+            return inMemMode ? buffer.getVarcharA(bufferRow, col) : super.getVarcharA(col);
+        }
+
+        @Override
+        public Utf8Sequence getVarcharB(int col) {
+            return inMemMode ? buffer.getVarcharB(bufferRow, col) : super.getVarcharB(col);
+        }
+
+        @Override
+        public int getVarcharSize(int col) {
+            return inMemMode ? buffer.getVarcharSize(bufferRow, col) : super.getVarcharSize(col);
         }
 
         void bindDisk(Record diskRecord, RecordCursor cursor, LiveViewInMemoryBuffer buffer) {

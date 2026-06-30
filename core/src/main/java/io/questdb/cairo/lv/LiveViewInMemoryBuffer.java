@@ -25,6 +25,7 @@
 package io.questdb.cairo.lv;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.vm.MemoryCARWImpl;
 import io.questdb.cairo.vm.api.MemoryCARW;
@@ -36,6 +37,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.str.Utf8Sequence;
 
 /**
  * One slot of the N=2 live-view in-memory tier.
@@ -52,11 +54,12 @@ import io.questdb.std.QuietCloseable;
  * Which column types the tier actually stores is governed solely by the per-type
  * support gate ({@link #isTierSupported}); the (data, aux) storage itself imposes
  * no further restriction. The gate admits fixed-width / SYMBOL columns (whose
- * {@code auxMem} slot is the stub) and the variable-length STRING and BINARY
- * columns (whose {@code auxMem} buffer holds an 8-byte-per-row vector of start
- * offsets into the appended {@code dataMem} payload). The remaining variable-length
- * types (VARCHAR / ARRAY) layer on by widening that gate further and reusing their
- * type drivers for the aux encoding.
+ * {@code auxMem} slot is the stub) and the variable-length STRING / BINARY / VARCHAR
+ * columns (whose {@code auxMem} buffer holds the per-row offset/header vector that
+ * encoding needs - an 8-byte start offset into the appended {@code dataMem} payload
+ * for STRING / BINARY, the 16-byte driver-owned header for VARCHAR). The remaining
+ * variable-length type (ARRAY) layers on by widening that gate further and reusing
+ * its type driver for the aux encoding.
  * <p>
  * The slot's {@code rowCount} and {@code seamTs} bookkeeping is owned by the
  * caller: {@link #setRowCount(long)} bumps the row counter once all column
@@ -166,8 +169,8 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
     /**
      * Returns true iff every column type in {@code columnTypes} is supported by
      * the in-memory tier. Fixed-width types, SYMBOL (stored as INT), and the
-     * variable-length STRING and BINARY types are supported; VARCHAR and ARRAY
-     * still return false. Used by {@code LiveViewRefreshJob} to decide whether to
+     * variable-length STRING, BINARY and VARCHAR types are supported; ARRAY still
+     * returns false. Used by {@code LiveViewRefreshJob} to decide whether to
      * populate the tier for a given LV; unsupported schemas fall back to disk-only
      * reads.
      */
@@ -189,7 +192,9 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
      * into the LV table's id space (see {@link LiveViewSymbolCache}) so the read
      * path resolves it against the disk reader's symbol table (committed values) or
      * the tier's symbol cache (values new to the un-flushed lead); STRING and
-     * BINARY are stored as an appended payload plus a per-row start-offset vector.
+     * BINARY are stored as an appended payload plus a per-row start-offset vector;
+     * VARCHAR is stored via {@link VarcharTypeDriver} (appended payload plus the
+     * driver's 16-byte-per-row aux header).
      */
     public static boolean isColumnTypeSupported(int columnType) {
         return isTierSupported(ColumnType.tagOf(columnType));
@@ -234,6 +239,20 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
         aux.putLong(off);
     }
 
+    // Appends one VARCHAR value as the next row of column col via VarcharTypeDriver:
+    // the driver writes its 16-byte-per-row aux header (inlined prefix + flags +
+    // offset, carrying the ascii flag) into auxMem and any non-inlined payload into
+    // dataMem. appendValue handles null and a fully-inlined value (no payload bytes).
+    // The order assert catches a caller that writes rows out of order: the driver
+    // appends, so the aux cursor must sit at dstRow * VARCHAR_AUX_WIDTH_BYTES before
+    // this row's header is appended.
+    private void appendVarchar(int col, long dstRow, Utf8Sequence value) {
+        final MemoryCARWImpl data = dataMem.getQuick(col);
+        final MemoryCARW aux = auxMem.getQuick(col);
+        assert (dstRow * VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES) == aux.getAppendOffset();
+        VarcharTypeDriver.appendValue(aux, data, value);
+    }
+
     private static boolean isTierSupported(int type) {
         switch (type) {
             case ColumnType.LONG:
@@ -254,6 +273,7 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
             case ColumnType.BOOLEAN:
             case ColumnType.STRING:
             case ColumnType.BINARY:
+            case ColumnType.VARCHAR:
                 return true;
             default:
                 return false;
@@ -263,10 +283,10 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
     /**
      * Copies one row's values, column by column, from {@code src} into this
      * buffer. Fixed-width / SYMBOL columns overwrite in place at the absolute
-     * {@code dstRow} offset; STRING / BINARY columns re-append the value read from
-     * {@code src}'s buffer getter (the value bytes are copied into this buffer's
-     * {@code dataMem} / {@code auxMem} before {@code src}'s flyweight is reused),
-     * so {@code dstRow} must be the next dense append row. Caller is responsible
+     * {@code dstRow} offset; STRING / BINARY / VARCHAR columns re-append the value
+     * read from {@code src}'s buffer getter (the value bytes are copied into this
+     * buffer's {@code dataMem} / {@code auxMem} before {@code src}'s flyweight is
+     * reused), so {@code dstRow} must be the next dense append row. Caller is responsible
      * for advancing {@link #setRowCount(long)} after the row is written. Throws
      * {@link UnsupportedOperationException} on column types the tier does not store
      * — callers should check {@link #areColumnTypesSupported(IntList)} before
@@ -310,6 +330,9 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
                 case ColumnType.BINARY:
                     appendBin(c, dstRow, src.getBin(srcRow, c));
                     break;
+                case ColumnType.VARCHAR:
+                    appendVarchar(c, dstRow, src.getVarcharA(srcRow, c));
+                    break;
                 default:
                     throw new UnsupportedOperationException(
                             "live view in-memory tier does not support column type: " + ColumnType.nameOf(columnTypes.getQuick(c))
@@ -328,8 +351,9 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
      * those columns with eager-interned, LV-table-consistent ids (see
      * {@link LiveViewSymbolCache}) before the slot is published, so the read path
      * can resolve them. STRING / BINARY columns append the value's payload to
-     * {@code dataMem} and its start offset to {@code auxMem}, so {@code dstRow}
-     * must be the next dense append row.
+     * {@code dataMem} and its start offset to {@code auxMem}; VARCHAR appends via
+     * {@link VarcharTypeDriver} (payload to {@code dataMem}, 16-byte header to
+     * {@code auxMem}). Either way {@code dstRow} must be the next dense append row.
      */
     public void copyRowFromRecord(Record record, long dstRow) {
         for (int c = 0, n = columnTypes.size(); c < n; c++) {
@@ -376,6 +400,9 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
                     break;
                 case ColumnType.BINARY:
                     appendBin(c, dstRow, record.getBin(c));
+                    break;
+                case ColumnType.VARCHAR:
+                    appendVarchar(c, dstRow, record.getVarcharA(c));
                     break;
                 default:
                     throw new UnsupportedOperationException(
@@ -467,6 +494,24 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
 
     public int getTimestampColumnIndex() {
         return timestampColumnIndex;
+    }
+
+    // Resolves a VARCHAR value via VarcharTypeDriver: the per-row 16-byte header
+    // lives in auxMem at row * VARCHAR_AUX_WIDTH_BYTES, the non-inlined payload (if
+    // any) in dataMem. Returns null for a null marker; getSplitValue handles the
+    // inlined / split cases and the ascii flag. getVarcharA / getVarcharB return the
+    // aux memory's own distinct reusable views (utf8SplitViewA / utf8SplitViewB), so
+    // a caller may hold both.
+    public Utf8Sequence getVarcharA(long row, int col) {
+        return VarcharTypeDriver.getSplitValue(auxMem.getQuick(col), dataMem.getQuick(col), row, 1);
+    }
+
+    public Utf8Sequence getVarcharB(long row, int col) {
+        return VarcharTypeDriver.getSplitValue(auxMem.getQuick(col), dataMem.getQuick(col), row, 2);
+    }
+
+    public int getVarcharSize(long row, int col) {
+        return VarcharTypeDriver.getValueSize(auxMem.getQuick(col), row);
     }
 
     public long leadRowCount() {

@@ -1050,12 +1050,12 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     // Drives an end-to-end live view whose OUTPUT schema carries a var-length /
     // array column (VARCHAR / STRING / BINARY / DOUBLE[] / DOUBLE[][]) projected
-    // straight from the base table. STRING and BINARY ride through the in-mem tier
-    // (tierSupported == true); VARCHAR and the array types are not yet stored, so
+    // straight from the base table. STRING, BINARY and VARCHAR ride through the
+    // in-mem tier (tierSupported == true); the array types are not yet stored, so
     // those LVs fall back to disk-only reads (tierSupported == false). Either way
     // the materialized rows reach disk - directly for the disk-only schemas, or via
-    // the tier's periodic flush flyweight for STRING / BINARY - and this proves the
-    // disk path MATERIALIZES and READS BACK the var-length values correctly. It
+    // the tier's periodic flush flyweight for STRING / BINARY / VARCHAR - and this
+    // proves the disk path MATERIALIZES and READS BACK the var-length values correctly. It
     // cross-checks the LV against the same window recomputed straight over the base
     // (a differential oracle that also compares the passthrough v column cell by
     // cell) after three phases: in-order ingestion, an O3 head-miss replay that
@@ -1094,16 +1094,17 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
                 Assert.assertNotNull(instance);
                 if (tierSupported) {
-                    // STRING / BINARY now ride through the in-mem tier; the periodic
-                    // flush serializes them back to disk via the flush flyweight,
-                    // so this oracle exercises that path across the phases below.
+                    // STRING / BINARY / VARCHAR now ride through the in-mem tier; the
+                    // periodic flush serializes them back to disk via the flush
+                    // flyweight, so this oracle exercises that path across the phases
+                    // below.
                     Assert.assertNotNull(
-                            "STRING / BINARY output schema must allocate the in-mem tier",
+                            "STRING / BINARY / VARCHAR output schema must allocate the in-mem tier",
                             instance.getInMemoryTier()
                     );
                 } else {
                     Assert.assertNull(
-                            "VARCHAR / array output schema must skip the in-mem tier",
+                            "array output schema must skip the in-mem tier",
                             instance.getInMemoryTier()
                     );
                 }
@@ -3048,26 +3049,26 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testInMemTierBypassedForVarLengthOutputSchema() throws Exception {
-        // LiveViewInMemoryBuffer supports fixed-width column
-        // types only; an LV that projects a var-length column (VARCHAR,
-        // STRING, etc.) falls through to disk-only reads.
-        // ensureStagingAndTier returns false, no tier is allocated, but the
-        // on-disk path still produces correct results via TableReader.
+        // LiveViewInMemoryBuffer does not yet store ARRAY columns; an LV that
+        // projects one falls through to disk-only reads. ensureStagingAndTier
+        // returns false, no tier is allocated, but the on-disk path still produces
+        // correct results via TableReader. (STRING / BINARY / VARCHAR are now
+        // stored, so this uses an ARRAY column to pin the still-unsupported path.)
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, sym VARCHAR, x INT) " +
+            execute("CREATE TABLE base (ts TIMESTAMP, arr DOUBLE[], x INT) " +
                     "TIMESTAMP(ts) PARTITION BY DAY WAL");
-            // The LV projects a var-length column (sym VARCHAR), so the
-            // in-mem tier allocation is skipped. PARTITION BY uses a fixed-
-            // width INT key so the LV-side snapshot/restore contract applies
-            // (variable-length partition keys are not yet supported by the
-            // codec used to serialise key bytes into checkpoint blocks).
+            // The LV projects an ARRAY column (arr DOUBLE[]), so the in-mem tier
+            // allocation is skipped. PARTITION BY uses a fixed-width INT key so the
+            // LV-side snapshot/restore contract applies (variable-length partition
+            // keys are not yet supported by the codec used to serialise key bytes
+            // into checkpoint blocks).
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
-                    "SELECT ts, sym, x, row_number() OVER w AS rn FROM base " +
+                    "SELECT ts, arr, x, row_number() OVER w AS rn FROM base " +
                     "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR DAILY '00:00')");
-            execute("INSERT INTO base (ts, sym, x) VALUES " +
-                    "('2026-05-12T00:00:00.000001Z', 'a', 1), " +
-                    "('2026-05-12T00:00:00.000002Z', 'b', 2), " +
-                    "('2026-05-12T00:00:00.000003Z', 'a', 1)");
+            execute("INSERT INTO base (ts, arr, x) VALUES " +
+                    "('2026-05-12T00:00:00.000001Z', ARRAY[1.0], 1), " +
+                    "('2026-05-12T00:00:00.000002Z', ARRAY[2.0], 2), " +
+                    "('2026-05-12T00:00:00.000003Z', ARRAY[3.0], 1)");
             drainWalQueue();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 drainJob(job);
@@ -3077,15 +3078,15 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
             Assert.assertNull(
-                    "var-length output schema must skip in-mem tier allocation",
+                    "ARRAY output schema must skip in-mem tier allocation",
                     instance.getInMemoryTier()
             );
 
             // Reads still return correct results from disk.
-            assertQuery("SELECT ts, sym, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\tx\trn\n" +
-                    "2026-05-12T00:00:00.000001Z\ta\t1\t1\n" +
-                    "2026-05-12T00:00:00.000002Z\tb\t2\t1\n" +
-                    "2026-05-12T00:00:00.000003Z\ta\t1\t2\n");
+            assertQuery("SELECT ts, arr, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tarr\tx\trn\n" +
+                    "2026-05-12T00:00:00.000001Z\t[1.0]\t1\t1\n" +
+                    "2026-05-12T00:00:00.000002Z\t[2.0]\t2\t1\n" +
+                    "2026-05-12T00:00:00.000003Z\t[3.0]\t1\t2\n");
 
             // in_mem_bytes must read 0 since no tier was allocated.
             assertQuery("SELECT in_mem_bytes FROM live_views() WHERE view_name = 'lv'").noLeakCheck().noRandomAccess().returns("in_mem_bytes\n0\n");
@@ -3110,13 +3111,13 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDiskOnlyVarcharOutputRoundTrip() throws Exception {
-        assertVarLengthOutputRoundTrip("VARCHAR", "rnd_varchar(1, 12, 3)", false);
+    public void testStringOutputRoundTrip() throws Exception {
+        assertVarLengthOutputRoundTrip("STRING", "rnd_str(1, 12, 3)", true);
     }
 
     @Test
-    public void testStringOutputRoundTrip() throws Exception {
-        assertVarLengthOutputRoundTrip("STRING", "rnd_str(1, 12, 3)", true);
+    public void testVarcharOutputRoundTrip() throws Exception {
+        assertVarLengthOutputRoundTrip("VARCHAR", "rnd_varchar(1, 12, 3)", true);
     }
 
     @Test
@@ -14031,27 +14032,27 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
         // scanForLaggingViews, the worker processes exactly three commits
         // then yields; the next FLUSH-EVERY pass drains the remainder.
         //
-        // A var-length (VARCHAR) output column keeps the view off the in-mem tier
-        // entirely - so it stays on the coupled refresh+flush cycle (not the lead
-        // path) and lastProcessedSeqTxn advances per cycle, making the budget-bounded
-        // backlog drain directly observable. (A SYMBOL output column is now
-        // lead-eligible via eager interning, so it would advance at flush instead.)
+        // An ARRAY output column keeps the view off the in-mem tier entirely - so
+        // it stays on the coupled refresh+flush cycle (not the lead path) and
+        // lastProcessedSeqTxn advances per cycle, making the budget-bounded backlog
+        // drain directly observable. (STRING / BINARY / VARCHAR and SYMBOL output
+        // columns are now lead-eligible, so they would advance at flush instead.)
         // The turn budget itself (in drainBaseWal) is shared by both paths.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_REFRESH_TURN_MAX_COMMITS, 3);
         assertMemoryLeak(() -> {
             setCurrentMicros(0L);
-            execute("CREATE TABLE base (ts TIMESTAMP, x INT, s VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, s DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
                     "SELECT ts, x, s, row_number() OVER () AS rn FROM base");
 
             // Six separate base WAL commits - one INSERT per row so each
             // becomes its own sequencer txn for the refresh worker to walk.
-            execute("INSERT INTO base (ts, x, s) VALUES ('2026-04-01T00:00:01.000000Z', 1, 'a')");
-            execute("INSERT INTO base (ts, x, s) VALUES ('2026-04-01T00:00:02.000000Z', 2, 'a')");
-            execute("INSERT INTO base (ts, x, s) VALUES ('2026-04-01T00:00:03.000000Z', 3, 'a')");
-            execute("INSERT INTO base (ts, x, s) VALUES ('2026-04-01T00:00:04.000000Z', 4, 'a')");
-            execute("INSERT INTO base (ts, x, s) VALUES ('2026-04-01T00:00:05.000000Z', 5, 'a')");
-            execute("INSERT INTO base (ts, x, s) VALUES ('2026-04-01T00:00:06.000000Z', 6, 'a')");
+            execute("INSERT INTO base (ts, x, s) VALUES ('2026-04-01T00:00:01.000000Z', 1, ARRAY[1.0])");
+            execute("INSERT INTO base (ts, x, s) VALUES ('2026-04-01T00:00:02.000000Z', 2, ARRAY[1.0])");
+            execute("INSERT INTO base (ts, x, s) VALUES ('2026-04-01T00:00:03.000000Z', 3, ARRAY[1.0])");
+            execute("INSERT INTO base (ts, x, s) VALUES ('2026-04-01T00:00:04.000000Z', 4, ARRAY[1.0])");
+            execute("INSERT INTO base (ts, x, s) VALUES ('2026-04-01T00:00:05.000000Z', 5, ARRAY[1.0])");
+            execute("INSERT INTO base (ts, x, s) VALUES ('2026-04-01T00:00:06.000000Z', 6, ARRAY[1.0])");
             drainWalQueue();
 
             LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
@@ -15139,17 +15140,17 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     @Test
     public void testInMemTierSkipsAllocationForUnsupportedColumnTypes() throws Exception {
         // An LV whose output schema contains a column type the in-mem tier cannot
-        // yet store (VARCHAR / ARRAY) skips tier allocation entirely. The cursor
-        // stays disk-only with no pin, and reads pass through unchanged. The
-        // seam_ts routing scaffolding in LiveViewRecordCursor exits via the
-        // {@code pinnedSlot == null} branch. (STRING / BINARY are now stored, so
-        // this uses VARCHAR to pin the still-unsupported path.)
+        // yet store (ARRAY) skips tier allocation entirely. The cursor stays
+        // disk-only with no pin, and reads pass through unchanged. The seam_ts
+        // routing scaffolding in LiveViewRecordCursor exits via the
+        // {@code pinnedSlot == null} branch. (STRING / BINARY / VARCHAR are now
+        // stored, so this uses an ARRAY column to pin the still-unsupported path.)
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, x INT, s VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, s DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
                     "SELECT ts, x, s, row_number() OVER () AS rn FROM base WHERE x > 0");
 
-            execute("INSERT INTO base (ts, x, s) VALUES ('2026-05-12T00:00:00.000001Z', 1, 'a')");
+            execute("INSERT INTO base (ts, x, s) VALUES ('2026-05-12T00:00:00.000001Z', 1, ARRAY[1.0, 2.0])");
             drainWalQueue();
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
@@ -15158,11 +15159,11 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             }
 
             Assert.assertNull(
-                    "in-mem tier must not be allocated for an LV with a VARCHAR output column",
+                    "in-mem tier must not be allocated for an LV with an ARRAY output column",
                     instance.getInMemoryTier()
             );
             // Disk-only cursor must return the inserted row through SELECT.
-            assertQuery("SELECT x, s, rn FROM lv ORDER BY ts").noLeakCheck().expectSize().returns("x\ts\trn\n1\ta\t1\n");
+            assertQuery("SELECT x, s, rn FROM lv ORDER BY ts").noLeakCheck().expectSize().returns("x\ts\trn\n1\t[1.0,2.0]\t1\n");
 
             execute("DROP LIVE VIEW lv");
         });

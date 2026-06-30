@@ -27,6 +27,7 @@ package io.questdb.cairo.lv;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.Utf8Sequence;
 
 /**
  * A flyweight {@link Record} view over one row of a {@link LiveViewInMemoryBuffer}.
@@ -35,10 +36,10 @@ import io.questdb.std.ObjList;
  * the same way the refresh path feeds it a window-cursor record: the copier copies
  * the un-flushed lead rows out of the in-mem tier into the LV's {@code WalWriter}
  * row, so the byte-level serialisation matches the inline-apply write path exactly.
- * The fixed-width / SYMBOL accessors plus the STRING and BINARY accessors the tier
- * stores are overridden; the remaining var-length accessors (VARCHAR / ARRAY)
- * inherit the throwing defaults, which the copier never reaches because the tier
- * rejects those column types up front
+ * The fixed-width / SYMBOL accessors plus the STRING, BINARY and VARCHAR accessors
+ * the tier stores are overridden; the remaining var-length accessor (ARRAY) inherits
+ * the throwing default, which the copier never reaches because the tier rejects that
+ * column type up front
  * (see {@link LiveViewInMemoryBuffer#areColumnTypesSupported}).
  * <p>
  * Single-threaded, reused: {@link #of(LiveViewInMemoryBuffer, long)} rebinds the
@@ -158,6 +159,16 @@ public class LiveViewBufferRecord implements Record {
     @Override
     public long getTimestamp(int col) {
         return buffer.getLong(row, col);
+    }
+
+    @Override
+    public Utf8Sequence getVarcharA(int col) {
+        return buffer.getVarcharA(row, col);
+    }
+
+    @Override
+    public int getVarcharSize(int col) {
+        return buffer.getVarcharSize(row, col);
     }
 
     public void of(LiveViewInMemoryBuffer buffer, long row) {
