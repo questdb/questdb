@@ -108,7 +108,8 @@ public class InLongFunctionFactory implements FunctionFactory {
                     return new InLongSingleConstFunction(
                             args.getQuick(0),
                             parseValue(argPositions, args.getQuick(1),
-                                    1, keyIsNarrowInt));
+                                    1, keyIsNarrowInt),
+                            keyIsNarrowInt);
                 case 2:
                     return new InLongTwoConstFunction(
                             args.getQuick(0),
@@ -119,13 +120,14 @@ public class InLongFunctionFactory implements FunctionFactory {
                             parseValue(
                                     argPositions,
                                     args.getQuick(2),
-                                    2, keyIsNarrowInt)
+                                    2, keyIsNarrowInt),
+                            keyIsNarrowInt
                     );
                 default:
                     DirectLongHashSet inVals = new DirectLongHashSet(argCount, MemoryTag.NATIVE_FUNC_RSS);
                     try {
                         parseToLong(args, argPositions, inVals, keyIsNarrowInt);
-                        return new InLongConstFunction(args.getQuick(0), inVals);
+                        return new InLongConstFunction(args.getQuick(0), inVals, keyIsNarrowInt);
                     } catch (Throwable e) {
                         Misc.free(inVals);
                         throw e;
@@ -197,11 +199,13 @@ public class InLongFunctionFactory implements FunctionFactory {
 
     private static class InLongConstFunction extends NegatableBooleanFunction implements UnaryFunction {
         private final DirectLongHashSet inSet;
+        private final boolean keyIsNarrowInt;
         private final Function tsFunc;
 
-        public InLongConstFunction(Function tsFunc, DirectLongHashSet inSet) {
+        public InLongConstFunction(Function tsFunc, DirectLongHashSet inSet, boolean keyIsNarrowInt) {
             this.tsFunc = tsFunc;
             this.inSet = inSet;
+            this.keyIsNarrowInt = keyIsNarrowInt;
         }
 
         @Override
@@ -217,7 +221,9 @@ public class InLongFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            long val = tsFunc.getLong(rec);
+            // A narrow-int key reads at INT width so an overflowing INT arithmetic wraps (getInt),
+            // symmetric with the IN-list elements and matching '=' (EqInt) and the JIT filter.
+            long val = keyIsNarrowInt ? Numbers.intToLong(tsFunc.getInt(rec)) : tsFunc.getLong(rec);
             return negated != inSet.contains(val);
         }
 
@@ -260,7 +266,9 @@ public class InLongFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            long val = keyFunc.getLong(rec);
+            // A narrow-int key reads at INT width so an overflowing INT arithmetic wraps (getInt),
+            // symmetric with the IN-list elements and matching '=' (EqInt) and the JIT filter.
+            long val = keyIsNarrowInt ? Numbers.intToLong(keyFunc.getInt(rec)) : keyFunc.getLong(rec);
             return negated != inSet.contains(val);
         }
 
@@ -283,11 +291,13 @@ public class InLongFunctionFactory implements FunctionFactory {
 
     private static class InLongSingleConstFunction extends NegatableBooleanFunction implements UnaryFunction {
         private final long inVal;
+        private final boolean keyIsNarrowInt;
         private final Function longFunc;
 
-        public InLongSingleConstFunction(Function longFunc, long inVal) {
+        public InLongSingleConstFunction(Function longFunc, long inVal, boolean keyIsNarrowInt) {
             this.longFunc = longFunc;
             this.inVal = inVal;
+            this.keyIsNarrowInt = keyIsNarrowInt;
         }
 
         @Override
@@ -297,7 +307,9 @@ public class InLongFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            long val = longFunc.getLong(rec);
+            // A narrow-int key reads at INT width so an overflowing INT arithmetic wraps (getInt),
+            // symmetric with the IN-list element and matching '=' (EqInt) and the JIT filter.
+            long val = keyIsNarrowInt ? Numbers.intToLong(longFunc.getInt(rec)) : longFunc.getLong(rec);
             return negated != (val == inVal);
         }
 
@@ -314,12 +326,14 @@ public class InLongFunctionFactory implements FunctionFactory {
     private static class InLongTwoConstFunction extends NegatableBooleanFunction implements UnaryFunction {
         private final long inVal0;
         private final long inVal1;
+        private final boolean keyIsNarrowInt;
         private final Function longFunc;
 
-        public InLongTwoConstFunction(Function longFunc, long inVal0, long inVal1) {
+        public InLongTwoConstFunction(Function longFunc, long inVal0, long inVal1, boolean keyIsNarrowInt) {
             this.longFunc = longFunc;
             this.inVal0 = inVal0;
             this.inVal1 = inVal1;
+            this.keyIsNarrowInt = keyIsNarrowInt;
         }
 
         @Override
@@ -329,7 +343,9 @@ public class InLongFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            long val = longFunc.getLong(rec);
+            // A narrow-int key reads at INT width so an overflowing INT arithmetic wraps (getInt),
+            // symmetric with the IN-list elements and matching '=' (EqInt) and the JIT filter.
+            long val = keyIsNarrowInt ? Numbers.intToLong(longFunc.getInt(rec)) : longFunc.getLong(rec);
             return negated != (val == inVal0 || val == inVal1);
         }
 
@@ -359,7 +375,9 @@ public class InLongFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            long val = args.getQuick(0).getLong(rec);
+            // A narrow-int key reads at INT width so an overflowing INT arithmetic wraps (getInt),
+            // symmetric with the IN-list elements and matching '=' (EqInt) and the JIT filter.
+            long val = keyIsNarrowInt ? Numbers.intToLong(args.getQuick(0).getInt(rec)) : args.getQuick(0).getLong(rec);
 
             for (int i = 1, n = args.size(); i < n; i++) {
                 Function func = args.getQuick(i);

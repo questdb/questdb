@@ -963,6 +963,45 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInOperatorOverflowFoldMatchesJavaOnNarrowArithKey() throws Exception {
+        // C1 regression: an overflowing INT *arithmetic* KEY on the left of IN(). The narrow-int
+        // IN fix wrapped the IN-list elements at INT width (matching '=') but every InLong*.getBool
+        // still read the KEY via getLong(), which WIDENS an overflowing INT arithmetic. So IN
+        // disagreed with '=' even with the JIT off, and the JIT (which computes the key at I4 and
+        // wraps) disagreed with the Java IN. The key is now read at INT width too, symmetric with
+        // the elements. a + a = 3*10^9 wraps to INT -1294967296; '=' (EqInt) and the JIT both wrap,
+        // so a correctly-wrapping IN matches the single row.
+        assertMemoryLeak(() -> {
+            execute("create table x as (select cast(1500000000 as int) a, cast(1500000000 as int) b)");
+
+            // const IN shapes: the JIT wraps the key at I4, the Java IN must wrap too.
+            assertJitMatchesJava("x where (a + a) in (1500000000 + 1500000000)", true);        // single const
+            assertJitMatchesJava("x where (a + a) in (1, 1500000000 + 1500000000)", true);     // two const
+            assertJitMatchesJava("x where (a + a) in (1, 2, 1500000000 + 1500000000)", true);  // multi const
+            assertJitMatchesJava("x where (a + a) not in (1500000000 + 1500000000)", true);    // inverse
+            // an in-range literal equal to the wrapped key must match too (pre-existing slice).
+            assertJitMatchesJava("x where (a + a) in (-1294967296)", true);
+            assertJitMatchesJava("x where (a + a) = 1500000000 + 1500000000", true);           // control: '='
+
+            // Java (JIT-disabled) IN must agree with '=' across the const InLong* variants.
+            Assert.assertEquals(1, runQuery("x where (a + a) in (1500000000 + 1500000000)"));      // single
+            Assert.assertEquals(1, runQuery("x where (a + a) in (1, 1500000000 + 1500000000)"));   // two
+            Assert.assertEquals(1, runQuery("x where (a + a) in (1, 2, 1500000000 + 1500000000)"));// multi
+            Assert.assertEquals(0, runQuery("x where (a + a) not in (1500000000 + 1500000000)"));  // inverse
+            Assert.assertEquals(1, runQuery("x where (a + a) = 1500000000 + 1500000000"));         // '='
+
+            // runtime-const variant: a bind variable forces InLongRuntimeConstFunction. The const
+            // element still matches the wrapped key; :p (= 0) does not.
+            bindVariableService.setInt("p", 0);
+            Assert.assertEquals(1, runQuery("x where (a + a) in (1500000000 + 1500000000, :p)"));
+
+            // var variant: a non-constant element forces InLongVarFunction.
+            Assert.assertEquals(1, runQuery("x where (a + a) in (b + b)"));
+            Assert.assertEquals(1, runQuery("x where (a + a) = (b + b)"));
+        });
+    }
+
+    @Test
     public void testInOperatorOverflowFoldMatchesJavaOnNarrowColumn() throws Exception {
         // An overflowing INT arithmetic fold inside an IN() list against a NARROW integer
         // key (INT/SHORT/BYTE). '=' (EqInt) wraps the fold mod 2^32 and the JIT emits the
