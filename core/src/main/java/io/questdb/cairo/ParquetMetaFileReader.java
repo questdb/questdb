@@ -326,7 +326,6 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
         this.fileSize = 0;
         this.resolvedFileSize = 0;
         this.footerAddr = 0;
-        this.resolvedFileSize = 0;
         this.columnCount = 0;
         this.rowGroupCount = 0;
         this.checksumVerified = false;
@@ -648,7 +647,6 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
         this.fileSize = other.fileSize;
         this.resolvedFileSize = other.resolvedFileSize;
         this.footerAddr = other.footerAddr;
-        this.resolvedFileSize = other.resolvedFileSize;
         this.columnCount = other.columnCount;
         this.rowGroupCount = other.rowGroupCount;
         this.checksumVerified = other.checksumVerified;
@@ -964,7 +962,6 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
         this.resolvedFileSize = currentSize;
         this.columnCount = columnCount;
         this.rowGroupCount = rowGroupCount;
-        this.resolvedFileSize = currentSize;
         return true;
     }
 

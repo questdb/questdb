@@ -180,7 +180,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         nullColumnAddresses = Misc.free(nullColumnAddresses);
         recordAtRows = Misc.free(recordAtRows);
         recordAtSlices.clear();
-        releaseParquetBuffers();
         memoryTracker = null;
     }
 
