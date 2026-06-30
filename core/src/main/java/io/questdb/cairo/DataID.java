@@ -52,6 +52,13 @@ import org.jetbrains.annotations.NotNull;
  * non-volatile: that class is a hot, general-purpose value holder, so the synchronization is kept
  * here where the one-writer/other-reader publication actually happens.
  * </p>
+ * <p>
+ * Note that {@code synchronized} gives each accessor per-call atomicity, not a multi-call snapshot:
+ * {@link #getLo()} and {@link #getHi()} each read a single half, so reading both as two separate calls
+ * re-acquires the monitor twice and can still observe a torn pair across a concurrent publish. Callers
+ * that need both halves consistently (e.g. {@code current_data_id()} and the Rust {@code JavaDataId} JNI
+ * bridge) must use {@link #getSnapshot()}, which reads the pair under a single monitor acquisition.
+ * </p>
  */
 public final class DataID implements Sinkable {
 
@@ -111,6 +118,20 @@ public final class DataID implements Sinkable {
 
     public synchronized long getLo() {
         return id.getLo();
+    }
+
+    /**
+     * Returns an atomic snapshot of the 128-bit value as a fresh {@link Uuid}. Both halves are read
+     * within a single critical section, so the returned pair is never torn across a concurrent
+     * {@link #initialize(long, long)} / {@link #change(long, long)} publish -- unlike reading
+     * {@link #getLo()} and {@link #getHi()} as two separate calls, which drops and re-acquires the
+     * monitor in between. Callers that need both halves consistently must use this accessor.
+     *
+     * @return a new {@link Uuid} holding a consistent {@code (lo, hi)} snapshot; the NULL Uuid when not
+     * yet initialized.
+     */
+    public synchronized Uuid getSnapshot() {
+        return new Uuid(id.getLo(), id.getHi());
     }
 
     /**
