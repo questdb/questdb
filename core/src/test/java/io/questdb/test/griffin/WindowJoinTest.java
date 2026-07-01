@@ -5853,7 +5853,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 "insert into prices select " +
                                         "'2023-01-01T00:00:00.000000Z'::timestamp + (100_000 * x), " +
                                         "rnd_symbol('TSLA', 'AMZN', 'META'), rnd_long256(), rnd_int() " +
-                                        "from long_sequence(40000)",
+                                        "from long_sequence(40_000)",
                                 sqlExecutionContext
                         );
                         TestUtils.drainWalQueue(engine);
