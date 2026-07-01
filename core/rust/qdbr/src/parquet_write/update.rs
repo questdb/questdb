@@ -4487,6 +4487,7 @@ mod tests {
             0,
             0,
             -1,
+            SeqTxn::UNSET,
         )?;
         let target = Partition {
             table: "t".to_string(),
