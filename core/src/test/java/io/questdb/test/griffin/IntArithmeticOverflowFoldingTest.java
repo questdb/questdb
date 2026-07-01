@@ -110,6 +110,54 @@ public class IntArithmeticOverflowFoldingTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWiderCastsWidenRemBitwiseAbsOnBothPaths() throws Exception {
+        // BF9 made explicit widening casts read getLong(), so +, -, *, / and unary
+        // minus widen an overflowing INT operand under ::LONG. %, & | ^ ~ and abs
+        // inherited the wrapping getLong() and stayed narrow, leaving ((a*b)/c)::LONG
+        // widened but ((a*b)%c)::LONG wrapped. Those operators now override getLong()
+        // to recurse at long width too, so every integer operator widens alike under
+        // a widening cast, constant and column paths identical.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE u (y INT)");
+            execute("INSERT INTO u VALUES (1000000)");
+
+            // reference: '/' already widened (DivInt overrides getLong)
+            assertQuery("SELECT ((1000000 * 1000000) / 7)::LONG AS v").noLeakCheck().expectSize().returns("v\n142857142857\n");
+            assertQuery("SELECT ((y * y) / 7)::LONG AS v FROM u").noLeakCheck().expectSize().returns("v\n142857142857\n");
+
+            // '%' now widens to match '/': 10^12 % 7 = 1 (was 0 from the wrapped product)
+            assertQuery("SELECT ((1000000 * 1000000) % 7)::LONG AS v").noLeakCheck().expectSize().returns("v\n1\n");
+            assertQuery("SELECT ((y * y) % 7)::LONG AS v FROM u").noLeakCheck().expectSize().returns("v\n1\n");
+
+            // '&' with an all-ones mask is identity: the widened value holds the full product
+            assertQuery("SELECT ((1000000 * 1000000) & -1)::LONG AS v").noLeakCheck().expectSize().returns("v\n1000000000000\n");
+            assertQuery("SELECT ((y * y) & -1)::LONG AS v FROM u").noLeakCheck().expectSize().returns("v\n1000000000000\n");
+
+            // '|' with 0 is identity
+            assertQuery("SELECT ((1000000 * 1000000) | 0)::LONG AS v").noLeakCheck().expectSize().returns("v\n1000000000000\n");
+            assertQuery("SELECT ((y * y) | 0)::LONG AS v FROM u").noLeakCheck().expectSize().returns("v\n1000000000000\n");
+
+            // '^' with 0 is identity
+            assertQuery("SELECT ((1000000 * 1000000) ^ 0)::LONG AS v").noLeakCheck().expectSize().returns("v\n1000000000000\n");
+            assertQuery("SELECT ((y * y) ^ 0)::LONG AS v FROM u").noLeakCheck().expectSize().returns("v\n1000000000000\n");
+
+            // '~' complements the full-width product: ~10^12 = -(10^12) - 1
+            assertQuery("SELECT (~(1000000 * 1000000))::LONG AS v").noLeakCheck().expectSize().returns("v\n-1000000000001\n");
+            assertQuery("SELECT (~(y * y))::LONG AS v FROM u").noLeakCheck().expectSize().returns("v\n-1000000000001\n");
+
+            // abs() widens: the wrapped product is negative, so a narrow abs would flip
+            // its sign; the widened value keeps the true magnitude.
+            assertQuery("SELECT (abs(1000000 * 1000000))::LONG AS v").noLeakCheck().expectSize().returns("v\n1000000000000\n");
+            assertQuery("SELECT (abs(y * y))::LONG AS v FROM u").noLeakCheck().expectSize().returns("v\n1000000000000\n");
+
+            // control: the plain INT projection (no widening cast) still wraps mod 2^32
+            // on both paths -- getInt() is unchanged.
+            assertQuery("SELECT (1000000 * 1000000) % 7 AS v").noLeakCheck().expectSize().returns("v\n0\n");
+            assertQuery("SELECT (y * y) % 7 AS v FROM u").noLeakCheck().expectSize().returns("v\n0\n");
+        });
+    }
+
+    @Test
     public void testImplicitDoublePromotionWrapsLikeConstantAndColumn() throws Exception {
         // (intCol + intConst) + floatConst: the constant-reassociation pass used to
         // regroup the column form into intCol + (intConst + floatConst), folding the

@@ -583,6 +583,33 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConstantFoldLongNullCollision() throws Exception {
+        // The LONG analog of testConstantFoldIntNullCollision. An inner constant
+        // product that lands EXACTLY on Long.MIN_VALUE (-2^63, the LONG null
+        // sentinel) poisons the rest of a long-width fold: the Java filter's
+        // MulLong/AddLong#getLong return LONG_NULL once an operand is LONG_NULL,
+        // so i64 = (4611686018427387904 * -2) + 5 folds the RHS to NULL and
+        // matches the null row. The JIT long fold kept computing full-width
+        // arithmetic ((2^62 * -2) + 5 = Long.MIN + 5) and matched no row.
+        // tryFoldConstantArith now propagates LONG_NULL, so both paths agree.
+        assertMemoryLeak(() -> {
+            execute("create table lp as (select timestamp_sequence(0, 1000000) k," +
+                    " case when x = 1 then cast(null as long) else x end i64" +
+                    " from long_sequence(3)) timestamp(k)");
+            // 4611686018427387904 = 2^62; 2^62 * -2 = Long.MIN (intermediate),
+            // + 5 a non-sentinel final. The fold collapses to LONG_NULL on both
+            // paths, so only the null row matches '='.
+            assertJitMatchesJava("lp where i64 = (4611686018427387904 * -2) + 5", true);
+            assertJitMatchesJava("lp where i64 <> (4611686018427387904 * -2) + 5", true);
+            assertJitMatchesJava("lp where i64 in (1, (4611686018427387904 * -2) + 5)", true);
+            assertJitMatchesJava("lp where i64 not in (1, (4611686018427387904 * -2) + 5)", true);
+            // Control: a fold whose FINAL value is Long.MIN agrees coincidentally
+            // (both paths emit the sentinel), so it was never a divergence.
+            assertJitMatchesJava("lp where i64 = 4611686018427387904 * -2", true);
+        });
+    }
+
+    @Test
     public void testConstantFoldRootUnderLongWithFloat() throws Exception {
         // An overflowing constant product (258558 * -259815) nested under a LONG
         // add (c0 + ...) is read at long width by AddLong#getLong, so the Java

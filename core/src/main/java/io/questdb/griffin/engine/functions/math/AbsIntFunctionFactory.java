@@ -73,6 +73,15 @@ public class AbsIntFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public long getLong(Record rec) {
+            // getLong() widens: nested INT arithmetic computes at long width, matching
+            // the widened arithmetic operators and explicit widening casts. Math.abs of
+            // the LONG null sentinel (Long.MIN_VALUE) overflows back to it, preserving
+            // NULL, exactly as getInt() relies on Math.abs(Integer.MIN_VALUE).
+            return Math.abs(arg.getLong(rec));
+        }
+
+        @Override
         public String getName() {
             return "abs";
         }

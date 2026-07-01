@@ -2040,12 +2040,24 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         if (node.type != ExpressionNode.OPERATION) {
             throw NumericException.INSTANCE;
         }
-        // Unary minus: parser builds OPERATION "-" with rhs only.
+        // Unary minus: parser builds OPERATION "-" with rhs only. NegLong#getLong
+        // propagates LONG_NULL instead of negating the sentinel.
         if (Chars.equals(node.token, '-') && node.lhs == null) {
-            return -tryFoldConstantArith(node.rhs);
+            long operand = tryFoldConstantArith(node.rhs);
+            return operand == Numbers.LONG_NULL ? Numbers.LONG_NULL : -operand;
         }
         long left = tryFoldConstantArith(node.lhs);
         long right = tryFoldConstantArith(node.rhs);
+        // MulLong / AddLong / SubLong / DivLong#getLong return LONG_NULL when
+        // either operand is Long.MIN_VALUE (the LONG null sentinel), so an inner
+        // product that lands exactly on -2^63 poisons the rest of the fold to
+        // NULL instead of feeding a wrapped value. Without this the JIT kept
+        // computing full-width arithmetic (e.g. (2^62 * -2) + 5 = Long.MIN + 5)
+        // while the Java filter collapsed to NULL. Mirrors the INT_NULL guard in
+        // tryFoldConstantArithI4.
+        if (left == Numbers.LONG_NULL || right == Numbers.LONG_NULL) {
+            return Numbers.LONG_NULL;
+        }
         if (Chars.equals(node.token, '+')) {
             return left + right;
         }
