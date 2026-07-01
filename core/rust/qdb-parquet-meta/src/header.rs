@@ -336,7 +336,7 @@ impl<'a> FileHeader<'a> {
         let offset = HEADER_FIXED_SIZE + index * COLUMN_DESCRIPTOR_SIZE;
         let ptr = self.data[offset..].as_ptr();
         // Safety: ColumnDescriptorRaw is #[repr(C)] with 8-byte natural alignment.
-        // offset = 24 + index * 32, which is always 8-byte aligned.
+        // offset = 32 + index * 32, which is always 8-byte aligned.
         debug_assert_eq!(ptr.align_offset(align_of::<ColumnDescriptorRaw>()), 0);
         Ok(unsafe { &*(ptr as *const ColumnDescriptorRaw) })
     }
@@ -386,7 +386,7 @@ impl<'a> FileHeader<'a> {
         let end = offset + (self.raw.sorting_column_count as usize) * 4;
         debug_assert!(end <= self.data.len());
         let ptr = self.data[offset..end].as_ptr() as *const u32;
-        // Safety: u32 requires 4-byte alignment. offset = 24 + n*32 is always 4-byte aligned.
+        // Safety: u32 requires 4-byte alignment. offset = 32 + n*32 is always 4-byte aligned.
         // Bounds checked: min_size() validated offset + sorting_column_count * 4 <= data.len().
         debug_assert_eq!(ptr.align_offset(align_of::<u32>()), 0);
         unsafe { std::slice::from_raw_parts(ptr, self.raw.sorting_column_count as usize) }

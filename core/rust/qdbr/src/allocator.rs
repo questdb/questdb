@@ -27,6 +27,8 @@ use std::fmt::{Display, Formatter};
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use qdb_core::memory_tracker::MemoryTracker;
+
 #[cfg(test)]
 use std::sync::Arc;
 
@@ -144,7 +146,7 @@ impl Default for MemTracking {
 }
 
 impl MemTracking {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             rss_mem_used: AtomicUsize::new(0),
             rss_mem_limit: AtomicUsize::new(0),
@@ -152,35 +154,6 @@ impl MemTracking {
             realloc_count: AtomicUsize::new(0),
             free_count: AtomicUsize::new(0),
             _non_rss_mem_used: AtomicUsize::new(0),
-        }
-    }
-}
-
-/// Per-workload memory counter, shared with Java. Wraps the 16-byte
-/// `{used, limit}` block backing a `MemoryTracker` Java object. The layout
-/// must match `Unsafe.MEMORY_TRACKER_*_OFFSET` on the Java side.
-#[repr(C)]
-pub struct MemoryTracker {
-    /// Bytes charged against this tracker. All parallel workers hammer this one
-    /// atomic, so it is the scaling ceiling - fine for an opt-in, default-off
-    /// limit; stripe it if per-query limits ever go default-on.
-    used: AtomicUsize,
-
-    /// Configured byte limit. `0` means unlimited.
-    limit: AtomicUsize,
-}
-
-impl Default for MemoryTracker {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl MemoryTracker {
-    pub fn new() -> Self {
-        Self {
-            used: AtomicUsize::new(0),
-            limit: AtomicUsize::new(0),
         }
     }
 }
@@ -333,9 +306,9 @@ impl QdbAllocator {
         // Per-workload limit, only when a tracker is bound. Resolve the tracker once
         // rather than null-checking it twice for its two counter words.
         if let Some(tracker) = self.memory_tracker() {
-            let limit = tracker.limit.load(RSS_ORDERING);
+            let limit = tracker.limit();
             if limit > 0 {
-                let used = tracker.used.load(RSS_ORDERING);
+                let used = tracker.used();
                 if used.saturating_add(requested_size) > limit {
                     ALLOC_ERROR.with(|error| {
                         *error.borrow_mut() = Some(AllocFailure::MemoryLimitExceeded {
@@ -368,7 +341,7 @@ impl QdbAllocator {
         self.rss_mem_used()
             .fetch_add(requested_size, COUNTER_ORDERING);
         if let Some(tracker) = self.memory_tracker() {
-            tracker.used.fetch_add(requested_size, COUNTER_ORDERING);
+            tracker.charge_unchecked(requested_size);
         }
         self.malloc_count().fetch_add(1, COUNTER_ORDERING);
     }
@@ -377,7 +350,7 @@ impl QdbAllocator {
         self.tagged_used().fetch_add(delta, COUNTER_ORDERING);
         self.rss_mem_used().fetch_add(delta, COUNTER_ORDERING);
         if let Some(tracker) = self.memory_tracker() {
-            tracker.used.fetch_add(delta, COUNTER_ORDERING);
+            tracker.charge_unchecked(delta);
         }
         self.realloc_count().fetch_add(1, COUNTER_ORDERING);
     }
@@ -386,7 +359,7 @@ impl QdbAllocator {
         self.tagged_used().fetch_sub(delta, COUNTER_ORDERING);
         self.rss_mem_used().fetch_sub(delta, COUNTER_ORDERING);
         if let Some(tracker) = self.memory_tracker() {
-            let prev = Self::saturating_decrement(&tracker.used, delta);
+            let prev = tracker.credit(delta);
             debug_assert!(
                 prev >= delta,
                 "per-query memory underflow on shrink: used={prev}, delta={delta}"
@@ -399,38 +372,13 @@ impl QdbAllocator {
         self.tagged_used().fetch_sub(freed_size, COUNTER_ORDERING);
         self.rss_mem_used().fetch_sub(freed_size, COUNTER_ORDERING);
         if let Some(tracker) = self.memory_tracker() {
-            let prev = Self::saturating_decrement(&tracker.used, freed_size);
+            let prev = tracker.credit(freed_size);
             debug_assert!(
                 prev >= freed_size,
                 "per-query memory underflow on deallocate: used={prev}, delta={freed_size}"
             );
         }
         self.free_count().fetch_add(1, COUNTER_ORDERING);
-    }
-
-    /// Decrements the per-query counter, clamping at zero, and returns the
-    /// previous value. Perfect malloc/free symmetry keeps the counter non-
-    /// negative, which the debug_assert at each call site enforces under `-ea`.
-    /// In release builds a latent asymmetry must not leave the unsigned counter
-    /// wrapped to ~2^64: a wrapped `tracker_used` makes every later
-    /// check_alloc_limit read it as over the limit and spuriously fail the
-    /// whole workload.
-    ///
-    /// The common path (no underflow) is a single `fetch_sub`, which lowers to
-    /// one `lock xadd` instead of the `cmpxchg` retry loop a `fetch_update`
-    /// compiles to -- this runs on every tracker-charged free, the symmetric
-    /// partner of the most-contended counter. Only on the impossible underflow
-    /// does a corrective `fetch_add` restore the clamp. That leaves a tiny
-    /// window where a concurrent reader could observe the wrapped value, versus
-    /// the atomic clamp a CAS gives; acceptable because the underflow cannot
-    /// occur under correct malloc/free pairing and the `debug_assert` catches
-    /// any regression that would.
-    fn saturating_decrement(counter: &AtomicUsize, delta: usize) -> usize {
-        let prev = counter.fetch_sub(delta, COUNTER_ORDERING);
-        if prev < delta {
-            counter.fetch_add(delta - prev, COUNTER_ORDERING);
-        }
-        prev
     }
 
     /// Charges `bytes` of externally-allocated native memory against the
@@ -453,21 +401,21 @@ impl QdbAllocator {
         }
         self.check_alloc_limit(bytes)?;
         if let Some(tracker) = self.memory_tracker() {
-            tracker.used.fetch_add(bytes, COUNTER_ORDERING);
+            tracker.charge_unchecked(bytes);
         }
         Ok(())
     }
 
     /// Releases `bytes` previously reserved with `charge_tracked`, clamping the
     /// per-query counter at zero on the impossible underflow (see
-    /// `saturating_decrement`). The RSS and tagged counters are left untouched,
-    /// mirroring `charge_tracked`.
+    /// [`MemoryTracker::credit`]). The RSS and tagged counters are left
+    /// untouched, mirroring `charge_tracked`.
     pub fn credit_tracked(&self, bytes: usize) {
         if bytes == 0 {
             return;
         }
         if let Some(tracker) = self.memory_tracker() {
-            Self::saturating_decrement(&tracker.used, bytes);
+            tracker.credit(bytes);
         }
     }
 }
@@ -624,22 +572,16 @@ impl TestAllocatorState {
     }
 
     pub fn tracker_used(&self) -> usize {
-        self.memory_tracker
-            .as_ref()
-            .map(|t| t.used.load(Ordering::SeqCst))
-            .unwrap_or(0)
+        self.memory_tracker.as_ref().map(|t| t.used()).unwrap_or(0)
     }
 
     pub fn tracker_limit(&self) -> usize {
-        self.memory_tracker
-            .as_ref()
-            .map(|t| t.limit.load(Ordering::SeqCst))
-            .unwrap_or(0)
+        self.memory_tracker.as_ref().map(|t| t.limit()).unwrap_or(0)
     }
 
     pub fn set_tracker_limit(&self, limit: usize) {
         if let Some(t) = self.memory_tracker.as_ref() {
-            t.limit.store(limit, Ordering::SeqCst);
+            t.set_limit(limit);
         }
     }
 
@@ -674,14 +616,6 @@ mod tests {
         assert_eq!(
             size_of::<crate::allocator::MemTracking>(),
             6 * size_of::<u64>()
-        );
-    }
-
-    #[test]
-    fn test_memory_tracker_size() {
-        assert_eq!(
-            size_of::<crate::allocator::MemoryTracker>(),
-            2 * size_of::<u64>()
         );
     }
 
@@ -1230,22 +1164,5 @@ mod tests {
         assert_eq!(tas.malloc_count(), total_allocs);
         assert_eq!(tas.realloc_count(), total_reallocs);
         assert_eq!(tas.free_count(), total_allocs);
-    }
-
-    #[test]
-    fn test_saturating_decrement_clamps_at_zero() {
-        use crate::allocator::QdbAllocator;
-        use std::sync::atomic::{AtomicUsize, Ordering};
-
-        let counter = AtomicUsize::new(8);
-        // A normal decrement returns the previous value and subtracts the delta.
-        assert_eq!(QdbAllocator::saturating_decrement(&counter, 5), 8);
-        assert_eq!(counter.load(Ordering::SeqCst), 3);
-
-        // An oversized decrement (the asymmetry a release build must survive) clamps the
-        // counter at zero rather than wrapping the unsigned value to ~usize::MAX, which would
-        // make every later check_alloc_limit read it as over the limit.
-        assert_eq!(QdbAllocator::saturating_decrement(&counter, 10), 3);
-        assert_eq!(counter.load(Ordering::SeqCst), 0);
     }
 }

@@ -224,7 +224,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
                 Unsafe.putInt(file.dataPtr + 24, 1_000_000_000);
                 // Re-checksum so the file is "consistently corrupt": the CRC
                 // matches the modified bytes and resolveFooter's up-front
-                // verifyChecksum0 step lets the columnCount validation fire.
+                // checksum step lets the columnCount validation fire.
                 patchCrc(file.dataPtr, file.parquetMetaFileSize);
 
                 ParquetMetaFileReader reader = new ParquetMetaFileReader();
@@ -259,7 +259,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
                 // Corrupt rowGroupCount to a huge value. Without the validation-before-loop
                 // fix, this causes an out-of-bounds read (SIGSEGV) instead of a clean exception.
                 Unsafe.putInt(footerAddr + 12, 1_000_000_000);
-                // Re-checksum so resolveFooter's up-front verifyChecksum0 step
+                // Re-checksum so resolveFooter's up-front checksum step
                 // lets the rowGroupCount validation fire.
                 patchCrc(file.dataPtr, file.parquetMetaFileSize);
 
@@ -290,7 +290,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
             // buildFile sets dts=-1 and no sorting columns, so SORTING_IS_DTS_ASC
             // is clear and resolveFooter enters the explicit sorting-array bound
             // check. The first resolveFooter caches the CRC; the second skips
-            // verifyChecksum0 (which would otherwise reject the corrupt count via
+            // the checksum parse (which would otherwise reject the corrupt count via
             // the Rust header parse) and reaches the Java-side bound check, which
             // must reject before any accessor reads past the sorting array.
             try (ParquetMetaTestFile file = buildFile(1, 100)) {
@@ -316,7 +316,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
             try (ParquetMetaTestFile file = buildFile(1, 100)) {
                 // Corrupt the footer length trailer to point past the file.
                 // The trailer sits outside the CRC region, so re-checksumming
-                // would not help: verifyChecksum0's from_file_size step uses
+                // would not help: the checksum parse's from_file_size step uses
                 // the trailer to derive the footer offset and rejects the
                 // file ("footer length ... exceeds file size") before
                 // computing the CRC. The Java-side resolveFooter has the
@@ -619,7 +619,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
                         Unsafe.putLong(newBuf, newTotalLen);   // header parquet_meta_file_size
 
                         // Recompute CRC after the snapshot is fully published
-                        // so resolveFooter's up-front verifyChecksum0 step
+                        // so resolveFooter's up-front checksum step
                         // accepts the file and the chain-walk validation
                         // (the test's actual subject) gets to fire.
                         patchCrc(newBuf, newTotalLen);
@@ -1690,7 +1690,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
                 // Re-checksum so the file is "consistently corrupt": the CRC
                 // matches the modified bytes. The Rust-side reader rejects
                 // the unknown required header flag while parsing the header
-                // (during verifyChecksum0's from_file_size step) before the
+                // (during the checksum parse's from_file_size step) before the
                 // Java-side validation in resolveFooter ever runs.
                 patchCrc(file.dataPtr, file.parquetMetaFileSize);
 
@@ -1728,7 +1728,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
                 Unsafe.putLong(footerFlagsAddr, originalFlags | (1L << 32));
                 // Re-checksum so the file is "consistently corrupt": the CRC
                 // matches the modified bytes. The Rust-side reader rejects
-                // the unknown required footer flag during verifyChecksum0's
+                // the unknown required footer flag during the checksum parse's
                 // from_file_size step, before the Java-side validation in
                 // resolveFooter runs.
                 patchCrc(file.dataPtr, file.parquetMetaFileSize);
@@ -1858,7 +1858,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
      * mutable {@code parquet_meta_file_size} field at offset 0.
      * <p>
      * Tests that hand-build {@code _pm} bytes (or corrupt fields inside the CRC
-     * region) call this so the reader's up-front {@code verifyChecksum0} step
+     * region) call this so the reader's up-front checksum step
      * accepts the file and the test's specific structural validation can fire.
      */
     private static void patchCrc(long addr, long snapshotEnd) {

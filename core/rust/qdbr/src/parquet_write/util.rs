@@ -10,7 +10,7 @@ use parquet2::encoding::uleb128;
 use parquet2::encoding::Encoding;
 use parquet2::metadata::Descriptor;
 use parquet2::page::{DataPage, DataPageHeader, DataPageHeaderV1, DataPageHeaderV2};
-use parquet2::schema::types::{PhysicalType, PrimitiveType};
+use parquet2::schema::types::{PhysicalType, PrimitiveLogicalType, PrimitiveType};
 use parquet2::statistics::{serialize_statistics, BinaryStatistics, ParquetStatistics, Statistics};
 use parquet2::types::NativeType;
 use parquet2::write::Version;
@@ -150,24 +150,78 @@ impl BinaryMaxMinStats {
     }
 
     pub fn into_parquet_stats(self, null_count: usize) -> ParquetStatistics {
-        let max_value = if is_binary_column_type(&self.primitive_type) {
-            self.max_value.map(|max_value| {
-                if max_value.len() <= SIZEOF_I64 {
-                    max_value
-                } else {
-                    binary_upper_bound(max_value)
-                }
-            })
-        } else {
-            self.max_value
-        };
+        let Self { primitive_type, min_value, max_value } = self;
+        let (min_value, max_value, is_min_value_exact, is_max_value_exact) =
+            if is_binary_column_type(&primitive_type) {
+                // Opaque Binary: keep the min's <=9-byte prefix (a valid floor) and round
+                // the max up via its incremented 8-byte prefix (a valid ceiling). Both can
+                // be inexact (truncated prefix / rounded-up ceiling), so flag them like the
+                // text path. update() clamps both to <=9 bytes, so len > 8 means len == 9.
+                let min_clamped = min_value.as_ref().is_some_and(|min| min.len() > SIZEOF_I64);
+                let (max_value, max_rounded) = match max_value {
+                    Some(max) if max.len() > SIZEOF_I64 => match binary_upper_bound(max) {
+                        // Rounded the 8-byte prefix up to a valid ceiling: inexact.
+                        Some(bound) => (Some(bound), true),
+                        // The 8-byte prefix is all 0xFF and has no short upper bound, so
+                        // omit max_value: a missing max reads as "unbounded" (readers won't
+                        // prune), whereas emitting the clamped prefix would be byte-wise <
+                        // a longer all-0xFF value -- an invalid bound that drops live rows.
+                        None => (None, false),
+                    },
+                    // Short (<= 8 bytes) or absent: stored verbatim and exact.
+                    other => (other, false),
+                };
+                (
+                    min_value,
+                    max_value,
+                    min_clamped.then_some(false),
+                    max_rounded.then_some(false),
+                )
+            } else if is_utf8_column_type(&primitive_type) {
+                // Text (String/Symbol/Varchar): bound min/max to UTF8_STATS_TRUNCATE_LEN
+                // bytes on a UTF-8 codepoint boundary. Truncate the min down to a prefix
+                // (byte-wise <= every value) and the max up to the next string (byte-wise
+                // >= every value), so the bound stays conservative for QuestDB's own
+                // row-group pruning and for external readers, while the footer (and the
+                // _pm sidecar that copies these stats by value) no longer grows without
+                // limit when a single value is multi-megabyte.
+                // The min always shortens to a strict prefix once it exceeds the
+                // bound, so it is inexact exactly when it was over the bound. The
+                // max can fall back to the untruncated (exact) value when no
+                // shorter ceiling exists, so truncate_max_utf8 reports whether it
+                // actually widened the bound rather than inferring it from length.
+                let min_truncated = min_value
+                    .as_ref()
+                    .is_some_and(|min| min.len() > UTF8_STATS_TRUNCATE_LEN);
+                let min_value =
+                    min_value.map(|min| truncate_min_utf8(min, UTF8_STATS_TRUNCATE_LEN));
+                let (max_value, max_truncated) = match max_value {
+                    Some(max) => {
+                        let (bound, truncated) = truncate_max_utf8(max, UTF8_STATS_TRUNCATE_LEN);
+                        (Some(bound), truncated)
+                    }
+                    None => (None, false),
+                };
+                (
+                    min_value,
+                    max_value,
+                    min_truncated.then_some(false),
+                    max_truncated.then_some(false),
+                )
+            } else {
+                // Fixed-length byte arrays (Uuid/Long128/Long256/Decimal): fixed-width and
+                // already short, so store the exact bounds verbatim.
+                (min_value, max_value, None, None)
+            };
 
         let stats = &BinaryStatistics {
-            primitive_type: self.primitive_type,
+            primitive_type,
             null_count: Some(null_count as i64),
             distinct_count: None,
             max_value,
-            min_value: self.min_value,
+            min_value,
+            is_max_value_exact,
+            is_min_value_exact,
         } as &dyn Statistics;
         serialize_statistics(stats)
     }
@@ -177,20 +231,111 @@ fn is_binary_column_type(primitive_type: &PrimitiveType) -> bool {
     primitive_type.physical_type == PhysicalType::ByteArray && primitive_type.logical_type.is_none()
 }
 
-pub(crate) fn binary_upper_bound(max_value: Vec<u8>) -> Vec<u8> {
-    // We only keep 8 initial bytes for the min and max values.
-    // Semantics of these Parquet fields are "lower and upper bound".
-    // If max_value is longer than 8 bytes, we must choose an 8-byte value that
-    // comes just after actual max_value in sort order. We achieve this by
-    // converting to integer, incrementing, and converting back to bytes.
-    // If the first 8 bytes are all 0xFF, we can't increment the prefix, so we
-    // fall back to the untruncated value (up to 9 bytes from update()).
+/// True for the UTF-8 text types (String/Symbol/Varchar): a `ByteArray` carrying
+/// the `String` logical type. The opaque `Binary` type (`ByteArray` with no
+/// logical type) goes through `is_binary_column_type` instead, and the
+/// fixed-length byte-array types (Uuid/Long128/Long256/Decimal) are neither.
+fn is_utf8_column_type(primitive_type: &PrimitiveType) -> bool {
+    primitive_type.physical_type == PhysicalType::ByteArray
+        && primitive_type.logical_type == Some(PrimitiveLogicalType::String)
+}
+
+/// Byte-length bound applied to UTF-8 (String/Symbol/Varchar) min/max statistics.
+/// Without it a single multi-megabyte value makes the column-chunk min and/or max
+/// equally large in the footer (and in the `_pm` sidecar, which copies the chunk
+/// stats by value). parquet-mr truncates byte-array bounds to 64 bytes by default;
+/// we match that.
+const UTF8_STATS_TRUNCATE_LEN: usize = 64;
+
+#[inline]
+fn is_utf8_continuation_byte(b: u8) -> bool {
+    (b & 0xC0) == 0x80
+}
+
+/// Largest length `<= max_len` that ends on a UTF-8 codepoint boundary of `value`,
+/// or `value.len()` when it already fits. Backs up off any multi-byte codepoint
+/// that straddles `max_len` so the prefix never splits a codepoint.
+fn utf8_floor_len(value: &[u8], max_len: usize) -> usize {
+    if value.len() <= max_len {
+        return value.len();
+    }
+    let mut end = max_len;
+    while end > 0 && is_utf8_continuation_byte(value[end]) {
+        end -= 1;
+    }
+    end
+}
+
+/// Truncate `value` down to at most `max_len` bytes on a codepoint boundary. The
+/// result is a prefix of `value`, hence byte-wise `<= value`: a valid lower bound.
+fn truncate_min_utf8(mut value: Vec<u8>, max_len: usize) -> Vec<u8> {
+    value.truncate(utf8_floor_len(&value, max_len));
+    value
+}
+
+/// Truncate `value` up to a valid upper bound of at most ~`max_len` bytes: it is
+/// byte-wise `>= value`. Truncates to a codepoint boundary then advances the last
+/// codepoint to the next scalar value (carrying into earlier codepoints when one is
+/// already U+10FFFF). Falls back to the untruncated `value` when no shorter ceiling
+/// exists (every retained codepoint is U+10FFFF) or `value` is not valid UTF-8.
+///
+/// Advancing a codepoint can grow its UTF-8 length by one byte (e.g. U+007F ->
+/// U+0080), and only the last retained codepoint is advanced (a carry drops
+/// trailing codepoints), so the result exceeds `max_len` by at most 1 byte --
+/// still bounded, versus an untruncated value of arbitrary length.
+///
+/// Returns `(bound, is_inexact)`. `is_inexact` is `true` only when the bound was
+/// actually widened; the fallback returns the original value unchanged, which is
+/// an exact upper bound (`is_inexact == false`).
+fn truncate_max_utf8(value: Vec<u8>, max_len: usize) -> (Vec<u8>, bool) {
+    if value.len() <= max_len {
+        return (value, false);
+    }
+    let end = utf8_floor_len(&value, max_len);
+    match next_utf8_string(&value[..end]) {
+        Some(bounded) => (bounded, true),
+        None => (value, false),
+    }
+}
+
+/// Smallest valid-UTF-8 byte string strictly greater (byte-wise) than every string
+/// that has `prefix` as a prefix, or `None` when `prefix` is empty, not valid UTF-8,
+/// or made up entirely of the maximum codepoint U+10FFFF. Advances the last codepoint
+/// and, on carry, drops it and advances the preceding one.
+fn next_utf8_string(prefix: &[u8]) -> Option<Vec<u8>> {
+    let mut chars: Vec<char> = std::str::from_utf8(prefix).ok()?.chars().collect();
+    while let Some(last) = chars.pop() {
+        if let Some(next) = next_char(last) {
+            let mut result: String = chars.iter().collect();
+            result.push(next);
+            return Some(result.into_bytes());
+        }
+        // `last` is U+10FFFF; drop it and carry into the previous codepoint.
+    }
+    None
+}
+
+/// Next Unicode scalar value after `c`, skipping the UTF-16 surrogate range, or
+/// `None` when `c` is the maximum scalar value U+10FFFF.
+fn next_char(c: char) -> Option<char> {
+    let code = c as u32 + 1;
+    // U+D800..=U+DFFF are not scalar values; the only valid char that steps into the
+    // range is U+D7FF, so jump straight to the first codepoint past it.
+    let code = if code == 0xD800 { 0xE000 } else { code };
+    char::from_u32(code)
+}
+
+/// Smallest 8-byte upper bound for an opaque-Binary max whose `update()`-clamped
+/// prefix exceeds 8 bytes: read the leading 8 bytes big-endian, increment, write
+/// back. Returns `None` when the prefix is all `0xFF` -- it can't be incremented,
+/// and there is no short value that bounds a longer all-`0xFF`-prefixed value from
+/// above. The caller then omits `max_value` (unbounded) rather than emit the
+/// clamped prefix, which would be byte-wise *less* than such a value and so an
+/// invalid upper bound that makes conformant readers prune the row group holding it.
+pub(crate) fn binary_upper_bound(max_value: Vec<u8>) -> Option<Vec<u8>> {
     let val_slice_be: [u8; SIZEOF_I64] = max_value[..SIZEOF_I64].try_into().unwrap();
     let as_u64 = u64::from_be_bytes(val_slice_be);
-    match as_u64.checked_add(1) {
-        Some(inc) => inc.to_be_bytes().to_vec(),
-        None => max_value,
-    }
+    as_u64.checked_add(1).map(|inc| inc.to_be_bytes().to_vec())
 }
 
 pub struct ArrayStats {
@@ -210,6 +355,8 @@ impl ArrayStats {
             min_value: None,
             min: None,
             max: None,
+            is_max_value_exact: None,
+            is_min_value_exact: None,
         }
     }
 }
@@ -593,15 +740,20 @@ mod tests {
     fn test_binary_upper_bound_normal() {
         let input = vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0xAB];
         let result = binary_upper_bound(input);
-        assert_eq!(result, vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02]);
+        assert_eq!(
+            result,
+            Some(vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02])
+        );
     }
 
     #[test]
     fn test_binary_upper_bound_all_ff() {
         let input = vec![0xFF; 9];
         let result = binary_upper_bound(input);
-        // Can't increment [0xFF; 8], falls back to keeping the 9-byte value
-        assert_eq!(result, vec![0xFF; 9]);
+        // The 8-byte prefix is all 0xFF and can't be incremented; there is no short
+        // upper bound, so the caller must omit max rather than emit a prefix that
+        // would understate a longer all-0xFF value.
+        assert_eq!(result, None);
     }
 
     #[test]
@@ -609,30 +761,330 @@ mod tests {
         let mut input = vec![0xFF; 9];
         input[7] = 0xFE;
         let result = binary_upper_bound(input);
-        assert_eq!(result, vec![0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]);
+        assert_eq!(
+            result,
+            Some(vec![0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF])
+        );
     }
 
     #[test]
     fn test_binary_upper_bound_high_bit() {
-        // 0x80_00_00_00_00_00_00_00 — would be i64::MIN in signed, but should work correctly
-        // with unsigned arithmetic: result should be 0x80_00_00_00_00_00_00_01
+        // 0x80_00_00_00_00_00_00_00 -- would be i64::MIN in signed, but unsigned
+        // arithmetic gives the correct 0x80_00_00_00_00_00_00_01.
         let input = vec![0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x42];
         let result = binary_upper_bound(input);
-        assert_eq!(result, vec![0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01]);
+        assert_eq!(
+            result,
+            Some(vec![0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01])
+        );
     }
 
     #[test]
-    fn test_binary_stats_all_ff_keeps_max() {
+    fn test_binary_stats_all_ff_omits_max() {
         let primitive_type =
             PrimitiveType::from_physical("test".to_string(), PhysicalType::ByteArray);
         let mut stats = BinaryMaxMinStats::new(&primitive_type);
         stats.update(&[0xFF; 9]);
 
         let parquet_stats = stats.into_parquet_stats(0);
-        // Can't increment [0xFF; 8], falls back to 9-byte value
-        assert!(parquet_stats.max_value.is_some());
+        // The 8-byte prefix is all 0xFF, so there is no representable short ceiling:
+        // max is omitted (reads as unbounded) and its exactness flag is cleared too.
+        assert_eq!(parquet_stats.max_value, None);
+        assert_eq!(parquet_stats.is_max_value_exact, None);
+        // The min is still the 9-byte clamped prefix: a valid, inexact floor.
         assert!(parquet_stats.min_value.is_some());
+        assert_eq!(parquet_stats.is_min_value_exact, Some(false));
     }
+
+    #[test]
+    fn test_binary_stats_all_ff_max_never_understates_real_value() {
+        // Regression guard for a silent-wrong-results bound: an opaque-Binary max
+        // longer than 9 bytes whose first 8 bytes are all 0xFF was clamped to a
+        // 9-byte prefix and emitted as-is -- byte-wise LESS than the real value, an
+        // invalid upper bound that makes conformant readers prune the row group
+        // holding it. The emitted max must be absent or >= the real value.
+        let real_max = [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xAA, 0xBB];
+        let primitive_type = PrimitiveType::from_physical("b".to_string(), PhysicalType::ByteArray);
+        let mut stats = BinaryMaxMinStats::new(&primitive_type);
+        stats.update(&real_max);
+
+        let parquet_stats = stats.into_parquet_stats(0);
+        match &parquet_stats.max_value {
+            None => {} // unbounded: safe, never prunes
+            Some(max) => assert!(
+                max.as_slice() >= real_max.as_slice(),
+                "emitted max {max:?} understates the real value {real_max:?}"
+            ),
+        }
+    }
+
+    fn utf8_primitive_type() -> PrimitiveType {
+        let mut pt = PrimitiveType::from_physical("s".to_string(), PhysicalType::ByteArray);
+        pt.logical_type = Some(parquet2::schema::types::PrimitiveLogicalType::String);
+        pt
+    }
+
+    #[test]
+    fn test_utf8_floor_len() {
+        // Short value: kept whole.
+        assert_eq!(super::utf8_floor_len(b"abc", 64), 3);
+        // ASCII over the bound: truncated exactly at the bound.
+        assert_eq!(super::utf8_floor_len(&[b'a'; 100], 64), 64);
+        // A 2-byte codepoint (U+00E9 'e-acute' = C3 A9) straddling the bound is
+        // dropped whole: "ae" where the bound falls inside the second char.
+        let s = "a\u{00e9}\u{00e9}".as_bytes(); // 61 C3 A9 C3 A9
+        assert_eq!(super::utf8_floor_len(s, 2), 1); // backs off the 'e-acute' at [1..3]
+        assert_eq!(super::utf8_floor_len(s, 3), 3); // [3] is a start byte, no back-off
+    }
+
+    #[test]
+    fn test_truncate_min_utf8_is_valid_prefix() {
+        // ASCII: a 64-byte prefix, byte-wise <= the original.
+        let original = vec![b'm'; 200];
+        let min = super::truncate_min_utf8(original.clone(), 64);
+        assert_eq!(min.len(), 64);
+        assert!(min.as_slice() <= original.as_slice());
+        assert_eq!(min, original[..64]);
+
+        // Multi-byte: truncation never splits a codepoint, stays valid UTF-8.
+        let original = "\u{1F600}".repeat(40).into_bytes(); // 4 bytes each => 160 bytes
+        let min = super::truncate_min_utf8(original.clone(), 64);
+        assert!(min.len() <= 64);
+        assert_eq!(min.len() % 4, 0, "must land on a 4-byte-codepoint boundary");
+        assert!(std::str::from_utf8(&min).is_ok());
+        assert!(min.as_slice() <= original.as_slice());
+    }
+
+    #[test]
+    fn test_truncate_max_utf8_is_valid_ceiling() {
+        // ASCII: incremented prefix, byte-wise >= the original, length still bounded.
+        let original = vec![b'm'; 200];
+        let (max, inexact) = super::truncate_max_utf8(original.clone(), 64);
+        assert!(max.len() <= 64 + 1, "ceiling stays bounded");
+        assert!(max.as_slice() >= original.as_slice());
+        assert!(std::str::from_utf8(&max).is_ok());
+        assert!(inexact, "a widened ceiling is inexact");
+
+        // Multi-byte: never splits a codepoint, still a valid byte-wise ceiling.
+        let original = "\u{00e9}".repeat(50).into_bytes(); // 100 bytes
+        let (max, inexact) = super::truncate_max_utf8(original.clone(), 64);
+        assert!(max.as_slice() >= original.as_slice());
+        assert!(std::str::from_utf8(&max).is_ok());
+        assert!(inexact);
+
+        // Carry: when the truncated prefix ends in U+10FFFF the carry advances an
+        // earlier codepoint, and the result still dominates the original byte-wise.
+        let mut original = vec![b'a'; 60];
+        original.extend_from_slice("\u{10FFFF}".repeat(5).as_bytes()); // 60 + 20 bytes
+        let (max, inexact) = super::truncate_max_utf8(original.clone(), 64);
+        assert!(max.as_slice() >= original.as_slice());
+        assert!(std::str::from_utf8(&max).is_ok());
+        assert!(inexact);
+    }
+
+    #[test]
+    fn test_truncate_max_utf8_all_max_codepoint_falls_back() {
+        // 16 * U+10FFFF = 64 bytes of the maximum codepoint, plus one more: no shorter
+        // ceiling exists, so the untruncated value is kept (a valid, if loose, bound).
+        let original = "\u{10FFFF}".repeat(17).into_bytes();
+        assert_eq!(original.len(), 68);
+        let (max, inexact) = super::truncate_max_utf8(original.clone(), 64);
+        assert_eq!(max, original);
+        // The bound was kept whole, so it is exact, not inexact.
+        assert!(!inexact);
+    }
+
+    #[test]
+    fn test_next_char() {
+        assert_eq!(super::next_char('a'), Some('b'));
+        // Steps over the UTF-16 surrogate range U+D800..=U+DFFF.
+        assert_eq!(super::next_char('\u{D7FF}'), Some('\u{E000}'));
+        // No scalar value past the maximum.
+        assert_eq!(super::next_char('\u{10FFFF}'), None);
+    }
+
+    #[test]
+    fn test_next_utf8_string() {
+        assert_eq!(super::next_utf8_string(b"abc"), Some(b"abd".to_vec()));
+        // Carry past a trailing max codepoint advances the preceding one.
+        assert_eq!(
+            super::next_utf8_string("a\u{10FFFF}".as_bytes()),
+            Some(b"b".to_vec())
+        );
+        // Empty, all-max, and invalid UTF-8 inputs have no bounded successor.
+        assert_eq!(super::next_utf8_string(b""), None);
+        assert_eq!(super::next_utf8_string("\u{10FFFF}".as_bytes()), None);
+        assert_eq!(super::next_utf8_string(&[0xFF, 0xFF]), None);
+    }
+
+    #[test]
+    fn test_binary_stats_text_truncates_long_values() {
+        // Two long distinct values; the chunk min/max must be bounded yet still
+        // bracket both values byte-wise.
+        let lo = vec![b'A'; 200];
+        let hi = vec![b'Z'; 200];
+        let primitive_type = utf8_primitive_type();
+        let mut stats = BinaryMaxMinStats::new(&primitive_type);
+        stats.update(&lo);
+        stats.update(&hi);
+
+        let parquet_stats = stats.into_parquet_stats(0);
+        let min = parquet_stats.min_value.unwrap();
+        let max = parquet_stats.max_value.unwrap();
+        assert_eq!(min.len(), 64, "min truncated to the bound");
+        assert!(max.len() <= 64 + 1, "max stays bounded");
+        assert!(
+            min.as_slice() <= lo.as_slice(),
+            "min is a floor for both values"
+        );
+        assert!(
+            max.as_slice() >= hi.as_slice(),
+            "max is a ceiling for both values"
+        );
+        assert_eq!(
+            parquet_stats.is_min_value_exact,
+            Some(false),
+            "truncated min must be marked inexact"
+        );
+        assert_eq!(
+            parquet_stats.is_max_value_exact,
+            Some(false),
+            "truncated max must be marked inexact"
+        );
+    }
+
+    #[test]
+    fn test_binary_stats_text_all_max_codepoint_max_stays_exact() {
+        // A long max value made entirely of U+10FFFF has no shorter ceiling, so the
+        // max falls back to the untruncated (exact) value. The min still truncates
+        // to a prefix and stays inexact; the max must NOT be flagged inexact.
+        let primitive_type = utf8_primitive_type();
+        let mut stats = BinaryMaxMinStats::new(&primitive_type);
+        let value = "\u{10FFFF}".repeat(17).into_bytes(); // 68 bytes, all the max codepoint
+        stats.update(&value);
+
+        let parquet_stats = stats.into_parquet_stats(0);
+        assert_eq!(
+            parquet_stats.max_value.as_deref(),
+            Some(value.as_slice()),
+            "max kept whole as a valid exact ceiling"
+        );
+        assert_eq!(
+            parquet_stats.is_max_value_exact, None,
+            "kept-whole max is exact, not inexact"
+        );
+        // The min was truncated to a prefix, so it stays inexact.
+        assert_eq!(parquet_stats.min_value.unwrap().len(), 64);
+        assert_eq!(parquet_stats.is_min_value_exact, Some(false));
+    }
+
+    #[test]
+    fn test_binary_stats_text_keeps_short_values() {
+        // Values within the bound are stored verbatim (exact min/max).
+        let primitive_type = utf8_primitive_type();
+        let mut stats = BinaryMaxMinStats::new(&primitive_type);
+        stats.update(b"apple");
+        stats.update(b"banana");
+
+        let parquet_stats = stats.into_parquet_stats(0);
+        assert_eq!(
+            parquet_stats.min_value.as_deref(),
+            Some(b"apple".as_slice())
+        );
+        assert_eq!(
+            parquet_stats.max_value.as_deref(),
+            Some(b"banana".as_slice())
+        );
+        assert_eq!(parquet_stats.is_min_value_exact, None);
+        assert_eq!(parquet_stats.is_max_value_exact, None);
+    }
+
+    #[test]
+    fn test_binary_stats_text_boundary_64_is_exact() {
+        // Exactly UTF8_STATS_TRUNCATE_LEN bytes: at the bound, not over it, so the value
+        // is kept verbatim and both bounds stay exact (flagged None).
+        let primitive_type = utf8_primitive_type();
+        let mut stats = BinaryMaxMinStats::new(&primitive_type);
+        let value = vec![b'm'; 64];
+        stats.update(&value);
+
+        let parquet_stats = stats.into_parquet_stats(0);
+        assert_eq!(parquet_stats.min_value.as_deref(), Some(value.as_slice()));
+        assert_eq!(parquet_stats.max_value.as_deref(), Some(value.as_slice()));
+        assert_eq!(parquet_stats.is_min_value_exact, None);
+        assert_eq!(parquet_stats.is_max_value_exact, None);
+    }
+
+    #[test]
+    fn test_binary_stats_text_boundary_65_truncates() {
+        // One byte past the bound triggers the first truncation, so both bounds become
+        // inexact and the min is cut back to the bound.
+        let primitive_type = utf8_primitive_type();
+        let mut stats = BinaryMaxMinStats::new(&primitive_type);
+        let value = vec![b'm'; 65];
+        stats.update(&value);
+
+        let parquet_stats = stats.into_parquet_stats(0);
+        assert_eq!(parquet_stats.min_value.unwrap().len(), 64);
+        assert_eq!(parquet_stats.is_min_value_exact, Some(false));
+        assert_eq!(parquet_stats.is_max_value_exact, Some(false));
+    }
+
+    #[test]
+    fn test_binary_stats_binary_path_unchanged() {
+        // Regression guard: opaque Binary keeps its 8/9-byte prefix bound and is NOT
+        // subject to the 64-byte text truncation.
+        let primitive_type = PrimitiveType::from_physical("b".to_string(), PhysicalType::ByteArray);
+        let mut stats = BinaryMaxMinStats::new(&primitive_type);
+        stats.update(&[b'A'; 100]);
+
+        let parquet_stats = stats.into_parquet_stats(0);
+        // update() clamps to 9 bytes; max rounds up via binary_upper_bound to 8.
+        assert_eq!(parquet_stats.min_value.unwrap().len(), 9);
+        assert_eq!(parquet_stats.max_value.unwrap().len(), 8);
+        // The 9-byte min is a truncated prefix and the max was rounded up: both inexact.
+        assert_eq!(parquet_stats.is_min_value_exact, Some(false));
+        assert_eq!(parquet_stats.is_max_value_exact, Some(false));
+    }
+
+    #[test]
+    fn test_binary_stats_binary_short_value_is_exact() {
+        // A short opaque Binary value (<= 8 bytes) is stored verbatim, so both bounds
+        // stay exact (flagged None).
+        let primitive_type = PrimitiveType::from_physical("b".to_string(), PhysicalType::ByteArray);
+        let mut stats = BinaryMaxMinStats::new(&primitive_type);
+        stats.update(&[b'A'; 8]);
+
+        let parquet_stats = stats.into_parquet_stats(0);
+        assert_eq!(
+            parquet_stats.min_value.as_deref(),
+            Some([b'A'; 8].as_slice())
+        );
+        assert_eq!(
+            parquet_stats.max_value.as_deref(),
+            Some([b'A'; 8].as_slice())
+        );
+        assert_eq!(parquet_stats.is_min_value_exact, None);
+        assert_eq!(parquet_stats.is_max_value_exact, None);
+    }
+
+    #[test]
+    fn test_binary_stats_fixed_len_not_truncated() {
+        // Fixed-length byte arrays (Uuid/Long128/Long256/Decimal) take neither the
+        // Binary nor the text branch: the exact bounds are stored verbatim.
+        let primitive_type =
+            PrimitiveType::from_physical("u".to_string(), PhysicalType::FixedLenByteArray(16));
+        let mut stats = BinaryMaxMinStats::new(&primitive_type);
+        let value = vec![0xABu8; 16];
+        stats.update(&value);
+
+        let parquet_stats = stats.into_parquet_stats(0);
+        assert_eq!(parquet_stats.min_value.as_deref(), Some(value.as_slice()));
+        assert_eq!(parquet_stats.max_value.as_deref(), Some(value.as_slice()));
+        assert_eq!(parquet_stats.is_min_value_exact, None);
+        assert_eq!(parquet_stats.is_max_value_exact, None);
+    }
+
     #[test]
     fn encode_all_ones_v1() {
         use super::encode_all_ones_def_levels;

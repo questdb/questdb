@@ -245,13 +245,17 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
         final AsyncFilterContext filterCtx = atom.getFilterContext();
         final PageFrameMemoryPool frameMemoryPool = filterCtx.getMemoryPool(slotId);
-        final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
-        record.init(frameMemory);
-
-        final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
-        final GroupByMapFragment fragment = atom.getFragment(slotId);
-        final RecordSink mapSink = atom.getMapSink(slotId);
+        // navigateTo() decodes the parquet frame and can throw (e.g. OOM); it must sit
+        // inside the try so a decode failure still releases the per-worker slot. Leaking
+        // the slot lock permanently strands it, and once every slot leaks acquireSlot()
+        // spins forever -- the query hangs in dispatchAndAwait().
         try {
+            final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
+            record.init(frameMemory);
+
+            final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
+            final GroupByMapFragment fragment = atom.getFragment(slotId);
+            final RecordSink mapSink = atom.getMapSink(slotId);
             atom.resetLocalStats(slotId);
 
             if (atom.isSharded()) {
@@ -491,23 +495,27 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         final boolean useLateMaterialization = filterCtx.shouldUseLateMaterialization(slotId, isParquetFrame);
 
         final PageFrameMemoryPool frameMemoryPool = filterCtx.getMemoryPool(slotId);
-        final PageFrameMemory frameMemory;
-        if (useLateMaterialization) {
-            frameMemory = frameMemoryPool.navigateTo(frameIndex, filterCtx.getFilterUsedColumnIndexes());
-        } else {
-            frameMemory = frameMemoryPool.navigateTo(frameIndex);
-        }
-        record.init(frameMemory);
-
-        final DirectLongList rows = filterCtx.getFilteredRows(slotId);
-        rows.clear();
-
-        final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
-        final GroupByMapFragment fragment = atom.getFragment(slotId);
-        final CompiledFilter compiledFilter = filterCtx.getCompiledFilter();
-        final Function filter = filterCtx.getFilter(slotId);
-        final RecordSink mapSink = atom.getMapSink(slotId);
+        // navigateTo() decodes the parquet frame and can throw (e.g. OOM); it must sit
+        // inside the try so a decode failure still releases the per-worker slot. Leaking
+        // the slot lock permanently strands it, and once every slot leaks acquireSlot()
+        // spins forever -- the query hangs in dispatchAndAwait().
         try {
+            final PageFrameMemory frameMemory;
+            if (useLateMaterialization) {
+                frameMemory = frameMemoryPool.navigateTo(frameIndex, filterCtx.getFilterUsedColumnIndexes());
+            } else {
+                frameMemory = frameMemoryPool.navigateTo(frameIndex);
+            }
+            record.init(frameMemory);
+
+            final DirectLongList rows = filterCtx.getFilteredRows(slotId);
+            rows.clear();
+
+            final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
+            final GroupByMapFragment fragment = atom.getFragment(slotId);
+            final CompiledFilter compiledFilter = filterCtx.getCompiledFilter();
+            final Function filter = filterCtx.getFilter(slotId);
+            final RecordSink mapSink = atom.getMapSink(slotId);
             atom.resetLocalStats(slotId);
 
             if (compiledFilter == null || frameMemory.hasColumnTops()) {

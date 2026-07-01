@@ -24,6 +24,10 @@
 
 package io.questdb.cairo.wal;
 
+// OSS WAL event types use values 0..63.
+// Values 64..127 are reserved for downstream distributions; do
+// not allocate new OSS types in that range. Unknown types are
+// delegated to a CairoEngine.getWalTxnTypeHandler() at apply time.
 public class WalTxnType {
     public static final byte DATA = 0;
     public static final byte MAT_VIEW_DATA = 3;
@@ -35,5 +39,9 @@ public class WalTxnType {
 
     public static boolean isDataType(byte type) {
         return type == DATA || type == MAT_VIEW_DATA;
+    }
+
+    public static boolean isDownstreamType(byte type) {
+        return type >= 64;
     }
 }

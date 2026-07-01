@@ -1,4 +1,5 @@
 use crate::parquet::error::{fmt_err, ParquetError, ParquetErrorExt, ParquetResult};
+use crate::parquet_metadata::types::SeqTxn;
 use crate::parquet_write::file::{
     ChunkedWriter, ParquetWriter, DEFAULT_BLOOM_FILTER_FPP, DEFAULT_ROW_GROUP_SIZE,
 };
@@ -173,6 +174,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     parquet_meta_file_size: jlong,
     append_base: jlong,
     existing_parquet_file_size: jlong,
+    seq_txn: jlong,
 ) -> *mut ParquetUpdater {
     let env = &mut env;
     let create = || -> ParquetResult<ParquetUpdater> {
@@ -223,6 +225,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
             parquet_meta_file_size as u64,
             append_base as u64,
             existing_parquet_file_size,
+            SeqTxn::new(seq_txn),
         )
     };
 
@@ -481,6 +484,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     min_compression_ratio: jdouble,
     parquet_meta_fd: jint,
     squash_tracker: jlong,
+    seq_txn: jlong,
 ) -> jlong {
     let env = &mut env;
     let encode = || -> ParquetResult<i64> {
@@ -541,6 +545,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
         });
         let sorting_columns =
             local_timestamp_index.map(|i| vec![SortingColumn::new(i, false, false)]);
+        let seq_txn = SeqTxn::new(seq_txn);
 
         // Break apart ParquetWriter::finish() to access row groups after writing.
         let writer = ParquetWriter::new(&mut file)
@@ -554,12 +559,14 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             .with_bloom_filter_columns(bloom_filter_cols)
             .with_bloom_filter_fpp(bloom_filter_fpp)
             .with_min_compression_ratio(min_compression_ratio)
-            .with_squash_tracker(squash_tracker);
+            .with_squash_tracker(squash_tracker)
+            .with_seq_txn(seq_txn);
 
         let (schema, additional_meta) = crate::parquet_write::schema::to_parquet_schema(
             &partition,
             raw_array_encoding,
             squash_tracker,
+            seq_txn,
         )?;
         let encodings = crate::parquet_write::schema::to_encodings(&partition);
         let compressions = crate::parquet_write::schema::to_compressions(&partition);
@@ -616,6 +623,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
                 chunked.bloom_bitsets(),
                 0, // unused_bytes: new file, no dead space
                 squash_tracker,
+                seq_txn,
             )
             .context("generate_parquet_metadata failed")?;
 
@@ -1051,6 +1059,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             &partition_template,
             raw_array_encoding != 0,
             -1,
+            SeqTxn::UNSET,
         )?;
         // SAFETY: Pointer was passed from Java and points to a valid allocator for the JNI call duration.
         let allocator = unsafe { &*allocator_ptr };
@@ -1529,6 +1538,17 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     let mut write_chunk = || -> ParquetResult<*const u8> {
         let row_count = (row_group_hi - row_group_lo) as usize;
         if row_count > 0 {
+            if source_parquet_addr == 0 {
+                // Permanent guard: a partition whose parquet file is not mapped locally
+                // reports getFileAddr() == 0 while getFileSize() is non-zero. Refuse here
+                // rather than build a slice from a null address, which is undefined behaviour
+                // that aborts the whole JVM. Such partitions must route the row group through
+                // the decode-from-buffers path instead.
+                return Err(fmt_err!(
+                    InvalidType,
+                    "source parquet address is null (partition is not mapped locally)"
+                ));
+            }
             use crate::parquet_read::{DecodeContext, ParquetDecoder, RowGroupBuffers};
             use std::io::Cursor;
             // SAFETY: JNI caller guarantees a valid pointer to `source_parquet_size` bytes
@@ -1582,6 +1602,72 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
         Ok(ptr) => ptr,
         Err(mut err) => {
             err.add_context("error in writeStreamingParquetChunkFromRowGroup");
+            err.into_cairo_exception().throw::<*const u8>(env);
+            std::ptr::null()
+        }
+    }
+}
+
+/// Streaming-export counterpart of `writeStreamingParquetChunkFromRowGroup` for a row group
+/// whose parquet bytes are not mapped locally. The caller decodes the row group into
+/// `row_group_buffers_ptr` through the decoder (which acquires and pins a decode resource),
+/// then hands those buffers here. We copy them into encoder-owned storage so the pending
+/// partition no longer references the caller's pinned buffers, letting the caller release the
+/// decode resource as soon as this returns. Symbol values come from `symbol_data_ptr`,
+/// identical to the mmap path.
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEncoder_writeStreamingParquetChunkFromRowGroupBuffers(
+    mut env: JNIEnv,
+    _class: JClass,
+    encoder: *mut StreamingParquetWriter,
+    allocator_ptr: *const QdbAllocator,
+    symbol_data_ptr: jlong,
+    row_group_buffers_ptr: jlong,
+    row_count: jint,
+) -> *const u8 {
+    let env = &mut env;
+    if encoder.is_null() {
+        let mut err = fmt_err!(InvalidType, "StreamingParquetWriter pointer is null");
+        err.add_context("error in writeStreamingParquetChunkFromRowGroupBuffers");
+        err.into_cairo_exception().throw::<*const u8>(env);
+        return std::ptr::null();
+    }
+
+    // SAFETY: Pointer was created by `Box::into_raw` in the create function.
+    // Single-threaded JNI access guarantees no aliasing.
+    let encoder = unsafe { &mut *encoder };
+    let mut write_chunk = || -> ParquetResult<*const u8> {
+        let row_count = row_count as usize;
+        if row_count > 0 {
+            use crate::parquet_read::RowGroupBuffers;
+            if row_group_buffers_ptr == 0 {
+                return Err(fmt_err!(InvalidType, "row group buffers pointer is null"));
+            }
+            // SAFETY: Java passes the live pointer of a RowGroupBuffers it just decoded into;
+            // it stays valid for this call and we only read from it.
+            let source_bufs = unsafe { &*(row_group_buffers_ptr as *const RowGroupBuffers) };
+            // SAFETY: Pointer was passed from Java and points to a valid allocator for the JNI call duration.
+            let allocator = unsafe { &*allocator_ptr }.clone();
+            let owned_bufs =
+                source_bufs.copy_first_n_columns(encoder.partition.columns.len(), allocator)?;
+            let partition = convert_row_group_buffers_to_partition(
+                &encoder.partition,
+                &owned_bufs,
+                row_count,
+                symbol_data_ptr,
+            )?;
+            encoder.pending_partitions.push(partition);
+            encoder.pending_row_group_buffers.push(Some(owned_bufs));
+            encoder.accumulated_rows += row_count;
+        }
+
+        flush_pending_partitions(encoder)
+    };
+
+    match write_chunk() {
+        Ok(ptr) => ptr,
+        Err(mut err) => {
+            err.add_context("error in writeStreamingParquetChunkFromRowGroupBuffers");
             err.into_cairo_exception().throw::<*const u8>(env);
             std::ptr::null()
         }

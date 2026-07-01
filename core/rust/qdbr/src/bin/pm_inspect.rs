@@ -127,8 +127,62 @@ fn run_dump(path: &Path, file_size: u64, reader: &ParquetMetaReader) {
     }
     println!();
 
-    // Footer
-    println!("=== Footer ===");
+    // Footer chain: walk newest -> oldest via prev_parquet_meta_file_size.
+    print_footer_chain(&bytes_for_chain(path), reader);
+
+    // Row groups (from the latest footer).
+    for rg_idx in 0..reader.row_group_count() as usize {
+        print_row_group(reader, rg_idx);
+    }
+}
+
+/// `run_dump` already mmapped / read the file via `fs::read` upstream; we
+/// re-read here from disk to walk the chain. Tiny cost for a diagnostic.
+fn bytes_for_chain(path: &Path) -> Vec<u8> {
+    fs::read(path).unwrap_or_default()
+}
+
+fn print_footer_chain(bytes: &[u8], latest_reader: &ParquetMetaReader) {
+    // Each iteration reopens the reader against a smaller "virtual" file
+    // size — the prev_parquet_meta_file_size links the latest footer back
+    // to the prior committed version. seq_txn / scratchpad are footer-local;
+    // walking gives you the snapshot-id history.
+    let mut depth = 0usize;
+    let mut file_size = latest_reader.parquet_meta_file_size();
+    loop {
+        let reader = if depth == 0 {
+            // Reuse the already-parsed latest reader instead of re-parsing.
+            None
+        } else {
+            match ParquetMetaReader::from_file_size(bytes, file_size) {
+                Ok(r) => Some(r),
+                Err(e) => {
+                    println!(
+                        "=== Footer @ depth {} (file_size={}) — parse failed: {} ===",
+                        depth, file_size, e
+                    );
+                    return;
+                }
+            }
+        };
+        let r = reader.as_ref().unwrap_or(latest_reader);
+        print_one_footer(r, depth);
+        let prev = r.prev_parquet_meta_file_size();
+        if prev == 0 {
+            return;
+        }
+        file_size = prev;
+        depth += 1;
+    }
+}
+
+fn print_one_footer(reader: &ParquetMetaReader, depth: usize) {
+    let label = if depth == 0 {
+        "=== Footer ===".to_string()
+    } else {
+        format!("=== Prior Footer @ depth {} ===", depth)
+    };
+    println!("{label}");
     println!(
         "Parquet footer: offset={}, length={}",
         reader.parquet_footer_offset(),
@@ -141,15 +195,76 @@ fn run_dump(path: &Path, file_size: u64, reader: &ParquetMetaReader) {
         reader.prev_parquet_meta_file_size()
     );
     let footer_flags = reader.footer_feature_flags();
-    if footer_flags.0 != 0 {
-        println!("Footer feature flags: 0x{:016x}", footer_flags.0);
+    print!("Footer feature flags: 0x{:016x}", footer_flags.0);
+    if footer_flags.has_seq_txn() {
+        print!(" [SEQ_TXN]");
+    }
+    if footer_flags.has_scratchpad() {
+        print!(" [SCRATCHPAD]");
     }
     println!();
-
-    // Row groups
-    for rg_idx in 0..reader.row_group_count() as usize {
-        print_row_group(reader, rg_idx);
+    if let Some(seq) = reader.seq_txn() {
+        println!("seqTxn: {}", seq.get());
     }
+    print_scratchpad(reader);
+    println!();
+}
+
+fn print_scratchpad(reader: &ParquetMetaReader) {
+    let entries: Vec<(u32, &[u8])> = reader.footer().scratchpad_entries().collect();
+    if entries.is_empty() {
+        if reader.footer_feature_flags().has_scratchpad() {
+            println!("Scratchpad: bit set but no entries (inconsistent)");
+        } else {
+            println!("Scratchpad: none");
+        }
+        return;
+    }
+    println!("Scratchpad: {} entry(ies)", entries.len());
+    for (code, content) in entries {
+        let preview = preview_bytes(content);
+        println!(
+            "  code=0x{:08x} len={} bytes: {}",
+            code,
+            content.len(),
+            preview
+        );
+    }
+}
+
+/// Hex preview with an ascii-printable tail, capped so a 100-byte etag stays
+/// readable but pathological entries don't flood the terminal.
+fn preview_bytes(bytes: &[u8]) -> String {
+    const CAP: usize = 64;
+    let (slice, truncated) = if bytes.len() > CAP {
+        (&bytes[..CAP], true)
+    } else {
+        (bytes, false)
+    };
+    let mut out = String::new();
+    for (i, b) in slice.iter().enumerate() {
+        if i > 0 {
+            out.push(' ');
+        }
+        out.push_str(&format!("{:02x}", b));
+    }
+    // ascii tail: if the payload looks printable, append it (helps when the
+    // entry is an etag string preceded by a kind tag byte).
+    let printable = slice
+        .iter()
+        .skip(1) // skip the leading kind tag for snapshot-id entries
+        .all(|&b| (0x20..=0x7e).contains(&b));
+    if printable && slice.len() > 1 {
+        out.push_str("  \"");
+        for &b in &slice[1..] {
+            out.push(b as char);
+        }
+        out.push('"');
+    }
+    if truncated {
+        out.push_str(" ...");
+    }
+    out
 }
 
 fn print_column_descriptor(reader: &ParquetMetaReader, i: usize) {

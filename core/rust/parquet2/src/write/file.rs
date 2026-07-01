@@ -3,7 +3,7 @@ use std::io::Write;
 use std::sync::{Arc, Mutex};
 
 use parquet_format_safe::thrift::protocol::TCompactOutputProtocol;
-use parquet_format_safe::{RowGroup, SortingColumn};
+use parquet_format_safe::{BoundaryOrder, RowGroup, SortingColumn};
 
 use crate::metadata::ThriftFileMetaData;
 use crate::{
@@ -13,9 +13,9 @@ use crate::{
 };
 
 use super::footer_cache::FooterCache;
-use super::indexes::{write_column_index, write_offset_index};
+use super::indexes::{pages_support_column_index, write_column_index, write_offset_index};
 use super::page::PageWriteSpec;
-use super::{row_group::write_row_group, RowGroupIter, WriteOptions};
+use super::{row_group::write_row_group, type_defined_column_orders, RowGroupIter, WriteOptions};
 
 pub use crate::metadata::KeyValue;
 use crate::write::State;
@@ -23,6 +23,32 @@ use crate::write::State;
 pub fn start_file<W: Write>(writer: &mut W) -> Result<u64> {
     writer.write_all(&PARQUET_MAGIC)?;
     Ok(PARQUET_MAGIC.len() as u64)
+}
+
+/// Picks the `ColumnIndex` `boundary_order` for the leaf column at `column_idx`.
+///
+/// Only the primary (first) `sorting_columns` entry has its rows globally ordered
+/// across the row group, so only its data pages carry monotonic min/max bounds;
+/// declaring `ASCENDING`/`DESCENDING` (per the column's `descending` flag) lets
+/// readers binary-search those bounds. A secondary sort column is ordered only
+/// within runs of equal primary key, so its per-page bounds are not monotonic
+/// across the row group -- it must stay `UNORDERED` like every other column,
+/// otherwise a reader binary-searching its bounds would prune pages that hold
+/// matches. `UNORDERED` is always safe.
+fn boundary_order_for_column(
+    sorting_columns: &Option<Vec<SortingColumn>>,
+    column_idx: usize,
+) -> BoundaryOrder {
+    match sorting_columns.as_deref() {
+        Some([primary, ..]) if primary.column_idx == column_idx as i32 => {
+            if primary.descending {
+                BoundaryOrder::DESCENDING
+            } else {
+                BoundaryOrder::ASCENDING
+            }
+        }
+        _ => BoundaryOrder::UNORDERED,
+    }
 }
 
 /// Describes where a row group in the final list came from.
@@ -241,6 +267,103 @@ pub fn end_file<W: Write>(mut writer: &mut W, metadata: &ThriftFileMetaData) -> 
     Ok(metadata_len as u64 + FOOTER_SIZE)
 }
 
+/// A raw-copied row group's per-column page index, rebased for the output file:
+/// `offset_index` has its page offsets shifted to the new position, `column_index`
+/// (statistics only, no offsets) is verbatim, or `None` if the source had none.
+pub struct CopiedColumnIndex {
+    pub column_index: Option<Vec<u8>>,
+    pub offset_index: Vec<u8>,
+}
+
+/// Writes the page index for `row_groups`, recording each column's index
+/// offset/length in place and advancing `offset`. Fresh groups derive it from
+/// `page_specs` (`boundary_order` from `sorting_columns`); copied groups (an
+/// entry in `copied_page_index`) replay their rebased bytes. All ColumnIndexes
+/// first, then all OffsetIndexes.
+///
+/// Call only when every row group is indexable, so the OffsetIndex stays
+/// uniform. The ColumnIndex is emitted all-or-nothing on top of that: only when
+/// `allow_column_index` is set AND every group in `row_groups` can supply one
+/// (a copied group carried a source ColumnIndex; a fresh group has no opaque-Binary
+/// page with an unbounded max). Returns whether the ColumnIndex was emitted, so an
+/// append caller that passes only the new groups here can reconcile the cached
+/// source groups it re-emits separately (strip their ColumnIndex when this returns
+/// false) and keep the file from advertising a ColumnIndex on some row groups but
+/// not others. The caller must have written all page data first.
+fn write_page_index<W: Write>(
+    writer: &mut W,
+    offset: &mut u64,
+    row_groups: &mut [RowGroup],
+    page_specs: &[Vec<Vec<PageWriteSpec>>],
+    copied_page_index: &[Option<Vec<CopiedColumnIndex>>],
+    sorting_columns: &Option<Vec<SortingColumn>>,
+    allow_column_index: bool,
+) -> Result<bool> {
+    let copied_for = |rg_idx: usize| copied_page_index.get(rg_idx).and_then(Option::as_ref);
+
+    // A fresh group can supply a ColumnIndex from its page stats when
+    // allow_column_index is set, unless a column carries an opaque-Binary page with an
+    // unbounded (max-less) max, which the ColumnIndex cannot represent. A copied group
+    // can only supply one if its source carried it. If any group cannot supply one,
+    // emit none: a copied group whose source predates statistics, or a fresh group
+    // with an unbounded-max page, would otherwise leave the output with a ColumnIndex
+    // on some row groups but not others.
+    let emit_column_index = allow_column_index
+        && (0..row_groups.len()).all(|rg_idx| match copied_for(rg_idx) {
+            Some(columns) => columns.iter().all(|c| c.column_index.is_some()),
+            None => page_specs
+                .get(rg_idx)
+                .is_none_or(|cols| cols.iter().all(|pages| pages_support_column_index(pages))),
+        });
+
+    if emit_column_index {
+        for (rg_idx, (group, pages)) in row_groups.iter_mut().zip(page_specs.iter()).enumerate() {
+            if let Some(columns) = copied_for(rg_idx) {
+                for (column, copied) in group.columns.iter_mut().zip(columns.iter()) {
+                    if let Some(bytes) = &copied.column_index {
+                        let start = *offset;
+                        column.column_index_offset = Some(start as i64);
+                        writer.write_all(bytes)?;
+                        *offset += bytes.len() as u64;
+                        column.column_index_length = Some((*offset - start) as i32);
+                    }
+                }
+            } else {
+                for (column_idx, (column, pages)) in
+                    group.columns.iter_mut().zip(pages.iter()).enumerate()
+                {
+                    let start = *offset;
+                    column.column_index_offset = Some(start as i64);
+                    let boundary_order = boundary_order_for_column(sorting_columns, column_idx);
+                    *offset += write_column_index(writer, pages, boundary_order)?;
+                    column.column_index_length = Some((*offset - start) as i32);
+                }
+            }
+        }
+    }
+
+    for (rg_idx, (group, pages)) in row_groups.iter_mut().zip(page_specs.iter()).enumerate() {
+        if let Some(columns) = copied_for(rg_idx) {
+            for (column, copied) in group.columns.iter_mut().zip(columns.iter()) {
+                let start = *offset;
+                column.offset_index_offset = Some(start as i64);
+                writer.write_all(&copied.offset_index)?;
+                *offset += copied.offset_index.len() as u64;
+                column.offset_index_length = Some((*offset - start) as i32);
+            }
+        } else {
+            for (column, pages) in group.columns.iter_mut().zip(pages.iter()) {
+                let start = *offset;
+                column.offset_index_offset = Some(start as i64);
+                *offset += write_offset_index(writer, pages)?;
+                column.offset_index_length = Some((*offset - start) as i32);
+            }
+        }
+    }
+
+    Ok(emit_column_index)
+}
+
 /// An interface to write a parquet file.
 /// Use `start` to write the header, `write` to write a row group,
 /// and `end` to write the footer.
@@ -425,44 +548,16 @@ impl<W: Write> FileWriter<W> {
         // compute file stats
         let num_rows = self.row_groups.iter().map(|group| group.num_rows).sum();
 
-        if self.options.write_statistics {
-            // write column indexes (require page statistics)
-            self.row_groups
-                .iter_mut()
-                .zip(self.page_specs.iter())
-                .try_for_each(|(group, pages)| {
-                    group.columns.iter_mut().zip(pages.iter()).try_for_each(
-                        |(column, pages)| {
-                            let offset = self.offset;
-                            column.column_index_offset = Some(offset as i64);
-                            self.offset += write_column_index(&mut self.writer, pages)?;
-                            let length = self.offset - offset;
-                            column.column_index_length = Some(length as i32);
-                            Result::Ok(())
-                        },
-                    )?;
-                    Result::Ok(())
-                })?;
-        };
-
-        // write offset index
-        self.row_groups
-            .iter_mut()
-            .zip(self.page_specs.iter())
-            .try_for_each(|(group, pages)| {
-                group
-                    .columns
-                    .iter_mut()
-                    .zip(pages.iter())
-                    .try_for_each(|(column, pages)| {
-                        let offset = self.offset;
-                        column.offset_index_offset = Some(offset as i64);
-                        self.offset += write_offset_index(&mut self.writer, pages)?;
-                        column.offset_index_length = Some((self.offset - offset) as i32);
-                        Result::Ok(())
-                    })?;
-                Result::Ok(())
-            })?;
+        // The primary writer encodes every row group, so all are indexable.
+        write_page_index(
+            &mut self.writer,
+            &mut self.offset,
+            &mut self.row_groups,
+            &self.page_specs,
+            &[],
+            &self.sorting_columns,
+            self.options.write_statistics,
+        )?;
 
         let metadata = ThriftFileMetaData::new(
             self.options.version.into(),
@@ -471,7 +566,7 @@ impl<W: Write> FileWriter<W> {
             self.row_groups.clone(),
             additional_meta,
             self.created_by.clone(),
-            None,
+            Some(type_defined_column_orders(self.schema.columns().len())),
             None,
             None,
         );
@@ -527,6 +622,10 @@ pub struct ParquetFile<W: Write> {
     metadata: Option<ThriftFileMetaData>,
     mode: Mode,
     is_insert: Vec<bool>,
+    /// Pre-rebased page index for raw-copied row groups, parallel to
+    /// `row_groups`. `None` marks a freshly encoded group (indexed from
+    /// `page_specs`) or a copied group whose source carried no OffsetIndex.
+    copied_page_index: Vec<Option<Vec<CopiedColumnIndex>>>,
     parquet_footer_offset: u64,
 }
 
@@ -557,6 +656,7 @@ impl<W: Write> ParquetFile<W> {
             mode: Mode::Write,
             bloom_bitsets: vec![],
             is_insert: vec![],
+            copied_page_index: vec![],
             parquet_footer_offset: 0,
         }
     }
@@ -582,6 +682,7 @@ impl<W: Write> ParquetFile<W> {
             mode: Mode::Write,
             bloom_bitsets: vec![],
             is_insert: vec![],
+            copied_page_index: vec![],
             parquet_footer_offset: 0,
         }
     }
@@ -610,6 +711,7 @@ impl<W: Write> ParquetFile<W> {
             mode: Mode::Update(metadata, footer_cache),
             bloom_bitsets: vec![],
             is_insert: vec![],
+            copied_page_index: vec![],
             parquet_footer_offset: 0,
         }
     }
@@ -709,6 +811,8 @@ impl<W: Write> ParquetFile<W> {
         self.row_groups.push(group);
         self.page_specs.push(specs);
         self.bloom_bitsets.push(bf_bitsets);
+        // Freshly encoded: end() derives the page index from page_specs.
+        self.copied_page_index.push(None);
         Ok(())
     }
 
@@ -840,6 +944,19 @@ impl<W: Write> ParquetFile<W> {
         row_group: RowGroup,
         bloom_bitsets: Vec<Option<Vec<u8>>>,
     ) -> Result<()> {
+        self.write_raw_row_group_with_index(raw_bytes, row_group, bloom_bitsets, None)
+    }
+
+    /// Like `write_raw_row_group_with_bloom` but also carries the row group's
+    /// rebased source page index for `end()` to re-emit. `None` if the source had
+    /// no OffsetIndex, which makes `end()` leave the whole file unindexed.
+    pub fn write_raw_row_group_with_index(
+        &mut self,
+        raw_bytes: &[u8],
+        row_group: RowGroup,
+        bloom_bitsets: Vec<Option<Vec<u8>>>,
+        copied_page_index: Option<Vec<CopiedColumnIndex>>,
+    ) -> Result<()> {
         if self.offset == 0 {
             self.start()?;
         }
@@ -848,6 +965,7 @@ impl<W: Write> ParquetFile<W> {
         self.row_groups.push(row_group);
         self.page_specs.push(vec![]);
         self.bloom_bitsets.push(bloom_bitsets);
+        self.copied_page_index.push(copied_page_index);
         self.is_insert.push(false);
         Ok(())
     }
@@ -865,6 +983,25 @@ impl<W: Write> ParquetFile<W> {
                     ));
                 }
 
+                // Re-emit the page index, but only when every group is indexable:
+                // a copied group whose source lacked an OffsetIndex keeps the
+                // whole file unindexed, since a mixed file is rejected by strict
+                // readers.
+                let all_indexable = self.row_groups.iter().enumerate().all(|(i, _)| {
+                    !self.page_specs[i].is_empty() || self.copied_page_index[i].is_some()
+                });
+                if all_indexable {
+                    write_page_index(
+                        &mut self.writer,
+                        &mut self.offset,
+                        &mut self.row_groups,
+                        &self.page_specs,
+                        &self.copied_page_index,
+                        &self.sorting_columns,
+                        self.options.write_statistics,
+                    )?;
+                }
+
                 let num_rows = self.row_groups.iter().map(|group| group.num_rows).sum();
                 let metadata = ThriftFileMetaData::new(
                     self.options.version.into(),
@@ -873,7 +1010,7 @@ impl<W: Write> ParquetFile<W> {
                     self.row_groups.clone(),
                     key_value_metadata,
                     self.created_by.clone(),
-                    None,
+                    Some(type_defined_column_orders(self.schema.columns().len())),
                     None,
                     None,
                 );
@@ -891,9 +1028,57 @@ impl<W: Write> ParquetFile<W> {
                 // Track which original row groups have been replaced.
                 let mut modified = vec![false; original_rg_count];
 
+                // Cached groups keep their original page index. Index the new
+                // groups only when the source is fully offset-indexed, else the
+                // file would be mixed. An empty source is trivially indexed.
+                // Assumes a uniform source (every column indexed, or none): QuestDB's
+                // writer always emits one, so a per-column-mixed source means a corrupt
+                // file, in which case the all() below conservatively reports false.
+                let source_offset_indexed = metadata
+                    .row_groups
+                    .iter()
+                    .all(|rg| rg.columns.iter().all(|c| c.offset_index_offset.is_some()));
+
+                // ColumnIndex emission is gated independently of chunk statistics: a
+                // source can carry stats with no ColumnIndex (an ADD COLUMN raw-copy,
+                // or a group whose ColumnIndex was stripped below on a prior append).
+                // New groups emit a ColumnIndex only when the source is uniformly
+                // ColumnIndexed, else the file would advertise one on some groups but
+                // not others.
+                let source_column_indexed = !metadata.row_groups.is_empty()
+                    && metadata
+                        .row_groups
+                        .iter()
+                        .all(|rg| rg.columns.iter().all(|c| c.column_index_offset.is_some()));
+
                 // Drain row_groups and is_insert so we can move instead of clone.
-                let groups = std::mem::take(&mut self.row_groups);
+                let mut groups = std::mem::take(&mut self.row_groups);
                 let is_insert_flags = std::mem::take(&mut self.is_insert);
+                let page_specs = std::mem::take(&mut self.page_specs);
+                let copied_page_index = std::mem::take(&mut self.copied_page_index);
+
+                // Index the new groups before they merge into the footer, but
+                // only when every new group is itself indexable: a raw-copied
+                // group whose source lacked an OffsetIndex is not. Combined with
+                // source_offset_indexed, this keeps the file from mixing indexed
+                // and unindexed row groups (which strict readers reject), the
+                // same all-or-nothing rule the Mode::Write branch applies.
+                let new_groups_indexable = (0..groups.len())
+                    .all(|i| !page_specs[i].is_empty() || copied_page_index[i].is_some());
+                let new_groups_have_column_index = if source_offset_indexed && new_groups_indexable
+                {
+                    write_page_index(
+                        &mut self.writer,
+                        &mut self.offset,
+                        &mut groups,
+                        &page_specs,
+                        &copied_page_index,
+                        &self.sorting_columns,
+                        source_column_indexed && self.options.write_statistics,
+                    )?
+                } else {
+                    false
+                };
 
                 // Partition into replacements/appends and insertions.
                 let mut insertion_groups = Vec::new();
@@ -944,6 +1129,33 @@ impl<W: Write> ParquetFile<W> {
                     num_rows += group.num_rows;
                     metadata.row_groups.insert(adjusted_pos, group);
                     sources.insert(adjusted_pos, RowGroupSource::Inserted);
+                }
+
+                // Keep the ColumnIndex all-or-nothing across cached and new groups. A
+                // cached source group carries its ColumnIndex verbatim, but a newly
+                // written group with an opaque-Binary page that has an unbounded
+                // (max-less) max cannot supply one, so write_page_index emitted none for
+                // the new groups. Strip the cached groups' ColumnIndex too -- re-serialize
+                // them (Cached -> Fresh) with the pointer cleared -- so the footer never
+                // advertises a ColumnIndex on some row groups but not others. Their
+                // OffsetIndex and data offsets are untouched.
+                if source_column_indexed && !new_groups_have_column_index {
+                    for (i, source) in sources.iter_mut().enumerate() {
+                        if !matches!(source, RowGroupSource::Cached(_)) {
+                            continue;
+                        }
+                        let mut had_column_index = false;
+                        for column in &mut metadata.row_groups[i].columns {
+                            if column.column_index_offset.is_some() {
+                                column.column_index_offset = None;
+                                column.column_index_length = None;
+                                had_column_index = true;
+                            }
+                        }
+                        if had_column_index {
+                            *source = RowGroupSource::Fresh;
+                        }
+                    }
                 }
 
                 metadata.num_rows = num_rows;
@@ -1018,5 +1230,50 @@ mod tests {
         assert!(result.is_ok());
 
         Ok(())
+    }
+
+    #[test]
+    fn boundary_order_follows_sorting_columns() {
+        // No sorting columns at all -> every column is UNORDERED.
+        assert_eq!(
+            boundary_order_for_column(&None, 0),
+            BoundaryOrder::UNORDERED
+        );
+
+        let ascending = Some(vec![SortingColumn::new(2, false, false)]);
+        // The declared sorting column gets ASCENDING.
+        assert_eq!(
+            boundary_order_for_column(&ascending, 2),
+            BoundaryOrder::ASCENDING
+        );
+        // Other columns in the same file stay UNORDERED.
+        assert_eq!(
+            boundary_order_for_column(&ascending, 0),
+            BoundaryOrder::UNORDERED
+        );
+
+        // A descending sorting column gets DESCENDING.
+        let descending = Some(vec![SortingColumn::new(0, true, false)]);
+        assert_eq!(
+            boundary_order_for_column(&descending, 0),
+            BoundaryOrder::DESCENDING
+        );
+
+        // Multi-column sort: only the primary (first) column has globally
+        // monotonic page bounds. The secondary column stays UNORDERED even
+        // though it is listed in sorting_columns, since its per-page bounds are
+        // not monotonic across the row group.
+        let multi = Some(vec![
+            SortingColumn::new(1, false, false),
+            SortingColumn::new(3, true, false),
+        ]);
+        assert_eq!(
+            boundary_order_for_column(&multi, 1),
+            BoundaryOrder::ASCENDING
+        );
+        assert_eq!(
+            boundary_order_for_column(&multi, 3),
+            BoundaryOrder::UNORDERED
+        );
     }
 }

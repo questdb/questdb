@@ -61,7 +61,10 @@ public final class Mig941 {
     private static final long META_OFFSET_COUNT = 0;
     private static final long META_OFFSET_PARTITION_BY = 4;
     private static final long META_OFFSET_TIMESTAMP_INDEX = 8;
+    private static final long PARQUET_FILE_SIZE_VALUE_MASK = ~(0xFFL << 56); // strip the flag byte (bits 56-63), mirrors TxReader.PARTITION_VERSION_VALUE_MASK
     private static final int PARQUET_FORMAT_BIT = 61;
+    private static final int PARQUET_GENERATED_BIT = 60;
+    private static final long PARQUET_REMOTE_BIT = 1L << 63;
     private static final int PARTITION_MASKED_SIZE_IDX = 1;
     private static final int PARTITION_NAME_TX_IDX = 2;
     private static final int PARTITION_PARQUET_FILE_SIZE_IDX = 3;
@@ -157,8 +160,21 @@ public final class Mig941 {
 
                 long partitionTs = txMem.getLong(entryOffset);
                 long nameTxn = txMem.getLong(entryOffset + PARTITION_NAME_TX_IDX * Long.BYTES);
-                long parquetFileSizeFromTxn = txMem.getLong(entryOffset + PARTITION_PARQUET_FILE_SIZE_IDX * Long.BYTES);
+                long rawParquetFileSize = txMem.getLong(entryOffset + PARTITION_PARQUET_FILE_SIZE_IDX * Long.BYTES);
 
+                final boolean parquetGenerated = ((maskedSize >>> PARQUET_GENERATED_BIT) & 1) == 1;
+                final boolean remote = rawParquetFileSize != -1L
+                        && (rawParquetFileSize & PARQUET_REMOTE_BIT) != 0;
+                if (remote && !parquetGenerated) {
+                    continue;
+                }
+
+                // Field 3 carries the REMOTE marker in bit 63 once a partition has a remote copy; the
+                // actual parquet file size is the low bits. Mask it off before using it as a size,
+                // mirroring TxReader.getPartitionParquetFileSize.
+                long parquetFileSizeFromTxn = rawParquetFileSize == -1L
+                        ? -1L
+                        : rawParquetFileSize & PARQUET_FILE_SIZE_VALUE_MASK;
                 generateParquetMetaForPartition(ff, path, plen, timestampType, partitionBy, partitionTs, nameTxn, parquetFileSizeFromTxn);
             }
         }

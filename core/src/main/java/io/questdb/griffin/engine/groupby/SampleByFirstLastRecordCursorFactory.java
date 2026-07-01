@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
@@ -62,6 +63,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 
@@ -87,6 +89,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
     private DirectLongList samplePeriodAddress;
 
     public SampleByFirstLastRecordCursorFactory(
+            @NotNull CairoConfiguration configuration,
             RecordCursorFactory base,
             TimestampSampler timestampSampler,
             GenericRecordMetadata groupByMetadata,
@@ -126,6 +129,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
             samplePeriodAddress = new DirectLongList(pageSize, MemoryTag.NATIVE_SAMPLE_BY_LONG_LIST);
             this.symbolFilter = symbolFilter;
             cursor = new SampleByFirstLastRecordCursor(
+                    configuration,
                     timestampSampler,
                     metadata.getColumnType(timestampIndex),
                     timezoneNameFunc,
@@ -304,7 +308,6 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         private final static int STATE_SEARCH = 5;
         private final static int STATE_START = 0;
         private final PageFrameAddressCache frameAddressCache;
-        private final PageFrameMemoryPool frameMemoryPool;
         private final SampleByFirstLastRecord record = new SampleByFirstLastRecord();
         private SqlExecutionCircuitBreaker circuitBreaker;
         private int crossRowState;
@@ -314,6 +317,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         private long frameHi = -1;
         private long frameLo = -1;
         private PageFrameMemory frameMemory;
+        private PageFrameMemoryPool frameMemoryPool;
         private long frameNextRowId = -1;
         private int groupBySymbolKey;
         private IndexFrameCursor indexCursor;
@@ -328,6 +332,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         private int state;
 
         public SampleByFirstLastRecordCursor(
+                @NotNull CairoConfiguration configuration,
                 TimestampSampler timestampSampler,
                 int timestampType,
                 Function timezoneNameFunc,
@@ -352,7 +357,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                     sampleToFuncPos
             );
             frameAddressCache = new PageFrameAddressCache();
-            frameMemoryPool = new PageFrameMemoryPool(0L);
+            frameMemoryPool = new PageFrameMemoryPool(configuration, 0L);
         }
 
         @Override

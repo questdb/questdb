@@ -84,12 +84,14 @@ import io.questdb.cairo.wal.DefaultWalDirectoryPolicy;
 import io.questdb.cairo.wal.DefaultWalListener;
 import io.questdb.cairo.wal.DurableAckRegistry;
 import io.questdb.cairo.wal.QdbrWalLocker;
+import io.questdb.cairo.wal.UnsupportedWalTxnTypeHandler;
 import io.questdb.cairo.wal.ViewWalWriter;
 import io.questdb.cairo.wal.WalDirectoryPolicy;
 import io.questdb.cairo.wal.WalEventReader;
 import io.questdb.cairo.wal.WalListener;
 import io.questdb.cairo.wal.WalLocker;
 import io.questdb.cairo.wal.WalReader;
+import io.questdb.cairo.wal.WalTxnTypeHandler;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
@@ -1439,6 +1441,10 @@ public class CairoEngine implements Closeable, WriterSource {
             return new WalReader(configuration, tableToken, walName, segmentId, walRowCount);
         }
         throw CairoException.nonCritical().put("WAL reader is not supported for table ").put(tableToken.getTableName());
+    }
+
+    public WalTxnTypeHandler getWalTxnTypeHandler() {
+        return UnsupportedWalTxnTypeHandler.INSTANCE;
     }
 
     public @NotNull WalWriter getWalWriter(TableToken tableToken) {

@@ -282,6 +282,7 @@ public class ParquetTest extends AbstractTest {
                         0.01,
                         0.0,
                         -1,
+                        -1L,
                         -1L
                 );
                 final InputFile inputFile = new LocalInputFile(java.nio.file.Path.of(parquetPathStr));
@@ -558,6 +559,7 @@ public class ParquetTest extends AbstractTest {
                         0.01,
                         0.0,
                         -1,
+                        -1L,
                         -1L
                 );
 
@@ -654,6 +656,7 @@ public class ParquetTest extends AbstractTest {
                         0.01,
                         0.0,
                         -1,
+                        -1L,
                         -1L
                 );
 
@@ -741,6 +744,7 @@ public class ParquetTest extends AbstractTest {
                         0.01,
                         0.0,
                         -1,
+                        -1L,
                         -1L
                 );
 
@@ -1203,7 +1207,7 @@ public class ParquetTest extends AbstractTest {
                         final Object arr = nextParquetRecord.get("arr");
                         Assert.assertNotNull(arr);
                         Assert.assertEquals(
-                                "[{\"list\": [{\"element\": 1.0}, {\"element\": 2.0}, {\"element\": 3.0}]}, {\"list\": [{\"element\": 4.0}, {\"element\": 5.0}, {\"element\": 6.0}]}, {\"list\": [{\"element\": 7.0}, {\"element\": 8.0}, {\"element\": 9.0}]}]",
+                                "[{\"element\": [{\"element\": 1.0}, {\"element\": 2.0}, {\"element\": 3.0}]}, {\"element\": [{\"element\": 4.0}, {\"element\": 5.0}, {\"element\": 6.0}]}, {\"element\": [{\"element\": 7.0}, {\"element\": 8.0}, {\"element\": 9.0}]}]",
                                 arr.toString()
                         );
                         actualRows++;

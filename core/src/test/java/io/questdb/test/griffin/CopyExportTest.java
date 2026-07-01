@@ -333,7 +333,7 @@ public class CopyExportTest extends AbstractCairoTest {
                         .noLeakCheck()
                         .returns("""
                                 path\tdiskSizeHuman
-                                test_table.parquet\t583.0 B
+                                test_table.parquet\t641.0 B
                                 """);
             };
             testCopyExport(stmt, test);
@@ -398,45 +398,6 @@ public class CopyExportTest extends AbstractCairoTest {
                             .expectSize()
                             .returns("export_path\tnum_exported_files\tstatus\n" +
                                     exportRoot + File.separator + "test_table.parquet" + "\t1\tfinished\n"));
-
-            testCopyExport(stmt, test);
-        });
-    }
-
-    @Test
-    public void testCopyParquetEmptyTable() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table all_types_empty (" +
-                    "bool_col boolean, " +
-                    "byte_col byte, " +
-                    "short_col short, " +
-                    "int_col int, " +
-                    "long_col long, " +
-                    "float_col float, " +
-                    "double_col double, " +
-                    "string_col string, " +
-                    "symbol_col symbol, " +
-                    "t_ns timestamp_ns, " +
-                    "d_array DOUBLE[], " +
-                    "ts timestamp" +
-                    ") timestamp(ts)");
-
-            CopyExportRunnable stmt = () ->
-                    runAndFetchCopyExportID("copy all_types_empty to 'all_types_empty' with format parquet", sqlExecutionContext);
-            CopyExportRunnable test = () ->
-                    assertEventually(() -> {
-                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
-                                .noLeakCheck()
-                                .expectSize()
-                                .returns("export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "all_types_empty.parquet" + "\t1\tfinished\n");
-                        assertQuery("select * from read_parquet('" + exportRoot + File.separator + "all_types_empty" + ".parquet')")
-                                .noLeakCheck()
-                                .timestamp("ts")
-                                .returns("""
-                                        bool_col\tbyte_col\tshort_col\tint_col\tlong_col\tfloat_col\tdouble_col\tstring_col\tsymbol_col\tt_ns\td_array\tts
-                                        """);
-                    });
 
             testCopyExport(stmt, test);
         });
@@ -530,6 +491,45 @@ public class CopyExportTest extends AbstractCairoTest {
                             .noLeakCheck()
                             .expectSize()
                             .returns("status\nfinished\n"));
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyParquetEmptyTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table all_types_empty (" +
+                    "bool_col boolean, " +
+                    "byte_col byte, " +
+                    "short_col short, " +
+                    "int_col int, " +
+                    "long_col long, " +
+                    "float_col float, " +
+                    "double_col double, " +
+                    "string_col string, " +
+                    "symbol_col symbol, " +
+                    "t_ns timestamp_ns, " +
+                    "d_array DOUBLE[], " +
+                    "ts timestamp" +
+                    ") timestamp(ts)");
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID("copy all_types_empty to 'all_types_empty' with format parquet", sqlExecutionContext);
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "all_types_empty.parquet" + "\t1\tfinished\n");
+                        assertQuery("select * from read_parquet('" + exportRoot + File.separator + "all_types_empty" + ".parquet')")
+                                .noLeakCheck()
+                                .timestamp("ts")
+                                .returns("""
+                                        bool_col\tbyte_col\tshort_col\tint_col\tlong_col\tfloat_col\tdouble_col\tstring_col\tsymbol_col\tt_ns\td_array\tts
+                                        """);
+                    });
 
             testCopyExport(stmt, test);
         });
@@ -711,8 +711,8 @@ public class CopyExportTest extends AbstractCairoTest {
                         assertQuery("select path, diskSizeHuman from export_files() order by path")
                                 .noLeakCheck()
                                 .returns("path\tdiskSizeHuman\n" +
-                                        "test_table" + File.separator + "2023-01.parquet\t614.0 B\n" +
-                                        "test_table" + File.separator + "2023-02.parquet\t614.0 B\n");
+                                        "test_table" + File.separator + "2023-01.parquet\t672.0 B\n" +
+                                        "test_table" + File.separator + "2023-02.parquet\t672.0 B\n");
                     });
             testCopyExport(stmt, test);
         });
@@ -795,8 +795,8 @@ public class CopyExportTest extends AbstractCairoTest {
                         assertQuery("select path, diskSizeHuman from export_files()  order by path")
                                 .noLeakCheck()
                                 .returns("path\tdiskSizeHuman\n" +
-                                        "test_table" + File.separator + "2020-01-01.parquet\t501.0 B\n" +
-                                        "test_table" + File.separator + "2020-01-02.parquet\t590.0 B\n");
+                                        "test_table" + File.separator + "2020-01-01.parquet\t666.0 B\n" +
+                                        "test_table" + File.separator + "2020-01-02.parquet\t648.0 B\n");
                     });
             testCopyExport(stmt, test);
         });
@@ -841,7 +841,7 @@ public class CopyExportTest extends AbstractCairoTest {
                                 .noLeakCheck()
                                 .returns("""
                                         path\tdiskSizeHuman
-                                        output_large.parquet\t122.7 KiB
+                                        output_large.parquet\t126.2 KiB
                                         """);
                     });
 
@@ -903,8 +903,8 @@ public class CopyExportTest extends AbstractCairoTest {
                         assertQuery("select path, diskSizeHuman from export_files()  order by path")
                                 .noLeakCheck()
                                 .returns("path\tdiskSizeHuman\n" +
-                                        "price_1h" + File.separator + "2023-09.parquet\t922.0 B\n" +
-                                        "price_1h" + File.separator + "2023-11.parquet\t927.0 B\n");
+                                        "price_1h" + File.separator + "2023-09.parquet\t1022.0 B\n" +
+                                        "price_1h" + File.separator + "2023-11.parquet\t1.0 KiB\n");
                     });
 
             testCopyExport(stmt, test);
@@ -1264,7 +1264,7 @@ public class CopyExportTest extends AbstractCairoTest {
                                 .noLeakCheck()
                                 .returns("""
                                         path\tdiskSizeHuman
-                                        ❤️🍺.parquet\t639.0 B
+                                        ❤️🍺.parquet\t697.0 B
                                         """);
                     });
 
@@ -3225,7 +3225,7 @@ public class CopyExportTest extends AbstractCairoTest {
                                 .noLeakCheck()
                                 .returns("""
                                         path\tdiskSizeHuman
-                                        💗❤️.parquet\t543.0 B
+                                        💗❤️.parquet\t601.0 B
                                         """);
                     });
 
@@ -3399,7 +3399,7 @@ public class CopyExportTest extends AbstractCairoTest {
                                 .noLeakCheck()
                                 .returns("""
                                         path\tdiskSizeHuman
-                                        output13.parquet\t818.0 B
+                                        output13.parquet\t905.0 B
                                         """);
                     });
 
@@ -3416,8 +3416,8 @@ public class CopyExportTest extends AbstractCairoTest {
                                 .noLeakCheck()
                                 .returns("""
                                         path\tdiskSizeHuman
-                                        output13.parquet\t818.0 B
-                                        output14.parquet\t818.0 B
+                                        output13.parquet\t905.0 B
+                                        output14.parquet\t905.0 B
                                         """);
                     });
 
@@ -3436,8 +3436,8 @@ public class CopyExportTest extends AbstractCairoTest {
                                 .noLeakCheck()
                                 .returns("""
                                         path\tdiskSizeHuman
-                                        output13.parquet\t865.0 B
-                                        output14.parquet\t818.0 B
+                                        output13.parquet\t952.0 B
+                                        output14.parquet\t905.0 B
                                         """);
                     });
             execute("insert into test_table values (4, 'hello1', 3.5), (5, 'world1', 4.5)");
@@ -3454,9 +3454,9 @@ public class CopyExportTest extends AbstractCairoTest {
                         assertQuery("select path, diskSizeHuman from export_files() order by path")
                                 .noLeakCheck()
                                 .returns("path\tdiskSizeHuman\n" +
-                                        "output13.parquet\t865.0 B\n" +
-                                        "output13" + File.separator + "dir1" + File.separator + "dir2.parquet\t865.0 B\n" +
-                                        "output14.parquet\t818.0 B\n");
+                                        "output13.parquet\t952.0 B\n" +
+                                        "output13" + File.separator + "dir1" + File.separator + "dir2.parquet\t952.0 B\n" +
+                                        "output14.parquet\t905.0 B\n");
                     });
             testCopyExport(stmt3, test3);
 
@@ -3471,10 +3471,10 @@ public class CopyExportTest extends AbstractCairoTest {
                         assertQuery("select path, diskSizeHuman from export_files() order by path")
                                 .noLeakCheck()
                                 .returns("path\tdiskSizeHuman\n" +
-                                        "output13.parquet\t865.0 B\n" +
-                                        "output13" + File.separator + "dir1" + File.separator + "dir2.parquet\t865.0 B\n" +
-                                        "output14.parquet\t818.0 B\n" +
-                                        "output15" + File.separator + "dir1" + File.separator + "dir2.parquet\t865.0 B\n");
+                                        "output13.parquet\t952.0 B\n" +
+                                        "output13" + File.separator + "dir1" + File.separator + "dir2.parquet\t952.0 B\n" +
+                                        "output14.parquet\t905.0 B\n" +
+                                        "output15" + File.separator + "dir1" + File.separator + "dir2.parquet\t952.0 B\n");
                     });
             testCopyExport(stmt4, test4);
         });
@@ -3503,10 +3503,10 @@ public class CopyExportTest extends AbstractCairoTest {
                     assertEventually(() -> assertQuery("select path, diskSizeHuman from export_files() order by path")
                             .noLeakCheck()
                             .returns("path\tdiskSizeHuman\n" +
-                                    "output13.parquet\t818.0 B\n" +
-                                    "output13" + File.separator + "dir1" + File.separator + "dir2.parquet\t866.0 B\n" +
-                                    "output14.parquet\t819.0 B\n" +
-                                    "output15" + File.separator + "dir1" + File.separator + "dir2.parquet\t819.0 B\n"));
+                                    "output13.parquet\t905.0 B\n" +
+                                    "output13" + File.separator + "dir1" + File.separator + "dir2.parquet\t953.0 B\n" +
+                                    "output14.parquet\t906.0 B\n" +
+                                    "output15" + File.separator + "dir1" + File.separator + "dir2.parquet\t906.0 B\n"));
             testCopyExport(stmt, test4, true, 4);
         });
     }
@@ -3992,14 +3992,6 @@ public class CopyExportTest extends AbstractCairoTest {
         });
     }
 
-    private void assertParquetMatchesQuery(String query, String parquetPath) throws Exception {
-        StringSink expectedSink = new StringSink();
-        StringSink actualSink = new StringSink();
-        TestUtils.printSql(engine, sqlExecutionContext, query, expectedSink);
-        TestUtils.printSql(engine, sqlExecutionContext, "SELECT * FROM read_parquet('" + parquetPath + "')", actualSink);
-        TestUtils.assertEquals(expectedSink, actualSink);
-    }
-
     // Helper methods for copy export operations
     private static void runAndFetchCopyExportID(String copySql, SqlExecutionContext sqlExecutionContext) throws SqlException {
         try (
@@ -4055,6 +4047,14 @@ public class CopyExportTest extends AbstractCairoTest {
 
     private void assertEventually(TestUtils.EventualCode assertion) throws Exception {
         TestUtils.assertEventually(assertion, 5, exceptionTypesToCatch);
+    }
+
+    private void assertParquetMatchesQuery(String query, String parquetPath) throws Exception {
+        StringSink expectedSink = new StringSink();
+        StringSink actualSink = new StringSink();
+        TestUtils.printSql(engine, sqlExecutionContext, query, expectedSink);
+        TestUtils.printSql(engine, sqlExecutionContext, "SELECT * FROM read_parquet('" + parquetPath + "')", actualSink);
+        TestUtils.assertEquals(expectedSink, actualSink);
     }
 
     private boolean exportFileExists(String fileName) {

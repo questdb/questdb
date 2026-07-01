@@ -52,6 +52,10 @@ public class O3PartitionTask {
     private long partitionTimestamp;
     private long partitionUpdateSinkAddr;
     private Path pathToTable;
+    // WAL apply-time seqTxn that scheduled this task. Threaded into the
+    // parquet writer so the produced _pm's SEQ_TXN section identifies
+    // the WAL transaction that produced it.
+    private long seqTxn;
     private long sortedTimestampsAddr;
     private long srcDataMax;
     private long srcNameTxn;
@@ -121,6 +125,10 @@ public class O3PartitionTask {
         return pathToTable;
     }
 
+    public long getSeqTxn() {
+        return seqTxn;
+    }
+
     public long getSortedTimestampsAddr() {
         return sortedTimestampsAddr;
     }
@@ -176,6 +184,7 @@ public class O3PartitionTask {
             long srcNameTxn,
             boolean last,
             long txn,
+            long seqTxn,
             long sortedTimestampsAddr,
             TableWriter tableWriter,
             AtomicInteger columnCounter,
@@ -190,6 +199,7 @@ public class O3PartitionTask {
     ) {
         this.pathToTable = path;
         this.txn = txn;
+        this.seqTxn = seqTxn;
         this.srcOooLo = srcOooLo;
         this.srcOooHi = srcOooHi;
         this.srcOooMax = srcOooMax;
