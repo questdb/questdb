@@ -34,6 +34,9 @@ import io.questdb.cairo.lv.LiveViewInMemoryTier;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
+import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
@@ -77,6 +80,46 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
                 tier.publishSwap(1 - tier.getPublishedIdx());
             }
         });
+    }
+
+    @Test
+    public void testColumnTypeSupportGate() {
+        // The tier stores every persisted (storable) column type: fixed-width, SYMBOL,
+        // the variable-length STRING / BINARY / VARCHAR / ARRAY types, the wide
+        // LONG256 / LONG128 / UUID, and every DECIMAL width. Only a non-persisted /
+        // internal type - which an LV output can never carry - is rejected, so the
+        // disk-only fallback the gate guards is now defensive. This unit check is the
+        // replacement for the old integration tests that pinned the disk-only path on
+        // a DECIMAL output column (now stored, so no persisted type disables the tier).
+        // No native memory is allocated, so assertMemoryLeak is unnecessary.
+        int[] supported = {
+                ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.SHORT, ColumnType.CHAR,
+                ColumnType.INT, ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP,
+                ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.STRING, ColumnType.SYMBOL,
+                ColumnType.LONG256, ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT,
+                ColumnType.GEOLONG, ColumnType.BINARY, ColumnType.UUID, ColumnType.LONG128,
+                ColumnType.IPv4, ColumnType.VARCHAR, ColumnType.encodeArrayType(ColumnType.DOUBLE, 1),
+                ColumnType.getDecimalType(2, 0), ColumnType.getDecimalType(4, 1),
+                ColumnType.getDecimalType(9, 3), ColumnType.getDecimalType(18, 2),
+                ColumnType.getDecimalType(38, 6), ColumnType.getDecimalType(60, 0),
+        };
+        IntList allSupported = new IntList(supported.length);
+        for (int type : supported) {
+            Assert.assertTrue(
+                    "tier must store " + ColumnType.nameOf(type),
+                    LiveViewInMemoryBuffer.isColumnTypeSupported(type)
+            );
+            allSupported.add(type);
+        }
+        Assert.assertTrue(LiveViewInMemoryBuffer.areColumnTypesSupported(allSupported));
+
+        // A non-persisted type (INTERVAL) an LV output can never carry is the only kind
+        // the gate rejects; areColumnTypesSupported turns false if any column is one.
+        Assert.assertFalse(LiveViewInMemoryBuffer.isColumnTypeSupported(ColumnType.INTERVAL));
+        IntList withUnsupported = new IntList(2);
+        withUnsupported.add(ColumnType.TIMESTAMP);
+        withUnsupported.add(ColumnType.INTERVAL);
+        Assert.assertFalse(LiveViewInMemoryBuffer.areColumnTypesSupported(withUnsupported));
     }
 
     @Test
@@ -927,6 +970,151 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testDecimalRoundTripThroughTier() throws Exception {
+        // Write every DECIMAL width - DECIMAL8/16/32/64 in place at their natural byte
+        // stride, the wide DECIMAL128 / DECIMAL256 at an absolute offset (row << 4 /
+        // row << 5) - including a NULL row carrying each width's null sentinel, then
+        // read them back through the buffer getters after a reader pins the published
+        // slot. The aux region stays the NullMemory stub; the value lives wholly in
+        // dataMem.
+        assertMemoryLeak(() -> {
+            IntList types = decimalSchema();
+            try (LiveViewInMemoryTier tier = new LiveViewInMemoryTier(types, 0, PAGE_SIZE)) {
+                int writeIdx = 1 - tier.getPublishedIdx();
+                LiveViewInMemoryBuffer slot = tier.tryAcquireWrite(writeIdx);
+                Assert.assertNotNull(slot);
+                DecimalRecord rec = new DecimalRecord();
+
+                // row 0: normal distinct values.
+                rec.of(1_000_000L, (byte) 0x12, (short) 0x1234, 0x1234_5678, 0x1234_5678_9ABC_DEF0L,
+                        0x1111L, 0x2222L, 0x3333L, 0x4444L, 0x5555L, 0x6666L);
+                slot.copyRowFromRecord(rec, 0);
+                // row 1: NULL for every decimal width.
+                rec.of(2_000_000L, Decimals.DECIMAL8_NULL, Decimals.DECIMAL16_NULL, Decimals.DECIMAL32_NULL,
+                        Decimals.DECIMAL64_NULL, Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL,
+                        Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL, Decimals.DECIMAL256_LH_NULL,
+                        Decimals.DECIMAL256_LL_NULL);
+                slot.copyRowFromRecord(rec, 1);
+                // row 2: distinct extremes, no cross-row bleed.
+                rec.of(3_000_000L, (byte) -7, (short) -12_345, Integer.MAX_VALUE, 987_654_321_012L,
+                        Long.MAX_VALUE, -1L, -1L, Long.MAX_VALUE, 7L, 100L);
+                slot.copyRowFromRecord(rec, 2);
+                slot.setRowCount(3);
+                tier.publishSwap(writeIdx);
+
+                int pin = tier.acquireRead();
+                Assert.assertEquals(writeIdx, pin);
+                LiveViewInMemoryBuffer r = tier.getSlot(pin);
+                Assert.assertEquals(3, r.rowCount());
+
+                Decimal128 d128 = new Decimal128();
+                Decimal256 d256 = new Decimal256();
+
+                // row 0.
+                Assert.assertEquals((byte) 0x12, r.getDecimal8(0, 1));
+                Assert.assertEquals((short) 0x1234, r.getDecimal16(0, 2));
+                Assert.assertEquals(0x1234_5678, r.getDecimal32(0, 3));
+                Assert.assertEquals(0x1234_5678_9ABC_DEF0L, r.getDecimal64(0, 4));
+                r.getDecimal128(0, 5, d128);
+                Assert.assertEquals(0x1111L, d128.getHigh());
+                Assert.assertEquals(0x2222L, d128.getLow());
+                r.getDecimal256(0, 6, d256);
+                assertDecimal256Equals(0x3333L, 0x4444L, 0x5555L, 0x6666L, d256);
+
+                // row 1: NULL across the board (per-width sentinels + isNull sinks).
+                Assert.assertEquals(Decimals.DECIMAL8_NULL, r.getDecimal8(1, 1));
+                Assert.assertEquals(Decimals.DECIMAL16_NULL, r.getDecimal16(1, 2));
+                Assert.assertEquals(Decimals.DECIMAL32_NULL, r.getDecimal32(1, 3));
+                Assert.assertEquals(Decimals.DECIMAL64_NULL, r.getDecimal64(1, 4));
+                r.getDecimal128(1, 5, d128);
+                Assert.assertTrue(d128.isNull());
+                r.getDecimal256(1, 6, d256);
+                Assert.assertTrue(d256.isNull());
+
+                // row 2: distinct extremes, no cross-row bleed.
+                Assert.assertEquals((byte) -7, r.getDecimal8(2, 1));
+                Assert.assertEquals((short) -12_345, r.getDecimal16(2, 2));
+                Assert.assertEquals(Integer.MAX_VALUE, r.getDecimal32(2, 3));
+                Assert.assertEquals(987_654_321_012L, r.getDecimal64(2, 4));
+                r.getDecimal128(2, 5, d128);
+                Assert.assertEquals(Long.MAX_VALUE, d128.getHigh());
+                Assert.assertEquals(-1L, d128.getLow());
+                r.getDecimal256(2, 6, d256);
+                assertDecimal256Equals(-1L, Long.MAX_VALUE, 7L, 100L, d256);
+
+                tier.releaseRead(pin);
+            }
+        });
+    }
+
+    @Test
+    public void testDecimalSlowPathSwapPreservesValues() throws Exception {
+        // The slow-path swap rebuilds a slot via copyRowFrom (buffer -> buffer),
+        // re-writing each retained decimal value at its absolute offset. Skipping rows
+        // (eviction) keeps the destination dense, so every DECIMAL width round-trips
+        // across the normal / null cases.
+        assertMemoryLeak(() -> {
+            IntList types = decimalSchema();
+            LiveViewInMemoryBuffer src = new LiveViewInMemoryBuffer(types, 0, PAGE_SIZE);
+            LiveViewInMemoryBuffer dst = new LiveViewInMemoryBuffer(types, 0, PAGE_SIZE);
+            try {
+                DecimalRecord rec = new DecimalRecord();
+                final int rows = 6;
+                for (int r = 0; r < rows; r++) {
+                    if (r % 3 == 0) {
+                        rec.of((r + 1) * 1_000_000L, Decimals.DECIMAL8_NULL, Decimals.DECIMAL16_NULL,
+                                Decimals.DECIMAL32_NULL, Decimals.DECIMAL64_NULL, Decimals.DECIMAL128_HI_NULL,
+                                Decimals.DECIMAL128_LO_NULL, Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL,
+                                Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL);
+                    } else {
+                        rec.of((r + 1) * 1_000_000L, (byte) (0x10 + r), (short) (0x2000 + r), 0x3000_0000 + r,
+                                0x4000_0000_0000_0000L + r, 0x50L + r, 0x60L + r, 0x70L + r, 0x80L + r, 0x90L + r, 0xA0L + r);
+                    }
+                    src.copyRowFromRecord(rec, r);
+                }
+                src.setRowCount(rows);
+
+                // Retain only the odd src rows, densely, into dst (mimics eviction).
+                long dstRow = 0;
+                for (int r = 1; r < rows; r += 2) {
+                    dst.copyRowFrom(src, r, dstRow);
+                    dstRow++;
+                }
+                dst.setRowCount(dstRow);
+                Assert.assertEquals(3, dst.rowCount());
+
+                Decimal128 d128 = new Decimal128();
+                Decimal256 d256 = new Decimal256();
+                dstRow = 0;
+                for (int r = 1; r < rows; r += 2) {
+                    if (r % 3 == 0) {
+                        Assert.assertEquals(Decimals.DECIMAL8_NULL, dst.getDecimal8(dstRow, 1));
+                        Assert.assertEquals(Decimals.DECIMAL64_NULL, dst.getDecimal64(dstRow, 4));
+                        dst.getDecimal128(dstRow, 5, d128);
+                        Assert.assertTrue(d128.isNull());
+                        dst.getDecimal256(dstRow, 6, d256);
+                        Assert.assertTrue(d256.isNull());
+                    } else {
+                        Assert.assertEquals((byte) (0x10 + r), dst.getDecimal8(dstRow, 1));
+                        Assert.assertEquals((short) (0x2000 + r), dst.getDecimal16(dstRow, 2));
+                        Assert.assertEquals(0x3000_0000 + r, dst.getDecimal32(dstRow, 3));
+                        Assert.assertEquals(0x4000_0000_0000_0000L + r, dst.getDecimal64(dstRow, 4));
+                        dst.getDecimal128(dstRow, 5, d128);
+                        Assert.assertEquals(0x50L + r, d128.getHigh());
+                        Assert.assertEquals(0x60L + r, d128.getLow());
+                        dst.getDecimal256(dstRow, 6, d256);
+                        assertDecimal256Equals(0x70L + r, 0x80L + r, 0x90L + r, 0xA0L + r, d256);
+                    }
+                    dstRow++;
+                }
+            } finally {
+                src.close();
+                dst.close();
+            }
+        });
+    }
+
     private static IntList array1d2dSchema() {
         IntList types = new IntList(3);
         types.add(ColumnType.TIMESTAMP);
@@ -957,6 +1145,13 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
         for (int i = 0; i < expected.length; i++) {
             Assert.assertEquals("byte " + i, expected[i], actual.byteAt(i));
         }
+    }
+
+    private static void assertDecimal256Equals(long hh, long hl, long lh, long ll, Decimal256 actual) {
+        Assert.assertEquals("hh", hh, actual.getHh());
+        Assert.assertEquals("hl", hl, actual.getHl());
+        Assert.assertEquals("lh", lh, actual.getLh());
+        Assert.assertEquals("ll", ll, actual.getLl());
     }
 
     private static void assertLong256Equals(long l0, long l1, long l2, long l3, Long256 actual) {
@@ -1041,6 +1236,21 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
     // TIMESTAMP + the three wide fixed-width types Phase 4 added: LONG256 (col 1),
     // UUID (col 2) and LONG128 (col 3). UUID and LONG128 share the same 16-byte
     // lo/hi storage and accessors but are distinct column types.
+    // Schema covering all six DECIMAL widths (one column each), keyed by the
+    // precision that maps to each storage tag: DECIMAL8 (<=2), DECIMAL16 (<=4),
+    // DECIMAL32 (<=9), DECIMAL64 (<=18), DECIMAL128 (<=38), DECIMAL256 (<=76).
+    private static IntList decimalSchema() {
+        IntList types = new IntList(7);
+        types.add(ColumnType.TIMESTAMP);
+        types.add(ColumnType.getDecimalType(2, 0));   // DECIMAL8
+        types.add(ColumnType.getDecimalType(4, 1));   // DECIMAL16
+        types.add(ColumnType.getDecimalType(9, 3));   // DECIMAL32
+        types.add(ColumnType.getDecimalType(18, 2));  // DECIMAL64
+        types.add(ColumnType.getDecimalType(38, 6));  // DECIMAL128
+        types.add(ColumnType.getDecimalType(60, 0));  // DECIMAL256
+        return types;
+    }
+
     private static IntList wideFixedWidthSchema() {
         IntList types = new IntList(4);
         types.add(ColumnType.TIMESTAMP);
@@ -1082,6 +1292,86 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
             this.ts = ts;
             this.arr1d = arr1d;
             this.arr2d = arr2d;
+        }
+    }
+
+    // Minimal single-row Record stub feeding copyRowFromRecord a TIMESTAMP (index 0)
+    // and one column of each DECIMAL width (indexes 1..6): DECIMAL8, DECIMAL16,
+    // DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256. The wide 128/256 values are stored
+    // as their raw limbs and re-materialised into the caller's sink on read. Rebind
+    // per row via of().
+    private static final class DecimalRecord implements Record {
+        private long d128Hi;
+        private long d128Lo;
+        private short d16;
+        private long d256Hh;
+        private long d256Hl;
+        private long d256Lh;
+        private long d256Ll;
+        private int d32;
+        private long d64;
+        private byte d8;
+        private long ts;
+
+        @Override
+        public void getDecimal128(int col, Decimal128 sink) {
+            sink.ofRaw(d128Hi, d128Lo);
+        }
+
+        @Override
+        public short getDecimal16(int col) {
+            return d16;
+        }
+
+        @Override
+        public void getDecimal256(int col, Decimal256 sink) {
+            sink.ofRaw(d256Hh, d256Hl, d256Lh, d256Ll);
+        }
+
+        @Override
+        public int getDecimal32(int col) {
+            return d32;
+        }
+
+        @Override
+        public long getDecimal64(int col) {
+            return d64;
+        }
+
+        @Override
+        public byte getDecimal8(int col) {
+            return d8;
+        }
+
+        @Override
+        public long getTimestamp(int col) {
+            return ts;
+        }
+
+        void of(
+                long ts,
+                byte d8,
+                short d16,
+                int d32,
+                long d64,
+                long d128Hi,
+                long d128Lo,
+                long d256Hh,
+                long d256Hl,
+                long d256Lh,
+                long d256Ll
+        ) {
+            this.ts = ts;
+            this.d8 = d8;
+            this.d16 = d16;
+            this.d32 = d32;
+            this.d64 = d64;
+            this.d128Hi = d128Hi;
+            this.d128Lo = d128Lo;
+            this.d256Hh = d256Hh;
+            this.d256Hl = d256Hl;
+            this.d256Lh = d256Lh;
+            this.d256Ll = d256Ll;
         }
     }
 

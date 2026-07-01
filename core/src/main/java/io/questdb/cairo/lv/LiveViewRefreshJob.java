@@ -74,6 +74,8 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -199,6 +201,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // buffer, so a single instance is safe to reuse across rows and columns. Holds
     // no native memory of its own.
     private final BorrowedArray stagingArrayView = new BorrowedArray();
+    // Reusable wide-decimal read sinks for the O3-rebuild disk stager
+    // (copyReaderRowToStaging): each holds one DECIMAL128 / DECIMAL256 value decoded
+    // from the LV table reader column, immediately re-written into the staging
+    // buffer, so a single instance is safe to reuse across rows and columns.
+    private final Decimal128 stagingDecimal128 = new Decimal128();
+    private final Decimal256 stagingDecimal256 = new Decimal256();
     // Per-worker staging buffer reused across cycles. Allocated lazily on the
     // first refresh of an LV whose output schema is fully supported by the
     // in-mem tier; reshaped (freed + reallocated) if the next LV's schema
@@ -525,8 +533,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
         // Decide whether the in-memory tier can be populated for this LV. Every
         // output column must be a type the tier can store (fixed-width, SYMBOL,
-        // STRING, BINARY, VARCHAR, ARRAY); an unsupported type (e.g. INTERVAL, DECIMAL)
-        // falls back to disk-only. The staging buffer is reshaped on schema-mismatch;
+        // STRING, BINARY, VARCHAR, ARRAY); an unsupported type (a non-persisted type
+        // such as INTERVAL) falls back to disk-only. The staging buffer is reshaped on schema-mismatch;
         // the LV's tier is lazily allocated on first use.
         RecordMetadata outMetadata = windowFactory.getMetadata();
         int cursorTimestampIndex = outMetadata.getTimestampIndex();
@@ -613,8 +621,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             instance.setLastProcessedSeqTxn(advanceTo);
             // This path applies every cycle, so appliedWatermark tracks
             // lastProcessed and the in-mem tier stays a subset of disk (no
-            // un-flushed lead). It serves lead-ineligible LVs (an unsupported output
-            // column type such as INTERVAL / DECIMAL, or no designated timestamp);
+            // un-flushed lead). It serves lead-ineligible LVs (a non-persisted output
+            // column type such as INTERVAL, or no designated timestamp);
             // lead-eligible LVs take the refresh/flush split instead.
             instance.setAppliedWatermark(advanceTo);
             boolean lvConsumedPersisted = false;
@@ -2808,7 +2816,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * for the upcoming cycle. Returns {@code true} when both are usable for
      * this LV (every output column type is one the tier can store - fixed-width,
      * SYMBOL, STRING, BINARY, VARCHAR, ARRAY); {@code false} when any column type
-     * is unsupported (e.g. INTERVAL, DECIMAL), in which case the cycle still writes to
+     * is unsupported (a non-persisted type such as INTERVAL), in which case the cycle still writes to
      * the on-disk tier but the in-mem tier stays empty / unallocated and reads fall
      * back to {@code TableReader}.
      * <p>
@@ -2823,7 +2831,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * (fixed-width, SYMBOL, STRING, BINARY, VARCHAR, ARRAY). SYMBOL columns are
      * eligible: the lead drain eager-interns them into the tier's symbol cache
      * (LV-table-consistent ids), so the read path resolves the lead's symbols from
-     * RAM. Ineligible LVs (an unsupported column type such as INTERVAL / DECIMAL, or no
+     * RAM. Ineligible LVs (a non-persisted output column type such as INTERVAL, or no
      * designated timestamp) keep the tier a strict subset of disk: the refresh worker
      * applies every cycle for them. Compiles the SELECT on the first call if needed
      * (cached for the LV's lifetime).
@@ -2854,9 +2862,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             tierColumnTypes.add(outMetadata.getColumnType(i));
         }
         if (!LiveViewInMemoryBuffer.areColumnTypesSupported(tierColumnTypes)) {
-            // LV output schema contains a column type the tier cannot store (e.g.
-            // INTERVAL, DECIMAL); skip the in-mem tier population for this LV. The
-            // cursor reads disk-only via TableReader.
+            // LV output schema contains a column type the tier cannot store (a
+            // non-persisted type such as INTERVAL); skip the in-mem tier population
+            // for this LV. The cursor reads disk-only via TableReader.
             return false;
         }
         long pageSize = engine.getConfiguration().getLiveViewInMemoryBufferInitialBytes();
@@ -3146,8 +3154,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private void rebuildInMemoryTier(LiveViewInstance instance) {
         LiveViewInMemoryTier tier = instance.getInMemoryTier();
         if (tier == null) {
-            // An unsupported output column type (e.g. INTERVAL, DECIMAL) never allocates
-            // the tier.
+            // An unsupported output column type (a non-persisted type such as
+            // INTERVAL) never allocates the tier.
             return;
         }
         // The O3 replay re-sequenced the on-disk symbol ids; the failed in-order
@@ -3328,6 +3336,32 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             col.getLong(partitionRow << 4),
                             col.getLong((partitionRow << 4) + Long.BYTES)
                     );
+                    break;
+                case ColumnType.DECIMAL8:
+                    stagingBuffer.putByte(dstRow, c, col.getByte(partitionRow));
+                    break;
+                case ColumnType.DECIMAL16:
+                    stagingBuffer.putShort(dstRow, c, col.getShort(partitionRow << 1));
+                    break;
+                case ColumnType.DECIMAL32:
+                    stagingBuffer.putInt(dstRow, c, col.getInt(partitionRow << 2));
+                    break;
+                case ColumnType.DECIMAL64:
+                    stagingBuffer.putLong(dstRow, c, col.getLong(partitionRow << 3));
+                    break;
+                case ColumnType.DECIMAL128:
+                    // 16-byte fixed-width: high 64 bits at row << 4, low at + 8. Decode
+                    // into the reusable sink, copied into the staging buffer before the
+                    // next read.
+                    col.getDecimal128(partitionRow << 4, stagingDecimal128);
+                    stagingBuffer.putDecimal128(dstRow, c, stagingDecimal128);
+                    break;
+                case ColumnType.DECIMAL256:
+                    // 32-byte fixed-width: four 64-bit limbs at row << 5. Decode into
+                    // the reusable sink, copied into the staging buffer before the next
+                    // read.
+                    col.getDecimal256(partitionRow << 5, stagingDecimal256);
+                    stagingBuffer.putDecimal256(dstRow, c, stagingDecimal256);
                     break;
                 case ColumnType.STRING: {
                     // STRING .d/.i layout: aux holds the per-row 8-byte start offset

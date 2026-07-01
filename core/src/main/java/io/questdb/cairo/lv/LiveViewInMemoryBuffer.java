@@ -34,6 +34,8 @@ import io.questdb.cairo.vm.MemoryCARWImpl;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.cairo.vm.api.NullMemory;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.MemoryTag;
@@ -116,6 +118,13 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
     // writer sentinel just before publish.
     private final int[] newSymbolMaxIds;
     private final int timestampColumnIndex;
+    // Write-path scratch sinks for the wide decimals, lazily allocated on the first
+    // DECIMAL128 / DECIMAL256 row the writer copies (null for a buffer with no such
+    // column). Only ever touched by the single refresh-worker writer in
+    // copyRowFromRecord / copyRowFrom; the read getters fill a caller-supplied sink,
+    // so no reader ever races these.
+    private Decimal128 decimal128;
+    private Decimal256 decimal256;
     // Number of trailing rows in this slot that are NOT yet on the LV's on-disk
     // tier (the un-flushed lead). Rows [rowCount - leadRowCount, rowCount) are
     // the lead; rows [0, rowCount - leadRowCount) are the overlap (also on disk).
@@ -190,11 +199,12 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
 
     /**
      * Returns true iff every column type in {@code columnTypes} is supported by
-     * the in-memory tier. Fixed-width types (including LONG256, LONG128 and UUID),
-     * SYMBOL (stored as INT), and every variable-length type - STRING, BINARY,
-     * VARCHAR and ARRAY - are supported. Used by {@code LiveViewRefreshJob} to decide
-     * whether to populate the tier for a given LV; unsupported schemas (e.g. INTERVAL,
-     * DECIMAL) fall back to disk-only reads.
+     * the in-memory tier. Fixed-width types (including LONG256, LONG128, UUID and
+     * every DECIMAL width), SYMBOL (stored as INT), and every variable-length type -
+     * STRING, BINARY, VARCHAR and ARRAY - are supported. Used by
+     * {@code LiveViewRefreshJob} to decide whether to populate the tier for a given
+     * LV; unsupported schemas (e.g. INTERVAL, a non-persisted type an LV cannot
+     * project) fall back to disk-only reads.
      */
     public static boolean areColumnTypesSupported(IntList columnTypes) {
         for (int i = 0, n = columnTypes.size(); i < n; i++) {
@@ -210,8 +220,10 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
      * Returns true iff a single column of {@code columnType} is supported by the
      * in-memory tier. Tags the type before the probe, so callers may pass a full
      * column type. Fixed-width types are stored in place at {@code row << shift}
-     * (LONG256 at {@code row << 5}, LONG128 / UUID at {@code row << 4}, each with the
-     * aux region parked at the {@link NullMemory} stub); SYMBOL is stored as INT,
+     * (LONG256 / DECIMAL256 at {@code row << 5}, LONG128 / UUID / DECIMAL128 at
+     * {@code row << 4}, the narrower DECIMAL8 / DECIMAL16 / DECIMAL32 / DECIMAL64 at
+     * their natural byte stride, each with the aux region parked at the
+     * {@link NullMemory} stub); SYMBOL is stored as INT,
      * with the refresh worker eager-interning the value into the LV table's id space
      * (see {@link LiveViewSymbolCache}) so the read path resolves it against the disk
      * reader's symbol table (committed values) or the tier's symbol cache (values new
@@ -303,6 +315,22 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
         return ba;
     }
 
+    // Lazily allocates the writer's DECIMAL128 scratch sink (see the field javadoc).
+    private Decimal128 decimal128() {
+        if (decimal128 == null) {
+            decimal128 = new Decimal128();
+        }
+        return decimal128;
+    }
+
+    // Lazily allocates the writer's DECIMAL256 scratch sink (see the field javadoc).
+    private Decimal256 decimal256() {
+        if (decimal256 == null) {
+            decimal256 = new Decimal256();
+        }
+        return decimal256;
+    }
+
     private static boolean isTierSupported(int type) {
         switch (type) {
             case ColumnType.LONG:
@@ -324,6 +352,12 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
             case ColumnType.LONG256:
             case ColumnType.LONG128:
             case ColumnType.UUID:
+            case ColumnType.DECIMAL8:
+            case ColumnType.DECIMAL16:
+            case ColumnType.DECIMAL32:
+            case ColumnType.DECIMAL64:
+            case ColumnType.DECIMAL128:
+            case ColumnType.DECIMAL256:
             case ColumnType.STRING:
             case ColumnType.BINARY:
             case ColumnType.VARCHAR:
@@ -385,6 +419,30 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
                 case ColumnType.UUID:
                     putLong128(dstRow, c, src.getLong128Lo(srcRow, c), src.getLong128Hi(srcRow, c));
                     break;
+                case ColumnType.DECIMAL8:
+                    putByte(dstRow, c, src.getDecimal8(srcRow, c));
+                    break;
+                case ColumnType.DECIMAL16:
+                    putShort(dstRow, c, src.getDecimal16(srcRow, c));
+                    break;
+                case ColumnType.DECIMAL32:
+                    putInt(dstRow, c, src.getDecimal32(srcRow, c));
+                    break;
+                case ColumnType.DECIMAL64:
+                    putLong(dstRow, c, src.getDecimal64(srcRow, c));
+                    break;
+                case ColumnType.DECIMAL128: {
+                    final Decimal128 d = decimal128();
+                    src.getDecimal128(srcRow, c, d);
+                    putDecimal128(dstRow, c, d);
+                    break;
+                }
+                case ColumnType.DECIMAL256: {
+                    final Decimal256 d = decimal256();
+                    src.getDecimal256(srcRow, c, d);
+                    putDecimal256(dstRow, c, d);
+                    break;
+                }
                 case ColumnType.STRING:
                     appendStr(c, dstRow, src.getStrA(srcRow, c));
                     break;
@@ -467,6 +525,30 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
                 case ColumnType.UUID:
                     putLong128(dstRow, c, record.getLong128Lo(c), record.getLong128Hi(c));
                     break;
+                case ColumnType.DECIMAL8:
+                    putByte(dstRow, c, record.getDecimal8(c));
+                    break;
+                case ColumnType.DECIMAL16:
+                    putShort(dstRow, c, record.getDecimal16(c));
+                    break;
+                case ColumnType.DECIMAL32:
+                    putInt(dstRow, c, record.getDecimal32(c));
+                    break;
+                case ColumnType.DECIMAL64:
+                    putLong(dstRow, c, record.getDecimal64(c));
+                    break;
+                case ColumnType.DECIMAL128: {
+                    final Decimal128 d = decimal128();
+                    record.getDecimal128(c, d);
+                    putDecimal128(dstRow, c, d);
+                    break;
+                }
+                case ColumnType.DECIMAL256: {
+                    final Decimal256 d = decimal256();
+                    record.getDecimal256(c, d);
+                    putDecimal256(dstRow, c, d);
+                    break;
+                }
                 case ColumnType.STRING:
                     appendStr(c, dstRow, record.getStrA(c));
                     break;
@@ -548,6 +630,44 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
 
     public byte getByte(long row, int col) {
         return dataMem.getQuick(col).getByte(row);
+    }
+
+    // Resolves the wide DECIMAL128 value (16 bytes at the absolute offset row << 4,
+    // high 64 bits first, low at + 8) into the caller-supplied sink, mirroring the
+    // on-disk fixed-width layout. A stored null decodes back to the sink's null.
+    public void getDecimal128(long row, int col, Decimal128 sink) {
+        dataMem.getQuick(col).getDecimal128(row << 4, sink);
+    }
+
+    // Resolves a DECIMAL16 value (2 bytes at the absolute offset row << 1). A stored
+    // null rides back as the DECIMAL16 null sentinel.
+    public short getDecimal16(long row, int col) {
+        return dataMem.getQuick(col).getDecimal16(row << 1);
+    }
+
+    // Resolves the wide DECIMAL256 value (32 bytes at the absolute offset row << 5)
+    // into the caller-supplied sink, mirroring the on-disk fixed-width layout. A
+    // stored null decodes back to the sink's null.
+    public void getDecimal256(long row, int col, Decimal256 sink) {
+        dataMem.getQuick(col).getDecimal256(row << 5, sink);
+    }
+
+    // Resolves a DECIMAL32 value (4 bytes at the absolute offset row << 2). A stored
+    // null rides back as the DECIMAL32 null sentinel.
+    public int getDecimal32(long row, int col) {
+        return dataMem.getQuick(col).getDecimal32(row << 2);
+    }
+
+    // Resolves a DECIMAL64 value (8 bytes at the absolute offset row << 3). A stored
+    // null rides back as the DECIMAL64 null sentinel.
+    public long getDecimal64(long row, int col) {
+        return dataMem.getQuick(col).getDecimal64(row << 3);
+    }
+
+    // Resolves a DECIMAL8 value (1 byte at the absolute offset row). A stored null
+    // rides back as the DECIMAL8 null sentinel.
+    public byte getDecimal8(long row, int col) {
+        return dataMem.getQuick(col).getDecimal8(row);
     }
 
     public double getDouble(long row, int col) {
@@ -667,6 +787,20 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
 
     public void putByte(long row, int col, byte value) {
         dataMem.getQuick(col).putByte(row, value);
+    }
+
+    // Stores a DECIMAL128 value (high 64 bits + low 64 bits) at the absolute offset
+    // row << 4, the 16-byte fixed-width layout getDecimal128 reads back. The aux
+    // region stays the NullMemory stub.
+    public void putDecimal128(long row, int col, Decimal128 value) {
+        dataMem.getQuick(col).putDecimal128(row << 4, value.getHigh(), value.getLow());
+    }
+
+    // Stores a DECIMAL256 value (four 64-bit limbs) at the absolute offset row << 5,
+    // the 32-byte fixed-width layout getDecimal256 reads back. The aux region stays
+    // the NullMemory stub.
+    public void putDecimal256(long row, int col, Decimal256 value) {
+        dataMem.getQuick(col).putDecimal256(row << 5, value.getHh(), value.getHl(), value.getLh(), value.getLl());
     }
 
     public void putDouble(long row, int col, double value) {

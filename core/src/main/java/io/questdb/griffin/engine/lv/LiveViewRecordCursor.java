@@ -40,6 +40,8 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.engine.table.PageFrameRecordCursor;
 import io.questdb.griffin.engine.table.TablePageFrameCursor;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -541,6 +543,44 @@ public class LiveViewRecordCursor implements RecordCursor {
         @Override
         public long getDate(int col) {
             return inMemMode ? buffer.getLong(bufferRow, col) : super.getDate(col);
+        }
+
+        @Override
+        public void getDecimal128(int col, Decimal128 sink) {
+            if (inMemMode) {
+                buffer.getDecimal128(bufferRow, col, sink);
+            } else {
+                super.getDecimal128(col, sink);
+            }
+        }
+
+        @Override
+        public short getDecimal16(int col) {
+            return inMemMode ? buffer.getDecimal16(bufferRow, col) : super.getDecimal16(col);
+        }
+
+        @Override
+        public void getDecimal256(int col, Decimal256 sink) {
+            if (inMemMode) {
+                buffer.getDecimal256(bufferRow, col, sink);
+            } else {
+                super.getDecimal256(col, sink);
+            }
+        }
+
+        @Override
+        public int getDecimal32(int col) {
+            return inMemMode ? buffer.getDecimal32(bufferRow, col) : super.getDecimal32(col);
+        }
+
+        @Override
+        public long getDecimal64(int col) {
+            return inMemMode ? buffer.getDecimal64(bufferRow, col) : super.getDecimal64(col);
+        }
+
+        @Override
+        public byte getDecimal8(int col) {
+            return inMemMode ? buffer.getDecimal8(bufferRow, col) : super.getDecimal8(col);
         }
 
         @Override

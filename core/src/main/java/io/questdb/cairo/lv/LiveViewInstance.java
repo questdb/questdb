@@ -194,7 +194,7 @@ public class LiveViewInstance implements QuietCloseable {
     // VARCHAR / ARRAY types) and the output carries a designated timestamp, so the tier
     // can hold an un-flushed lead the refresh worker serves ahead of disk. False keeps
     // the tier a strict subset of disk - an output column of a type the tier does not
-    // store (e.g. INTERVAL, DECIMAL). Computed once on the first refresh cycle after the
+    // store (a non-persisted type such as INTERVAL). Computed once on the first refresh cycle after the
     // compiled factory is ready, then cached. Volatile so the catalogue thread can read
     // it without extra synchronisation; mutated only under the refresh latch.
     private volatile boolean leadEligible;

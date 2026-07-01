@@ -1050,7 +1050,8 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     // Drives an end-to-end live view whose OUTPUT schema carries a var-length /
     // array column (VARCHAR / STRING / BINARY / DOUBLE[] / DOUBLE[][]) or a wide
-    // fixed-width column (LONG256 / UUID) projected straight from the base table. All
+    // fixed-width column (LONG256 / UUID / any DECIMAL width) projected straight from
+    // the base table. All
     // of these ride through the in-mem tier (tierSupported == true); a schema with a
     // type the tier cannot store would pass false and fall back to disk-only reads.
     // Either way the materialized rows reach
@@ -3048,55 +3049,6 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testInMemTierBypassedForUnsupportedOutputSchema() throws Exception {
-        // LiveViewInMemoryBuffer does not store DECIMAL columns; an LV that projects one
-        // falls through to disk-only reads. ensureStagingAndTier returns false, no
-        // tier is allocated, but the on-disk path still produces correct results via
-        // TableReader. (STRING / BINARY / VARCHAR / ARRAY and the fixed-width LONG256 /
-        // LONG128 / UUID types are now stored, so this uses a DECIMAL column - persisted
-        // but still tier-unsupported - to pin the disk-only path.)
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, d DECIMAL(18, 6), x INT) " +
-                    "TIMESTAMP(ts) PARTITION BY DAY WAL");
-            // The LV projects a DECIMAL column, so the in-mem tier allocation is
-            // skipped. PARTITION BY uses a fixed-width INT key so the LV-side
-            // snapshot/restore contract applies (variable-length partition keys are
-            // not yet supported by the codec used to serialise key bytes into
-            // checkpoint blocks).
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
-                    "SELECT ts, d, x, row_number() OVER w AS rn FROM base " +
-                    "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR DAILY '00:00')");
-            execute("INSERT INTO base (ts, d, x) VALUES " +
-                    "('2026-05-12T00:00:00.000001Z', 1.500000m, 1), " +
-                    "('2026-05-12T00:00:00.000002Z', 2.500000m, 2), " +
-                    "('2026-05-12T00:00:00.000003Z', 3.500000m, 1)");
-            drainWalQueue();
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                drainJob(job);
-            }
-            drainWalQueue();
-
-            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
-            Assert.assertNotNull(instance);
-            Assert.assertNull(
-                    "DECIMAL output schema must skip in-mem tier allocation",
-                    instance.getInMemoryTier()
-            );
-
-            // Reads still return correct results from disk.
-            assertQuery("SELECT ts, d, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\td\tx\trn\n" +
-                    "2026-05-12T00:00:00.000001Z\t1.500000\t1\t1\n" +
-                    "2026-05-12T00:00:00.000002Z\t2.500000\t2\t1\n" +
-                    "2026-05-12T00:00:00.000003Z\t3.500000\t1\t2\n");
-
-            // in_mem_bytes must read 0 since no tier was allocated.
-            assertQuery("SELECT in_mem_bytes FROM live_views() WHERE view_name = 'lv'").noLeakCheck().noRandomAccess().returns("in_mem_bytes\n0\n");
-
-            execute("DROP LIVE VIEW lv");
-        });
-    }
-
-    @Test
     public void testBinaryOutputRoundTrip() throws Exception {
         assertVarLengthOutputRoundTrip("BINARY", "rnd_bin(4, 20, 3)", true);
     }
@@ -3109,6 +3061,40 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     @Test
     public void testDoubleArrayOutputRoundTrip() throws Exception {
         assertVarLengthOutputRoundTrip("DOUBLE[]", "rnd_double_array(1, 0)", true);
+    }
+
+    @Test
+    public void testDecimal128OutputRoundTrip() throws Exception {
+        // DECIMAL128 is a wide (16-byte) fixed-width passthrough the tier now stores;
+        // the nonzero null rate exercises the null sentinel through the flush flyweight
+        // and the O3 disk stager.
+        assertVarLengthOutputRoundTrip("DECIMAL(38, 7)", "rnd_decimal(38, 7, 4)", true);
+    }
+
+    @Test
+    public void testDecimal16OutputRoundTrip() throws Exception {
+        assertVarLengthOutputRoundTrip("DECIMAL(4, 2)", "rnd_decimal(4, 2, 4)", true);
+    }
+
+    @Test
+    public void testDecimal256OutputRoundTrip() throws Exception {
+        // DECIMAL256 is the widest (32-byte) fixed-width passthrough the tier stores.
+        assertVarLengthOutputRoundTrip("DECIMAL(76, 10)", "rnd_decimal(76, 10, 4)", true);
+    }
+
+    @Test
+    public void testDecimal32OutputRoundTrip() throws Exception {
+        assertVarLengthOutputRoundTrip("DECIMAL(9, 2)", "rnd_decimal(9, 2, 4)", true);
+    }
+
+    @Test
+    public void testDecimal64OutputRoundTrip() throws Exception {
+        assertVarLengthOutputRoundTrip("DECIMAL(18, 3)", "rnd_decimal(18, 3, 4)", true);
+    }
+
+    @Test
+    public void testDecimal8OutputRoundTrip() throws Exception {
+        assertVarLengthOutputRoundTrip("DECIMAL(2, 1)", "rnd_decimal(2, 1, 4)", true);
     }
 
     @Test
@@ -14039,19 +14025,18 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testWorkerYieldsAtTurnBudget() throws Exception {
-        // A single refresh turn is bounded by max commits and max duration
-        // so a long backlog cannot monopolise the worker. With budget = 3
-        // commits per turn and a five-commit gap to close in
-        // scanForLaggingViews, the worker processes exactly three commits
-        // then yields; the next FLUSH-EVERY pass drains the remainder.
+        // A single refresh turn is bounded by max commits (and max duration) so a
+        // long backlog cannot monopolise the worker. With budget = 3 commits per turn
+        // and a six-commit backlog, one turn cannot drain it all - the budget forces a
+        // yield with the lead only partially refreshed - and repeated turns complete
+        // it in order.
         //
-        // A DECIMAL output column keeps the view off the in-mem tier entirely - so
-        // it stays on the coupled refresh+flush cycle (not the lead path) and
-        // lastProcessedSeqTxn advances per cycle, making the budget-bounded backlog
-        // drain directly observable. (STRING / BINARY / VARCHAR / ARRAY, the
-        // fixed-width LONG256 / LONG128 / UUID types, and SYMBOL output columns are
-        // now lead-eligible, so they would advance at flush instead.) The turn budget
-        // itself (in drainBaseWal) is shared by both paths.
+        // Every persisted output type is now lead-eligible, so the view runs the
+        // decoupled lead path: the refresh drains base commits into the in-mem tier
+        // (ungated by FLUSH EVERY, budget-bounded per turn) and the flush materialises
+        // them to disk on the FLUSH EVERY cadence. refreshedUpToSeqTxn tracks the
+        // budget-bounded lead drain; lastProcessedSeqTxn tracks the flush. The DECIMAL
+        // passthrough column exercises the decimal tier storage under the yield.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_REFRESH_TURN_MAX_COMMITS, 3);
         assertMemoryLeak(() -> {
             setCurrentMicros(0L);
@@ -14073,37 +14058,34 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             Assert.assertNotNull(lv);
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                // First drainJob at clock = 0 processes the first queued
-                // notification (seqTxn = 1) and then the FLUSH EVERY gate
-                // freezes further work until the clock advances.
+                // One turn makes progress but cannot drain the whole six-commit
+                // backlog: the per-turn budget forces a yield with the lead only
+                // partially refreshed.
+                job.run();
+                drainWalQueue();
+                long afterOneTurn = lv.getRefreshedUpToSeqTxn();
+                Assert.assertTrue(
+                        "one turn must make progress but must not drain the whole backlog, was " + afterOneTurn,
+                        afterOneTurn > 0 && afterOneTurn < 6
+                );
+
+                // Remaining turns - still at clock 0, so the lead refresh runs ungated
+                // by FLUSH EVERY - drain the residual commits into the lead in order.
                 drainJob(job);
                 drainWalQueue();
                 Assert.assertEquals(
-                        "initial notification turn processes one commit",
-                        1L,
-                        lv.getLastProcessedSeqTxn()
+                        "repeated turns drain the full backlog into the lead",
+                        6L,
+                        lv.getRefreshedUpToSeqTxn()
                 );
-                assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
 
-                // Advance past FLUSH EVERY. scanForLaggingViews picks up the
-                // five remaining commits in one refreshInstance call; budget = 3
-                // forces a yield after the first three.
+                // Advance past FLUSH EVERY so the accumulated lead materialises to
+                // disk; lastProcessed catches up and every row is now visible.
                 setCurrentMicros(200_000L);
                 drainJob(job);
                 drainWalQueue();
                 Assert.assertEquals(
-                        "turn budget yields after processing exactly three more commits",
-                        4L,
-                        lv.getLastProcessedSeqTxn()
-                );
-                assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n4\n");
-
-                // Advance again; the residual two commits fit inside the next turn.
-                setCurrentMicros(400_000L);
-                drainJob(job);
-                drainWalQueue();
-                Assert.assertEquals(
-                        "final turn drains the residual two commits",
+                        "flush materialises the whole lead",
                         6L,
                         lv.getLastProcessedSeqTxn()
                 );
@@ -15146,39 +15128,6 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                         firstIdx, tier.getPublishedIdx()
                 );
             }
-
-            execute("DROP LIVE VIEW lv");
-        });
-    }
-
-    @Test
-    public void testInMemTierSkipsAllocationForUnsupportedColumnTypes() throws Exception {
-        // An LV whose output schema contains a column type the in-mem tier cannot
-        // store (DECIMAL) skips tier allocation entirely. The cursor stays disk-only
-        // with no pin, and reads pass through unchanged. The seam_ts routing
-        // scaffolding in LiveViewRecordCursor exits via the {@code pinnedSlot == null}
-        // branch. (STRING / BINARY / VARCHAR / ARRAY and the fixed-width LONG256 /
-        // LONG128 / UUID types are now stored, so this uses a DECIMAL column -
-        // persisted but still tier-unsupported - to pin the disk-only path.)
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, x INT, d DECIMAL(18, 6)) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
-                    "SELECT ts, x, d, row_number() OVER () AS rn FROM base WHERE x > 0");
-
-            execute("INSERT INTO base (ts, x, d) VALUES ('2026-05-12T00:00:00.000001Z', 1, 1.500000m)");
-            drainWalQueue();
-            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
-            Assert.assertNotNull(instance);
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                drainJob(job);
-            }
-
-            Assert.assertNull(
-                    "in-mem tier must not be allocated for an LV with a DECIMAL output column",
-                    instance.getInMemoryTier()
-            );
-            // Disk-only cursor must return the inserted row through SELECT.
-            assertQuery("SELECT x, d, rn FROM lv ORDER BY ts").noLeakCheck().expectSize().returns("x\td\trn\n1\t1.500000\t1\n");
 
             execute("DROP LIVE VIEW lv");
         });

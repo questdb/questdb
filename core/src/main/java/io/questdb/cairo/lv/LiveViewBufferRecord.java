@@ -27,6 +27,8 @@ package io.questdb.cairo.lv;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Long256;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8Sequence;
@@ -88,6 +90,36 @@ public class LiveViewBufferRecord implements Record {
     @Override
     public long getDate(int col) {
         return buffer.getLong(row, col);
+    }
+
+    @Override
+    public void getDecimal128(int col, Decimal128 sink) {
+        buffer.getDecimal128(row, col, sink);
+    }
+
+    @Override
+    public short getDecimal16(int col) {
+        return buffer.getDecimal16(row, col);
+    }
+
+    @Override
+    public void getDecimal256(int col, Decimal256 sink) {
+        buffer.getDecimal256(row, col, sink);
+    }
+
+    @Override
+    public int getDecimal32(int col) {
+        return buffer.getDecimal32(row, col);
+    }
+
+    @Override
+    public long getDecimal64(int col) {
+        return buffer.getDecimal64(row, col);
+    }
+
+    @Override
+    public byte getDecimal8(int col) {
+        return buffer.getDecimal8(row, col);
     }
 
     @Override
