@@ -46,18 +46,31 @@ import org.jetbrains.annotations.NotNull;
  * Thread-safety: the in-memory UUID can be published by one thread (e.g. the replication
  * downloader's {@link #initialize(long, long)} JNI up-call) and read by another (e.g. a booting
  * backup scheduler gating on {@link #isInitialized()}). The 128-bit value is two longs, so a plain
- * read could observe a torn half-written value or miss the publish entirely. All accessors that touch
- * the {@code lo}/{@code hi} pair are therefore {@code synchronized} on this instance, reading/writing
- * the pair as one critical section. The underlying {@link Uuid} fields are deliberately left
- * non-volatile: that class is a hot, general-purpose value holder, so the synchronization is kept
- * here where the one-writer/other-reader publication actually happens.
+ * read could observe a torn half-written value or miss the publish entirely. The accessors that read or
+ * write the {@code lo}/{@code hi} pair directly -- {@link #getLo()}, {@link #getHi()},
+ * {@link #getSnapshot()}, {@link #isInitialized()}, {@link #toSink}, {@link #initialize(long, long)} and
+ * {@link #change(long, long)} -- are therefore {@code synchronized} on this instance, reading/writing the
+ * pair as one critical section. The underlying {@link Uuid} fields are deliberately left non-volatile:
+ * that class is a hot, general-purpose value holder, so the synchronization is kept here where the
+ * one-writer/other-reader publication actually happens. The one exception is {@link #get()}, which is a
+ * deliberate unsynchronized escape hatch: it hands back the live, mutable {@link Uuid} reference itself,
+ * so any {@code lo}/{@code hi} read a caller performs off that reference bypasses this monitor. It exists
+ * only for advisory, best-effort readers (e.g. the boot-time "data id: ..." log line) and must not be
+ * used where a torn or stale pair would matter -- see its own javadoc.
  * </p>
  * <p>
  * Note that {@code synchronized} gives each accessor per-call atomicity, not a multi-call snapshot:
  * {@link #getLo()} and {@link #getHi()} each read a single half, so reading both as two separate calls
  * re-acquires the monitor twice and can still observe a torn pair across a concurrent publish. Callers
- * that need both halves consistently (e.g. {@code current_data_id()} and the Rust {@code JavaDataId} JNI
- * bridge) must use {@link #getSnapshot()}, which reads the pair under a single monitor acquisition.
+ * that need both halves consistently must observe the pair under a single monitor acquisition. There are
+ * two supported ways to do this: call {@link #getSnapshot()}, which reads the pair in one critical section
+ * (e.g. {@code current_data_id()}); or hold this instance's monitor across the two separate
+ * {@link #getLo()}/{@link #getHi()} calls (e.g. the Rust {@code JavaDataId} JNI bridge, which enters this
+ * object's monitor via JNI {@code MonitorEnter} for the duration of both reads -- Java monitors are
+ * reentrant, so the {@code synchronized} accessors simply re-enter the already-held monitor, and a
+ * concurrent publish blocks until the bridge releases it). This monitor-held-across-both-reads approach
+ * avoids the per-call {@link Uuid} allocation that {@link #getSnapshot()} performs. Reading the two halves
+ * as separate calls without holding the monitor across both is the one unsafe combination.
  * </p>
  */
 public final class DataID implements Sinkable {
@@ -108,6 +121,20 @@ public final class DataID implements Sinkable {
         this.id.of(lo, hi);
     }
 
+    /**
+     * Returns the live, mutable backing {@link Uuid} reference -- <b>not</b> a snapshot and <b>not</b>
+     * synchronized. Any {@code lo}/{@code hi} read performed off the returned reference bypasses this
+     * instance's monitor entirely, so it can observe a torn half-written pair or a stale value across a
+     * concurrent {@link #initialize(long, long)} / {@link #change(long, long)} publish.
+     * <p>
+     * This is a deliberate unsynchronized escape hatch intended only for advisory, best-effort readers
+     * that already gate on {@link #isInitialized()} and tolerate a stale/torn read (e.g. the boot-time
+     * "data id: ..." advisory log line). Callers that need a consistent pair must use
+     * {@link #getSnapshot()} instead (or hold this instance's monitor across the reads).
+     * </p>
+     *
+     * @return the live backing {@link Uuid}; never a defensive copy.
+     */
     public Uuid get() {
         return id;
     }
