@@ -158,6 +158,13 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private SqlExecutionContext executionContext;
     // internal flag used to forcefully enable scalar mode based on filter's contents
     private boolean forceScalarMode;
+    // Per-element width override for an overflowing constant IN key that descend() folds to an IMM.
+    // A multi-value IN re-serializes the key once per element (serializeIn), and each key = element
+    // comparison must fold the key at that element's width -- I8 (widen) against a LONG/TIMESTAMP
+    // element, I4 (wrap) against an INT element -- exactly as the elements themselves are folded. The
+    // static per-node i64WidenFoldRoots mark cannot express this (one width per node), so serializeIn
+    // sets this around each per-element key serialization. UNDEFINED_CODE everywhere else.
+    private int inKeyFoldWidthOverride = UNDEFINED_CODE;
     private MemoryCARW memory;
     private RecordMetadata metadata;
     private PageFrameCursor pageFrameCursor;
@@ -205,7 +212,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     // Children are skipped, so flag the fold root as arithmetic
                     // and observe the emitted IMM (markFoldedI4Imm/I8Imm) for the
                     // scalar-mode forcer and getExecHint() mixed-size detection.
-                    if (isI64WidenFoldRoot(node)) {
+                    // A foldable overflow constant IN key takes its width per element
+                    // from inKeyFoldWidthOverride (serializeIn sets it around each
+                    // per-element key serialization); every other fold root uses its
+                    // static per-comparison i64WidenFoldRoots mark.
+                    final boolean widenFold = inKeyFoldWidthOverride != UNDEFINED_CODE
+                            ? inKeyFoldWidthOverride == I8_TYPE
+                            : isI64WidenFoldRoot(node);
+                    if (widenFold) {
                         predicateContext.markFoldedI8Imm();
                         putOperand(IMM, I8_TYPE, longVal);
                     } else {
@@ -275,6 +289,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * @throws SqlException thrown when IR serialization failed.
      */
     public int serialize(ExpressionNode node, boolean forceScalar, boolean debug, boolean nullChecks) throws SqlException {
+        // Reset the per-element IN-key fold override: the serializer instance is reused across
+        // filters, and a throw mid-IN (JIT fallback) could otherwise leave it stale for the next one.
+        inKeyFoldWidthOverride = UNDEFINED_CODE;
         // Detect if scalar mode is guaranteed by checking for mixed column sizes.
         // Short-circuit optimizations (including IN() short-circuit) only work correctly
         // in scalar mode, so we only enable them when scalar mode is certain.
@@ -1522,8 +1539,19 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
     private void serializeIn() throws SqlException {
         predicateContext.currentInSerialization = true;
+        inKeyFoldWidthOverride = UNDEFINED_CODE;
 
         final ObjList<ExpressionNode> args = predicateContext.inOperationNode.args;
+
+        // A multi-value IN list keeps its operands as [elements..., key]. When the key is a
+        // foldable overflowing INT constant, its emitted width must follow each element (I8 to
+        // widen against a LONG/TIMESTAMP element, I4 to wrap against an INT element), so drive
+        // inKeyFoldWidthOverride from key-vs-element around each per-element key serialization
+        // below. The single-value form (args empty; key/element in lhs/rhs) takes the correct
+        // width from its comparison mark and needs no override.
+        final ExpressionNode inKey = args.size() > 0 ? args.getLast() : null;
+        final boolean overflowConstKey = inKey != null && isFoldableOverflowConst(inKey);
+        final int inKeyGenuineType = overflowConstKey ? genuineArithType(inKey) : UNDEFINED_CODE;
 
         if (args.size() > executionContext.getCairoEngine().getConfiguration().getSqlJitMaxInListSizeThreshold()) {
             throw SqlException.$(args.getQuick(0).position, "exceeded JIT IN list threshold [threshold=")
@@ -1552,7 +1580,11 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 putOperatorWithLabel(BEGIN_SC, 2); // create success label
                 for (int i = 0, n = predicateContext.inOperationNode.args.size() - 1; i < n; i++) {
                     traverseAlgo.traverse(args.get(i), this);
+                    if (overflowConstKey) {
+                        inKeyFoldWidthOverride = foldCmpType(inKeyGenuineType, args.get(i)) == I8_TYPE ? I8_TYPE : I4_TYPE;
+                    }
                     traverseAlgo.traverse(args.getLast(), this);
+                    inKeyFoldWidthOverride = UNDEFINED_CODE;
                     putOperator(EQ);
                     if (i < n - 1) {
                         putOperatorWithLabel(OR_SC, 2); // if true, jump to success
@@ -1578,7 +1610,11 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         int orCount = -1;
         for (int i = 0, n = predicateContext.inOperationNode.args.size() - 1; i < n; i++) {
             traverseAlgo.traverse(args.get(i), this);
+            if (overflowConstKey) {
+                inKeyFoldWidthOverride = foldCmpType(inKeyGenuineType, args.get(i)) == I8_TYPE ? I8_TYPE : I4_TYPE;
+            }
             traverseAlgo.traverse(args.getLast(), this);
+            inKeyFoldWidthOverride = UNDEFINED_CODE;
             putOperator(EQ);
             orCount++;
         }

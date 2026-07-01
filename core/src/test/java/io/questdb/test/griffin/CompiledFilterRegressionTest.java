@@ -969,6 +969,36 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInOperatorOverflowFoldMatchesJavaOnConstantKey() throws Exception {
+        // C1 regression: an overflowing INT arithmetic CONSTANT key on the left of a multi-value
+        // IN() list. `k IN (e0, e1, ...)` is `k = e0 OR k = e1 OR ...`, and the Java filter reads
+        // the key at EACH element's '=' width -- widened (getLong, 10^12) against a LONG/TIMESTAMP
+        // element, wrapped (getInt, -727379968) against an INT element. The JIT re-serializes the
+        // key per element (serializeIn) but folded it to a single wrapped I4 IMM for the whole list
+        // (one width per node), so against a LONG element it matched the wrapped image instead of
+        // the widened value. serializeIn now drives the key's fold width per element via
+        // inKeyFoldWidthOverride, exactly as the elements are folded. The table carries the widened
+        // value (10^12) and its wrapped INT image (-727379968) so a wrong key width matches the
+        // wrong row instead of the right one.
+        assertMemoryLeak(() -> {
+            execute("create table x as (select cast(v as long) i64, cast(v as timestamp) tsc " +
+                    "from (select 1000000000000 v union all select -727379968 v))");
+            // LONG element: the key must widen to 10^12 and match the widened row, not the wrapped one.
+            assertJitMatchesJava("x where (1000000 * 1000000) in (i64, 5)", true);
+            assertJitMatchesJava("x where (1000000 * 1000000) in (5, i64)", true);        // order independent
+            assertJitMatchesJava("x where (1000000 * 1000000) in (5, 6, i64)", true);     // multi value
+            assertJitMatchesJava("x where (1000000 * 1000000) in (i64, i64)", true);      // all long
+            assertJitMatchesJava("x where (1000000 * 1000000) not in (i64, 5)", true);    // inverse
+            // TIMESTAMP element widens the key the same way.
+            assertJitMatchesJava("x where (1000000 * 1000000) in (tsc, 5)", true);
+            // Controls: '=' and single-value IN already widened; an INT element still wraps the key.
+            assertJitMatchesJava("x where (1000000 * 1000000) = i64", true);
+            assertJitMatchesJava("x where (1000000 * 1000000) in (i64)", true);
+            assertJitMatchesJava("x where (1000000 * 1000000) in (i64, -727379968)", true);
+        });
+    }
+
+    @Test
     public void testInOperatorOverflowFoldMatchesJavaOnLongColumn() throws Exception {
         // An overflowing INT arithmetic fold inside an IN() list against a LONG column: the
         // Java filter reads the IN element at long width (10^12), so the JIT must too. The
