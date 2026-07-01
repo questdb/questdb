@@ -179,6 +179,39 @@ public class LiveViewWindow implements QuietCloseable {
     }
 
     /**
+     * CREATE-time mirror of the anchor-map key-codec clause in
+     * {@code LiveViewRefreshJob.computeSnapshotCapability}: resolves each
+     * {@code PARTITION BY} column against {@code projectedMetadata} using the same
+     * SYMBOL-&gt;STRING map-key mapping {@link #build} applies, then reports whether
+     * every resolved key type is one the checkpoint codec can persist
+     * ({@link LiveViewSnapshotKeyCodec#isAllTypesSupported}).
+     * <p>
+     * Lets CREATE reject an anchored live view whose partition-key types the
+     * snapshot codec cannot store, instead of deferring the failure to the first
+     * runtime snapshot. This matters for a DEDUP base, where replay (which needs a
+     * restorable snapshot) is the normal correction path rather than a rare event.
+     * Returns {@code false} on a partition column that does not resolve, deferring
+     * to {@link #build}'s own more specific reject at runtime.
+     */
+    public static boolean arePartitionKeyTypesSnapshotCapable(
+            @NotNull RecordMetadata projectedMetadata,
+            @NotNull ObjList<String> partitionColumnNames
+    ) {
+        ArrayColumnTypes mapKeyTypes = new ArrayColumnTypes();
+        for (int i = 0, n = partitionColumnNames.size(); i < n; i++) {
+            final int idx = projectedMetadata.getColumnIndexQuiet(partitionColumnNames.getQuick(i));
+            if (idx < 0) {
+                return false;
+            }
+            final int columnType = projectedMetadata.getColumnType(idx);
+            // SYMBOL partition keys are encoded as STRING in the anchor map (see
+            // build); STRING is a supported key type.
+            mapKeyTypes.add(ColumnType.isSymbol(columnType) ? ColumnType.STRING : columnType);
+        }
+        return LiveViewSnapshotKeyCodec.isAllTypesSupported(mapKeyTypes);
+    }
+
+    /**
      * Constructs a {@code LiveViewWindow} bound to {@code projectedMetadata} —
      * the record shape produced by the live view's source-side cursor (the leaf
      * page-frame factory in the compiled SELECT). The {@code partitionColumnNames}

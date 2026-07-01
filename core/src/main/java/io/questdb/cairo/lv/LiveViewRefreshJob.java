@@ -713,6 +713,274 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * Coupled, applied-reader refresh cycle for a live view whose base table has
+     * DEDUP keys. Sibling of the raw-WAL {@link #drainBaseWal} / {@link #incrementalRefresh}
+     * pair: instead of appending the pre-dedup WAL stream, it reads the applied,
+     * post-dedup base via a {@code waitForApply}-pinned {@link TableReader} and routes
+     * any timestamp-overlap batch through {@link #o3Replay}. The proven non-dedup
+     * {@code drainBaseWal} bytecode is left untouched.
+     * <p>
+     * Each cycle:
+     * <ol>
+     *     <li>Pin the applied base snapshot ({@code waitForApply}, throws on apply lag)
+     *     and fix {@code effectiveSeqTxn = reader.getSeqTxn()} - the reader may sit past
+     *     {@code toSeqTxn} if apply raced ahead. Both the overlap walk and the forward
+     *     scan bound to this same point so no unexamined seqTxn slips past the cheap
+     *     append.</li>
+     *     <li>Compute {@code batchMinTs} by walking the base WAL-E events over
+     *     {@code (fromSeqTxn, effectiveSeqTxn]}, taking {@code min(DataInfo.getMinTimestamp())}
+     *     over DATA commits (structural {@code walId<=0} skipped, non-DATA excluded via
+     *     {@link WalTxnType#isDataType}) and OR-ing intra-commit out-of-order. Reads
+     *     commit metadata only (type + min/max ts), never the pre-dedup data columns.</li>
+     *     <li>If {@code batchMinTs <= latestSeenTs} (a row at/below the frontier may have
+     *     been added or dedup-replaced) or any commit is intra-commit out-of-order,
+     *     release the reader and hand off to {@link #o3Replay} (correct whether the
+     *     overlap was a replacement or an additive same-timestamp row). Otherwise do a
+     *     strictly-forward cheap append of the post-dedup rows above the frontier, then
+     *     commit / apply / advance watermarks to {@code effectiveSeqTxn} / checkpoint /
+     *     publish the disk-subset tier.</li>
+     * </ol>
+     * The window functions retain accumulator state across cycles, so the forward scan
+     * bounded to {@code ts > latestSeenTs} continues the accumulation exactly as
+     * {@code drainBaseWal}'s per-commit continuation does - only the source is
+     * post-dedup. See LIVE_VIEW_DEDUP_BASE_DESIGN.
+     */
+    private void drainAppliedBase(LiveViewInstance instance, long fromSeqTxn, long toSeqTxn) throws SqlException {
+        final WindowRecordCursorFactory windowFactory = getWindowFactory(instance);
+        final TableToken baseToken = instance.getDefinition().getBaseTableToken();
+        final String viewName = instance.getDefinition().getViewName();
+        final long viewLowerBoundTimestamp = instance.getDefinition().getViewLowerBoundTimestamp();
+
+        final RecordCursorFactory filterFactory = windowFactory.getBaseFactory();
+        final Function filter = filterFactory.getFilter();
+        final RecordCursorFactory pageFrameFactory = filter != null ? filterFactory.getBaseFactory() : filterFactory;
+        final RecordMetadata baseMetadata = pageFrameFactory.getMetadata();
+        final int baseTimestampIndex = baseMetadata.getTimestampIndex();
+        final RecordMetadata outMetadata = windowFactory.getMetadata();
+        final int cursorTimestampIndex = outMetadata.getTimestampIndex();
+        if (cursorTimestampIndex < 0) {
+            throw CairoException.nonCritical()
+                    .put("live view requires a designated timestamp [view=").put(viewName).put(']');
+        }
+
+        // Pin the applied (post-dedup) base snapshot. waitForApply blocks then throws
+        // once base apply lag exceeds the flush-retry budget, surfacing the lag rather
+        // than silently stalling (the coupling the non-dedup raw-WAL path avoids).
+        TableReader reader = waitForApply(baseToken, toSeqTxn);
+        try {
+            // reader.getSeqTxn() may run past toSeqTxn if ApplyWal2TableJob raced
+            // ahead. Fix the effective applied point from the reader and bound BOTH the
+            // overlap walk and the forward scan to it, closing the apply-ahead hole the
+            // head-hit guard also addresses.
+            final long effectiveSeqTxn = reader.getSeqTxn();
+
+            // Overlap trigger. The min-ts source is the base WAL-E event file, not
+            // TransactionLogCursor.getTxnMinTimestamp() (V2-sequencer-only; throws on
+            // the default V1). Reading WAL-E opens the per-segment event file (commit
+            // metadata) but never the pre-dedup data columns.
+            long batchMinTs = Numbers.LONG_NULL;
+            boolean anyOutOfOrder = false;
+            try (TransactionLogCursor txnCursor = engine.getTableSequencerAPI().getCursor(baseToken, fromSeqTxn)) {
+                while (txnCursor.hasNext()) {
+                    final long txn = txnCursor.getTxn();
+                    if (txn > effectiveSeqTxn) {
+                        break;
+                    }
+                    final int walId = txnCursor.getWalId();
+                    if (walId <= 0) {
+                        // Compacted / structural entry (STRUCTURAL_CHANGE / DROP_TABLE):
+                        // never a DATA commit, so it cannot dedup-replace a row.
+                        continue;
+                    }
+                    final int segmentId = txnCursor.getSegmentId();
+                    final int segmentTxn = txnCursor.getSegmentTxn();
+                    walPath.of(engine.getConfiguration().getDbRoot())
+                            .concat(baseToken)
+                            .concat(WAL_NAME_BASE).put(walId).slash().put(segmentId);
+                    final WalEventCursor eventCursor = WalTxnDetails.openWalEFile(walPath, walEventReader, segmentTxn, txn);
+                    if (!WalTxnType.isDataType(eventCursor.getType())) {
+                        // TRUNCATE / DROP PARTITION / UPDATE commit with walId>0 and a
+                        // min ts, but no dedup-replaceable rows. Excluding them keeps a
+                        // base row removal frozen (o3HeadMissReplay clamps to replayMinTs)
+                        // rather than triggering a history-rewriting replay.
+                        continue;
+                    }
+                    final WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
+                    final long txnMinTs = dataInfo.getMinTimestamp();
+                    if (batchMinTs == Numbers.LONG_NULL || txnMinTs < batchMinTs) {
+                        batchMinTs = txnMinTs;
+                    }
+                    // Conservative over-trigger, not a correctness requirement here (the
+                    // applied reader is ts-sorted, unlike raw WAL); mirrors drainBaseWal.
+                    anyOutOfOrder |= dataInfo.isOutOfOrder();
+                }
+            }
+
+            final long latestSeenTs = instance.getLatestSeenTs();
+            // First cycle (latestSeenTs == LONG_NULL) never overlaps -> cheap full
+            // build via the forward scan floored at viewLowerBoundTimestamp. A range
+            // with no DATA commit (batchMinTs == LONG_NULL) has nothing to overlap.
+            final boolean overlap = latestSeenTs != Numbers.LONG_NULL
+                    && batchMinTs != Numbers.LONG_NULL
+                    && (batchMinTs <= latestSeenTs || anyOutOfOrder);
+            if (overlap) {
+                // Release the scan reader before o3Replay re-pins via its own
+                // waitForApply (don't hold two base readers).
+                reader.close();
+                reader = null;
+                // Drop any un-flushed lead before the rebuild. A view that just
+                // flipped to dedup (ALTER ... DEDUP ENABLE) can still hold a RAM lead
+                // built from the pre-dedup stream; o3Replay's rebuildInMemoryTier
+                // rebuilds the tier as a pure disk subset, so the stale lead rows must
+                // not be counted (mirrors finishLeadRefresh's o3 branch).
+                instance.setLeadRowCount(0);
+                o3Replay(instance, windowFactory, batchMinTs, baseToken, effectiveSeqTxn);
+                // Coupled invariant: keep refreshedUpTo == lastProcessed so a later
+                // ALTER DEDUP DISABLE flip back to the lead path resumes cleanly with
+                // no stale un-flushed lead.
+                instance.setRefreshedUpToSeqTxn(instance.getLastProcessedSeqTxn());
+                return;
+            }
+
+            // Strictly-forward cheap append over the applied reader.
+            final boolean populateTier = ensureStagingAndTier(instance, outMetadata, cursorTimestampIndex);
+            // Inclusive lower bound: strictly above the frontier, floored at the view's
+            // lower bound. On the first cycle latestSeenTs is LONG_NULL, so the floor
+            // governs and the scan builds window state from empty.
+            final long scanLowTs = latestSeenTs == Numbers.LONG_NULL
+                    ? viewLowerBoundTimestamp
+                    : Math.max(latestSeenTs + 1, viewLowerBoundTimestamp);
+
+            final LiveViewSymbolCache symbolCache = populateTier ? instance.getInMemoryTier().getSymbolCache() : null;
+            final boolean internSymbols = symbolCache != null && stagingSymbolColumnIndexes.size() > 0;
+
+            long appendedRows = 0;
+            long batchMaxTs = Numbers.LONG_NULL;
+            long stagingMinTs = Numbers.LONG_NULL;
+            long stagingMaxTs = Numbers.LONG_NULL;
+            long lvAppliedSeqTxn = Numbers.LONG_NULL;
+            boolean readerAttached = false;
+            try (TableReader committedSymbolReader = internSymbols ? engine.getReader(instance.getLiveViewToken()) : null) {
+                engine.detachReader(reader);
+                executionContext.of(reader);
+                readerAttached = true;
+                if (internSymbols) {
+                    // Re-anchor each SYMBOL column's next-new-id to the committed symbol
+                    // count so a prior flush's advance moves new-id assignment past it.
+                    for (int si = 0, sn = stagingSymbolColumnIndexes.size(); si < sn; si++) {
+                        final int c = stagingSymbolColumnIndexes.getQuick(si);
+                        symbolCache.anchor(c, committedSymbolReader.getSymbolMapReader(c).getSymbolCount());
+                    }
+                }
+                try (WalWriter walWriter = engine.getWalWriter(instance.getLiveViewToken())) {
+                    final RecordToRowCopier copier = ensureCopier(instance, windowFactory, walWriter);
+                    try (RecordCursor pageCursor = pageFrameFactory.getCursor(executionContext)) {
+                        tsLowerBoundCursor.of(pageCursor, baseTimestampIndex, scanLowTs);
+                        RecordCursor source = tsLowerBoundCursor;
+                        if (filter != null) {
+                            filteringCursor.of(source, filter, executionContext);
+                            source = filteringCursor;
+                        }
+                        final LiveViewWindow anchorWindow = instance.getAnchorWindow();
+                        if (anchorWindow != null) {
+                            anchorDispatchingCursor.of(source, anchorWindow, executionContext);
+                            source = anchorDispatchingCursor;
+                        }
+                        try (RecordCursor windowCursor = windowFactory.getIncrementalCursor(source, executionContext)) {
+                            final Record outRecord = windowCursor.getRecord();
+                            while (windowCursor.hasNext()) {
+                                final long ts = outRecord.getTimestamp(cursorTimestampIndex);
+                                if (batchMaxTs == Numbers.LONG_NULL || ts > batchMaxTs) {
+                                    batchMaxTs = ts;
+                                }
+                                instance.setLatestSeenTs(ts);
+                                final TableWriter.Row row = walWriter.newRow(ts);
+                                copier.copy(executionContext, outRecord, row);
+                                row.append();
+                                if (populateTier) {
+                                    stagingBuffer.copyRowFromRecord(outRecord, appendedRows);
+                                    if (internSymbols) {
+                                        for (int si = 0, sn = stagingSymbolColumnIndexes.size(); si < sn; si++) {
+                                            final int c = stagingSymbolColumnIndexes.getQuick(si);
+                                            stagingBuffer.putInt(appendedRows, c,
+                                                    symbolCache.intern(c, outRecord.getSymA(c), committedSymbolReader.getSymbolMapReader(c)));
+                                        }
+                                    }
+                                    if (stagingMinTs == Numbers.LONG_NULL) {
+                                        stagingMinTs = ts;
+                                    }
+                                    if (stagingMaxTs == Numbers.LONG_NULL || ts > stagingMaxTs) {
+                                        stagingMaxTs = ts;
+                                    }
+                                }
+                                appendedRows++;
+                            }
+                        }
+                        if (appendedRows > 0) {
+                            walWriter.commitLiveView(effectiveSeqTxn);
+                        }
+                    }
+                }
+            } finally {
+                if (readerAttached) {
+                    executionContext.clearReader();
+                    engine.attachReader(reader);
+                }
+            }
+            // The forward scan is done with the reader; close it before apply so the
+            // base holds no lingering snapshot. The outer finally then no-ops.
+            reader.close();
+            reader = null;
+
+            if (appendedRows > 0 && populateTier) {
+                stagingBuffer.setRowCount(appendedRows);
+                stagingBuffer.setSeamTs(stagingMinTs);
+            }
+
+            // Advance watermarks to the effective applied point (mirrors
+            // o3HeadMissReplay): the scan covered every DATA seqTxn up to
+            // effectiveSeqTxn, including any past toSeqTxn apply raced into.
+            instance.setLastProcessedSeqTxn(effectiveSeqTxn);
+            instance.setAppliedWatermark(effectiveSeqTxn);
+            // Coupled invariant: no un-flushed lead.
+            instance.setRefreshedUpToSeqTxn(effectiveSeqTxn);
+
+            boolean lvConsumedPersisted = false;
+            if (appendedRows > 0) {
+                applyJob.applyWalDirect(instance.getLiveViewToken(), Job.RUNNING_STATUS);
+                lvAppliedSeqTxn = engine.getTableSequencerAPI()
+                        .getTxnTracker(instance.getLiveViewToken())
+                        .getWriterTxn();
+            }
+            try {
+                engine.advanceLiveViewConsumedSeqTxn(instance.getLiveViewToken(), effectiveSeqTxn, blockFileWriter, path);
+                lvConsumedPersisted = true;
+            } catch (CairoException e) {
+                LOG.critical().$("could not advance live view consumed seqTxn after dedup forward append [view=")
+                        .$(viewName)
+                        .$(", effectiveSeqTxn=").$(effectiveSeqTxn)
+                        .$(", error=").$safe(e.getFlyweightMessage()).I$();
+            }
+            if (!lvConsumedPersisted) {
+                persistState(instance);
+            }
+            if (lvConsumedPersisted && populateTier && appendedRows > 0) {
+                // Publish the just-applied rows into the tier as a subset of disk
+                // (leadRowCount = 0). This disk-subset publish is the tier's only feed
+                // for a dedup base (it has no un-flushed lead), so it is load-bearing.
+                publishToInMemoryTier(instance, stagingMaxTs, lvAppliedSeqTxn, appendedRows, false);
+            }
+            if (lvConsumedPersisted && appendedRows > 0) {
+                maybeWriteHeadCheckpoint(instance, windowFactory, effectiveSeqTxn, batchMaxTs, appendedRows);
+            }
+        } finally {
+            if (reader != null) {
+                reader.close();
+            }
+        }
+    }
+
+    /**
      * Walks the base sequencer log forward over {@code (fromSeqTxn, toSeqTxn]} and
      * runs each in-order DATA commit through the compiled window cursor, mirroring
      * every output row into the worker-local staging buffer (when the tier is
@@ -1278,6 +1546,29 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
         }
         instance.setHeadCheckpoint(Numbers.LONG_NULL, Numbers.LONG_NULL, 0L, Numbers.LONG_NULL);
+    }
+
+    /**
+     * Reports whether the live view's base table currently has DEDUP UPSERT keys
+     * enabled. A dedup base makes the refresh worker route this view onto the
+     * coupled, applied-reader path ({@link #drainAppliedBase}) instead of the raw-WAL
+     * lead path, because the raw WAL holds the pre-dedup stream (see the class
+     * javadoc / LIVE_VIEW_DEDUP_BASE_DESIGN).
+     * <p>
+     * Re-derived each cycle rather than cached, because base dedup config is mutable
+     * via {@code ALTER TABLE ... DEDUP ENABLE/DISABLE}: a one-shot flag would freeze
+     * the wrong cadence across a flip. The read is a MetadataCache read-lock plus a
+     * map lookup on the memory-resident catalogue (no file open); it is once per
+     * cycle, never per row, so the non-dedup per-row hot loop is unaffected. The
+     * catalogue reflects the timestamp column's dedup flag, which is set exactly when
+     * the table is dedup-enabled (mirrors {@code TableWriter.isDeduplicationEnabled()}).
+     */
+    private boolean isDedupBase(LiveViewInstance instance) {
+        final TableToken baseToken = instance.getDefinition().getBaseTableToken();
+        try (MetadataCacheReader metaRO = engine.getMetadataCache().readLock()) {
+            final CairoTable baseTable = metaRO.getTable(baseToken);
+            return baseTable != null && baseTable.hasDedup();
+        }
     }
 
     /**
@@ -2648,6 +2939,30 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         );
         long resumeSeqTxn = manifestBaseSeqTxn;
         long replayedRows = 0;
+        if (diskAppliedSeqTxn > manifestBaseSeqTxn && isDedupBase(instance)) {
+            // Dedup base: the checkpoint-to-applied gap must be closed over the
+            // applied (post-dedup) base, not raw WAL. replayToApplied re-feeds raw
+            // WAL via drainBaseWal, which would advance the restored accumulators over
+            // the pre-dedup stream and silently diverge from the post-dedup disk state
+            // (Gap A / Gap B are invisible to the raw O3 triggers). Route straight to a
+            // full head-miss rebuild from viewLowerBoundTimestamp over the applied
+            // snapshot: unconditionally correct, and idempotent with an intact base (its
+            // REPLACE_RANGE reproduces the rows disk already holds). o3HeadMissReplay
+            // advances the watermarks and writes a fresh head, so restore is complete.
+            try {
+                o3HeadMissReplay(instance, windowFactory, instance.getDefinition().getBaseTableToken(), diskAppliedSeqTxn);
+            } catch (Throwable t) {
+                LOG.critical().$("live view dedup restart head-miss replay failed [view=")
+                        .$(instance.getDefinition().getViewName())
+                        .$(", manifestBaseSeqTxn=").$(manifestBaseSeqTxn)
+                        .$(", appliedWatermark=").$(diskAppliedSeqTxn)
+                        .$(", error=").$(t).I$();
+                instance.setPendingInvalidationReason("live view restart dedup replay-to-applied failed");
+                return;
+            }
+            instance.setCheckpointRestoreSucceeded();
+            return;
+        }
         if (diskAppliedSeqTxn > manifestBaseSeqTxn) {
             // The checkpoint cadence left the head short of the applied point.
             // Advance the restored accumulators over the gap without re-emitting
@@ -3592,10 +3907,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // Decide the cadence. A lead-eligible LV decouples refresh (drain
                 // into the in-mem tier as the un-flushed lead, every tick with new
                 // base commits) from flush (commit + apply + checkpoint, on the
-                // FLUSH EVERY cadence). An ineligible LV (SYMBOL or var-length
-                // output) keeps the coupled cycle, gated by FLUSH EVERY, applying
-                // every cycle so the tier stays a subset of disk.
-                final boolean leadEligible = ensureLeadEligible(instance);
+                // FLUSH EVERY cadence). A coupled LV keeps the coupled cycle, gated by
+                // FLUSH EVERY, applying every cycle so the tier stays a subset of disk.
+                // Two things force the coupled cadence: a tier-unstorable output type
+                // (a non-persisted type such as INTERVAL, or no designated timestamp),
+                // which ensureLeadEligible rejects one-shot; and a DEDUP base, which
+                // isDedupBase re-derives each cycle (mutable via ALTER). A dedup base
+                // additionally reads the applied (post-dedup) base instead of raw WAL.
+                final boolean dedupBase = isDedupBase(instance);
+                final boolean leadEligible = ensureLeadEligible(instance) && !dedupBase;
                 final long nowUs = engine.getConfiguration().getMicrosecondClock().getTicks();
                 final long lastFlushUs = instance.getLastFlushTimeUs();
                 final long flushEveryMicros = instance.getDefinition().getFlushEveryMicros();
@@ -3634,7 +3954,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // pass lastSeqTxn directly. The cursor's getTxn() returns entries with
                         // seqTxn > lastSeqTxn.
                         attempted = true;
-                        incrementalRefresh(instance, lastSeqTxn, seqTxn, false);
+                        if (dedupBase) {
+                            // Dedup base: read the applied, post-dedup base via a
+                            // TableReader and route any timestamp-overlap batch through
+                            // o3Replay. The raw-WAL drainBaseWal path is skipped entirely.
+                            drainAppliedBase(instance, lastSeqTxn, seqTxn);
+                        } else {
+                            incrementalRefresh(instance, lastSeqTxn, seqTxn, false);
+                        }
                         instance.setLastFlushTimeUs(engine.getConfiguration().getMicrosecondClock().getTicks());
                     }
                 }

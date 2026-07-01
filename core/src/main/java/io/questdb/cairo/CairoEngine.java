@@ -42,6 +42,7 @@ import io.questdb.cairo.lv.LiveViewStateReader;
 import io.questdb.cairo.lv.LiveViewStateStore;
 import io.questdb.cairo.lv.LiveViewStateStoreImpl;
 import io.questdb.cairo.lv.LiveViewTableStructure;
+import io.questdb.cairo.lv.LiveViewWindow;
 import io.questdb.cairo.lv.NoOpLiveViewStateStore;
 import io.questdb.cairo.mig.EngineMigration;
 import io.questdb.cairo.mv.DependentViewGraph;
@@ -1056,19 +1057,17 @@ public class CairoEngine implements Closeable, WriterSource {
             TableToken baseTableToken,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        // reject DEDUP base tables: incremental refresh reads raw WAL segments, which
-        // contain the pre-dedup row stream and cannot be reconciled with the applied
-        // base table state.
+        // A DEDUP base table is supported: the refresh worker routes such a view
+        // onto the coupled, applied-reader path (see LiveViewRefreshJob) so it reads
+        // the post-dedup base rather than the pre-dedup raw WAL. Classify the base
+        // here only to drive the CREATE-time anchor-codec guard below; the steady-
+        // state classifier re-derives dedup state each cycle from live metadata,
+        // because base dedup config is mutable via ALTER ... DEDUP ENABLE/DISABLE.
         final int basePartitionBy;
         final int baseTimestampType;
+        final boolean baseHasDedup;
         final long viewLowerBoundTimestamp;
         try (TableMetadata baseMetadata = getTableMetadata(baseTableToken)) {
-            for (int i = 0, n = baseMetadata.getColumnCount(); i < n; i++) {
-                if (baseMetadata.isDedupKey(i)) {
-                    throw SqlException.$(op.getBaseTableNamePosition(),
-                            "live view cannot be created over a base table with DEDUP keys");
-                }
-            }
             basePartitionBy = baseMetadata.getPartitionBy();
             int tsIndex = baseMetadata.getTimestampIndex();
             if (tsIndex < 0) {
@@ -1076,6 +1075,9 @@ public class CairoEngine implements Closeable, WriterSource {
                         "live view base table must have a designated timestamp");
             }
             baseTimestampType = baseMetadata.getColumnType(tsIndex);
+            // A table is dedup-enabled iff its designated timestamp carries the
+            // dedup flag (mirrors TableWriter.isDeduplicationEnabled()).
+            baseHasDedup = baseMetadata.isDedupKey(tsIndex);
         }
         // viewLowerBoundTimestamp is the floor for O3 reachability and is compared
         // against late_row.ts in base-table units. The non-BACKFILL path takes the
@@ -1148,6 +1150,25 @@ public class CairoEngine implements Closeable, WriterSource {
                 // post-constant-fold flags and runtime-state predicates per-fn.
                 // Runs at CREATE only, never at restart.
                 final LiveViewDefinition.LvAnchorSpec anchor = op.getAnchorSpec();
+                // CREATE-time snapshot-capability guard for a DEDUP base. Replay is
+                // the normal correction path for a dedup base, and replay restores
+                // window state from a checkpoint whose anchor map is keyed by the
+                // PARTITION BY columns. If those key types are ones the snapshot codec
+                // cannot persist, the view would pass CREATE yet fail the first runtime
+                // snapshot and serve wrong results silently. The per-window-function
+                // supportsSnapshot()/ZERO_PASS half already runs for all views
+                // (validateLiveViewWindowFunction); this adds the anchor-key-codec half
+                // that computeSnapshotCapability checks at runtime but CREATE otherwise
+                // omits. Scoped to dedup bases so a non-dedup anchored view keeps its
+                // existing (replay-rare) behavior.
+                if (baseHasDedup
+                        && anchor != null
+                        && anchor.partitionColumnNames != null
+                        && anchor.partitionColumnNames.size() > 0
+                        && !LiveViewWindow.arePartitionKeyTypesSnapshotCapable(baseProjMeta, anchor.partitionColumnNames)) {
+                    throw SqlException.$(anchor.anchorPosition,
+                            "anchored live view over a DEDUP base table uses a PARTITION BY key type that cannot be snapshotted; incremental replay is unavailable");
+                }
                 if (anchor != null && anchor.anchorExpressionSql != null) {
                     final ExpressionNode anchorNode = compiler.parseExpression(anchor.anchorExpressionSql);
                     if (anchorNode != null) {
