@@ -179,6 +179,10 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
+    public void authorizeReconcileTable(TableToken tableToken) {
+    }
+
+    @Override
     public void authorizeResumeWal(TableToken tableToken) {
     }
 
