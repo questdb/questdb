@@ -37,8 +37,7 @@ import org.junit.Test;
  * takes the coupled, applied-reader refresh path: instead of appending the base's
  * raw (pre-dedup) WAL stream, the refresh worker reads the applied, post-dedup base
  * via a {@code TableReader} and routes any timestamp-overlap batch through the O3
- * replay machinery. See {@code LIVE_VIEW_DEDUP_BASE_DESIGN} and
- * {@code LiveViewRefreshJob#drainAppliedBase}.
+ * replay machinery. See {@code LiveViewRefreshJob#drainAppliedBase}.
  * <p>
  * All tests run under the default (V1) sequencer
  * ({@code cairo.default.seq.part.txn.count = 0}), so any accidental reliance on the
@@ -263,6 +262,47 @@ public class LiveViewDedupBaseTest extends AbstractCairoTest {
                             "a\t100.0\t2026-01-01T00:00:01.000000Z\t100.0\n" +
                             "a\t20.0\t2026-01-01T00:00:02.000000Z\t120.0\n" +
                             "a\t30.0\t2026-01-01T00:00:03.000000Z\t150.0\n");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testFilteredLowestRowReplacementIsDeleted() throws Exception {
+        // A below-frontier dedup replacement flips the LOWEST result row's value so it
+        // fails the WHERE filter; the row must be DELETED (the recompute over the
+        // applied base no longer has it). Regression for the o3HeadMissReplay boundary:
+        // the rebuild's first row is above the filtered ts, so replayMinTs jumps past
+        // it and a replayMinTs-only REPLACE_RANGE would leave the stale row frozen.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (sym SYMBOL, val INT, ts TIMESTAMP) " +
+                    "TIMESTAMP(ts) PARTITION BY HOUR WAL DEDUP UPSERT KEYS(ts, sym)");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS SELECT sym, val, ts, " +
+                    "first_value(val) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 100 PRECEDING AND CURRENT ROW) AS fv " +
+                    "FROM base WHERE val > 0");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base (sym, val, ts) VALUES " +
+                        "('a', 10, '2026-01-01T00:00:01.000000Z'), " +
+                        "('a', 20, '2026-01-01T00:00:02.000000Z'), " +
+                        "('a', 30, '2026-01-01T00:00:03.000000Z')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                // Replace the lowest row ts=01: val 10 -> -5. It now fails WHERE val>0,
+                // so the recompute drops it and the view must too.
+                setCurrentMicros(2_000_000L);
+                execute("INSERT INTO base (sym, val, ts) VALUES ('a', -5, '2026-01-01T00:00:01.000000Z')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+            }
+            assertQuery("SELECT sym, val, ts, fv FROM lv ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("sym\tval\tts\tfv\n" +
+                            "a\t20\t2026-01-01T00:00:02.000000Z\t20\n" +
+                            "a\t30\t2026-01-01T00:00:03.000000Z\t20\n");
             execute("DROP LIVE VIEW lv");
         });
     }

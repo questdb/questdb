@@ -46,7 +46,7 @@ public class SeqTxnTracker {
     private final Metrics metrics;
     private final TableWriterPressureControlImpl pressureControl;
     private final CountedConcurrentQueue<WaiterHolder> waiters = CountedConcurrentQueue.create(WaiterHolder::new);
-    // Live-view dedup-base signal (LIVE_VIEW_DEDUP_BASE_DESIGN Phase 2a). The apply
+    // Live-view dedup-base signal. The apply
     // worker is the single writer per table, so plain volatile suffices (no CAS). A
     // coupled dedup-base live view reads these to decide whether an applied seqTxn range
     // matches its raw WAL stream (so it can raw-WAL route instead of the applied-reader
@@ -205,8 +205,8 @@ public class SeqTxnTracker {
     }
 
     /**
-     * Records an applied WAL seqTxn range for the live-view dedup-base signal
-     * (LIVE_VIEW_DEDUP_BASE_DESIGN Phase 2a). Called once per applied batch/op by the
+     * Records an applied WAL seqTxn range for the live-view dedup-base signal.
+     * Called once per applied batch/op by the
      * apply worker, which is the single writer per table -- plain volatile writes, no CAS.
      * <p>
      * Ordering discipline: divergence and trackedFrom are written BEFORE covered, so a

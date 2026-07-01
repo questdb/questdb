@@ -119,6 +119,19 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
     private static final int RANGE_FIRST_VALUE_VARIANT = 10;
     private static final int LAG_VARIANT = 11;
     private static final int LAG_OFFSET_VARIANT = 12;
+    // Partitioned (PARTITION BY sym ORDER BY ts) variants driven over a DEDUP base
+    // by runDedupFuzz. Their output is a deterministic function of the deduped base
+    // (every (ts, sym) is unique after apply, so ts is a total order within each sym
+    // partition), which keeps the recompute oracle sound under duplicate timestamps.
+    // The un-partitioned row_number OVER () (variant 5) is excluded: its scan-order
+    // tie-break is ambiguous once timestamps collide. The decimal variant is excluded
+    // too - its storage path is orthogonal to the coupled dedup refresh and already
+    // fuzzed by the non-dedup arms.
+    private static final int[] DEDUP_VARIANTS = {
+            0, 1, 2, 3, 4, 6,
+            RANGE_SUM_VARIANT, RANGE_AVG_VARIANT, RANGE_FIRST_VALUE_VARIANT,
+            LAG_VARIANT, LAG_OFFSET_VARIANT
+    };
     // Anchored-window fuzz variants (driven via runAnchoredFuzz): sum, avg,
     // count, max, row_number over a named WINDOW carrying ANCHOR EXPRESSION.
     private static final int ANCHORED_VARIANT_COUNT = 5;
@@ -159,6 +172,30 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             for (int v = 0; v < variantCount(); v++) {
                 runFuzz(rnd, v, 140, true, rnd.nextBoolean(), true, rnd.nextBoolean());
+            }
+        });
+    }
+
+    @Test
+    public void testFuzzDedup() throws Exception {
+        // Differential fuzz over a DEDUP UPSERT KEYS(ts, sym) base - the coupled,
+        // applied-reader refresh path. Unlike every other arm, timestamps are NOT
+        // unique: they are drawn from a small pool so many rows share one ts across
+        // different keys (additive same-ts, the Phase 2a clean raw-WAL fast path),
+        // and a forced fraction re-emit an existing (ts, sym) with a new value (real
+        // dedup replacement, routed through the applied-reader replay). The recompute
+        // oracle stays sound because (ts, sym) is the dedup key: after apply every
+        // (ts, sym) is unique, so within each sym partition ts is a total order and a
+        // partitioned window is a deterministic function of the final deduped base.
+        // Each variant runs under O3 with random restart and backfill; DROP PARTITION
+        // of an unprocessed future band (removals=true) exercises the divergence gate
+        // - a removed row the LV never emitted must not leak onto the raw-WAL path.
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1 + rnd.nextInt(4));
+        assertMemoryLeak(() -> {
+            for (int i = 0; i < DEDUP_VARIANTS.length; i++) {
+                runDedupFuzz(rnd, DEDUP_VARIANTS[i], 120 + rnd.nextInt(160),
+                        true, rnd.nextBoolean(), rnd.nextBoolean(), true);
             }
         });
     }
@@ -762,6 +799,37 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
         }
     }
 
+    // Removal traffic for the dedup arm that keeps the recompute oracle sound.
+    // Inserts a small batch into a far-future partition (strictly above all real
+    // data and the current frontier) and drops it BEFORE the LV refreshes, so the
+    // LV never emits these rows. TRUNCATE / DROP PARTITION of already-emitted rows
+    // would freeze the derived prefix and make the LV path-dependent (LV keeps the
+    // rows, the recompute over the shrunken base does not) - only removals confined
+    // to the unprocessed window stay oracle-checkable. On the next cycle the applied
+    // base no longer holds the doomed rows; the DROP PARTITION seqTxn advances the
+    // dedup divergence watermark, so the coupled dispatch must route through the
+    // applied reader, not the raw-WAL fast path - which would wrongly append the
+    // doomed (above-frontier) rows and be caught by the differential oracle.
+    private void dropDoomedFuturePartition(StringSink sink, LiveViewRefreshJob job, Rnd rnd) throws Exception {
+        final long doomed = MicrosTimestampDriver.floor("2030-01-01T00:00:00.000000Z");
+        final int rows = 1 + rnd.nextInt(3);
+        sink.clear();
+        sink.put("INSERT INTO base (ts, sym, i, x) VALUES ");
+        for (int r = 0; r < rows; r++) {
+            if (r > 0) {
+                sink.put(',');
+            }
+            sink.put('(').put(doomed + r).put("::timestamp,'")
+                    .put(SYMBOLS[rnd.nextInt(SYMBOLS.length)]).put("',")
+                    .put(rnd.nextInt(100)).put(',').put(rnd.nextDouble() * 100.0).put(')');
+        }
+        execute(sink);
+        drainWalQueue();
+        execute("ALTER TABLE base DROP PARTITION LIST '2030-01-01'");
+        drainWalQueue();
+        refreshCycle(job);
+    }
+
     private void insertCommit(
             StringSink sink,
             int[] order,
@@ -986,6 +1054,172 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
                 sqlExecutionContext,
                 "(" + oracleSql + ") ORDER BY 1",
                 "(lv) ORDER BY 1",
+                LOG,
+                true
+        );
+
+        execute("DROP LIVE VIEW lv");
+        execute("DROP TABLE base");
+    }
+
+    // Differential fuzz for a DEDUP UPSERT KEYS(ts, sym) base. Mirrors runFuzz's
+    // ingestion shape (pre-CREATE backfill history, then per-commit O3 refresh with
+    // optional quiescent restarts and removal events), but with a data model built
+    // for dedup: timestamps are drawn from a pool small enough to force same-ts /
+    // same-(ts, sym) collisions, and a fifth of the emissions re-point onto an
+    // earlier (ts, sym) so a real below-frontier replacement is guaranteed. The
+    // oracle recomputes the window over the applied (post-dedup) base and orders
+    // both sides by (ts, sym::string) - a total order because (ts, sym) is the dedup
+    // key; genericStringMatch tolerates SYMBOL-vs-STRING on the sym passthrough.
+    private void runDedupFuzz(
+            Rnd rnd,
+            int variant,
+            int rowCount,
+            boolean o3,
+            boolean restart,
+            boolean backfill,
+            boolean removals
+    ) throws Exception {
+        // Pin the clock a day below the data (see runFuzz): a non-backfill view's
+        // lower bound is the CREATE moment and forward-append drops rows below it.
+        if (currentMicros < 0) {
+            setCurrentMicros(MicrosTimestampDriver.floor("2025-12-31T00:00:00.000000Z"));
+        }
+
+        final int n = 1 + rnd.nextInt(MAX_FRAME);
+        final int symCount = 1 + rnd.nextInt(SYMBOLS.length);
+        final int stepMode = rnd.nextInt(3);
+        final int baseStepMax = stepMode == 0 ? 5_000_000 : stepMode == 1 ? 60_000_000 : 900_000_000;
+        final int dayJumpEvery = stepMode == 0 ? 20 : 12;
+        final boolean withWhere = rnd.nextInt(3) == 0;
+
+        final String projection = projection(variant, n);
+        final String viewSql = "SELECT " + projection + " FROM base" + (withWhere ? " WHERE i > 0" : "");
+        final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
+                + (backfill ? "BACKFILL " : "")
+                + "AS " + viewSql;
+
+        execute("DROP LIVE VIEW IF EXISTS lv");
+        execute("DROP TABLE IF EXISTS base");
+        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) "
+                + "TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, sym)");
+
+        LOG.info().$("LV dedup fuzz: variant=").$(variant).$(", rows=").$(rowCount)
+                .$(", n=").$(n).$(", symCount=").$(symCount).$(", stepMode=").$(stepMode)
+                .$(", o3=").$(o3).$(", restart=").$(restart).$(", backfill=").$(backfill)
+                .$(", removals=").$(removals).$(", where=").$(withWhere).$(", sql=").$(viewSql).$();
+
+        // Distinct, strictly-increasing timestamp pool - fewer distinct values than
+        // rows, so many emissions collide on one ts (additive across keys) and the
+        // forced re-emissions collide on one (ts, sym) (real dedup). Partition spread
+        // mirrors runFuzz (per-run step size plus occasional day jumps).
+        final int poolSize = Math.max(2, rowCount / 4);
+        final long[] pool = new long[poolSize];
+        final int maxDayJumps = 30;
+        int dayJumps = 0;
+        long ts = MicrosTimestampDriver.floor("2026-01-01T00:00:00.000000Z");
+        for (int k = 0; k < poolSize; k++) {
+            ts += 1 + rnd.nextInt(baseStepMax);
+            if (dayJumps < maxDayJumps && rnd.nextInt(dayJumpEvery) == 0) {
+                ts += 86_400_000_000L;
+                dayJumps++;
+            }
+            pool[k] = ts;
+        }
+
+        // Each emission draws a ts from the pool and a non-null sym (a dedup key);
+        // (ts, sym) may repeat across emissions. i/x carry occasional NULLs. The
+        // recompute oracle reads the final deduped base, so the keep-last winner
+        // never has to be predicted here.
+        final long[] tsv = new long[rowCount];
+        final int[] symIdx = new int[rowCount];
+        final long[] iv = new long[rowCount];
+        final double[] xv = new double[rowCount];
+        final boolean[] xNull = new boolean[rowCount];
+        for (int k = 0; k < rowCount; k++) {
+            tsv[k] = pool[rnd.nextInt(poolSize)];
+            symIdx[k] = rnd.nextInt(symCount); // never -1: sym is a dedup key, kept non-null
+            iv[k] = rnd.nextInt(20) == 0 ? Numbers.LONG_NULL : (rnd.nextInt(2001) - 1000);
+            xNull[k] = rnd.nextInt(20) == 0;
+            xv[k] = rnd.nextDouble() * 1000.0;
+        }
+        // Backfill floor guard: the backfill lower bound is the base min ts at CREATE.
+        // ts is not monotonic in the emission index here, so pin emission 0 to the
+        // global-min ts (pool[0]) and force it pre-CREATE (preCount >= 1) - then no
+        // post-CREATE row falls below the floor and gets dropped, diverging the oracle.
+        tsv[0] = pool[0];
+        // Force a replacement fraction: re-point some emissions onto an earlier
+        // (ts, sym) so a real below-frontier dedup is guaranteed, exercising the
+        // applied-reader replay path, not only the additive fast path.
+        for (int r = 0, forced = rowCount / 5; r < forced; r++) {
+            final int dst = 1 + rnd.nextInt(rowCount - 1);
+            final int src = rnd.nextInt(dst);
+            tsv[dst] = tsv[src];
+            symIdx[dst] = symIdx[src];
+        }
+
+        // Backfill captures pre-CREATE history: preCount >= 1 keeps the global-min ts
+        // (emission 0) before CREATE. Non-backfill: everything lands post-CREATE.
+        final int preCount = backfill ? 1 + rnd.nextInt(rowCount) : 0;
+
+        final StringSink sink = new StringSink();
+        LiveViewRefreshJob job = null;
+        try {
+            if (preCount > 0) {
+                final int[] preOrder = segmentOrder(rnd, 0, preCount, o3);
+                final int[] cb = commitBounds(rnd, preOrder.length);
+                for (int c = 0; c + 1 < cb.length; c++) {
+                    insertCommit(sink, preOrder, cb[c], cb[c + 1], tsv, symIdx, iv, xv, xNull, null);
+                    drainWalQueue();
+                }
+            }
+
+            execute(createSql);
+            job = new LiveViewRefreshJob(0, engine, 1);
+
+            if (backfill) {
+                driveBackfillToCompletion(job, "lv");
+            }
+
+            if (preCount < rowCount) {
+                final int[] postOrder = segmentOrder(rnd, preCount, rowCount, o3);
+                final int[] cb = commitBounds(rnd, postOrder.length);
+                for (int c = 0; c + 1 < cb.length; c++) {
+                    insertCommit(sink, postOrder, cb[c], cb[c + 1], tsv, symIdx, iv, xv, xNull, null);
+                    drainWalQueue();
+                    refreshCycle(job);
+
+                    // Remove rows the LV has not yet emitted (see dropDoomedFuturePartition).
+                    if (removals && rnd.nextInt(4) == 0) {
+                        dropDoomedFuturePartition(sink, job, rnd);
+                    }
+
+                    if (restart && rnd.nextInt(3) == 0) {
+                        LiveViewInstance inst = engine.getLiveViewRegistry().getViewInstance("lv");
+                        if (inst != null
+                                && inst.getStateReader().getBackfillState() == LiveViewState.BACKFILL_STATE_ACTIVE) {
+                            job = Misc.free(job);
+                            engine.getLiveViewRegistry().clear();
+                            engine.buildViewGraphs();
+                            job = new LiveViewRefreshJob(0, engine, 1);
+                        }
+                    }
+                }
+            }
+
+            driveRefreshToQuiescence(job);
+        } finally {
+            Misc.free(job);
+        }
+
+        // The oracle: the live view equals the window recomputed over the applied
+        // (deduped) base. (ts, sym::string) is a total order because (ts, sym) is the
+        // dedup key; genericStringMatch tolerates SYMBOL-vs-STRING on the passthrough.
+        TestUtils.assertSqlCursors(
+                engine,
+                sqlExecutionContext,
+                "(" + viewSql + ") ORDER BY ts, sym::string",
+                "(lv) ORDER BY ts, sym::string",
                 LOG,
                 true
         );

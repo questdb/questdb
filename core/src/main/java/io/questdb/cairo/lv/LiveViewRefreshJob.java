@@ -744,7 +744,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * The window functions retain accumulator state across cycles, so the forward scan
      * bounded to {@code ts > latestSeenTs} continues the accumulation exactly as
      * {@code drainBaseWal}'s per-commit continuation does - only the source is
-     * post-dedup. See LIVE_VIEW_DEDUP_BASE_DESIGN.
+     * post-dedup.
      */
     private void drainAppliedBase(LiveViewInstance instance, long fromSeqTxn, long toSeqTxn) throws SqlException {
         final WindowRecordCursorFactory windowFactory = getWindowFactory(instance);
@@ -821,8 +821,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // unlike drainBaseWal (which appends the raw stream in WAL row order, so an
             // OOO commit corrupts window state), the applied reader yields rows ts-sorted,
             // so an OOO commit entirely above the frontier appends correctly and an OOO
-            // commit reaching at/below the frontier already has minTs <= latestSeenTs
-            // (LIVE_VIEW_DEDUP_BASE_DESIGN 2A.6b).
+            // commit reaching at/below the frontier already has minTs <= latestSeenTs.
             final boolean overlap = latestSeenTs != Numbers.LONG_NULL
                     && batchMinTs != Numbers.LONG_NULL
                     && batchMinTs <= latestSeenTs;
@@ -1556,7 +1555,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * enabled. A dedup base makes the refresh worker route this view onto the
      * coupled, applied-reader path ({@link #drainAppliedBase}) instead of the raw-WAL
      * lead path, because the raw WAL holds the pre-dedup stream (see the class
-     * javadoc / LIVE_VIEW_DEDUP_BASE_DESIGN).
+     * javadoc).
      * <p>
      * Re-derived each cycle rather than cached, because base dedup config is mutable
      * via {@code ALTER TABLE ... DEDUP ENABLE/DISABLE}: a one-shot flag would freeze
@@ -1577,8 +1576,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     /**
      * Reports whether the applied base over {@code (fromSeqTxn, toSeqTxn]} provably equals
      * the base's raw WAL stream, so a coupled dedup-base view can refresh through the proven
-     * raw-WAL {@link #drainBaseWal} path instead of the applied-reader {@link #drainAppliedBase}
-     * (LIVE_VIEW_DEDUP_BASE_DESIGN Phase 2a). The raw-WAL path appends additive same-ts rows
+     * raw-WAL {@link #drainBaseWal} path instead of the applied-reader {@link #drainAppliedBase}.
+     * The raw-WAL path appends additive same-ts rows
      * cheaply and its own O3 detection still routes a genuine below-frontier late row through
      * {@link #o3Replay}; it only diverges from the applied base when a seqTxn in range deduped,
      * skipped, or ran a data-shaped non-DATA op, which the signal rules out.
@@ -1586,7 +1585,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * Reads the {@link SeqTxnTracker} the apply worker updates per applied batch. Fails safe
      * (returns false) on a cold signal (restart / first cycle), apply lag past the recorded
      * point, or any divergence in range -- the caller then falls back to {@link #drainAppliedBase}
-     * with no correctness loss, only the Phase 2a benefit until the signal warms.
+     * with no correctness loss, only the raw-WAL fast-path benefit until the signal warms.
      */
     private boolean isRangeProvablyClean(TableToken baseToken, long fromSeqTxn, long toSeqTxn) {
         final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(baseToken);
@@ -1708,7 +1707,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         if (headHitEligible) {
             o3HeadHitReplay(instance, windowFactory, baseToken, advanceTo, headLvSeqTxn, headMaxTs);
         } else {
-            o3HeadMissReplay(instance, windowFactory, baseToken, advanceTo);
+            o3HeadMissReplay(instance, windowFactory, lateRowTs, baseToken, advanceTo);
         }
 
         // The replay rewrote the on-disk tier (REPLACE_RANGE); the in-mem tier
@@ -1769,7 +1768,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // case; head-hit proceeds only when the snapshot is exactly at the
             // trigger (no unexamined seqTxns, so no gap and no duplicate).
             reader.close();
-            o3HeadMissReplay(instance, windowFactory, baseToken, advanceTo);
+            // Head-hit was eligible, so the trigger row sits above headMaxTs and the
+            // full rebuild's produced minimum stays at or below it: no lateRowTs
+            // extension needed (LONG_NULL keeps the plain replayMinTs boundary).
+            o3HeadMissReplay(instance, windowFactory, Numbers.LONG_NULL, baseToken, advanceTo);
             return;
         }
         boolean readerAttached = false;
@@ -1870,7 +1872,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // it) so head-miss's invalidateHeadOnO3 no-ops.
             LOG.info().$("live view O3 head-hit replay falling through to head-miss [view=")
                     .$(viewName).I$();
-            o3HeadMissReplay(instance, windowFactory, baseToken, advanceTo);
+            o3HeadMissReplay(instance, windowFactory, Numbers.LONG_NULL, baseToken, advanceTo);
             return;
         }
 
@@ -1937,6 +1939,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private void o3HeadMissReplay(
             LiveViewInstance instance,
             WindowRecordCursorFactory windowFactory,
+            long lateRowTs,
             TableToken baseToken,
             long advanceTo
     ) throws SqlException {
@@ -1965,16 +1968,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         boolean readerAttached = false;
         long appendedRows = 0;
         long replayMaxTs = Numbers.LONG_NULL;
-        // Minimum output ts the replay actually produced (rows arrive in
-        // ts-ascending order, so the first appended row is the minimum). Used
-        // as the REPLACE_RANGE low boundary instead of viewLowerBoundTimestamp:
-        // when the base has lost rows below this point (base DROP PARTITION /
-        // TTL / TRUNCATE), the LV's own derived rows below it are preserved
-        // (frozen) rather than deleted by a range that the base can no longer
-        // refill. With an intact base the filter is deterministic, so every
-        // existing LV row regenerates and replayMinTs sits at or below the
-        // oldest LV row - the range still covers everything and behaviour is
-        // unchanged.
+        // Minimum output ts the replay actually produced (rows arrive
+        // ts-ascending, so the first appended row is the minimum). Base of the
+        // REPLACE_RANGE low boundary decided at the commit site below.
         long replayMinTs = Numbers.LONG_NULL;
         try {
             engine.detachReader(reader);
@@ -2053,16 +2049,20 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         }
 
                         if (appendedRows > 0) {
-                            // Clamp the rewrite to the rows the base actually
-                            // produced. With an intact base replayMinTs sits at
-                            // or below the oldest LV row, so this still rewrites
-                            // the whole view; with base data removed below
-                            // replayMinTs it leaves the unrefreshable prefix in
-                            // place rather than deleting it. See the replayMinTs
-                            // declaration.
+                            // REPLACE_RANGE low boundary. replayMinTs alone freezes the
+                            // prefix when the base lost rows below it (DROP PARTITION /
+                            // TTL / TRUNCATE - intended). But a below-frontier dedup
+                            // replacement that drops the lowest result row via the filter
+                            // leaves the base row present, so replayMinTs jumps above it
+                            // and the stale LV row would survive. Extend down to lateRowTs
+                            // (lowest triggering DATA-commit ts); removals are non-DATA and
+                            // excluded from it, so frozen prefixes stay safe.
+                            final long replaceLowTs = lateRowTs != Numbers.LONG_NULL && lateRowTs >= viewLowerBoundTimestamp
+                                    ? Math.min(replayMinTs, lateRowTs)
+                                    : replayMinTs;
                             walWriter.commitLiveViewWithReplaceRange(
                                     effectiveSeqTxn,
-                                    replayMinTs,
+                                    replaceLowTs,
                                     Long.MAX_VALUE
                             );
                         }
@@ -2985,7 +2985,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // REPLACE_RANGE reproduces the rows disk already holds). o3HeadMissReplay
             // advances the watermarks and writes a fresh head, so restore is complete.
             try {
-                o3HeadMissReplay(instance, windowFactory, instance.getDefinition().getBaseTableToken(), diskAppliedSeqTxn);
+                o3HeadMissReplay(instance, windowFactory, Numbers.LONG_NULL, instance.getDefinition().getBaseTableToken(), diskAppliedSeqTxn);
             } catch (Throwable t) {
                 LOG.critical().$("live view dedup restart head-miss replay failed [view=")
                         .$(instance.getDefinition().getViewName())
@@ -3991,8 +3991,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         attempted = true;
                         if (dedupBase) {
                             if (isRangeProvablyClean(instance.getDefinition().getBaseTableToken(), lastSeqTxn, seqTxn)) {
-                                // Phase 2a: the applied base provably equals the raw WAL over
-                                // this range (nothing deduped / skipped / removed). Take the
+                                // The applied base provably equals the raw WAL over this
+                                // range (nothing deduped / skipped / removed). Take the
                                 // proven raw-WAL path -- it appends additive same-ts rows without
                                 // the applied-reader over-trigger, and drainBaseWal's own O3
                                 // detection still routes a genuine below-frontier late row through

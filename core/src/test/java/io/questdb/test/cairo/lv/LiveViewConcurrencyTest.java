@@ -84,7 +84,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *   <li><b>Reader-churn soak.</b> Many reader threads repeatedly open and drain a
  *   cursor over an {@code IN MEMORY} live view while a refresh-driver appends to the
  *   in-memory tier via the fast-path CAS and writers ingest - the lock-free
- *   read/publish hand-off the RFC risk callout flags. Readers must never see a torn
+ *   read/publish hand-off is the concurrency risk under test. Readers must never see a torn
  *   read or crash, and the quiesced final state still matches the recompute. The
  *   {@code InMem} variant uses a SYMBOL-free {@code row_number()} view so the reads
  *   route through Mode B (seam routing over the pinned slot), and each read asserts
@@ -212,7 +212,7 @@ public class LiveViewConcurrencyTest extends AbstractCairoTest {
     @Test
     public void testReaderChurnSoak() throws Exception {
         // Reader threads churn cursors over an IN MEMORY view while a refresh driver
-        // appends via the fast-path CAS and writers ingest (the RFC risk callout).
+        // appends via the fast-path CAS and writers ingest - the read/publish risk.
         // The sum() view carries a SYMBOL passthrough, so the reads route disk-only;
         // this soak stresses the read/publish hand-off without Mode B in the loop.
         final Rnd rnd = TestUtils.generateRandom(LOG);
@@ -256,7 +256,7 @@ public class LiveViewConcurrencyTest extends AbstractCairoTest {
         // reads route through the in-mem tier (Mode B) and dereference the
         // var-length (data, aux) regions per row while a refresh driver appends via
         // the fast-path CAS and writers ingest - the lock-free read/publish
-        // hand-off the RFC risk callout flags, now with var-length buffers in play.
+        // hand-off under test, now with var-length buffers in play.
         // Each read asserts a per-snapshot invariant: rows ts-ascending, rn a
         // gapless 1..N sequence, and the STRING / VARCHAR passthroughs decoding
         // back to their ts-derived values (vs == decimal ts, vv == 'v' + ts). So a
@@ -1133,8 +1133,8 @@ public class LiveViewConcurrencyTest extends AbstractCairoTest {
     }
 
     // Reader threads churn cursors over an IN MEMORY view while the refresh driver
-    // appends via the fast-path CAS and writers ingest (the RFC reader-churn risk
-    // callout). The readers detect torn reads / tier-slot corruption by crashing or
+    // appends via the fast-path CAS and writers ingest - the reader-churn risk.
+    // The readers detect torn reads / tier-slot corruption by crashing or
     // throwing; the quiesced final state still matches the recompute.
     // <p>
     // leadMode: the driver advances the clock only a fraction of FLUSH EVERY per

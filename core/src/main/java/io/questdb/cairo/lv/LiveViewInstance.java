@@ -103,7 +103,7 @@ public class LiveViewInstance implements QuietCloseable {
     private long backfillSkipWriteFloor;
     private RecordCursorFactory compiledFactory;
     // Cumulative count of coupled dedup-base refresh cycles that proved the base range
-    // clean and took the cheap raw-WAL append path (LIVE_VIEW_DEDUP_BASE_DESIGN Phase 2a).
+    // clean and took the cheap raw-WAL append path.
     // In-memory observability, reset to 0 on restart; bumped only on the refresh worker.
     // Volatile so a reader off the worker thread sees a current value.
     private volatile long dedupRawWalCleanCycles;
@@ -323,7 +323,7 @@ public class LiveViewInstance implements QuietCloseable {
     /**
      * Increments the count of coupled dedup-base refresh cycles that proved the base
      * range clean (raw WAL == applied base) and took the cheap raw-WAL append path
-     * instead of the applied-reader path (LIVE_VIEW_DEDUP_BASE_DESIGN Phase 2a). Bumped
+     * instead of the applied-reader path. Bumped
      * only on the refresh-worker thread; in-memory observability that resets on restart.
      */
     public void bumpDedupRawWalCleanCycles() {

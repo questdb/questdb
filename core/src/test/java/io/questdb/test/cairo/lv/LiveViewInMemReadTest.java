@@ -1129,7 +1129,7 @@ public class LiveViewInMemReadTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoinRhsSeesAppliedPrefixNotLead() throws Exception {
         // ASOF JOIN with the LV on the RHS consumes the LV's time-frame cursor,
-        // which is disk-only in V1 (handoff 1.7): it serves the applied prefix and
+        // which is disk-only in V1: it serves the applied prefix and
         // trails the un-flushed lead by at most one flush cycle. A documented
         // freshness limitation, not a correctness issue - a flush lands the lead
         // on disk and the join catches up. Pin the disk-only ASOF path so it stays
