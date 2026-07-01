@@ -45,6 +45,32 @@ import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_MAX_BYTES_FULLY_INLINED
 public class VarcharTypeDriverTest extends AbstractTest {
 
     @Test
+    public void testAppendPlainEmptyNonAsciiVarchar() throws Exception {
+        // An empty varchar is ASCII by definition, but the Utf8Sequence contract lets a producer
+        // report isAscii() == false for it. In the single-vector "plain" format the length prefix
+        // encodes the ASCII flag in its top bit, so an empty non-ASCII value used to write a 0
+        // header -- which getPlainValue rejects via "assert header != 0" (it is the NULL / empty
+        // sentinel). The value must round-trip as an empty ASCII varchar instead.
+        TestUtils.assertMemoryLeak(() -> {
+            try (MemoryCARW dataMem = Vm.getCARWInstance(1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+                Utf8Sequence emptyNonAscii = new Utf8String(new byte[0], false);
+                Assert.assertEquals(0, emptyNonAscii.size());
+                Assert.assertFalse(emptyNonAscii.isAscii());
+
+                VarcharTypeDriver.appendPlainValue(dataMem, emptyNonAscii);
+
+                // The header must be non-zero, otherwise getPlainValue mistakes it for a missing entry.
+                Assert.assertNotEquals(0, dataMem.getInt(0));
+
+                Utf8Sequence read = VarcharTypeDriver.getPlainValue(dataMem, 0);
+                Assert.assertNotNull(read);
+                Assert.assertEquals(0, read.size());
+                Assert.assertTrue(read.isAscii());
+            }
+        });
+    }
+
+    @Test
     public void testGetDataVectorSize() throws Exception {
         final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
         final VarcharTypeDriver driver = new VarcharTypeDriver();

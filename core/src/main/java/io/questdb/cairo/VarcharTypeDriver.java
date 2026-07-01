@@ -89,7 +89,10 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         if (eraseAsciiFlag) {
             Unsafe.putInt(dataMemAddr, hi);
         } else {
-            final boolean ascii = value.isAscii();
+            // An empty varchar is ASCII by definition; force the flag so that an empty value
+            // does not write a 0 header, which collides with the "size == 0" NULL/empty-slot
+            // sentinels the readers rely on.
+            final boolean ascii = value.isAscii() || hi == 0;
             // ASCII flag is signaled with the highest bit
             Unsafe.putInt(dataMemAddr, ascii ? hi | Integer.MIN_VALUE : hi);
         }
@@ -108,7 +111,10 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
             return;
         }
         final int size = value.size();
-        dataMem.putInt(value.isAscii() ? size | Integer.MIN_VALUE : size);
+        // An empty varchar is ASCII by definition; force the flag so that an empty value does
+        // not write a 0 header, which collides with the "size == 0" NULL/empty-slot sentinels.
+        final boolean ascii = value.isAscii() || size == 0;
+        dataMem.putInt(ascii ? size | Integer.MIN_VALUE : size);
         dataMem.putVarchar(value, 0, size);
     }
 

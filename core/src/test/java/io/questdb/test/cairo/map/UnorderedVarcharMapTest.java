@@ -262,6 +262,52 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBlankNonAsciiKey() throws Exception {
+        // An empty VARCHAR whose isAscii() reports false is legal: the Utf8Sequence contract
+        // only guarantees that isAscii() == true means ASCII, not the converse. Such a value
+        // used to trip an assertion in putVarchar (and, with assertions off, packed to 0 and
+        // collided with the empty-slot sentinel, corrupting the map). This is the map-level
+        // reproduction of the hash join crash on empty non-ASCII join keys.
+        TestUtils.assertMemoryLeak(() -> {
+            SingleColumnType valueType = new SingleColumnType(ColumnType.INT);
+            try (UnorderedVarcharMap map = newDefaultMap(valueType)) {
+                Utf8Sequence emptyNonAscii = new Utf8String(new byte[0], false);
+                Assert.assertEquals(0, emptyNonAscii.size());
+                Assert.assertFalse(emptyNonAscii.isAscii());
+
+                MapKey key = map.withKey();
+                key.putVarchar(emptyNonAscii);
+                MapValue value = key.createValue();
+                Assert.assertTrue(value.isNew());
+                value.putInt(0, 42);
+
+                // The entry must be retrievable and NOT be mistaken for a missing entry.
+                MapKey lookup = map.withKey();
+                lookup.putVarchar(emptyNonAscii);
+                MapValue found = lookup.findValue();
+                Assert.assertNotNull(found);
+                Assert.assertEquals(42, found.getInt(0));
+
+                // Re-inserting the same empty key must resolve to the existing entry.
+                MapKey again = map.withKey();
+                again.putVarchar(emptyNonAscii);
+                MapValue existing = again.createValue();
+                Assert.assertFalse(existing.isNew());
+                Assert.assertEquals(1, map.size());
+
+                // An empty ASCII varchar has the same (empty) content, so it must resolve to
+                // the same slot: the ASCII flag must not affect key identity.
+                MapKey asciiKey = map.withKey();
+                asciiKey.putVarchar(new Utf8String(new byte[0], true));
+                MapValue asciiFound = asciiKey.findValue();
+                Assert.assertNotNull(asciiFound);
+                Assert.assertEquals(42, asciiFound.getInt(0));
+                Assert.assertEquals(1, map.size());
+            }
+        });
+    }
+
+    @Test
     public void testDeferredKeyCopyCopyFrom() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             SingleColumnType valueTypes = new SingleColumnType(ColumnType.INT);
