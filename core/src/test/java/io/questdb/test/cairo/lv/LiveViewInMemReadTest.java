@@ -825,6 +825,100 @@ public class LiveViewInMemReadTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testArrayElementFilterServedFromRamModeB() throws Exception {
+        // A WHERE predicate on an array element - a1[i] / a2[i][j] - reaches
+        // MergedRecord.getArrayDouble1d2d, the direct-index fast path
+        // DoubleArrayAccessFunctionFactory takes when the array argument is a column
+        // read straight off the routed cursor's record. (A projected a1[i] instead
+        // resolves through the whole-array getArray slow path, already covered by
+        // testArrayPassthroughServesLeadFromRam; the filter is what forces the
+        // element-index override.) The read stays a full-schema projection
+        // (SELECT ts, a1, a2, rn) so the seam fence routes it Mode B, and the filter
+        // must decode each row's element out of the tier's (data, aux) region: the
+        // predicate keeps an un-flushed LEAD row (absent from disk), so a wrong
+        // decode - or a fall-back to the disk record - drops or mismatches it against
+        // the base oracle. Covers the 1-D element, the 2-D [row][col] element, and
+        // the NULL array -> NaN -> predicate-false branch.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, a1 DOUBLE[], a2 DOUBLE[][]) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m AS " +
+                    "SELECT ts, a1, a2, row_number() OVER () AS rn FROM base");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Cycle 1: three flushed rows on disk, mixed 1-D and 2-D shapes.
+                execute("INSERT INTO base (ts, a1, a2) VALUES " +
+                        "('2026-05-12T00:00:01.000000Z', ARRAY[1.0, 2.0, 3.0], ARRAY[[10.0, 11.0], [12.0, 13.0]]), " +
+                        "('2026-05-12T00:00:02.000000Z', ARRAY[4.0], ARRAY[[14.0]]), " +
+                        "('2026-05-12T00:00:03.000000Z', ARRAY[5.0, 6.0], ARRAY[[15.0, 16.0]])");
+                drainWalQueue();
+                drainJob(job); // clock 0: first tick flushes the batch to disk
+
+                // Cycle 2: a 2-row un-flushed lead within FLUSH EVERY. One lead row
+                // carries NULL arrays (the isNull -> NaN branch).
+                execute("INSERT INTO base (ts, a1, a2) VALUES " +
+                        "('2026-05-12T00:00:04.000000Z', ARRAY[7.0, 8.0], ARRAY[[17.0, 18.0], [19.0, 20.0]]), " +
+                        "('2026-05-12T00:00:05.000000Z', NULL, NULL)");
+                drainWalQueue();
+                drainJob(job); // clock still 0: refresh the lead, no flush
+            }
+
+            // The unfiltered full-schema read routes Mode B and serves the 2-row
+            // lead, so a filter over the same read sees the lead rows in RAM.
+            InnerRead lead = readInner("SELECT * FROM lv");
+            Assert.assertTrue("array-filter base read must be routing-eligible", lead.routingEligible);
+            Assert.assertEquals("all rows served from the tier", 5, lead.inMemRowsServed);
+            Assert.assertEquals("two un-flushed lead rows served from RAM", 2, lead.leadRowsServed);
+
+            // 1-D element predicate: a1[1] > 4.5 keeps disk-overlap row 3 (a1[1]=5)
+            // and lead row 4 (a1[1]=7), and drops the NULL-array lead row 5
+            // (NaN > 4.5 false). The differential over base proves getArrayDouble1d2d
+            // decodes the 1-D element - including the lead row's - out of the tier
+            // correctly. Row 4 is un-flushed, so its presence proves the tier fed the
+            // filter, not disk.
+            // The oracle computes rn over all base rows in a subquery, then filters,
+            // so it reproduces the LV's stored rn (a bare row_number() OVER () under a
+            // WHERE would renumber the filtered rows and mismatch the materialized rn).
+            assertLvMatchesOracle(
+                    "SELECT ts, a1, a2, rn FROM lv WHERE a1[1] > 4.5",
+                    "SELECT * FROM (SELECT ts, a1, a2, row_number() OVER () AS rn FROM base) WHERE a1[1] > 4.5");
+
+            // Pin the 1-D element at a non-zero index: a1[2] = 8 matches only lead
+            // row 4 (a1=[7,8]). A wrong 1-D offset would read 7 (or NaN) and drop the
+            // row, mismatching the oracle.
+            assertLvMatchesOracle(
+                    "SELECT ts, a1, a2, rn FROM lv WHERE a1[2] = 8.0",
+                    "SELECT * FROM (SELECT ts, a1, a2, row_number() OVER () AS rn FROM base) WHERE a1[2] = 8.0");
+
+            // 2-D element predicate pins the exact value: a2[2][2] = 20 matches only
+            // lead row 4 (a2=[[17,18],[19,20]]). The equality catches a wrong 2-D
+            // flat-index (a bad stride would read 17 / 18 / 19, none of which equal
+            // 20), so a broken row-major decode drops the row and mismatches the
+            // oracle. The flushed rows' a2[2][2] are 13 (row 1) and NaN (rows 2 / 3
+            // are 1-row so idx0 is out of bounds), and the NULL row is NaN.
+            assertLvMatchesOracle(
+                    "SELECT ts, a1, a2, rn FROM lv WHERE a2[2][2] = 20.0",
+                    "SELECT * FROM (SELECT ts, a1, a2, row_number() OVER () AS rn FROM base) WHERE a2[2][2] = 20.0");
+
+            // Forcing the tier off drops the lead: the disk-only scan holds only the
+            // 3 flushed rows, none of which have a2[2][2] = 20, so the result is
+            // empty. Contrast with the Mode B read above (which returns lead row 4) -
+            // that difference is exactly the row the override decoded out of RAM.
+            assertDiskOnlyMatchesOracle(
+                    "SELECT ts, a1, a2, rn FROM lv WHERE a2[2][2] = 20.0",
+                    "SELECT * FROM (SELECT ts, a1, a2, row_number() OVER () AS rn FROM base) WHERE a2[2][2] = 99999.0");
+
+            // A flush lands the lead on disk; the Mode B filtered read then equals the
+            // disk-only filtered read byte for byte.
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(1_000_000L);
+                drainJob(job);
+            }
+            drainWalQueue();
+            assertModeBMatchesDiskOnly("SELECT ts, a1, a2, rn FROM lv WHERE a1[1] > 4.5");
+        });
+    }
+
+    @Test
     public void testStringBinaryPassthroughServesLeadFromRam() throws Exception {
         // Passthrough STRING + BINARY output columns: the tier carries the raw
         // values from RAM, so a var-size LV gets the same lead-serving behaviour as
