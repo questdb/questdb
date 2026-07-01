@@ -52,7 +52,7 @@
     </target>
 
     <target name="set-mvn-path-unix" if="isUnix">
-        <property name="maven.executable" value="mvnd"/>
+        <property name="maven.executable" value="mvn"/>
     </target>
 
     <target name="qdbr-build" depends="set-mvn-path-windows, set-mvn-path-unix">
