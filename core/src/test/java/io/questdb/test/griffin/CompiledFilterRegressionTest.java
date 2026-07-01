@@ -1128,6 +1128,45 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInOperatorOverflowWidenColumnArithKeyPerElement() throws Exception {
+        // C2 regression: a COLUMN-arithmetic IN key (a * b) whose product overflows INT, in a
+        // multi-value list that mixes a genuine-LONG element with an overflowing-INT element.
+        // The Java InLong path reads the key per element -- widened (getLong) against the LONG
+        // element, wrapped (getInt) against the INT element. But the JIT decided narrow-int
+        // widening once for the WHOLE predicate: a single coexisting LONG element flipped
+        // needsNarrowI64Widening on, so the JIT sign-extended a and b for EVERY comparison,
+        // computing a * b at 64 bits (10^12) even against the INT element where Java wraps the
+        // key to -727379968. A row whose wrapped key matched the INT element matched in Java
+        // but not in the JIT (which returned empty). The key width is now driven per element
+        // (widen against LONG/TIMESTAMP, wrap against INT), matching the Java path.
+        //
+        // a*b = 10^12 widens to 10^12, wraps to INT -727379968. el = 0 (matches neither image);
+        // the INT element -727379968 matches only the WRAPPED key.
+        assertMemoryLeak(() -> {
+            execute("create table y (a int, b int, el long, k timestamp) timestamp(k)");
+            execute("insert into y values (1000000, 1000000, 0, 1)");
+
+            // A LONG COLUMN element coexists with an overflowing-INT constant element. RED on
+            // HEAD: the JIT widened the key against the INT element and missed the wrapped match.
+            assertJitMatchesJava("select a from y where (a * b) in (el, -727379968)", true);    // RED on HEAD
+            assertJitMatchesJava("select a from y where (a * b) in (-727379968, el)", true);    // element order swapped
+            assertJitMatchesJava("select a from y where (a * b) in (5, el, -727379968)", true); // plus a plain element
+            assertJitMatchesJava("select a from y where (a * b) not in (el, -727379968)", true);// inverse
+
+            // The Java (JIT-disabled) path is the oracle: the wrapped key matches the INT element.
+            Assert.assertEquals("a\n1000000\n", runJavaToString("select a from y where (a * b) in (el, -727379968)"));
+            Assert.assertEquals("a\n", runJavaToString("select a from y where (a * b) not in (el, -727379968)"));
+
+            // controls that already agreed: an all-INT list wraps the key, a single LONG element
+            // widens it, and '=' wraps -- none of these mix widths across the list.
+            assertJitMatchesJava("select a from y where (a * b) = -727379968", true);           // '=' wraps
+            assertJitMatchesJava("select a from y where (a * b) in (-727379968)", true);        // single INT: wraps
+            assertJitMatchesJava("select a from y where (a * b) in (5, -727379968)", true);     // all-INT list: wraps
+            assertJitMatchesJava("select a from y where (a * b) in (el)", true);                // single LONG: widens
+        });
+    }
+
+    @Test
     public void testInOperatorOverflowWidenKeyOnLongElement() throws Exception {
         // C1 regression: an overflowing INT *arithmetic* KEY on the left of IN() against a
         // LONG element. 'in (LONG)' is 'key = LONG', which promotes to long, so the key must
