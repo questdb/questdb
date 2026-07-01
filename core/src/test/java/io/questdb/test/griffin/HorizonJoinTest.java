@@ -5353,6 +5353,79 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMultiHorizonJoinKeyedLong256AggregatesOnMissingSymbol() throws Exception {
+        // Multi-slave counterpart of testHorizonJoinKeyedLong256AggregatesOnMissingSymbol:
+        // two HORIZON JOIN clauses route to MultiHorizonJoinRecord, whose getLong256A/B must
+        // return the NULL_LONG256 sentinel (not Java null) for a master symbol with no slave
+        // match, or the LONG256 aggregate reduce path NPEs. Symbol B is absent from both slaves.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts) PARTITION BY HOUR",
+                    leftTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, val LONG256) TIMESTAMP(ts) PARTITION BY HOUR",
+                    rightTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE quotes (ts #TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts) PARTITION BY HOUR",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('2024-01-01T00:00:01.000000Z', 'A', 10.0),
+                                ('2024-01-01T00:00:02.000000Z', 'B', 20.0),
+                                ('2024-01-01T00:00:03.000000Z', 'A', 30.0),
+                                ('2024-01-01T00:00:04.000000Z', 'C', 40.0)
+                            """
+            );
+            // Neither slave carries B, so B's master row has no ASOF match and its
+            // LONG256 aggregates read an absent slave record on the multi-slave path.
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('2024-01-01T00:00:00.500000Z', 'A', 0x10),
+                                ('2024-01-01T00:00:00.500000Z', 'C', 0x30),
+                                ('2024-01-01T00:00:02.500000Z', 'A', 0x15),
+                                ('2024-01-01T00:00:03.500000Z', 'C', 0x35)
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO quotes VALUES
+                                ('2024-01-01T00:00:00.500000Z', 'A', 1.0),
+                                ('2024-01-01T00:00:00.500000Z', 'C', 3.0),
+                                ('2024-01-01T00:00:02.500000Z', 'A', 1.5),
+                                ('2024-01-01T00:00:03.500000Z', 'C', 3.5)
+                            """
+            );
+
+            String sql = "SELECT t.sym, count(p.val) AS n, first(p.val) AS fst, last(p.val) AS lst, sum(p.val) AS s, sum(q.bid) AS qb " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "HORIZON JOIN quotes AS q ON (t.sym = q.sym) " +
+                    "LIST (0) AS h " +
+                    "GROUP BY t.sym " +
+                    "ORDER BY t.sym";
+
+            for (boolean parallel : new boolean[]{true, false}) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(parallel);
+                assertQuery(sql)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                sym\tn\tfst\tlst\ts\tqb
+                                A\t2\t16\t21\t0x25\t2.5
+                                B\t0\tnull\tnull\t\tnull
+                                C\t1\t53\t53\t0x35\t3.5
+                                """);
+            }
+        });
+    }
+
+    @Test
     public void testMultiHorizonJoinKeyedWithMultipleOffsets() throws Exception {
         // Two slaves, keyed, with multiple offsets
         assertMemoryLeak(() -> {

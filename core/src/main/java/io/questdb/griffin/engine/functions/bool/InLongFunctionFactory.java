@@ -515,10 +515,16 @@ public class InLongFunctionFactory implements FunctionFactory {
     private static class InLongVarFunction extends NegatableBooleanFunction implements MultiArgFunction {
         private final ObjList<Function> args;
         private final boolean keyIsNarrowInt;
+        // Whether some element needs the key read at INT width (wrap) / long width (widen).
+        // Fixed by element TYPE, so a single-width list reads the key subtree once per row.
+        private final boolean keyReadInt;
+        private final boolean keyReadLong;
 
         public InLongVarFunction(ObjList<Function> args, boolean keyIsNarrowInt) {
             this.args = args;
             this.keyIsNarrowInt = keyIsNarrowInt;
+            this.keyReadInt = keyIsNarrowInt && hasNarrowIntElement(args);
+            this.keyReadLong = !keyIsNarrowInt || hasLongWidthElement(args);
         }
 
         @Override
@@ -529,11 +535,9 @@ public class InLongFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             final Function keyFunc = args.getQuick(0);
-            // The key is compared at long width against long-width elements and at
-            // INT width (wrap) against INT-width elements; a narrow key wraps under
-            // getInt while widening under getLong, so read it at both widths once.
-            final long keyLong = keyFunc.getLong(rec);
-            final long keyInt = keyIsNarrowInt ? Numbers.intToLong(keyFunc.getInt(rec)) : keyLong;
+            // Read the key only at the width(s) some element needs (see keyReadInt/keyReadLong).
+            final long keyLong = keyReadLong ? keyFunc.getLong(rec) : 0L;
+            final long keyInt = keyReadInt ? Numbers.intToLong(keyFunc.getInt(rec)) : keyLong;
 
             for (int i = 1, n = args.size(); i < n; i++) {
                 Function func = args.getQuick(i);
