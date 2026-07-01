@@ -102,6 +102,10 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private final WalEventReader walEventReader;
     private final Telemetry<TelemetryWalTask> walTelemetry;
     private final WalTelemetryFacade walTelemetryFacade;
+    // Set by processWalCommit for the live-view dedup-base signal: true if the just-processed
+    // commit's applied state diverges from its raw WAL stream (dedup / skip / non-DATA op).
+    // Read once by applyOutstandingWalTransactions right after processWalCommit returns.
+    private boolean lastCommitDiverged;
     private long lastAttemptSeqTxn;
     private long lastCommittedRows;
 
@@ -397,6 +401,10 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             TableWriterPressureControl pressureControl
     ) {
         final TableSequencerAPI tableSequencerAPI = engine.getTableSequencerAPI();
+        // Long-lived, never-evicted per-table home for the live-view dedup-base signal.
+        // Recorded per applied batch/op below (never per row); a coupled dedup-base LV
+        // reads it to route provably-clean ranges through the raw-WAL path.
+        final SeqTxnTracker seqTxnTracker = tableSequencerAPI.getTxnTracker(tableToken);
         boolean isTerminating;
         boolean finishedAll = true;
         long initialSeqTxn = writer.getSeqTxn();
@@ -567,6 +575,11 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                     if (txnCommitted > 1) {
                                         transactionLogCursor.setPosition(writer.getAppliedSeqTxn());
                                     }
+                                    // Live-view dedup-base signal: record the durably-applied range
+                                    // [seqTxn, appliedSeqTxn] and whether it diverged from raw WAL.
+                                    // These seqTxns are committed at this point, so a later apply
+                                    // failure in the batch cannot un-apply them (see design 2A.5).
+                                    seqTxnTracker.recordApplied(seqTxn, writer.getAppliedSeqTxn(), lastCommitDiverged);
                                 }
 
                                 isTerminating = runStatus.isTerminating();
@@ -730,6 +743,11 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         // invalidate, view def, truncate) would otherwise re-read the prior iter's count.
         writer.resetWalApplyCounters();
 
+        // Dedup-base signal default: a non-DATA op (TRUNCATE / DROP PARTITION / TTL via SQL,
+        // view/mat-view maintenance) removes or replaces applied rows the raw WAL append would
+        // keep, so it diverges. The DATA branch refines this to the precise skip/dedup outcome.
+        lastCommitDiverged = true;
+
         switch (walTxnType) {
             case DATA:
             case MAT_VIEW_DATA:
@@ -765,7 +783,12 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 }
 
                 // Decrement pending WAL row count and track dedup after successful processing
-                engine.getRecentWriteTracker().recordWalProcessed(writer.getTableToken(), lastCommittedSeqTxn, lastCommittedRows, writer.getDedupRowsRemovedSinceLastCommit());
+                final long dedupRowsRemoved = writer.getDedupRowsRemovedSinceLastCommit();
+                engine.getRecentWriteTracker().recordWalProcessed(writer.getTableToken(), lastCommittedSeqTxn, lastCommittedRows, dedupRowsRemoved);
+                // Dedup-base signal: a DATA batch matches its raw WAL stream only if it skipped
+                // nothing (a skipped DATA commit's rows never materialise) and deduped nothing
+                // (a dedup replaced/removed a row the raw append would keep). Either diverges.
+                lastCommitDiverged = skipped || dedupRowsRemoved > 0;
 
                 if (writer.getTableToken().isMatView()) {
                     for (long s = lastCommittedSeqTxn; s >= seqTxn; s--) {

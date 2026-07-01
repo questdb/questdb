@@ -58,6 +58,7 @@ import io.questdb.cairo.wal.WalEventReader;
 import io.questdb.cairo.wal.WalTxnDetails;
 import io.questdb.cairo.wal.WalTxnType;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.FunctionParser;
@@ -730,15 +731,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      *     <li>Compute {@code batchMinTs} by walking the base WAL-E events over
      *     {@code (fromSeqTxn, effectiveSeqTxn]}, taking {@code min(DataInfo.getMinTimestamp())}
      *     over DATA commits (structural {@code walId<=0} skipped, non-DATA excluded via
-     *     {@link WalTxnType#isDataType}) and OR-ing intra-commit out-of-order. Reads
-     *     commit metadata only (type + min/max ts), never the pre-dedup data columns.</li>
+     *     {@link WalTxnType#isDataType}). Reads commit metadata only (type + min/max ts),
+     *     never the pre-dedup data columns. Intra-commit out-of-order is not consulted:
+     *     the applied reader is ts-sorted, so it is not an overlap trigger here (2A.6b).</li>
      *     <li>If {@code batchMinTs <= latestSeenTs} (a row at/below the frontier may have
-     *     been added or dedup-replaced) or any commit is intra-commit out-of-order,
-     *     release the reader and hand off to {@link #o3Replay} (correct whether the
-     *     overlap was a replacement or an additive same-timestamp row). Otherwise do a
-     *     strictly-forward cheap append of the post-dedup rows above the frontier, then
-     *     commit / apply / advance watermarks to {@code effectiveSeqTxn} / checkpoint /
-     *     publish the disk-subset tier.</li>
+     *     been added or dedup-replaced), release the reader and hand off to
+     *     {@link #o3Replay} (correct whether the overlap was a replacement or an additive
+     *     same-timestamp row). Otherwise do a strictly-forward cheap append of the
+     *     post-dedup rows above the frontier, then commit / apply / advance watermarks to
+     *     {@code effectiveSeqTxn} / checkpoint / publish the disk-subset tier.</li>
      * </ol>
      * The window functions retain accumulator state across cycles, so the forward scan
      * bounded to {@code ts > latestSeenTs} continues the accumulation exactly as
@@ -779,7 +780,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // the default V1). Reading WAL-E opens the per-segment event file (commit
             // metadata) but never the pre-dedup data columns.
             long batchMinTs = Numbers.LONG_NULL;
-            boolean anyOutOfOrder = false;
             try (TransactionLogCursor txnCursor = engine.getTableSequencerAPI().getCursor(baseToken, fromSeqTxn)) {
                 while (txnCursor.hasNext()) {
                     final long txn = txnCursor.getTxn();
@@ -810,9 +810,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     if (batchMinTs == Numbers.LONG_NULL || txnMinTs < batchMinTs) {
                         batchMinTs = txnMinTs;
                     }
-                    // Conservative over-trigger, not a correctness requirement here (the
-                    // applied reader is ts-sorted, unlike raw WAL); mirrors drainBaseWal.
-                    anyOutOfOrder |= dataInfo.isOutOfOrder();
                 }
             }
 
@@ -820,9 +817,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // First cycle (latestSeenTs == LONG_NULL) never overlaps -> cheap full
             // build via the forward scan floored at viewLowerBoundTimestamp. A range
             // with no DATA commit (batchMinTs == LONG_NULL) has nothing to overlap.
+            // Intra-commit out-of-order is deliberately NOT an overlap trigger here:
+            // unlike drainBaseWal (which appends the raw stream in WAL row order, so an
+            // OOO commit corrupts window state), the applied reader yields rows ts-sorted,
+            // so an OOO commit entirely above the frontier appends correctly and an OOO
+            // commit reaching at/below the frontier already has minTs <= latestSeenTs
+            // (LIVE_VIEW_DEDUP_BASE_DESIGN 2A.6b).
             final boolean overlap = latestSeenTs != Numbers.LONG_NULL
                     && batchMinTs != Numbers.LONG_NULL
-                    && (batchMinTs <= latestSeenTs || anyOutOfOrder);
+                    && batchMinTs <= latestSeenTs;
             if (overlap) {
                 // Release the scan reader before o3Replay re-pins via its own
                 // waitForApply (don't hold two base readers).
@@ -1569,6 +1572,38 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             final CairoTable baseTable = metaRO.getTable(baseToken);
             return baseTable != null && baseTable.hasDedup();
         }
+    }
+
+    /**
+     * Reports whether the applied base over {@code (fromSeqTxn, toSeqTxn]} provably equals
+     * the base's raw WAL stream, so a coupled dedup-base view can refresh through the proven
+     * raw-WAL {@link #drainBaseWal} path instead of the applied-reader {@link #drainAppliedBase}
+     * (LIVE_VIEW_DEDUP_BASE_DESIGN Phase 2a). The raw-WAL path appends additive same-ts rows
+     * cheaply and its own O3 detection still routes a genuine below-frontier late row through
+     * {@link #o3Replay}; it only diverges from the applied base when a seqTxn in range deduped,
+     * skipped, or ran a data-shaped non-DATA op, which the signal rules out.
+     * <p>
+     * Reads the {@link SeqTxnTracker} the apply worker updates per applied batch. Fails safe
+     * (returns false) on a cold signal (restart / first cycle), apply lag past the recorded
+     * point, or any divergence in range -- the caller then falls back to {@link #drainAppliedBase}
+     * with no correctness loss, only the Phase 2a benefit until the signal warms.
+     */
+    private boolean isRangeProvablyClean(TableToken baseToken, long fromSeqTxn, long toSeqTxn) {
+        final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(baseToken);
+        // Read covered first (acquire): recordApplied writes divergence and trackedFrom BEFORE
+        // covered, so observing covered >= toSeqTxn guarantees the paired divergence/trackedFrom
+        // are visible too. Reading them later than covered only over-reports (both monotone),
+        // which is conservative.
+        final long covered = tracker.getDedupSignalCoveredSeqTxn();
+        if (covered < toSeqTxn) {
+            // Apply has not yet recorded the whole range (cold signal or apply lag).
+            return false;
+        }
+        final long trackedFrom = tracker.getDedupSignalTrackedFromSeqTxn();
+        final long divergence = tracker.getDedupSignalDivergenceSeqTxn();
+        return trackedFrom != Numbers.LONG_NULL
+                && fromSeqTxn + 1 >= trackedFrom   // range lower bound within the tracked window
+                && divergence <= fromSeqTxn;        // no dedup / skip / non-DATA op above fromSeqTxn
     }
 
     /**
@@ -3955,10 +3990,28 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // seqTxn > lastSeqTxn.
                         attempted = true;
                         if (dedupBase) {
-                            // Dedup base: read the applied, post-dedup base via a
-                            // TableReader and route any timestamp-overlap batch through
-                            // o3Replay. The raw-WAL drainBaseWal path is skipped entirely.
-                            drainAppliedBase(instance, lastSeqTxn, seqTxn);
+                            if (isRangeProvablyClean(instance.getDefinition().getBaseTableToken(), lastSeqTxn, seqTxn)) {
+                                // Phase 2a: the applied base provably equals the raw WAL over
+                                // this range (nothing deduped / skipped / removed). Take the
+                                // proven raw-WAL path -- it appends additive same-ts rows without
+                                // the applied-reader over-trigger, and drainBaseWal's own O3
+                                // detection still routes a genuine below-frontier late row through
+                                // o3Replay over the applied base.
+                                incrementalRefresh(instance, lastSeqTxn, seqTxn, false);
+                                // Coupled invariant: keep refreshedUpTo == lastProcessed (which
+                                // incrementalRefresh, unlike drainAppliedBase, does not set) so a
+                                // later ALTER DEDUP DISABLE flip back to the lead path resumes
+                                // cleanly with no stale un-flushed lead / double emit. Uses
+                                // getLastProcessedSeqTxn() so a partial or internal-o3Replay cycle
+                                // stays consistent.
+                                instance.setRefreshedUpToSeqTxn(instance.getLastProcessedSeqTxn());
+                                instance.bumpDedupRawWalCleanCycles();
+                            } else {
+                                // Cold signal, apply lag, or a divergence (dedup / skip / non-DATA
+                                // op) in range: read the applied, post-dedup base via a TableReader
+                                // and route any timestamp-overlap batch through o3Replay.
+                                drainAppliedBase(instance, lastSeqTxn, seqTxn);
+                            }
                         } else {
                             incrementalRefresh(instance, lastSeqTxn, seqTxn, false);
                         }

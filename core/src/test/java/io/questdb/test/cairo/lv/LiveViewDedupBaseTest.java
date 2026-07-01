@@ -59,8 +59,9 @@ public class LiveViewDedupBaseTest extends AbstractCairoTest {
     @Test
     public void testAdditiveSameTimestampAcrossCommitsStaysCorrect() throws Exception {
         // Many keys share one ts across separate commits: each later commit's minTs
-        // equals the frontier, so it over-triggers a replay. The over-trigger is
-        // value-neutral (nothing was dedup-replaced), so the result is still correct.
+        // equals the frontier. The applied-reader path would over-trigger a replay here;
+        // Phase 2a proves the range clean (no dedup) and takes the cheap raw-WAL append
+        // instead. Assert both correctness and that the clean raw-WAL path engaged.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (sym SYMBOL, val INT, ts TIMESTAMP) " +
                     "TIMESTAMP(ts) PARTITION BY HOUR WAL DEDUP UPSERT KEYS(ts, sym)");
@@ -83,6 +84,15 @@ public class LiveViewDedupBaseTest extends AbstractCairoTest {
                 drainWalQueue();
                 drainJob(job);
                 drainWalQueue();
+
+                LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                // With no dedup in any commit, the additive same-ts commits route through
+                // the cheap raw-WAL path (pre-Phase-2a every one of them would have replayed).
+                Assert.assertTrue(
+                        "additive same-ts commits must take the cheap raw-WAL path, not replay",
+                        instance.getDedupRawWalCleanCycles() > 0
+                );
             }
             assertQuery("SELECT sym, val, ts FROM lv ORDER BY sym")
                     .noLeakCheck()
@@ -337,6 +347,71 @@ public class LiveViewDedupBaseTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRealDedupFallsBackToAppliedReplay() throws Exception {
+        // Phase 2a routing discriminator. A forward (additive) commit over a warm signal
+        // takes the cheap raw-WAL path; the next commit is a real dedup replacement, which
+        // advances the divergence watermark so the gate fails and that cycle falls back to
+        // the applied-reader replay. Assert the clean-cycle counter advances on the forward
+        // commit but NOT on the dedup commit, and that the replaced value is reflected.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (sym SYMBOL, val INT, ts TIMESTAMP) " +
+                    "TIMESTAMP(ts) PARTITION BY HOUR WAL DEDUP UPSERT KEYS(ts, sym)");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT sym, val, ts, row_number() OVER () AS rn FROM base");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Batch 1: initial rows (the first cycle warms the signal).
+                execute("INSERT INTO base (sym, val, ts) VALUES " +
+                        "('a', 10, '2026-01-01T00:00:01.000000Z'), " +
+                        "('a', 20, '2026-01-01T00:00:02.000000Z')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                // Batch 2: a forward row strictly above the frontier, no dedup. The signal
+                // is warm and the range is clean -> cheap raw-WAL append.
+                setCurrentMicros(2_000_000L);
+                execute("INSERT INTO base (sym, val, ts) VALUES ('a', 30, '2026-01-01T00:00:03.000000Z')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                long cleanAfterForward = instance.getDedupRawWalCleanCycles();
+                Assert.assertTrue(
+                        "forward additive commit must take the cheap raw-WAL path",
+                        cleanAfterForward > 0
+                );
+
+                // Batch 3: a dedup replacement at existing ts=02 (val 20 -> 99). The batch
+                // dedups, so the divergence watermark advances past the range's lower bound
+                // and the gate fails -> fall back to the applied-reader replay. The clean-
+                // cycle counter must not move.
+                setCurrentMicros(4_000_000L);
+                execute("INSERT INTO base (sym, val, ts) VALUES ('a', 99, '2026-01-01T00:00:02.000000Z')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                Assert.assertEquals(
+                        "dedup commit must fall back to the applied-reader path, not raw-WAL",
+                        cleanAfterForward,
+                        instance.getDedupRawWalCleanCycles()
+                );
+            }
+            assertQuery("SELECT sym, val, ts, rn FROM lv ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("sym\tval\tts\trn\n" +
+                            "a\t10\t2026-01-01T00:00:01.000000Z\t1\n" +
+                            "a\t99\t2026-01-01T00:00:02.000000Z\t2\n" +
+                            "a\t30\t2026-01-01T00:00:03.000000Z\t3\n");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testRestartWithDedupCollapseInCheckpointGap() throws Exception {
         // The head .cp is written on a cadence, so it can lag the applied point. When
         // the gap holds an intra-commit equal-ts collapse (Gap B), a raw-WAL
@@ -443,6 +518,63 @@ public class LiveViewDedupBaseTest extends AbstractCairoTest {
                     .returns("sym\ttag\tts\trn\n" +
                             "a\tx\t2026-01-01T00:00:01.000000Z\t1\n" +
                             "a\tz\t2026-01-01T00:00:02.000000Z\t2\n");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testTruncateInRangeFallsBackToAppliedReader() throws Exception {
+        // A data-shaped non-DATA op (TRUNCATE) diverges the applied base from the raw WAL,
+        // so its seqTxn advances the divergence watermark and any range covering it fails
+        // the clean gate -> applied-reader fallback. Warm the signal with forward commits
+        // (clean-cycle counter grows), then TRUNCATE and assert the counter does not move
+        // across that cycle, and that the derived prefix stays frozen (no history rewrite).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (sym SYMBOL, val INT, ts TIMESTAMP) " +
+                    "TIMESTAMP(ts) PARTITION BY HOUR WAL DEDUP UPSERT KEYS(ts, sym)");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT sym, val, ts, row_number() OVER () AS rn FROM base");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base (sym, val, ts) VALUES ('a', 10, '2026-01-01T00:00:01.000000Z')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                // Forward row above the frontier: clean cycle, cheap raw-WAL append.
+                setCurrentMicros(2_000_000L);
+                execute("INSERT INTO base (sym, val, ts) VALUES ('a', 20, '2026-01-01T00:00:02.000000Z')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                long cleanBeforeTruncate = instance.getDedupRawWalCleanCycles();
+                Assert.assertTrue(
+                        "forward commit must take the cheap raw-WAL path",
+                        cleanBeforeTruncate > 0
+                );
+
+                // TRUNCATE removes applied history the raw append would keep -> divergence.
+                setCurrentMicros(4_000_000L);
+                execute("TRUNCATE TABLE base");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                Assert.assertEquals(
+                        "TRUNCATE must fall back to the applied-reader path, not raw-WAL",
+                        cleanBeforeTruncate,
+                        instance.getDedupRawWalCleanCycles()
+                );
+            }
+            assertQuery("SELECT sym, val, ts FROM lv ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("sym\tval\tts\n" +
+                            "a\t10\t2026-01-01T00:00:01.000000Z\n" +
+                            "a\t20\t2026-01-01T00:00:02.000000Z\n");
             execute("DROP LIVE VIEW lv");
         });
     }

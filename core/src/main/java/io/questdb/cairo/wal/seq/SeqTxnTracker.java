@@ -32,6 +32,7 @@ import io.questdb.mp.CountedConcurrentQueue;
 import io.questdb.mp.ValueHolder;
 import io.questdb.mp.continuation.TxnWaiter;
 import io.questdb.std.CarrierLocal;
+import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.TestOnly;
 
@@ -45,6 +46,24 @@ public class SeqTxnTracker {
     private final Metrics metrics;
     private final TableWriterPressureControlImpl pressureControl;
     private final CountedConcurrentQueue<WaiterHolder> waiters = CountedConcurrentQueue.create(WaiterHolder::new);
+    // Live-view dedup-base signal (LIVE_VIEW_DEDUP_BASE_DESIGN Phase 2a). The apply
+    // worker is the single writer per table, so plain volatile suffices (no CAS). A
+    // coupled dedup-base live view reads these to decide whether an applied seqTxn range
+    // matches its raw WAL stream (so it can raw-WAL route instead of the applied-reader
+    // path). Ordering discipline: recordApplied writes divergence and trackedFrom BEFORE
+    // covered, and the consumer reads covered first, so observing covered >= to also
+    // observes the paired divergence/trackedFrom.
+    //
+    // Highest applied seqTxn recorded this process; the range the signal vouches for is
+    // [trackedFrom, covered]. Benignly jumps over structural / non-DATA seqTxns.
+    private volatile long dedupSignalCoveredSeqTxn = Numbers.LONG_NULL;
+    // Highest seqTxn <= covered whose applied state diverges from the raw WAL stream
+    // (dedup removed rows, a skipped DATA commit, or a data-shaped non-DATA op). LONG_NULL
+    // if none. Monotone, so a consumer reading it later than covered only over-reports.
+    private volatile long dedupSignalDivergenceSeqTxn = Numbers.LONG_NULL;
+    // The from seqTxn of the first batch recorded this process; set once, never decreases.
+    // A range whose lower bound sits below this is not vouched for (cold signal).
+    private volatile long dedupSignalTrackedFromSeqTxn = Numbers.LONG_NULL;
     private volatile long dirtyWriterTxn;
     // Volatile because fireWaiters() and registerWaiter() can race. See comments there
     private volatile boolean dropped;
@@ -68,6 +87,18 @@ public class SeqTxnTracker {
     public SeqTxnTracker(CairoConfiguration configuration) {
         this.pressureControl = new TableWriterPressureControlImpl(configuration);
         this.metrics = configuration.getMetrics();
+    }
+
+    public long getDedupSignalCoveredSeqTxn() {
+        return dedupSignalCoveredSeqTxn;
+    }
+
+    public long getDedupSignalDivergenceSeqTxn() {
+        return dedupSignalDivergenceSeqTxn;
+    }
+
+    public long getDedupSignalTrackedFromSeqTxn() {
+        return dedupSignalTrackedFromSeqTxn;
     }
 
     public String getErrorMessage() {
@@ -171,6 +202,35 @@ public class SeqTxnTracker {
         metrics.walMetrics().addSeqTxn(-seqTxn);
         metrics.walMetrics().addWriterTxn(-writerTxn);
         fireWaiters();
+    }
+
+    /**
+     * Records an applied WAL seqTxn range for the live-view dedup-base signal
+     * (LIVE_VIEW_DEDUP_BASE_DESIGN Phase 2a). Called once per applied batch/op by the
+     * apply worker, which is the single writer per table -- plain volatile writes, no CAS.
+     * <p>
+     * Ordering discipline: divergence and trackedFrom are written BEFORE covered, so a
+     * consumer that reads covered first (and observes {@code covered >= to}) is guaranteed
+     * to also observe the paired divergence/trackedFrom.
+     *
+     * @param fromSeqTxn    the first seqTxn of the applied batch/op
+     * @param coveredSeqTxn the highest seqTxn now applied by this batch/op
+     * @param diverged      true if the applied state differs from the raw WAL stream for
+     *                      this range: dedup removed rows, a DATA commit was skipped, or a
+     *                      data-shaped non-DATA op (TRUNCATE / DROP PARTITION / TTL /
+     *                      REPLACE_RANGE) removed or replaced rows
+     */
+    public void recordApplied(long fromSeqTxn, long coveredSeqTxn, boolean diverged) {
+        if (dedupSignalTrackedFromSeqTxn == Numbers.LONG_NULL) {
+            dedupSignalTrackedFromSeqTxn = fromSeqTxn;
+        }
+        if (diverged && coveredSeqTxn > dedupSignalDivergenceSeqTxn) {
+            dedupSignalDivergenceSeqTxn = coveredSeqTxn;
+        }
+        // covered LAST: release-store pairing divergence/trackedFrom with the covered read.
+        if (coveredSeqTxn > dedupSignalCoveredSeqTxn) {
+            dedupSignalCoveredSeqTxn = coveredSeqTxn;
+        }
     }
 
     /**

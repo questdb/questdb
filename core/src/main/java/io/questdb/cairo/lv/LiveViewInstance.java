@@ -102,6 +102,11 @@ public class LiveViewInstance implements QuietCloseable {
     // budget can split the catch-up). Mutated under the refresh latch only.
     private long backfillSkipWriteFloor;
     private RecordCursorFactory compiledFactory;
+    // Cumulative count of coupled dedup-base refresh cycles that proved the base range
+    // clean and took the cheap raw-WAL append path (LIVE_VIEW_DEDUP_BASE_DESIGN Phase 2a).
+    // In-memory observability, reset to 0 on restart; bumped only on the refresh worker.
+    // Volatile so a reader off the worker thread sees a current value.
+    private volatile long dedupRawWalCleanCycles;
     private volatile boolean dropped;
     // Consecutive refresh-cycle failures since the last success. The flush retry
     // budget caps retries by both count (cairo.live.view.flush.retry.max) and elapsed
@@ -316,6 +321,16 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * Increments the count of coupled dedup-base refresh cycles that proved the base
+     * range clean (raw WAL == applied base) and took the cheap raw-WAL append path
+     * instead of the applied-reader path (LIVE_VIEW_DEDUP_BASE_DESIGN Phase 2a). Bumped
+     * only on the refresh-worker thread; in-memory observability that resets on restart.
+     */
+    public void bumpDedupRawWalCleanCycles() {
+        dedupRawWalCleanCycles++;
+    }
+
+    /**
      * Accumulates {@code n} late O3 rows rejected for falling below
      * {@code viewLowerBoundTimestamp}. Called from the refresh worker at the
      * O3-detection step; the value is exposed via {@code live_views().o3_rejected_count}.
@@ -379,6 +394,10 @@ public class LiveViewInstance implements QuietCloseable {
 
     public RecordCursorFactory getCompiledFactory() {
         return compiledFactory;
+    }
+
+    public long getDedupRawWalCleanCycles() {
+        return dedupRawWalCleanCycles;
     }
 
     public LiveViewDefinition getDefinition() {
