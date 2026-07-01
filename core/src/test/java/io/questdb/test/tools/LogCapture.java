@@ -40,6 +40,16 @@ public class LogCapture {
         }
     }
 
+    /**
+     * Snapshot of the captured log lines. Read-only view — the underlying
+     * sink keeps accumulating after this call, so tests that scan for
+     * "which of these events fired" should either call {@link #stop()}
+     * first or filter the returned text themselves.
+     */
+    public String captured() {
+        return sink.toString();
+    }
+
     @SuppressWarnings("unused")
     // used in the Ent
     public void assertNotLogged(String message) {
