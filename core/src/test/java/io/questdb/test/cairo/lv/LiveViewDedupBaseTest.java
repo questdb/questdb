@@ -26,6 +26,7 @@ package io.questdb.test.cairo.lv;
 
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.griffin.SqlException;
 import io.questdb.mp.Job;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -184,6 +185,54 @@ public class LiveViewDedupBaseTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAnchoredWindowReplayOverDedupBase() throws Exception {
+        // Anchored window (a per-hour cumulative sum that resets at each anchor
+        // bucket) over a dedup base. A below-frontier dedup replacement inside the
+        // FIRST hour bucket routes through the O3 replay, which must restore the
+        // anchor-map state and recompute only that bucket's downstream sums while the
+        // SECOND bucket (a different anchor value) stays untouched. This exercises the
+        // anchor-map snapshot/restore contract on the coupled dedup path, distinct
+        // from the un-anchored cumulative/row_number tests.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (sym SYMBOL, val DOUBLE, ts TIMESTAMP) " +
+                    "TIMESTAMP(ts) PARTITION BY HOUR WAL DEDUP UPSERT KEYS(ts, sym)");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS SELECT sym, val, ts, " +
+                    "sum(val) OVER w AS cum FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1h', ts))");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Bucket 00:00 -> cum 10, 30; bucket 01:00 (anchor reset) -> cum 30, 70.
+                execute("INSERT INTO base (sym, val, ts) VALUES " +
+                        "('a', 10.0, '2026-01-01T00:00:01.000000Z'), " +
+                        "('a', 20.0, '2026-01-01T00:30:00.000000Z'), " +
+                        "('a', 30.0, '2026-01-01T01:00:01.000000Z'), " +
+                        "('a', 40.0, '2026-01-01T01:30:00.000000Z')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                // Replace the mid-bucket row ts=00:30 (below the frontier ts=01:30):
+                // val 20 -> 200. Only bucket 00:00 recomputes (cum 10, 210); the
+                // anchor reset keeps bucket 01:00 at 30, 70.
+                setCurrentMicros(2_000_000L);
+                execute("INSERT INTO base (sym, val, ts) VALUES ('a', 200.0, '2026-01-01T00:30:00.000000Z')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+            }
+            assertQuery("SELECT sym, val, ts, cum FROM lv ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("sym\tval\tts\tcum\n" +
+                            "a\t10.0\t2026-01-01T00:00:01.000000Z\t10.0\n" +
+                            "a\t200.0\t2026-01-01T00:30:00.000000Z\t210.0\n" +
+                            "a\t30.0\t2026-01-01T01:00:01.000000Z\t30.0\n" +
+                            "a\t40.0\t2026-01-01T01:30:00.000000Z\t70.0\n");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testBaseTruncateFreezesDerivedPrefix() throws Exception {
         // A base TRUNCATE below the frontier is a data-shaped non-DATA commit
         // (walId>0, isDataType=false): the WAL-E walk excludes it from batchMinTs, so
@@ -225,6 +274,39 @@ public class LiveViewDedupBaseTest extends AbstractCairoTest {
                             "a\t20\t2026-01-01T00:00:02.000000Z\n" +
                             "a\t30\t2026-01-01T00:00:03.000000Z\n");
             execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testCreateRejectsUnsnapshottableAnchorKeyOverDedupBase() throws Exception {
+        // Replay is the normal correction path for a dedup base, and replay restores
+        // window state from a checkpoint whose anchor map is keyed by the PARTITION BY
+        // columns. A key type the snapshot codec cannot persist (here UUID) must be
+        // rejected at CREATE rather than pass and then serve wrong results at the first
+        // replay. The reject is enforced by the per-function supportsSnapshot() check
+        // (which folds in LiveViewSnapshotKeyCodec.isAllTypesSupported over the same
+        // partition keys and runs for every view); the createLiveView anchor-codec guard
+        // is a dedup-scoped backstop currently shadowed by that check. This test pins the
+        // observable contract: such a view does not silently create over a dedup base.
+        assertMemoryLeak(() -> {
+            // sym drives the dedup keys; u (UUID) is the unsupported anchor partition key.
+            execute("CREATE TABLE base (sym SYMBOL, u UUID, val DOUBLE, ts TIMESTAMP) " +
+                    "TIMESTAMP(ts) PARTITION BY HOUR WAL DEDUP UPSERT KEYS(ts, sym)");
+            try {
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS SELECT u, val, ts, " +
+                        "sum(val) OVER w AS cum FROM base " +
+                        "WINDOW w AS (PARTITION BY u ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1h', ts))");
+                Assert.fail("expected SqlException for an unsnapshottable anchor key over a DEDUP base");
+            } catch (SqlException e) {
+                Assert.assertTrue(
+                        e.getMessage(),
+                        e.getMessage().contains("incremental snapshot is not supported")
+                );
+            }
+            Assert.assertNull(
+                    "the rejected view must not have been created",
+                    engine.getLiveViewRegistry().getViewInstance("lv")
+            );
         });
     }
 
