@@ -1737,6 +1737,20 @@ public class CairoEngine implements Closeable, WriterSource {
         return tableNameRegistry.lockTableName(tableNameStr, dirName, tableId, isView, isMatView, isWal);
     }
 
+    /**
+     * Locks the writer-pool slot for a table without opening a TableWriter.
+     * Closes any cached writer in the slot, marks the slot busy, and prevents
+     * any other thread from acquiring the writer until {@link #unlockTableWriter}
+     * is called. Returns {@code null} on success or the existing ownership
+     * reason on failure (slot is busy with another thread). Throws
+     * {@link CairoException} for token-verification or pool-state issues, which
+     * the caller should treat as "table not usable" rather than retry.
+     */
+    public String lockTableWriter(TableToken tableToken, @NotNull String lockReason) {
+        verifyTableToken(tableToken);
+        return writerPool.lock(tableToken, lockReason);
+    }
+
     public boolean lockWalWriters(TableToken tableToken) {
         return walWriterPool.lock(tableToken);
     }
@@ -2171,6 +2185,17 @@ public class CairoEngine implements Closeable, WriterSource {
     public void unlockReaders(TableToken tableToken) {
         verifyTableToken(tableToken);
         readerPool.unlock(tableToken);
+    }
+
+    /**
+     * Releases a writer-pool slot lock previously acquired via
+     * {@link #lockTableWriter}. Idempotent: safe to call when the slot is not
+     * locked by this thread (the underlying pool ignores the call). Does not
+     * verify the token because the table may be in an in-flight repair
+     * (RECONCILE TABLE) where the dir state is briefly inconsistent.
+     */
+    public void unlockTableWriter(TableToken tableToken) {
+        writerPool.unlock(tableToken);
     }
 
     public void unlockReadersAndMetadata(TableToken tableToken) {
