@@ -176,6 +176,23 @@ public class InLongFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMergedPlanDeduplicatesCrossWidthValue() throws Exception {
+        // A narrow-int key IN() list that partitions a repeated value across the INT-width and
+        // long-width sets (5 as an INT literal, 5::long as a LONG element) must still render the
+        // value once in EXPLAIN, matching the single hash-set plan. Needs >= 3 elements so the
+        // const path builds the sets (a 2-element list routes to the two-const form). Before the
+        // dedup the merge rendered [5,5,7].
+        assertQuery("select * from x where i in (5, 5::long, 7)")
+                .ddl("create table x as (select x::int i from long_sequence(10))")
+                .withPlanContaining("i in [5,7]")
+                .returns("""
+                        i
+                        5
+                        7
+                        """);
+    }
+
+    @Test
     public void testSingleConst() throws Exception {
         assertQuery("select * from x where x in (1)")
                 .ddl("create table x as (" +

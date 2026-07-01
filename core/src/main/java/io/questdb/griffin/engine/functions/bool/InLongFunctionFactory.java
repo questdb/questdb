@@ -260,9 +260,12 @@ public class InLongFunctionFactory implements FunctionFactory {
 
     /**
      * Renders the IN value list for EXPLAIN. Merges the INT-width and long-width
-     * sets into one sorted list so the output is a single {@code [...]} block,
-     * byte-for-byte identical to the original single-set plan regardless of how
-     * the elements were partitioned by width.
+     * sets into one sorted, de-duplicated list so the output is a single
+     * {@code [...]} block, byte-for-byte identical to the original single-set
+     * plan regardless of how the elements were partitioned by width. A value
+     * present at BOTH widths (e.g. {@code i IN (5, 5::long, 7)}) lands in both
+     * sets, so the merge drops the adjacent duplicate to render it once, exactly
+     * as a single hash set would.
      */
     private static void plan(PlanSink sink, DirectLongHashSet intSet, DirectLongHashSet longSet) {
         boolean hasInt = intSet != null && intSet.size() > 0;
@@ -272,6 +275,15 @@ public class InLongFunctionFactory implements FunctionFactory {
             intSet.copyTo(merged);
             longSet.copyTo(merged);
             merged.sort();
+            // Drop adjacent duplicates so a value present at both widths renders once.
+            int w = 0;
+            for (int r = 0, n = merged.size(); r < n; r++) {
+                long v = merged.getQuick(r);
+                if (w == 0 || v != merged.getQuick(w - 1)) {
+                    merged.setQuick(w++, v);
+                }
+            }
+            merged.setPos(w);
             sink.val(merged);
         } else if (hasInt) {
             sink.val(intSet);

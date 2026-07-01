@@ -1114,7 +1114,7 @@ public final class QueryRunner {
      * Multiset comparison with floating-point tolerance: the two row sets
      * are equivalent iff each line in {@code a} can be paired with a
      * distinct line in {@code b} that matches under
-     * {@link #rowEqualsWithFpTolerance(String, String)}. Used after a
+     * {@link #rowEqualsWithFpTolerance(String, String, boolean[])}. Used after a
      * strict {@link #rowsetEquals} fails to absorb FP-reduction-order
      * drift in {@code SUM}/{@code AVG} aggregates whose last digits depend
      * on the access path the planner picks. Greedy matching is O(n^2);
