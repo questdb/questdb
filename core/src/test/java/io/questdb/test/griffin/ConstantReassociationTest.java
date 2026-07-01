@@ -109,10 +109,11 @@ public class ConstantReassociationTest extends AbstractCairoTest {
         // Mirror B (associative): floatConst op (C1 op col)
         assertReassociation("0.0 + (3 + d)", "0.0 + (3 + d)");
 
-        // Same-category pairs still regroup. Integer pairs are safe because
-        // integer addition is associative modulo 2^32 and INT-to-LONG widening
-        // reads the same value via getLong(); floating pairs evaluate at floating
-        // point regardless of grouping.
+        // Same-category pairs still regroup. Integer addition is associative modulo 2^32 in
+        // the absence of the INT_NULL sentinel, and floating pairs evaluate at floating point
+        // regardless of grouping. (Integer-pair regrouping is not fully safe -- an intermediate
+        // col op C1 can still wrap onto the sentinel for a particular column value; see
+        // testIntegerPairWrappingToIntNullIsNotReassociated for that known limitation.)
         assertReassociation("d + 3 + 4", "d + (3 + 4)");
         assertReassociation("d + 3 + 4L", "d + (3 + 4L)");
         assertReassociation("d + 1.0 + 2.0", "d + (1.0 + 2.0)");
@@ -149,7 +150,14 @@ public class ConstantReassociationTest extends AbstractCairoTest {
         // reassociation never fires here, not because integerPairFoldsToNull caught it.)
         assertReassociation("d + -2147483647 + -1", "d + -(2147483647) + -(1)");
 
-        // control: a pair that does NOT fold to INT_NULL still regroups normally
+        // Known limitation (NOT a correctness control): the constant pair 2147483647 + 2
+        // wraps to -2147483647, which is NOT the INT_NULL sentinel, so the guard does not
+        // fire and the pair regroups. But the left-associative intermediate d + 2147483647
+        // DOES wrap onto INT_NULL for d == 1, so the un-regrouped and fully-literal forms
+        // return NULL while this regrouped form returns -2147483646 -- the regroup silently
+        // changes the result for that column value. Detecting it needs a column value the
+        // optimizer does not have (see the "Known limitation" note on reassociateConstants).
+        // These assertions pin the current, pre-existing behaviour, not a correct outcome.
         assertReassociation("d + 2147483647 + 2", "d + (2147483647 + 2)");
         assertReassociation("(2147483647 + d) + 2", "d + (2147483647 + 2)");
     }

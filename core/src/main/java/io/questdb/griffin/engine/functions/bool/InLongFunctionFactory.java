@@ -37,6 +37,7 @@ import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.DirectLongHashSet;
 import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -71,10 +72,15 @@ public class InLongFunctionFactory implements FunctionFactory {
         int constCount = 0;
         int runtimeConstCount = 0;
         final int argCount = args.size() - 1;
-        // When the key column (arg 0) is a narrow integer (INT/SHORT/BYTE), the value
-        // list is read at INT width so an overflowing INT arithmetic fold wraps exactly
-        // as '=' (EqInt) does, instead of widening to its full-width product via
-        // getLong(). For a LONG/TIMESTAMP key the elements still widen to long.
+        // When the key column (arg 0) is a narrow integer (INT/SHORT/BYTE) the IN
+        // list is compared per element at the width of '=': an INT-typed element
+        // (including an overflowing INT arithmetic fold) is read at INT width so
+        // both key and element wrap mod 2^32, exactly as EqInt and the JIT do,
+        // while a LONG/TIMESTAMP element is read at long width so the key widens
+        // (getLong) to its full value. A single flag cannot express this because
+        // an overflowing INT arithmetic key wraps under getInt() but widens under
+        // getLong(); the per-element width picks the correct key read for each
+        // element. For a LONG/TIMESTAMP key every element widens to long anyway.
         final boolean keyIsNarrowInt = isNarrowInt(ColumnType.tagOf(args.getQuick(0).getType()));
         for (int i = 1, n = args.size(); i < n; i++) {
             Function func = args.getQuick(i);
@@ -107,29 +113,27 @@ public class InLongFunctionFactory implements FunctionFactory {
                 case 1:
                     return new InLongSingleConstFunction(
                             args.getQuick(0),
-                            parseValue(argPositions, args.getQuick(1),
-                                    1, keyIsNarrowInt),
-                            keyIsNarrowInt);
+                            parseValue(argPositions, args.getQuick(1), 1, keyIsNarrowInt),
+                            isIntWidthElement(args.getQuick(1), keyIsNarrowInt));
                 case 2:
                     return new InLongTwoConstFunction(
                             args.getQuick(0),
-                            parseValue(
-                                    argPositions,
-                                    args.getQuick(1),
-                                    1, keyIsNarrowInt),
-                            parseValue(
-                                    argPositions,
-                                    args.getQuick(2),
-                                    2, keyIsNarrowInt),
-                            keyIsNarrowInt
+                            parseValue(argPositions, args.getQuick(1), 1, keyIsNarrowInt),
+                            parseValue(argPositions, args.getQuick(2), 2, keyIsNarrowInt),
+                            isIntWidthElement(args.getQuick(1), keyIsNarrowInt),
+                            isIntWidthElement(args.getQuick(2), keyIsNarrowInt)
                     );
                 default:
-                    DirectLongHashSet inVals = new DirectLongHashSet(argCount, MemoryTag.NATIVE_FUNC_RSS);
+                    // A narrow-int key needs an INT-width set for the elements the key wraps
+                    // against; a LONG/TIMESTAMP key only ever widens, so the int set stays null.
+                    DirectLongHashSet intVals = keyIsNarrowInt ? new DirectLongHashSet(argCount, MemoryTag.NATIVE_FUNC_RSS) : null;
+                    DirectLongHashSet longVals = new DirectLongHashSet(argCount, MemoryTag.NATIVE_FUNC_RSS);
                     try {
-                        parseToLong(args, argPositions, inVals, keyIsNarrowInt);
-                        return new InLongConstFunction(args.getQuick(0), inVals, keyIsNarrowInt);
+                        parseToSets(args, argPositions, intVals, longVals, keyIsNarrowInt);
+                        return new InLongConstFunction(args.getQuick(0), intVals, longVals);
                     } catch (Throwable e) {
-                        Misc.free(inVals);
+                        Misc.free(intVals);
+                        Misc.free(longVals);
                         throw e;
                     }
             }
@@ -145,18 +149,36 @@ public class InLongFunctionFactory implements FunctionFactory {
         return new InLongVarFunction(new ObjList<>(args), keyIsNarrowInt);
     }
 
+    /**
+     * Reports whether {@code func}, as an IN-list element, is compared at INT
+     * width against the key: true only when the key is a narrow integer and the
+     * element is itself INT/SHORT/BYTE-typed, in which case both key and element
+     * wrap mod 2^32 (matching EqInt and the JIT). Otherwise the element is
+     * compared at long width and the key widens via getLong().
+     */
+    private static boolean isIntWidthElement(Function func, boolean keyIsNarrowInt) {
+        return keyIsNarrowInt && isNarrowInt(ColumnType.tagOf(func.getType()));
+    }
+
     private static boolean isNarrowInt(int typeTag) {
         return typeTag == ColumnType.BYTE || typeTag == ColumnType.SHORT || typeTag == ColumnType.INT;
     }
 
-    private static void parseToLong(
+    private static void parseToSets(
             ObjList<Function> args,
             IntList argPositions,
+            DirectLongHashSet outIntSet,
             DirectLongHashSet outLongSet,
             boolean keyIsNarrowInt
     ) throws SqlException {
         for (int i = 1, n = args.size(); i < n; i++) {
-            outLongSet.add(parseValue(argPositions, args.getQuick(i), i, keyIsNarrowInt));
+            Function func = args.getQuick(i);
+            long val = parseValue(argPositions, func, i, keyIsNarrowInt);
+            if (isIntWidthElement(func, keyIsNarrowInt)) {
+                outIntSet.add(val);
+            } else {
+                outLongSet.add(val);
+            }
         }
     }
 
@@ -197,21 +219,48 @@ public class InLongFunctionFactory implements FunctionFactory {
         return val;
     }
 
+    /**
+     * Renders the IN value list for EXPLAIN. Merges the INT-width and long-width
+     * sets into one sorted list so the output is a single {@code [...]} block,
+     * byte-for-byte identical to the original single-set plan regardless of how
+     * the elements were partitioned by width.
+     */
+    private static void plan(PlanSink sink, DirectLongHashSet intSet, DirectLongHashSet longSet) {
+        if (intSet == null || intSet.size() == 0) {
+            sink.val(longSet);
+            return;
+        }
+        if (longSet.size() == 0) {
+            sink.val(intSet);
+            return;
+        }
+        LongList merged = new LongList(intSet.size() + longSet.size());
+        intSet.copyTo(merged);
+        longSet.copyTo(merged);
+        merged.sort();
+        sink.val(merged);
+    }
+
     private static class InLongConstFunction extends NegatableBooleanFunction implements UnaryFunction {
-        private final DirectLongHashSet inSet;
-        private final boolean keyIsNarrowInt;
+        // Elements compared at INT width against a wrapped (getInt) narrow key.
+        // Null unless the key is a narrow integer; then it may still be empty when
+        // every element is LONG/TIMESTAMP-typed.
+        private final DirectLongHashSet intSet;
+        // Elements compared at long width against the widened (getLong) key.
+        private final DirectLongHashSet longSet;
         private final Function tsFunc;
 
-        public InLongConstFunction(Function tsFunc, DirectLongHashSet inSet, boolean keyIsNarrowInt) {
+        public InLongConstFunction(Function tsFunc, DirectLongHashSet intSet, DirectLongHashSet longSet) {
             this.tsFunc = tsFunc;
-            this.inSet = inSet;
-            this.keyIsNarrowInt = keyIsNarrowInt;
+            this.intSet = intSet;
+            this.longSet = longSet;
         }
 
         @Override
         public void close() {
             UnaryFunction.super.close();
-            Misc.free(inSet);
+            Misc.free(intSet);
+            Misc.free(longSet);
         }
 
         @Override
@@ -221,10 +270,13 @@ public class InLongFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            // A narrow-int key reads at INT width so an overflowing INT arithmetic wraps (getInt),
-            // symmetric with the IN-list elements and matching '=' (EqInt) and the JIT filter.
-            long val = keyIsNarrowInt ? Numbers.intToLong(tsFunc.getInt(rec)) : tsFunc.getLong(rec);
-            return negated != inSet.contains(val);
+            // The key widens (getLong) against long-width elements and wraps (getInt)
+            // against INT-width elements; the int set is present only for a narrow key.
+            boolean found = longSet.contains(tsFunc.getLong(rec));
+            if (!found && intSet != null) {
+                found = intSet.contains(Numbers.intToLong(tsFunc.getInt(rec)));
+            }
+            return negated != found;
         }
 
         @Override
@@ -233,14 +285,16 @@ public class InLongFunctionFactory implements FunctionFactory {
             if (negated) {
                 sink.val(" not");
             }
-            sink.val(" in ").val(inSet);
+            sink.val(" in ");
+            plan(sink, intSet, longSet);
         }
     }
 
     private static class InLongRuntimeConstFunction extends NegatableBooleanFunction implements MultiArgFunction {
-        private final DirectLongHashSet inSet;
+        private final DirectLongHashSet intSet;
         private final Function keyFunc;
         private final boolean keyIsNarrowInt;
+        private final DirectLongHashSet longSet;
         private final IntList valueFunctionPositions;
         private final ObjList<Function> valueFunctions;
 
@@ -250,7 +304,8 @@ public class InLongFunctionFactory implements FunctionFactory {
             this.valueFunctions = valueFunctions;
             this.valueFunctionPositions = valueFunctionPositions;
             this.keyIsNarrowInt = keyIsNarrowInt;
-            this.inSet = new DirectLongHashSet(valueFunctions.size() - 1, MemoryTag.NATIVE_FUNC_RSS);
+            this.longSet = new DirectLongHashSet(valueFunctions.size() - 1, MemoryTag.NATIVE_FUNC_RSS);
+            this.intSet = keyIsNarrowInt ? new DirectLongHashSet(valueFunctions.size() - 1, MemoryTag.NATIVE_FUNC_RSS) : null;
         }
 
         @Override
@@ -261,22 +316,27 @@ public class InLongFunctionFactory implements FunctionFactory {
         @Override
         public void close() {
             MultiArgFunction.super.close();
-            Misc.free(inSet);
+            Misc.free(intSet);
+            Misc.free(longSet);
         }
 
         @Override
         public boolean getBool(Record rec) {
-            // A narrow-int key reads at INT width so an overflowing INT arithmetic wraps (getInt),
-            // symmetric with the IN-list elements and matching '=' (EqInt) and the JIT filter.
-            long val = keyIsNarrowInt ? Numbers.intToLong(keyFunc.getInt(rec)) : keyFunc.getLong(rec);
-            return negated != inSet.contains(val);
+            boolean found = longSet.contains(keyFunc.getLong(rec));
+            if (!found && intSet != null) {
+                found = intSet.contains(Numbers.intToLong(keyFunc.getInt(rec)));
+            }
+            return negated != found;
         }
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             MultiArgFunction.super.init(symbolTableSource, executionContext);
-            inSet.clear();
-            parseToLong(valueFunctions, valueFunctionPositions, inSet, keyIsNarrowInt);
+            longSet.clear();
+            if (intSet != null) {
+                intSet.clear();
+            }
+            parseToSets(valueFunctions, valueFunctionPositions, intSet, longSet, keyIsNarrowInt);
         }
 
         @Override
@@ -285,19 +345,22 @@ public class InLongFunctionFactory implements FunctionFactory {
             if (negated) {
                 sink.val(" not");
             }
-            sink.val(" in ").val(inSet);
+            sink.val(" in ");
+            plan(sink, intSet, longSet);
         }
     }
 
     private static class InLongSingleConstFunction extends NegatableBooleanFunction implements UnaryFunction {
         private final long inVal;
-        private final boolean keyIsNarrowInt;
+        // Read the key at INT width (wrap) against an INT-width element, else at
+        // long width (widen). Int width is only ever set for a narrow-integer key.
+        private final boolean keyReadInt;
         private final Function longFunc;
 
-        public InLongSingleConstFunction(Function longFunc, long inVal, boolean keyIsNarrowInt) {
+        public InLongSingleConstFunction(Function longFunc, long inVal, boolean keyReadInt) {
             this.longFunc = longFunc;
             this.inVal = inVal;
-            this.keyIsNarrowInt = keyIsNarrowInt;
+            this.keyReadInt = keyReadInt;
         }
 
         @Override
@@ -307,9 +370,7 @@ public class InLongFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            // A narrow-int key reads at INT width so an overflowing INT arithmetic wraps (getInt),
-            // symmetric with the IN-list element and matching '=' (EqInt) and the JIT filter.
-            long val = keyIsNarrowInt ? Numbers.intToLong(longFunc.getInt(rec)) : longFunc.getLong(rec);
+            long val = keyReadInt ? Numbers.intToLong(longFunc.getInt(rec)) : longFunc.getLong(rec);
             return negated != (val == inVal);
         }
 
@@ -326,14 +387,17 @@ public class InLongFunctionFactory implements FunctionFactory {
     private static class InLongTwoConstFunction extends NegatableBooleanFunction implements UnaryFunction {
         private final long inVal0;
         private final long inVal1;
-        private final boolean keyIsNarrowInt;
+        // Per-element key read width; see InLongSingleConstFunction#keyReadInt.
+        private final boolean keyRead0Int;
+        private final boolean keyRead1Int;
         private final Function longFunc;
 
-        public InLongTwoConstFunction(Function longFunc, long inVal0, long inVal1, boolean keyIsNarrowInt) {
+        public InLongTwoConstFunction(Function longFunc, long inVal0, long inVal1, boolean keyRead0Int, boolean keyRead1Int) {
             this.longFunc = longFunc;
             this.inVal0 = inVal0;
             this.inVal1 = inVal1;
-            this.keyIsNarrowInt = keyIsNarrowInt;
+            this.keyRead0Int = keyRead0Int;
+            this.keyRead1Int = keyRead1Int;
         }
 
         @Override
@@ -343,10 +407,9 @@ public class InLongFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            // A narrow-int key reads at INT width so an overflowing INT arithmetic wraps (getInt),
-            // symmetric with the IN-list elements and matching '=' (EqInt) and the JIT filter.
-            long val = keyIsNarrowInt ? Numbers.intToLong(longFunc.getInt(rec)) : longFunc.getLong(rec);
-            return negated != (val == inVal0 || val == inVal1);
+            long val0 = keyRead0Int ? Numbers.intToLong(longFunc.getInt(rec)) : longFunc.getLong(rec);
+            long val1 = keyRead1Int ? Numbers.intToLong(longFunc.getInt(rec)) : longFunc.getLong(rec);
+            return negated != (val0 == inVal0 || val1 == inVal1);
         }
 
         @Override
@@ -375,20 +438,29 @@ public class InLongFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            // A narrow-int key reads at INT width so an overflowing INT arithmetic wraps (getInt),
-            // symmetric with the IN-list elements and matching '=' (EqInt) and the JIT filter.
-            long val = keyIsNarrowInt ? Numbers.intToLong(args.getQuick(0).getInt(rec)) : args.getQuick(0).getLong(rec);
+            final Function keyFunc = args.getQuick(0);
+            // The key is compared at long width against long-width elements and at
+            // INT width (wrap) against INT-width elements; a narrow key wraps under
+            // getInt while widening under getLong, so read it at both widths once.
+            final long keyLong = keyFunc.getLong(rec);
+            final long keyInt = keyIsNarrowInt ? Numbers.intToLong(keyFunc.getInt(rec)) : keyLong;
 
             for (int i = 1, n = args.size(); i < n; i++) {
                 Function func = args.getQuick(i);
                 long inVal = Numbers.LONG_NULL;
+                long keyVal = keyLong;
                 switch (ColumnType.tagOf(func.getType())) {
                     case ColumnType.BYTE:
                     case ColumnType.SHORT:
                     case ColumnType.INT:
                         // Match '=' on a narrow-integer key: read the element at INT width
                         // (wrap) rather than widening an overflowing INT arithmetic via getLong().
-                        inVal = keyIsNarrowInt ? Numbers.intToLong(func.getInt(rec)) : func.getLong(rec);
+                        if (keyIsNarrowInt) {
+                            inVal = Numbers.intToLong(func.getInt(rec));
+                            keyVal = keyInt;
+                        } else {
+                            inVal = func.getLong(rec);
+                        }
                         break;
                     case ColumnType.LONG:
                     case ColumnType.TIMESTAMP:
@@ -405,7 +477,7 @@ public class InLongFunctionFactory implements FunctionFactory {
                         inVal = Numbers.parseLongQuiet(cs);
                         break;
                 }
-                if (inVal == val) {
+                if (inVal == keyVal) {
                     return !negated;
                 }
             }
@@ -423,4 +495,3 @@ public class InLongFunctionFactory implements FunctionFactory {
         }
     }
 }
-

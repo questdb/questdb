@@ -380,9 +380,25 @@ public class ExpressionNode implements Mutable, Sinkable {
      * exactly on an integer NULL sentinel -- INT_NULL (-2^31) for an INT-typed pair,
      * LONG_NULL (-2^63) for a LONG-typed one: {@code col + (const1 + const2)} would then
      * read that sentinel and poison every row to NULL, while the left-associative form
-     * keeps the real wrapped value. Integer pairs are otherwise safe because integer
-     * arithmetic is associative modulo 2^32 / 2^64 and INT-to-LONG widening reads the same
-     * value via getLong(); floating pairs are already evaluated at floating-point width.</p>
+     * keeps the real wrapped value. Floating pairs are already evaluated at floating-point
+     * width and carry no integer NULL sentinel.</p>
+     *
+     * <p><b>Known limitation.</b> Both guards inspect only the constant pair, so they
+     * cannot see a poison introduced by the left-associative <em>intermediate</em>
+     * {@code col op C1}. Integer arithmetic is associative modulo 2^32 / 2^64 in the
+     * absence of the sentinel, but the wrap that lands exactly on INT_NULL / LONG_NULL is
+     * read as NULL, and that can happen at the intermediate for a particular column value
+     * even when the constant pair itself does not fold to the sentinel. For example
+     * {@code (i + 2147483647) + 2} with {@code i == 1}: the intermediate
+     * {@code i + 2147483647} wraps to INT_NULL and poisons the row to NULL, so the
+     * un-regrouped and fully-literal forms return NULL, while the regrouped
+     * {@code i + (2147483647 + 2)} returns a real value -- the regroup silently changes the
+     * result for that column value. The constant pair {@code 2147483647 + 2} does not fold
+     * to the sentinel, so the second guard does not fire, and detecting the intermediate
+     * poison would need a column value the optimizer does not have. Integer-pair
+     * reassociation therefore still fires in this case. This is pre-existing behaviour --
+     * {@code master} reassociates unconditionally -- that these guards narrow (they close
+     * the case where the constant pair itself is the sentinel) but do not fully close.</p>
      *
      * @return {@code true} if this subtree is entirely constant (every leaf is a
      * constant and every interior node is a binary operation on constants),
@@ -832,6 +848,11 @@ public class ExpressionNode implements Mutable, Sinkable {
      *   the matching NULL on a NULL operand), while the left-associative literal /
      *   un-regrouped form keeps the real wrapped value.</li>
      * </ul>
+     * <p>Both checks see only the constant pair, not the column, so a "safe" verdict here
+     * still permits an integer-pair regroup whose left-associative intermediate
+     * {@code col OP a} wraps onto the sentinel for some column value (see the "Known
+     * limitation" note on {@link #reassociateConstants}). The method reports value-preserving
+     * for the pair, not for every column value.</p>
      */
     private static boolean isReassociationSafe(ExpressionNode a, ExpressionNode b, CharSequence opToken) {
         return !mixesIntegerAndWidening(a, b) && !integerPairFoldsToNull(a, b, opToken);
