@@ -4325,6 +4325,61 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRestartWithUnappliedBaseSeqTxnConverges() throws Exception {
+        // Distinct from "retained base WAL": here the base's OWN table lags its sequencer at restart.
+        // batch2 is committed to the base WAL but never applied to the base table (no drainWalQueue),
+        // so the base table's applied seqTxn sits behind the sequencer's committed seqTxn. The LV,
+        // refreshed only through batch1, is consistent with the applied base at restart. Rebuilding the
+        // registry from disk and then draining must apply the pending base WAL and refresh forward,
+        // converging to a from-scratch recompute over the full base - without losing batch2 or
+        // re-emitting batch1. The window carries a daily ANCHOR but all rows sit on one day, so the
+        // running sum never resets and equals the plain sum(x) OVER (PARTITION BY sym ORDER BY ts)
+        // recompute.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0);
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, sym, x, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // batch1: applied to the base and refreshed into the view.
+                execute("INSERT INTO base VALUES " +
+                        "('2026-04-01T00:00:00.000000Z', 'a', 1), " +
+                        "('2026-04-01T00:00:01.000000Z', 'b', 2)");
+                drainWalQueue();
+                setCurrentMicros(2_000_000L);
+                drainJob(job);
+                drainWalQueue();
+                assertRunningSumLvMatchesRecompute();
+
+                // batch2: committed to the base WAL but deliberately NOT applied - the base table now
+                // lags its sequencer.
+                execute("INSERT INTO base VALUES " +
+                        "('2026-04-01T00:00:02.000000Z', 'a', 3), " +
+                        "('2026-04-01T00:00:03.000000Z', 'b', 4)");
+            }
+
+            // Restart while batch2 is still unapplied to the base table.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(4_000_000L);
+                drainWalQueue(); // applies the pending batch2 to the base table
+                drainJob(job);
+                drainWalQueue();
+
+                // Converged over the full base with no loss and no duplication.
+                assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n4\n");
+                assertRunningSumLvMatchesRecompute();
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testMultipleLiveViewsOverSameBaseRefreshTogether() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");

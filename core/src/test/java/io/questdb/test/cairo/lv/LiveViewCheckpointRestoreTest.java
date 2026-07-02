@@ -25,15 +25,24 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.cairo.lv.LiveViewState;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.mp.Job;
+import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Files;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.AfterClass;
@@ -42,6 +51,9 @@ import org.junit.Assume;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
+
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * SQL {@code CHECKPOINT CREATE} / restore (database backup) coverage for live views.
@@ -61,6 +73,10 @@ public class LiveViewCheckpointRestoreTest extends AbstractCairoTest {
     // > FLUSH EVERY 100ms, so a single driveRefreshToQuiescence pass crosses the flush window.
     private static final long CLOCK_ADVANCE_MICROS = 250_000;
     private static final String SNAPSHOT_ID = "test-checkpoint-instance";
+    // Installed before the engine is built (setUpStatic) so DatabaseCheckpointAgent captures it. A pure
+    // pass-through unless a test arms lvStateCopyHook; testCheckpointWhileBaseAdvancesConverges uses it to
+    // land a deterministic base advance during the _lv.s copy.
+    private static final LvCheckpointFilesFacade testFilesFacade = new LvCheckpointFilesFacade();
     private static Path checkpointPath;
     private static Path triggerFilePath;
     private int checkpointRootLen;
@@ -69,6 +85,7 @@ public class LiveViewCheckpointRestoreTest extends AbstractCairoTest {
     public static void setUpStatic() throws Exception {
         checkpointPath = new Path();
         triggerFilePath = new Path();
+        ff = testFilesFacade;
         AbstractCairoTest.setUpStatic();
     }
 
@@ -84,6 +101,8 @@ public class LiveViewCheckpointRestoreTest extends AbstractCairoTest {
         // CHECKPOINT relies on the sync() syscall, unavailable on Windows; skip the whole suite there.
         Assume.assumeTrue(Os.type != Os.WINDOWS);
         super.setUp();
+        ff = testFilesFacade;
+        testFilesFacade.reset();
         checkpointPath.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory()).slash();
         checkpointRootLen = checkpointPath.size();
         triggerFilePath.of(configuration.getDbRoot()).parent().concat(TableUtils.RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME).$();
@@ -333,6 +352,95 @@ public class LiveViewCheckpointRestoreTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCheckpointWhileBaseAdvancesConverges() throws Exception {
+        // Convergence lock for the "an LV can lead the base in the checkpoint" hazard.
+        // DatabaseCheckpointAgent orders tables dependent-first / base-last
+        // (DependentViewGraph.orderByDependentViews), so it freezes and copies the live view BEFORE it
+        // snapshots the base. This test forces the base to advance in exactly that window - after the
+        // LV's _lv.s state file has been frozen and copied, but before the base snapshot is taken - via
+        // a deterministic FilesFacade copy hook: the first time the checkpoint copies _lv.s, a helper
+        // thread inserts and applies two fresh base rows, and the copy blocks until that lands. So the
+        // checkpoint captures the LV at its older consumed watermark and the base at the newer state.
+        //
+        // Because the base is copied last (at a seqTxn >= the LV's consumed point), restore leaves the
+        // LV at or behind the base, and the forward refresh catches it up: the restored view converges
+        // to the recompute over the restored (advanced) base. Under a base-FIRST ordering, the LV's
+        // _lv.s would instead reference base rows newer than the base snapshot and restore would keep
+        // ghost rows; this lock is expected to PASS on the current (base-last) code. The hook makes the
+        // interleaving deterministic - the advance always lands at the _lv.s copy - so this is a
+        // behaviour lock, not a timing race.
+        final String viewSql = "SELECT ts, sym, x, sum(x) OVER (PARTITION BY sym ORDER BY ts " +
+                "ROWS BETWEEN 4 PRECEDING AND CURRENT ROW) AS s FROM base";
+
+        final AtomicBoolean hookFired = new AtomicBoolean(false);
+        final ConcurrentLinkedQueue<Throwable> hookErrors = new ConcurrentLinkedQueue<>();
+
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " + viewSql);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base (ts, sym, x) VALUES " +
+                        "('2026-01-01T00:00:01.000000Z', 'a', 1.0), " +
+                        "('2026-01-01T00:00:02.000000Z', 'b', 2.0), " +
+                        "('2026-01-01T00:00:03.000000Z', 'a', 3.0), " +
+                        "('2026-01-01T00:00:04.000000Z', 'b', 4.0), " +
+                        "('2026-01-01T00:00:05.000000Z', 'a', 5.0)");
+                // Converge and flush the lead to disk so the checkpoint captures the full view at 1..5.
+                driveRefreshToQuiescence(job);
+                assertViewMatchesRecompute(viewSql);
+            }
+            // The job is closed: the LV stays frozen at rows 1..5 for the whole checkpoint. Only the hook
+            // moves the base.
+
+            // Arm the one-shot _lv.s copy hook: when the checkpoint freezes and copies the LV state file,
+            // advance the base (ordered last, so not yet copied) on a helper thread and block until it
+            // lands. The base is free here - the checkpoint has not yet opened a reader on it.
+            testFilesFacade.lvStateCopyHook = () -> {
+                final SOCountDownLatch advanceDone = new SOCountDownLatch(1);
+                final Thread advancer = new Thread(() -> {
+                    try {
+                        final TableToken baseToken = engine.verifyTableName("base");
+                        try (WalWriter ww = engine.getWalWriter(baseToken)) {
+                            appendBaseRow(ww, MicrosFormatUtils.parseUTCTimestamp("2026-01-01T00:00:06.000000Z"), "a", 60.0);
+                            appendBaseRow(ww, MicrosFormatUtils.parseUTCTimestamp("2026-01-01T00:00:07.000000Z"), "b", 70.0);
+                            ww.commit();
+                        }
+                        drainWalQueue(engine);
+                    } catch (Throwable th) {
+                        hookErrors.add(th);
+                    } finally {
+                        Path.clearThreadLocals();
+                        advanceDone.countDown();
+                    }
+                }, "lv-base-advancer");
+                advancer.start();
+                advanceDone.await();
+                hookFired.set(true);
+            };
+
+            // The hook advances the base to rows 1..7 during the _lv.s copy.
+            execute("CHECKPOINT CREATE");
+            if (!hookErrors.isEmpty()) {
+                throw new RuntimeException("base advance hook failed", hookErrors.peek());
+            }
+            Assert.assertTrue("the _lv.s copy hook must have fired", hookFired.get());
+
+            restoreFromCheckpoint();
+            drainWalQueue();
+
+            // The restored base holds rows 1..7 (the base was copied last, after the advance). The LV was
+            // frozen at 1..5; the forward refresh must catch it up to the recompute over the advanced base.
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+            assertViewMatchesRecompute(viewSql);
+
+            execute("CHECKPOINT RELEASE");
+        });
+    }
+
+    @Test
     public void testCheckpointWithUnflushedLeadRebuildsAfterRestore() throws Exception {
         // At checkpoint time the newest rows sit in the non-durable in-mem tier (the lead), not on
         // disk. startCheckpoint freezes the view without flushing, so CHECKPOINT CREATE captures only
@@ -479,6 +587,15 @@ public class LiveViewCheckpointRestoreTest extends AbstractCairoTest {
         });
     }
 
+    // Appends one row to the (ts, sym, x) base table via a direct WalWriter. Used by the base-advance
+    // FilesFacade hook, which runs off the SQL execution context and so cannot use execute(INSERT ...).
+    private static void appendBaseRow(WalWriter walWriter, long ts, CharSequence sym, double x) {
+        TableWriter.Row row = walWriter.newRow(ts);
+        row.putSym(1, sym);
+        row.putDouble(2, x);
+        row.append();
+    }
+
     // The live view must equal the same window recomputed directly over the base table. The view's
     // stored columns are exactly the projection it was created from, so (lv) and (viewSql) share a
     // schema. ORDER BY 2, 1 (sym, ts) gives both sides a total order; genericStringMatch tolerates
@@ -537,5 +654,28 @@ public class LiveViewCheckpointRestoreTest extends AbstractCairoTest {
             any = true;
         }
         return any;
+    }
+
+    // A pass-through FilesFacade with a one-shot hook that fires when the checkpoint copies a live
+    // view's _lv.s state file. Installed before the engine is built so DatabaseCheckpointAgent captures
+    // it (the agent snapshots configuration.getFilesFacade() into a final field at construction, so a
+    // per-test assertMemoryLeak(ff, ...) swap would arrive too late for the copy loop).
+    private static class LvCheckpointFilesFacade extends TestFilesFacadeImpl {
+        // Armed by a test; run once, on the first _lv.s copy after arming. Runs on the checkpoint thread.
+        Runnable lvStateCopyHook;
+
+        @Override
+        public int copy(LPSZ from, LPSZ to) {
+            final Runnable hook = lvStateCopyHook;
+            if (hook != null && Utf8s.endsWithAscii(from, LiveViewState.LIVE_VIEW_STATE_FILE_NAME)) {
+                lvStateCopyHook = null; // one-shot
+                hook.run();
+            }
+            return super.copy(from, to);
+        }
+
+        void reset() {
+            lvStateCopyHook = null;
+        }
     }
 }

@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.lv;
 
+import io.questdb.PropertyKey;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
 import io.questdb.test.AbstractCairoTest;
@@ -44,6 +45,31 @@ import org.junit.Test;
  * EXPRESSION is validated separately by validateAnchorPurity and is not covered here.)
  */
 public class LiveViewValidationTest extends AbstractCairoTest {
+
+    @Test
+    public void testCreateRejectedWhenLiveViewsDisabled() throws Exception {
+        // Parity with materialized views (CreateMatViewTest#testCreateMatViewDisabled): when the
+        // feature is turned off, CREATE is rejected at parse time rather than silently creating a
+        // view that never refreshes - its state store is a no-op (NoOpLiveViewStateStore) and no
+        // refresh workers are started, so a silently-accepted view would appear healthy while never
+        // updating. The reject sits next to the identical materialized-view guard in SqlParser.
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_ENABLED, "false");
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try {
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                        "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                Assert.fail("expected CREATE LIVE VIEW to be rejected when live views are disabled");
+            } catch (SqlException e) {
+                Assert.assertTrue(
+                        "wrong message [msg=" + e.getFlyweightMessage() + ']',
+                        Chars.contains(e.getFlyweightMessage(), "live views are disabled")
+                );
+            }
+            Assert.assertNull("no view should be created when the feature is disabled",
+                    engine.getLiveViewRegistry().getViewInstance("lv"));
+        });
+    }
 
     @Test
     public void testRejectNonDeterministicFunctionInWhere() throws Exception {

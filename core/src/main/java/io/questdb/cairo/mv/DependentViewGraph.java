@@ -75,7 +75,7 @@ public class DependentViewGraph implements Mutable {
      * checkpoint/snapshot flows. Unlike {@link #addView(MatViewDefinition)},
      * this does not cache a definition - LV definitions live in
      * {@code LiveViewRegistry}. The graph only needs the LV's token to honor
-     * the "dependents-after-bases" ordering rule.
+     * the "dependents-before-bases" ordering rule.
      * <p>
      * Rejects circular dependencies via {@link #hasDependencyLoop} - the same
      * walk used for mat views, so a mixed mat/live chain catches loops that

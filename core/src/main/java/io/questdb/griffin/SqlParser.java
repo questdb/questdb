@@ -1268,6 +1268,9 @@ public class SqlParser {
             return parseCreateView(lexer, executionContext, sqlParserCallback);
         }
         if (isLiveKeyword(tok)) {
+            if (!configuration.isLiveViewEnabled()) {
+                throw SqlException.$(0, "live views are disabled");
+            }
             return parseCreateLiveView(lexer, sqlParserCallback);
         }
         if (isMaterializedKeyword(tok)) {

@@ -24,11 +24,13 @@
 
 package io.questdb.test.cairo.lv;
 
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.mp.Job;
 import io.questdb.std.Chars;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -47,6 +49,9 @@ import org.junit.Test;
  * type change to a column the view does not read must stay transparent.
  */
 public class LiveViewBaseDdlTest extends AbstractCairoTest {
+
+    // > FLUSH EVERY 100ms, so a single driveRefreshToQuiescence pass crosses the flush window.
+    private static final long CLOCK_ADVANCE_MICROS = 250_000;
 
     // Pin the test clock below all test data before each test. A non-BACKFILL view's
     // lower bound is the CREATE wall-clock moment, and the forward-append refresh path
@@ -129,6 +134,141 @@ public class LiveViewBaseDdlTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testConvertBaseToNonWalInvalidatesOrRejects() throws Exception {
+        // Converting the base from WAL to non-WAL removes the refresh source (the WAL + sequencer the
+        // LV drains). SET TYPE only schedules the conversion via a _convert marker; the flip happens
+        // when the table is next opened. This documents the observed behaviour: the ALTER is accepted
+        // (there is no dependent-view guard, mirroring mat views), and once the conversion is applied
+        // and the view graph rebuilt, the LV flips INVALID with the "base table is not WAL table"
+        // reason - it does not silently keep serving stale rows or crash. If a future version wants to
+        // block the conversion instead, this test documents the current contract to change.
+        final String viewSql = "SELECT ts, sym, x, sum(x) OVER (PARTITION BY sym ORDER BY ts " +
+                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) AS s FROM base";
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " + viewSql);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base (ts, sym, x) VALUES " +
+                        "('2026-01-01T00:00:01.000000Z', 'a', 1.0), " +
+                        "('2026-01-01T00:00:02.000000Z', 'b', 2.0)");
+                driveRefreshToQuiescence(job);
+                assertViewMatchesRecompute(viewSql);
+                Assert.assertFalse("LV must start valid",
+                        engine.getLiveViewRegistry().getViewInstance("lv").isInvalid());
+            }
+
+            // Accepted with a dependent LV present: SET TYPE writes the _convert marker only.
+            execute("ALTER TABLE base SET TYPE BYPASS WAL");
+
+            // Apply the conversion and rebuild the LV registry (mirrors a restart). engine.load()
+            // runs TableConverter over the marker, flipping the base to non-WAL and recreating the
+            // LV state store; buildViewGraphs then reloads the LV instances and runs the base-is-WAL
+            // check that marks the view invalid.
+            engine.releaseInactive();
+            engine.load();
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            final TableToken baseToken = engine.verifyTableName("base");
+            Assert.assertFalse("base must be non-WAL after conversion", baseToken.isWal());
+
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull("LV must still be present after the base conversion", instance);
+            Assert.assertTrue("LV must be invalid once its base is no longer WAL", instance.isInvalid());
+            Assert.assertTrue(
+                    "wrong invalidation reason [reason=" + instance.getInvalidationReason() + ']',
+                    Chars.contains(instance.getInvalidationReason(), "not WAL")
+            );
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testUnreferencedBaseColumnChangeThenDataMatchesRecompute() throws Exception {
+        // The refresh path re-resolves each referenced writer column by NAME every cycle
+        // (buildColumnMappings), so an unreferenced ADD / DROP / RENAME - each of which shifts the
+        // physical column positions of the base - must leave the referenced columns (ts, sym, x)
+        // mapping correctly. The existing unreferenced-change tests stop at isInvalid()/seqTxn; this
+        // one ingests post-change DATA after every op and asserts the view still equals a from-scratch
+        // recompute over the (post-change) base, so a mis-resolved stride would surface as a value
+        // mismatch, not just a missed invalidation.
+        final String viewSql = "SELECT ts, sym, x, sum(x) OVER (PARTITION BY sym ORDER BY ts " +
+                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) AS s FROM base";
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE, y INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " + viewSql);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base (ts, sym, x, y) VALUES " +
+                        "('2026-01-01T00:00:01.000000Z', 'a', 1.0, 1), " +
+                        "('2026-01-01T00:00:02.000000Z', 'b', 2.0, 2)");
+                driveRefreshToQuiescence(job);
+                assertViewMatchesRecompute(viewSql);
+                assertViewValid();
+
+                // ADD an unreferenced column: the physical layout grows a trailing column.
+                execute("ALTER TABLE base ADD COLUMN z INT");
+                drainWalQueue();
+                assertViewValid();
+                execute("INSERT INTO base (ts, sym, x, y, z) VALUES " +
+                        "('2026-01-01T00:00:03.000000Z', 'a', 3.0, 3, 30), " +
+                        "('2026-01-01T00:00:04.000000Z', 'b', 4.0, 4, 40)");
+                driveRefreshToQuiescence(job);
+                assertViewMatchesRecompute(viewSql);
+                assertViewValid();
+
+                // DROP an unreferenced column: physical positions of later columns shift left.
+                execute("ALTER TABLE base DROP COLUMN y");
+                drainWalQueue();
+                assertViewValid();
+                execute("INSERT INTO base (ts, sym, x, z) VALUES " +
+                        "('2026-01-01T00:00:05.000000Z', 'a', 5.0, 50), " +
+                        "('2026-01-01T00:00:06.000000Z', 'b', 6.0, 60)");
+                driveRefreshToQuiescence(job);
+                assertViewMatchesRecompute(viewSql);
+                assertViewValid();
+
+                // RENAME an unreferenced column: the name changes but the referenced columns must
+                // still resolve by their own names.
+                execute("ALTER TABLE base RENAME COLUMN z TO w");
+                drainWalQueue();
+                assertViewValid();
+                execute("INSERT INTO base (ts, sym, x, w) VALUES " +
+                        "('2026-01-01T00:00:07.000000Z', 'a', 7.0, 70), " +
+                        "('2026-01-01T00:00:08.000000Z', 'b', 8.0, 80)");
+                driveRefreshToQuiescence(job);
+                assertViewMatchesRecompute(viewSql);
+                assertViewValid();
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    // The live view must equal the same window recomputed directly over the base table. (lv) and
+    // (viewSql) share a schema (the view stores exactly its projection); ORDER BY 2, 1 (sym, ts) gives
+    // both a total order and genericStringMatch tolerates the SYMBOL-vs-STRING passthrough difference.
+    private void assertViewMatchesRecompute(String viewSql) throws Exception {
+        TestUtils.assertSqlCursors(
+                engine,
+                sqlExecutionContext,
+                "(" + viewSql + ") ORDER BY 2, 1",
+                "(lv) ORDER BY 2, 1",
+                LOG,
+                true
+        );
+    }
+
+    private void assertViewValid() {
+        Assert.assertFalse(
+                "LV must stay valid across the unreferenced change",
+                engine.getLiveViewRegistry().getViewInstance("lv").isInvalid()
+        );
+    }
+
     private void assertReferencedColumnTypeChangeInvalidates(String initialType, String newType) throws Exception {
         final String transition = initialType + "->" + newType;
         assertMemoryLeak(() -> {
@@ -162,5 +302,19 @@ public class LiveViewBaseDdlTest extends AbstractCairoTest {
             any = true;
         }
         return any;
+    }
+
+    // Pumps the refresh job until no further LV WAL work is produced, advancing the clock each pass so
+    // deferred flushes land, and applying the LV's own WAL after each burst. Mirrors the fuzz harness.
+    private void driveRefreshToQuiescence(LiveViewRefreshJob job) {
+        for (int i = 0; i < 512; i++) {
+            setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+            drainWalQueue();
+            boolean progressed = drainJob(job);
+            drainWalQueue();
+            if (!progressed) {
+                break;
+            }
+        }
     }
 }

@@ -837,7 +837,7 @@ public class CairoEngine implements Closeable, WriterSource {
                             }
                             liveViewRegistry.registerView(instance);
                             // Register the LV with the shared dependents graph so
-                            // orderByDependentViews honors LV-after-base ordering
+                            // orderByDependentViews honors LV-before-base ordering
                             // during DatabaseCheckpointAgent snapshots. Skipping this
                             // would deadlock the snapshot agent on multi-LV chains
                             // over the same base.
