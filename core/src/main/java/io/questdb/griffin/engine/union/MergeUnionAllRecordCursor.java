@@ -33,25 +33,43 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.ObjList;
 
-class UnionAllRecordCursor extends AbstractSetRecordCursor implements NoRandomAccessRecordCursor {
-    private final NextMethod nextB = this::nextB;
+class MergeUnionAllRecordCursor extends AbstractSetRecordCursor implements NoRandomAccessRecordCursor {
+    private final boolean isAscending;
     private final AbstractUnionRecord record;
-    private NextMethod nextMethod;
-    private final NextMethod nextA = this::nextA;
+    private final int timestampIndex;
+    private boolean hasPendingA;
+    private boolean hasPendingB;
+    private boolean isLastA;
+    private boolean isStarted;
+    private Record recordA;
+    private Record recordB;
 
-    public UnionAllRecordCursor(ObjList<Function> castFunctionsA, ObjList<Function> castFunctionsB) {
+    public MergeUnionAllRecordCursor(
+            ObjList<Function> castFunctionsA,
+            ObjList<Function> castFunctionsB,
+            int timestampIndex,
+            boolean isAscending
+    ) {
         if (castFunctionsA != null && castFunctionsB != null) {
             this.record = new UnionCastRecord(castFunctionsA, castFunctionsB);
         } else {
             assert castFunctionsA == null && castFunctionsB == null;
             this.record = new UnionRecord();
         }
+        this.timestampIndex = timestampIndex;
+        this.isAscending = isAscending;
     }
 
     @Override
-    public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, RecordCursor.Counter counter) {
-        cursorA.calculateSize(circuitBreaker, counter);
-        cursorB.calculateSize(circuitBreaker, counter);
+    public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
+        // Counts row by row rather than summing the branches' O(frames) fast size path (as concat
+        // UnionAllRecordCursor does): the merge reads one row ahead from each branch, so delegating to
+        // cursorA.calculateSize() + cursorB.calculateSize() would miscount the buffered rows. Only reached
+        // when a branch's size() is unknown (e.g. a filtered branch). Cancellation still fires at the
+        // branches' page-frame boundaries through cursorA/cursorB.hasNext().
+        while (hasNext()) {
+            counter.inc();
+        }
     }
 
     @Override
@@ -61,7 +79,29 @@ class UnionAllRecordCursor extends AbstractSetRecordCursor implements NoRandomAc
 
     @Override
     public boolean hasNext() {
-        return nextMethod.next();
+        if (!isStarted) {
+            hasPendingA = cursorA.hasNext();
+            hasPendingB = cursorB.hasNext();
+            isStarted = true;
+        } else if (isLastA) {
+            hasPendingA = cursorA.hasNext();
+        } else {
+            hasPendingB = cursorB.hasNext();
+        }
+
+        if (hasPendingA && hasPendingB) {
+            final long tsA = recordA.getLong(timestampIndex);
+            final long tsB = recordB.getLong(timestampIndex);
+            isLastA = isAscending ? tsA <= tsB : tsA >= tsB;
+        } else if (hasPendingA) {
+            isLastA = true;
+        } else if (hasPendingB) {
+            isLastA = false;
+        } else {
+            return false;
+        }
+        record.setAb(isLastA);
+        return true;
     }
 
     @Override
@@ -75,49 +115,22 @@ class UnionAllRecordCursor extends AbstractSetRecordCursor implements NoRandomAc
     }
 
     @Override
-    public void skipRows(Counter rowCount, long maxRowsAfterSkip) {
-        // Each leg clamps against its own post-skip output, never the joint output.
-        // The skip reaches B only when it exhausts A (rowCount still > 0); in that
-        // case A yields no post-skip rows, so the full remaining output comes from B
-        // and the cap passed to B is exact. When the skip lands inside A, B is not
-        // skipped here and runs unclamped on later iteration.
-        cursorA.skipRows(rowCount, maxRowsAfterSkip);
-        if (rowCount.get() > 0) {
-            cursorB.skipRows(rowCount, maxRowsAfterSkip);
-            record.setAb(false);
-            nextMethod = nextB;
-        }
-    }
-
-    @Override
     public void toTop() {
+        isStarted = false;
+        hasPendingA = false;
+        hasPendingB = false;
+        isLastA = true;
         record.setAb(true);
-        nextMethod = nextA;
         cursorA.toTop();
         cursorB.toTop();
     }
 
-    private boolean nextA() {
-        return cursorA.hasNext() || switchToSlaveCursor();
-    }
-
-    private boolean nextB() {
-        return cursorB.hasNext();
-    }
-
-    private boolean switchToSlaveCursor() {
-        record.setAb(false);
-        nextMethod = nextB;
-        return nextMethod.next();
-    }
-
+    @Override
     void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionContext executionContext) throws SqlException {
         super.of(cursorA, cursorB, executionContext);
-        record.of(cursorA.getRecord(), cursorB.getRecord());
+        this.recordA = cursorA.getRecord();
+        this.recordB = cursorB.getRecord();
+        record.of(recordA, recordB);
         toTop();
-    }
-
-    interface NextMethod {
-        boolean next();
     }
 }
