@@ -50,6 +50,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 
+import static io.questdb.cairo.wal.WalTxnType.LIVE_VIEW_DATA;
 import static io.questdb.cairo.wal.WalTxnType.MAT_VIEW_DATA;
 import static io.questdb.cairo.wal.WalTxnType.MAT_VIEW_INVALIDATE;
 
@@ -121,6 +122,10 @@ public class WalUtils {
     public static long WAL_DEFAULT_BASE_TABLE_TXN = Long.MIN_VALUE;
     public static long WAL_DEFAULT_LAST_PERIOD_HI = Long.MIN_VALUE;
     public static long WAL_DEFAULT_LAST_REFRESH_TIMESTAMP = Long.MIN_VALUE;
+    // Sentinel returned by liveViewMaxBaseSeqTxnFromRecord for a record that is not a
+    // LIVE_VIEW_DATA block, so the backward scan keeps looking. Distinct from a real
+    // maxBaseSeqTxn (>= 0) and from the not-found / unreadable result (-1).
+    private static final long LV_SCAN_CONTINUE = Long.MIN_VALUE;
 
     /**
      * Builds a complete rebased table in the staging directory {@code dstDir} for
@@ -351,6 +356,69 @@ public class WalUtils {
     }
 
     /**
+     * Recovers the in-band {@code maxBaseSeqTxn} of a live view's last applied
+     * {@code LIVE_VIEW_DATA} block by scanning its own sequencer transaction log
+     * backward and reading the first (latest) such block's WAL-e event. This is the
+     * "forward-scan recovery from the LV WAL" that closes the durable-floor gap left
+     * when a crash lands between the inline apply and the trailing {@code _lv.s}
+     * persist: the block's {@code maxBaseSeqTxn} is the base seqTxn the LV table has
+     * actually materialised, which the stale {@code _lv.s} may not record.
+     * <p>
+     * The caller owns {@code txnLogMemory} and {@code walEventReader}. Returns the
+     * {@code maxBaseSeqTxn} of the latest {@code LIVE_VIEW_DATA} block, or {@code -1}
+     * when there is none or the backing WAL-e cannot be read (a missing/purged event
+     * yields {@code -1} so the caller safely no-ops rather than clamps to a guess).
+     */
+    public static long readLiveViewMaxBaseSeqTxn(
+            Path tablePath,
+            CairoConfiguration configuration,
+            MemoryCMR txnLogMemory,
+            WalEventReader walEventReader
+    ) {
+        final int tablePathLen = tablePath.size();
+        txnLogMemory.smallFile(configuration.getFilesFacade(), tablePath.concat(SEQ_DIR).concat(TXNLOG_FILE_NAME).$(), MemoryTag.MMAP_TX_LOG);
+        if (txnLogMemory.size() < TableTransactionLogFile.HEADER_SIZE) {
+            return -1;
+        }
+        final int formatVersion = txnLogMemory.getInt(TableTransactionLogFile.TX_LOG_STRUCTURE_VERSION_OFFSET);
+        if (formatVersion == WAL_SEQUENCER_FORMAT_VERSION_V1) {
+            final long txnCount = txnLogMemory.getLong(TableTransactionLogFile.MAX_TXN_OFFSET_64);
+            if (txnCount > 0 && txnLogMemory.size() >= TableTransactionLogFile.HEADER_SIZE + txnCount * TableTransactionLogV1.RECORD_SIZE) {
+                for (long txn = txnCount - 1; txn >= 0; txn--) {
+                    final long offset = TableTransactionLogFile.HEADER_SIZE + txn * TableTransactionLogV1.RECORD_SIZE;
+                    final long result = liveViewMaxBaseSeqTxnFromRecord(txnLogMemory, offset, tablePath, tablePathLen, walEventReader);
+                    if (result != LV_SCAN_CONTINUE) {
+                        return result;
+                    }
+                }
+            }
+        } else if (formatVersion == WAL_SEQUENCER_FORMAT_VERSION_V2) {
+            final long txnCount = txnLogMemory.getLong(TableTransactionLogFile.MAX_TXN_OFFSET_64);
+            final long partSize = txnLogMemory.getInt(TableTransactionLogFile.HEADER_SEQ_PART_SIZE_32);
+            if (txnCount > 0 && partSize > 0) {
+                final long partCount = (txnCount + partSize - 1) / partSize;
+                try (MemoryCMR partMem = Vm.getCMRInstance(configuration.getBypassWalFdCache())) {
+                    for (long part = partCount - 1; part >= 0; part--) {
+                        tablePath.trimTo(tablePathLen).concat(SEQ_DIR).concat(TXNLOG_PARTS_DIR).slash().put(part);
+                        partMem.smallFile(configuration.getFilesFacade(), tablePath.$(), MemoryTag.MMAP_TX_LOG);
+                        final long partTxnCount = Math.min(partSize, txnCount - part * partSize);
+                        for (long txn = partTxnCount - 1; txn >= 0; txn--) {
+                            final long offset = txn * TableTransactionLogV2.RECORD_SIZE;
+                            final long result = liveViewMaxBaseSeqTxnFromRecord(partMem, offset, tablePath, tablePathLen, walEventReader);
+                            if (result != LV_SCAN_CONTINUE) {
+                                return result;
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            throw new UnsupportedOperationException("Unsupported transaction log version: " + formatVersion);
+        }
+        return -1;
+    }
+
+    /**
      * Creates the {@link #REBASE_NEW_FILE_NAME} marker in the table dir. Idempotent.
      *
      * @param tableDirPath path positioned at the table directory; restored on return.
@@ -490,5 +558,44 @@ public class WalUtils {
             }
         }
         return false;
+    }
+
+    /**
+     * Inspects one sequencer-log record for {@link #readLiveViewMaxBaseSeqTxn}. Returns
+     * the block's {@code maxBaseSeqTxn} when the record is a {@code LIVE_VIEW_DATA}
+     * block (the caller's backward scan stops at the first, i.e. latest, one),
+     * {@link #LV_SCAN_CONTINUE} for a structural / non-WAL record so the scan keeps
+     * looking, or {@code -1} to abort the reconciliation safely (an unreadable WAL-e
+     * or an unexpected block type: the caller then no-ops rather than clamp to a value
+     * older than the true applied point, which would itself re-emit rows).
+     */
+    private static long liveViewMaxBaseSeqTxnFromRecord(
+            MemoryCMR mem,
+            long offset,
+            Path tablePath,
+            int tablePathLen,
+            WalEventReader walEventReader
+    ) {
+        final int walId = mem.getInt(offset + TableTransactionLogFile.TX_LOG_WAL_ID_OFFSET);
+        final int segmentId = mem.getInt(offset + TableTransactionLogFile.TX_LOG_SEGMENT_OFFSET);
+        final int segmentTxn = mem.getInt(offset + TableTransactionLogFile.TX_LOG_SEGMENT_TXN_OFFSET);
+        // Structural / non-WAL records (walId <= 0) carry no data event; skip them and
+        // keep scanning back to the latest LIVE_VIEW_DATA block below.
+        if (walId <= 0) {
+            return LV_SCAN_CONTINUE;
+        }
+        tablePath.trimTo(tablePathLen).concat(WAL_NAME_BASE).put(walId).slash().put(segmentId);
+        try {
+            final WalEventCursor walEventCursor = walEventReader.of(tablePath, segmentTxn);
+            if (walEventCursor.getType() == LIVE_VIEW_DATA) {
+                return walEventCursor.getLiveViewDataInfo().getMaxBaseSeqTxnInBlock();
+            }
+            // First data record scanning back is not a LIVE_VIEW_DATA block: an older
+            // block would under-clamp, so abort safely.
+            return -1;
+        } catch (Throwable th) {
+            // WAL-e missing / purged / unreadable: cannot recover the in-band value.
+            return -1;
+        }
     }
 }

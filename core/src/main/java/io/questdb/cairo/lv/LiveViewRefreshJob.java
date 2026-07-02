@@ -3887,6 +3887,56 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         return didWork;
     }
 
+    /**
+     * Repairs a durable-floor lag on the first refresh cycle after a restart. A flush
+     * commits the LV WAL block, inline-applies it (rows become durable in the LV
+     * table's own {@code _txn}), then persists {@code _lv.s} last; a crash between the
+     * apply and that persist leaves {@code _lv.s} behind the LV table's applied state.
+     * On restart the stale {@code lastProcessedSeqTxn} would make the first drain
+     * re-derive and re-append the already-materialised base range - a forward-append
+     * commit carries no dedup to collapse the duplicate, so the rows would double
+     * permanently.
+     * <p>
+     * Recovery restores the floor from disk truth: first apply any LV WAL block that
+     * committed but never applied (a crash in the narrower commit-to-apply window), so
+     * the LV table reflects every committed block, then clamp
+     * {@code lastProcessedSeqTxn} / {@code appliedWatermark} / {@code lvConsumedSeqTxn}
+     * up to the last applied block's in-band {@code maxBaseSeqTxn}. ACTIVE views only:
+     * a BACKFILLING view resumes through its own {@code .bcp} sweep, which owns its
+     * distinct floor. Idempotent on a healthy restart - {@code applyWalDirect} finds
+     * nothing pending and the clamp is a no-op because {@code _lv.s} already matches
+     * disk. When the WAL-e cannot be read the recovery no-ops, leaving the prior
+     * (worst-case duplicating, never lossy) behaviour.
+     */
+    private void reconcileAppliedFloorAfterRestart(LiveViewInstance instance) {
+        if (instance.getStateReader().getBackfillState() != LiveViewState.BACKFILL_STATE_ACTIVE) {
+            return;
+        }
+        final TableToken token = instance.getLiveViewToken();
+        try {
+            applyJob.applyWalDirect(token, Job.RUNNING_STATUS);
+        } catch (Throwable t) {
+            LOG.error().$("could not apply pending live view WAL on restart [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", error=").$(t).I$();
+            return;
+        }
+        final long appliedMaxBaseSeqTxn = engine.readLiveViewAppliedMaxBaseSeqTxn(token);
+        if (appliedMaxBaseSeqTxn > instance.getStateReader().getLastProcessedSeqTxn()) {
+            try {
+                engine.applyLiveViewData(token, appliedMaxBaseSeqTxn, blockFileWriter, path);
+                LOG.info().$("reconciled live view floor to applied state on restart [view=")
+                        .$(instance.getDefinition().getViewName())
+                        .$(", maxBaseSeqTxn=").$(appliedMaxBaseSeqTxn).I$();
+            } catch (CairoException e) {
+                LOG.critical().$("could not reconcile live view floor on restart [view=")
+                        .$(instance.getDefinition().getViewName())
+                        .$(", maxBaseSeqTxn=").$(appliedMaxBaseSeqTxn)
+                        .$(", error=").$safe(e.getFlyweightMessage()).I$();
+            }
+        }
+    }
+
     private void refreshInstance(LiveViewInstance instance, long seqTxn) {
         if (!instance.tryLockForRefresh()) {
             return;
@@ -3917,6 +3967,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // true whether the restore succeeded, missed, or failed.
                 if (!instance.isCheckpointRestoreAttempted()) {
                     instance.setCheckpointRestoreAttempted();
+                    // Reconcile a durable floor left behind by a crash between the
+                    // inline apply and the trailing _lv.s persist, before the head
+                    // .cp restore reads appliedWatermark as disk truth.
+                    reconcileAppliedFloorAfterRestart(instance);
                     if (instance.getHeadCheckpointLvSeqTxn() != Numbers.LONG_NULL) {
                         tryRestoreFromHead(instance, getWindowFactory(instance));
                     }

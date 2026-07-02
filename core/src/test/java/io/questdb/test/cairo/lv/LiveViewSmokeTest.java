@@ -79,6 +79,7 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Smoke tests: confirm the new CREATE LIVE VIEW syntax (FLUSH EVERY,
@@ -1158,6 +1159,22 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 sqlExecutionContext,
                 "(SELECT ts, sym, v, sum(x) OVER (PARTITION BY sym ORDER BY ts) AS s FROM base) ORDER BY 2, 1",
                 "(SELECT ts, sym, v, s FROM lv) ORDER BY 2, 1",
+                LOG,
+                true
+        );
+    }
+
+    // Differential oracle for the throw-then-retry idempotency test: the LV must
+    // equal its running-sum window recomputed straight over the base table.
+    // A persist failure mid-flush that neither dropped nor duplicated a row keeps
+    // this equality; a double-emit or a lost row breaks it. ORDER BY sym, ts is a
+    // total order (timestamps are unique per sym).
+    private void assertRunningSumLvMatchesRecompute() throws SqlException {
+        TestUtils.assertSqlCursors(
+                engine,
+                sqlExecutionContext,
+                "(SELECT ts, sym, x, sum(x) OVER (PARTITION BY sym ORDER BY ts) AS s FROM base) ORDER BY 2, 1",
+                "(SELECT ts, sym, x, s FROM lv) ORDER BY 2, 1",
                 LOG,
                 true
         );
@@ -3783,6 +3800,299 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 } finally {
                     failPersist.set(false);
                 }
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testCrashBetweenLvWalCommitAndInlineApplyRecovers() throws Exception {
+        // Regression: a crash that leaves the durable _lv.s floor behind the LV
+        // table's applied state must not double-emit on restart. A flush commits
+        // the LV WAL block, inline-applies it (rows become durable in the LV
+        // table via its own _txn), then persists _lv.s LAST. If the process dies
+        // after the apply but before the _lv.s persist, restart reloads a stale
+        // lastProcessedSeqTxn and the first post-restart refresh re-drains the
+        // same base range, re-committing and re-applying the identical rows. The
+        // LV table has no dedup keys and the forward-append commit is not a
+        // REPLACE_RANGE, so nothing collapses the duplicates - recovery must
+        // reconcile lastProcessedSeqTxn up to what the LV table already applied.
+        final AtomicBoolean failStatePersist = new AtomicBoolean(false);
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (failStatePersist.get() && Utf8s.endsWithAscii(name, LiveViewState.LIVE_VIEW_STATE_FILE_NAME)) {
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            setCurrentMicros(0);
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, sym, x, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Baseline clean flush; _lv.s durably records this commit.
+                execute("INSERT INTO base VALUES ('2026-04-01T00:00:00.000000Z', 'a', 1)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                // Crash window: the commit and inline apply succeed (row durable
+                // in the LV table), but the trailing _lv.s persist fails, so the
+                // durable floor stays at the baseline commit.
+                setCurrentMicros(2_000_000L);
+                failStatePersist.set(true);
+                execute("INSERT INTO base VALUES ('2026-04-01T00:00:02.000000Z', 'a', 2)");
+                drainWalQueue();
+                drainJob(job);
+                failStatePersist.set(false);
+
+                // The row is applied and queryable despite the stale floor.
+                assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n2\n");
+            }
+
+            // Restart: rebuild the registry from the on-disk _lv + (stale) _lv.s,
+            // the path startup takes.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(4_000_000L);
+                // A fresh commit drives the first post-restart refresh, which must
+                // resume from what the LV table already applied - not re-emit the
+                // stranded range.
+                execute("INSERT INTO base VALUES ('2026-04-01T00:00:04.000000Z', 'a', 3)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                // No duplication: exactly the three base rows, once each.
+                assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n3\n");
+                assertRunningSumLvMatchesRecompute();
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testCrashMidHeadCheckpointWriteFallsBackToPriorHead() throws Exception {
+        // A crash mid head-.cp write (or a .cp write that simply fails) must not
+        // corrupt the view or block recovery. The row data is durable in the LV
+        // table via its own _txn; the head .cp only snapshots window-accumulator
+        // state so a restart can continue the running window without replaying
+        // from the view's lower bound. maybeWriteHeadCheckpoint swallows a write
+        // failure (the .cp is a derived artifact, written tmp+rename), leaving
+        // the prior head .cp intact and addressable. A restart re-discovers that
+        // prior head via the startup sweep, restores its accumulators, and
+        // replays base WAL forward across the cadence gap to the applied point,
+        // converging to a from-scratch recompute with no duplication.
+        //
+        // CHECKPOINT_ROWS=1 makes every flush attempt a head .cp write so the
+        // injected failure fires on the second flush.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        final AtomicBoolean failCpWrite = new AtomicBoolean(false);
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (failCpWrite.get() && Utf8s.endsWithAscii(name, LiveViewCheckpointWriter.CP_TMP_FILE_EXT)) {
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            setCurrentMicros(0);
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, sym, x, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            final long priorHead;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // First flush writes a valid head .cp (the firstCp cadence).
+                execute("INSERT INTO base VALUES ('2026-04-01T00:00:00.000000Z', 'a', 1)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                priorHead = instance.getHeadCheckpointLvSeqTxn();
+                Assert.assertNotEquals("a prior head .cp must exist", Numbers.LONG_NULL, priorHead);
+
+                // Crash mid .cp write: the next flush commits + applies + persists
+                // _lv.s fine, but the head .cp write fails and is swallowed, so the
+                // head metadata stays pinned to the prior .cp.
+                setCurrentMicros(2_000_000L);
+                failCpWrite.set(true);
+                execute("INSERT INTO base VALUES ('2026-04-01T00:00:02.000000Z', 'a', 2)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                failCpWrite.set(false);
+                Assert.assertEquals("head .cp must remain the prior version after a failed write",
+                        priorHead, instance.getHeadCheckpointLvSeqTxn());
+                // Rows are durable despite the failed .cp write.
+                assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n2\n");
+                assertRunningSumLvMatchesRecompute();
+            }
+
+            // Restart: the sweep re-discovers the prior head .cp; the first refresh
+            // restores its accumulators and replays base WAL forward across the
+            // cadence gap.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(reloaded);
+                Assert.assertEquals("sweep re-stamps the prior head from its .cp filename",
+                        priorHead, reloaded.getHeadCheckpointLvSeqTxn());
+
+                setCurrentMicros(4_000_000L);
+                execute("INSERT INTO base VALUES ('2026-04-01T00:00:04.000000Z', 'a', 3)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                // The prior-head restore + forward replay leaves the view exactly
+                // equal to a recompute - no lost or duplicated rows.
+                assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n3\n");
+                assertRunningSumLvMatchesRecompute();
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testRefreshThrowThenRetryIsIdempotentAndLeakFree() throws Exception {
+        // A refresh cycle whose durable _lv.s persist throws mid-flush must not
+        // corrupt the view. The LV WAL block is committed and inline-applied
+        // before the persist, so the rows are already durable and the in-memory
+        // watermark advanced past them; the top-level catch in refreshInstance
+        // ticks the flush-retry budget and abandons the cycle, and a subsequent
+        // successful cycle never re-appends the already-committed rows (no
+        // duplication). Both the in-order flush path (flushLead) and the
+        // out-of-order REPLACE_RANGE replay path (o3Replay) advance
+        // lvConsumedSeqTxn then fall back to persistState on failure, so both
+        // are exercised. The whole test runs under assertMemoryLeak, covering
+        // the base readers that o3Replay / drainBaseWal close manually - a leak
+        // on the throwing path would surface here.
+        //
+        // Injection: a counter fails exactly the two _lv.s writes a single
+        // failing cycle makes (the advanceLiveViewConsumedSeqTxn attempt plus
+        // the persistState fallback) and then self-clears, so the next cycle
+        // persists cleanly. The failing cycle's second write is what propagates
+        // and ticks the budget; a success cycle makes only one _lv.s write, so a
+        // fully-drained counter proves the throw-and-fallback path executed.
+        final AtomicInteger failLvStateWrites = new AtomicInteger(0);
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (Utf8s.endsWithAscii(name, LiveViewState.LIVE_VIEW_STATE_FILE_NAME)
+                        && failLvStateWrites.get() > 0) {
+                    failLvStateWrites.decrementAndGet();
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            setCurrentMicros(0);
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, sym, x, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Baseline: one clean flush establishes lastFlushTimeUs and the
+                // head .cp the O3 replay later rebuilds against. All test rows sit
+                // within one day, so the daily-anchored running sum equals the
+                // plain unbounded recompute the oracle uses.
+                execute("INSERT INTO base VALUES ('2026-04-01T00:00:00.000000Z', 'a', 1)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                Assert.assertEquals("clean baseline leaves no retries", 0, instance.getFlushRetryCount());
+                long baselineProcessed = instance.getLastProcessedSeqTxn();
+                Assert.assertTrue("baseline must have processed the first commit", baselineProcessed > -1);
+
+                // Phase 1 - in-order flush persist failure. Advance past FLUSH
+                // EVERY so the flush is due, arm the two-write failure, and drive
+                // one refresh. flushLead commits + applies the row, then the
+                // consumed-seqTxn advance and its persistState fallback both throw
+                // and the cycle ticks the retry budget. The lead in-order path
+                // advances refreshedUpTo on the drain (before the flush), so the
+                // failing cycle does not re-run and the budget stays at one.
+                setCurrentMicros(2_000_000L);
+                failLvStateWrites.set(2);
+                execute("INSERT INTO base VALUES ('2026-04-01T00:00:02.000000Z', 'a', 2)");
+                drainWalQueue();
+                drainJob(job);
+                Assert.assertEquals("both _lv.s writes of the failing flush must have fired",
+                        0, failLvStateWrites.get());
+                Assert.assertTrue("persist failure must tick the flush-retry budget",
+                        instance.getFlushRetryCount() > 0);
+                Assert.assertTrue("in-memory watermark advances despite the persist failure",
+                        instance.getLastProcessedSeqTxn() > baselineProcessed);
+                // The row was applied before the persist threw, so it is durable
+                // and queryable even though _lv.s is momentarily stale.
+                assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n2\n");
+
+                // Retry: a fresh commit drives a clean flush that resets the
+                // budget and catches _lv.s up. No row is re-appended.
+                setCurrentMicros(4_000_000L);
+                execute("INSERT INTO base VALUES ('2026-04-01T00:00:04.000000Z', 'a', 3)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                Assert.assertEquals("successful retry resets the budget", 0, instance.getFlushRetryCount());
+                assertRunningSumLvMatchesRecompute();
+
+                // Phase 2 - out-of-order REPLACE_RANGE replay persist failure. A
+                // back-dated row forces o3Replay, which commits a REPLACE_RANGE
+                // block and inline-applies it before advancing lvConsumedSeqTxn.
+                // The lead O3 branch only advances refreshedUpTo after o3Replay
+                // returns, so the throwing cycle re-runs on the next worker tick;
+                // the two-write counter self-clears so that re-run persists
+                // cleanly and converges within the same drainJob burst.
+                setCurrentMicros(6_000_000L);
+                failLvStateWrites.set(2);
+                execute("INSERT INTO base VALUES ('2026-04-01T00:00:01.000000Z', 'a', 9)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                Assert.assertEquals("the O3 replay cycle must have exhausted the injected failures",
+                        0, failLvStateWrites.get());
+                Assert.assertTrue("O3 replay persist failure must tick the retry budget",
+                        instance.getFlushRetryCount() > 0);
+                // The REPLACE_RANGE block was committed and applied before the
+                // persist threw, so the back-dated row is already durable and lands
+                // exactly once (REPLACE_RANGE replaces the overlap band rather than
+                // appending) even though _lv.s is momentarily stale.
+                assertRunningSumLvMatchesRecompute();
+
+                // Retry: the next commit re-drives the O3 replay (refreshedUpTo did
+                // not advance on the failing cycle) with the counter cleared, so it
+                // persists cleanly, resets the budget, and stays duplication-free.
+                setCurrentMicros(8_000_000L);
+                execute("INSERT INTO base VALUES ('2026-04-01T00:00:06.000000Z', 'a', 4)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                Assert.assertEquals("successful retry resets the budget", 0, instance.getFlushRetryCount());
+                assertRunningSumLvMatchesRecompute();
             }
 
             execute("DROP LIVE VIEW lv");

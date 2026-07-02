@@ -2646,6 +2646,25 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     /**
+     * Recovers the base seqTxn a live view has actually materialised, by reading the
+     * in-band {@code maxBaseSeqTxn} of the last {@code LIVE_VIEW_DATA} block applied to
+     * the view's own table (its sequencer log + WAL-e events). Used at restart to
+     * reconcile a {@code _lv.s} floor left stale by a crash between the inline apply
+     * and the trailing persist. Returns {@code -1} when there is no applied block or
+     * the WAL-e is unreadable, so the caller safely leaves the floor untouched.
+     */
+    public long readLiveViewAppliedMaxBaseSeqTxn(TableToken liveViewToken) {
+        try (
+                Path path = new Path();
+                MemoryCMR txnLogMem = Vm.getCMRInstance(configuration.getBypassWalFdCache());
+                WalEventReader walEventReader = new WalEventReader(configuration)
+        ) {
+            path.of(configuration.getDbRoot()).concat(liveViewToken);
+            return WalUtils.readLiveViewMaxBaseSeqTxn(path, configuration, txnLogMem, walEventReader);
+        }
+    }
+
+    /**
      * Rebases a hard-suspended WAL table ({@code ALTER TABLE ... REBASE WAL}): clones the applied data
      * into a new dir with a new tableId and a brand-new sequencer (seqTxn reset to 0), discarding all
      * non-applied WAL (including pending structural changes), marks the new table rebased and seeds two
