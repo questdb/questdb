@@ -3823,6 +3823,104 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampNoOpCastBetweenExtracted() throws SqlException {
+        // CAST(ts AS <same_type>) BETWEEN ... should be treated as an interval intrinsic
+        String tsType = timestampType.getTypeName().toLowerCase();
+        IntrinsicModel m = modelOf(
+                "cast(timestamp as " + tsType + ") between '2014-01-01T12:30:00.000Z' and '2014-01-02T12:30:00.000Z'"
+        );
+        Assert.assertTrue(m.hasIntervalFilters());
+        assertFilter(m, null);
+        TestUtils.assertEquals(
+                replaceTimestampSuffix("[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]"),
+                intervalToString(m)
+        );
+    }
+
+    @Test
+    public void testTimestampNoOpCastCrossPrecisionNotExtracted() throws SqlException {
+        // CAST(ts AS <different_type>) is a cross-precision cast and must NOT be unwrapped
+        String crossType = ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? "timestamp_ns" : "timestamp";
+        IntrinsicModel m = modelOf(
+                "cast(timestamp as " + crossType + ") > '2015-02-22T00:00:00.000Z'"
+        );
+        Assert.assertFalse(m.hasIntervalFilters());
+    }
+
+    @Test
+    public void testTimestampNoOpCastEqualsExtracted() throws SqlException {
+        // CAST(ts AS <same_type>) = value should be treated as an interval intrinsic
+        String tsType = timestampType.getTypeName().toLowerCase();
+        runWhereIntervalTest0(
+                "cast(timestamp as " + tsType + ") = '2020-03-01T15:43:21.000000Z'",
+                "[{lo=2020-03-01T15:43:21.000000Z, hi=2020-03-01T15:43:21.000000Z}]"
+        );
+    }
+
+    @Test
+    public void testTimestampNoOpCastGreaterExtracted() throws SqlException {
+        // CAST(ts AS <same_type>) > value and CAST(ts AS <same_type>) >= value should extract
+        String tsType = timestampType.getTypeName().toLowerCase();
+        runWhereIntervalTest0(
+                "cast(timestamp as " + tsType + ") > to_date('2015-02-22', 'yyyy-MM-dd')",
+                "[{lo=2015-02-22T00:00:00.000001Z, hi=294247-01-10T04:00:54.775807Z}]"
+        );
+        runWhereIntervalTest0(
+                "cast(timestamp as " + tsType + ") >= to_date('2015-02-22', 'yyyy-MM-dd')",
+                "[{lo=2015-02-22T00:00:00.000000Z, hi=294247-01-10T04:00:54.775807Z}]"
+        );
+    }
+
+    @Test
+    public void testTimestampNoOpCastInExtracted() throws SqlException {
+        // CAST(ts AS <same_type>) IN 'value' should be treated as an interval intrinsic
+        String tsType = timestampType.getTypeName().toLowerCase();
+        runWhereIntervalTest0(
+                "cast(timestamp as " + tsType + ") in '2018-01-01'",
+                "[{lo=2018-01-01T00:00:00.000000Z, hi=2018-01-01T23:59:59.999999Z}]"
+        );
+    }
+
+    @Test
+    public void testTimestampNoOpCastLessExtracted() throws SqlException {
+        // CAST(ts AS <same_type>) < value and <= should extract
+        String tsType = timestampType.getTypeName().toLowerCase();
+        runWhereIntervalTest0(
+                "cast(timestamp as " + tsType + ") < to_date('2015-02-22', 'yyyy-MM-dd')",
+                "[{lo=, hi=2015-02-21T23:59:59.999999Z}]"
+        );
+        runWhereIntervalTest0(
+                "cast(timestamp as " + tsType + ") <= to_date('2015-02-22', 'yyyy-MM-dd')",
+                "[{lo=, hi=2015-02-22T00:00:00.000000Z}]"
+        );
+    }
+
+    @Test
+    public void testTimestampNoOpCastNotEqualsExtracted() throws SqlException {
+        // CAST(ts AS <same_type>) != value should be treated as an interval intrinsic
+        String tsType = timestampType.getTypeName().toLowerCase();
+        runWhereIntervalTest0(
+                "cast(timestamp as " + tsType + ") != to_date('2020-03-01:15:43:21', 'yyyy-MM-dd:HH:mm:ss')",
+                "[{lo=, hi=2020-03-01T15:43:20.999999Z},{lo=2020-03-01T15:43:21.000001Z, hi=294247-01-10T04:00:54.775807Z}]"
+        );
+    }
+
+    @Test
+    public void testTimestampNoOpCastRangeAndOtherFilter() throws SqlException {
+        // CAST(ts AS <same_type>) with an additional non-timestamp filter; range is intrinsic, rest is filter
+        String tsType = timestampType.getTypeName().toLowerCase();
+        IntrinsicModel m = modelOf(
+                "cast(timestamp as " + tsType + ") >= to_date('2015-02-22', 'yyyy-MM-dd') and bid > 100"
+        );
+        Assert.assertTrue(m.hasIntervalFilters());
+        assertFilter(m, "100 bid >");
+        TestUtils.assertEquals(
+                replaceTimestampSuffix("[{lo=2015-02-22T00:00:00.000000Z, hi=294247-01-10T04:00:54.775807Z}]"),
+                intervalToString(m)
+        );
+    }
+
+    @Test
     public void testTimestampNotEqualsConstFunction() throws Exception {
         runWhereIntervalTest0("timestamp != to_date('2020-03-01:15:43:21', 'yyyy-MM-dd:HH:mm:ss')",
                 "[{lo=, hi=2020-03-01T15:43:20.999999Z},{lo=2020-03-01T15:43:21.000001Z, hi=294247-01-10T04:00:54.775807Z}]");
