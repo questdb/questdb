@@ -26,11 +26,14 @@ package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.lv.LiveViewInMemoryTier;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewState;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.lv.LiveViewRecordCursor;
 import io.questdb.griffin.engine.lv.LiveViewRecordCursorFactory;
@@ -38,11 +41,16 @@ import io.questdb.mp.Job;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Differential fuzz test for live views.
@@ -119,6 +127,18 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
     private static final int RANGE_FIRST_VALUE_VARIANT = 10;
     private static final int LAG_VARIANT = 11;
     private static final int LAG_OFFSET_VARIANT = 12;
+    // Window shapes driven over concurrent multi-WalWriter base ingestion by
+    // runConcurrentWriterFuzz. Every shape here reads the (ts, sym, i, x) base the
+    // writer threads populate (so the DECIMAL variant, which needs a d column, is
+    // excluded) and is a deterministic function of the unique-ts row set, so the
+    // recompute oracle holds regardless of how the writers interleave. The
+    // un-partitioned row_number() OVER () (variant 5) is kept in - its whole-table
+    // re-sequencing under apply-ahead is the Finding 4 surface this arm targets.
+    private static final int[] CONCURRENT_WRITER_VARIANTS = {
+            0, 1, 2, 3, 4, 5, 6,
+            RANGE_SUM_VARIANT, RANGE_AVG_VARIANT, RANGE_FIRST_VALUE_VARIANT,
+            LAG_VARIANT, LAG_OFFSET_VARIANT
+    };
     // Partitioned (PARTITION BY sym ORDER BY ts) variants driven over a DEDUP base
     // by runDedupFuzz. Their output is a deterministic function of the deduped base
     // (every (ts, sym) is unique after apply, so ts is a total order within each sym
@@ -172,6 +192,38 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             for (int v = 0; v < variantCount(); v++) {
                 runFuzz(rnd, v, 140, true, rnd.nextBoolean(), true, rnd.nextBoolean());
+            }
+        });
+    }
+
+    @Test
+    public void testFuzzConcurrentWriters() throws Exception {
+        // Differential fuzz with the base ingested by MULTIPLE concurrent WAL
+        // writers rather than the single-writer SQL INSERT path every other arm
+        // uses. Each variant's post-CREATE rows are split into disjoint,
+        // globally-ts-ordered round-robin slices, one per writer thread; the
+        // writers own their own WalWriter and commit concurrently, so the base
+        // sequencer interleaves their transactions and the apply job batches
+        // several seqTxns per cycle. That interleave / apply-ahead is the Finding 4
+        // territory (a trailing in-order global-max commit was once forward-re-
+        // appended as a permanent duplicate), and the row_number() variant's whole-
+        // table re-sequencing is its sharpest surface, so that variant always runs a
+        // concurrent refresh driver; the others randomize it. The recompute oracle
+        // stays exact because the disjoint slices reassemble to the same unique-ts
+        // base no matter how the writers interleave, so the quiesced view must equal
+        // the from-scratch recompute. Optional BACKFILL captures pre-CREATE history
+        // (single-writer, so the backfill floor pins the global-min ts) before the
+        // concurrent suffix.
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1 + rnd.nextInt(4));
+        assertMemoryLeak(() -> {
+            for (int i = 0; i < CONCURRENT_WRITER_VARIANTS.length; i++) {
+                final int variant = CONCURRENT_WRITER_VARIANTS[i];
+                // row_number() OVER () (variant 5) always drives a concurrent refresh
+                // so the apply-ahead re-sequencing path is exercised every run.
+                final boolean concurrentRefresh = variant == 5 || rnd.nextBoolean();
+                runConcurrentWriterFuzz(rnd, variant, 200 + rnd.nextInt(300),
+                        2 + rnd.nextInt(3), concurrentRefresh, rnd.nextBoolean());
             }
         });
     }
@@ -407,6 +459,21 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
             case 4 -> "ts, sym, row_number() OVER w AS v";
             default -> throw new IllegalArgumentException("anchored variant=" + variant);
         };
+    }
+
+    // Appends one (ts, sym, i, x) row through a WalWriter. A negative symIdx writes
+    // a NULL symbol; LONG_NULL in iv stores as a NULL LONG. Used by the concurrent-
+    // writer fuzz threads, which each own their own WalWriter.
+    private static void appendRow(WalWriter walWriter, long ts, int symIdx, long iv, double xv) {
+        TableWriter.Row row = walWriter.newRow(ts);
+        if (symIdx < 0) {
+            row.putSym(1, (CharSequence) null);
+        } else {
+            row.putSym(1, SYMBOLS[symIdx]);
+        }
+        row.putLong(2, iv);
+        row.putDouble(3, xv);
+        row.append();
     }
 
     // Mode A read-back cross-check: with a known un-flushed lead resident, the
@@ -900,6 +967,46 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
         execute(sink);
     }
 
+    // A writer thread that owns its own WalWriter and ingests the round-robin slice
+    // [fromIndex+writerId, rowCount) with stride numWriters, committing every batch
+    // rows. The slices are disjoint and globally ts-ordered, so timestamps stay
+    // unique across writers; the cross-writer commit interleaving is what produces
+    // O3 and apply-ahead batching. The thread awaits the barrier before its first
+    // write and clears thread-locals on exit for the leak check.
+    private Thread newConcurrentWriterThread(
+            int writerId,
+            int numWriters,
+            int fromIndex,
+            int rowCount,
+            int batch,
+            long[] tsv,
+            int[] symIdx,
+            long[] iv,
+            double[] xv,
+            TableToken baseToken,
+            CyclicBarrier barrier,
+            ConcurrentLinkedQueue<Throwable> errors
+    ) {
+        return new Thread(() -> {
+            try (WalWriter walWriter = engine.getWalWriter(baseToken)) {
+                barrier.await();
+                int sinceCommit = 0;
+                for (int k = fromIndex + writerId; k < rowCount; k += numWriters) {
+                    appendRow(walWriter, tsv[k], symIdx[k], iv[k], xv[k]);
+                    if (++sinceCommit >= batch) {
+                        walWriter.commit();
+                        sinceCommit = 0;
+                    }
+                }
+                walWriter.commit();
+            } catch (Throwable th) {
+                errors.add(th);
+            } finally {
+                Path.clearThreadLocals();
+            }
+        }, "lv-cw-writer-" + writerId);
+    }
+
     // One refresh cycle past the FLUSH EVERY rate-limit: advances the clock so
     // the commit is not deferred, runs the job, and applies the LV WAL.
     private void refreshCycle(LiveViewRefreshJob job) {
@@ -1053,6 +1160,179 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
                 engine,
                 sqlExecutionContext,
                 "(" + oracleSql + ") ORDER BY 1",
+                "(lv) ORDER BY 1",
+                LOG,
+                true
+        );
+
+        execute("DROP LIVE VIEW lv");
+        execute("DROP TABLE base");
+    }
+
+    // Differential fuzz where the base is ingested by several concurrent WalWriters
+    // (see testFuzzConcurrentWriters). Mirrors runFuzz's dataset shape - unique,
+    // strictly-increasing timestamps; optional pre-CREATE BACKFILL history - but the
+    // post-CREATE suffix is split into disjoint round-robin slices, one per writer
+    // thread, that commit in parallel so the sequencer interleaves their
+    // transactions. With concurrentRefresh a single refresh driver runs alongside
+    // ingestion (steady-state timing, so the base apply job races ahead of the LV
+    // trigger - the apply-ahead path); otherwise the refresh runs single-threaded
+    // after the writers join. Either way the view is quiesced before the exact-
+    // equality recompute oracle.
+    private void runConcurrentWriterFuzz(
+            Rnd rnd,
+            int variant,
+            int rowCount,
+            int numWriters,
+            boolean concurrentRefresh,
+            boolean backfill
+    ) throws Exception {
+        // A concurrent refresh driver advances the flush clock in an unbounded loop
+        // while ingestion is in flight, so - unlike the single-threaded fuzz arms,
+        // which sit a day below the data - the clock is pinned a full YEAR below the
+        // data start. That keeps it under a non-backfill view's CREATE-moment lower
+        // bound for the whole run (a 250ms/advance loop never climbs a year), so
+        // head-miss replay never drops a row the recompute keeps.
+        setCurrentMicros(MicrosTimestampDriver.floor("2026-01-01T00:00:00.000000Z"));
+        final long dataStart = MicrosTimestampDriver.floor("2027-01-01T00:00:00.000000Z");
+
+        final int n = 1 + rnd.nextInt(MAX_FRAME);
+        final int symCount = 1 + rnd.nextInt(SYMBOLS.length);
+        final int stepMode = rnd.nextInt(3);
+        final int baseStepMax = stepMode == 0 ? 5_000_000 : stepMode == 1 ? 60_000_000 : 900_000_000;
+        final int dayJumpEvery = stepMode == 0 ? 20 : 12;
+        final boolean withWhere = rnd.nextInt(3) == 0;
+
+        final String viewSql = "SELECT " + projection(variant, n) + " FROM base" + (withWhere ? " WHERE i > 0" : "");
+        final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
+                + (backfill ? "BACKFILL " : "")
+                + "AS " + viewSql;
+
+        execute("DROP LIVE VIEW IF EXISTS lv");
+        execute("DROP TABLE IF EXISTS base");
+        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+        LOG.info().$("LV concurrent-writer fuzz: variant=").$(variant).$(", rows=").$(rowCount)
+                .$(", n=").$(n).$(", writers=").$(numWriters).$(", symCount=").$(symCount)
+                .$(", stepMode=").$(stepMode).$(", concurrentRefresh=").$(concurrentRefresh)
+                .$(", backfill=").$(backfill).$(", where=").$(withWhere).$(", sql=").$(viewSql).$();
+
+        // Strictly-unique, strictly-increasing timestamps so ts is a total order;
+        // random symbols and values with occasional NULLs.
+        final long[] tsv = new long[rowCount];
+        final int[] symIdx = new int[rowCount];
+        final long[] iv = new long[rowCount];
+        final double[] xv = new double[rowCount];
+        final int maxDayJumps = 30;
+        int dayJumps = 0;
+        long ts = dataStart;
+        for (int k = 0; k < rowCount; k++) {
+            ts += 1 + rnd.nextInt(baseStepMax);
+            if (dayJumps < maxDayJumps && rnd.nextInt(dayJumpEvery) == 0) {
+                ts += 86_400_000_000L;
+                dayJumps++;
+            }
+            tsv[k] = ts;
+            symIdx[k] = rnd.nextInt(20) == 0 ? -1 : rnd.nextInt(symCount);
+            iv[k] = rnd.nextInt(20) == 0 ? Numbers.LONG_NULL : (rnd.nextInt(2001) - 1000);
+            xv[k] = rnd.nextDouble() * 1000.0;
+        }
+
+        // Backfill captures pre-CREATE history: the earliest rows [0, preCount) go
+        // before CREATE so the backfill floor sits at the global-min ts and no
+        // concurrent post-CREATE row falls below it. Non-backfill: everything lands
+        // post-CREATE via the concurrent writers.
+        final int preCount = backfill ? rnd.nextInt(rowCount + 1) : 0;
+
+        final TableToken baseToken = engine.verifyTableName("base");
+        final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
+        LiveViewRefreshJob job = null;
+        try {
+            // Pre-CREATE history (single-writer, in ts order): keeps the backfill
+            // floor at the global-min ts.
+            if (preCount > 0) {
+                try (WalWriter walWriter = engine.getWalWriter(baseToken)) {
+                    for (int k = 0; k < preCount; k++) {
+                        appendRow(walWriter, tsv[k], symIdx[k], iv[k], xv[k]);
+                    }
+                    walWriter.commit();
+                }
+                drainWalQueue();
+            }
+
+            execute(createSql);
+            job = new LiveViewRefreshJob(0, engine, 1);
+
+            if (backfill) {
+                driveBackfillToCompletion(job, "lv");
+            }
+
+            // Concurrent suffix [preCount, rowCount): numWriters threads each own a
+            // WalWriter and commit a disjoint round-robin slice in parallel, with an
+            // optional refresh driver racing them.
+            if (preCount < rowCount) {
+                final int driverCount = concurrentRefresh ? 1 : 0;
+                final CyclicBarrier barrier = new CyclicBarrier(numWriters + driverCount);
+                final AtomicBoolean ingesting = new AtomicBoolean(true);
+
+                final Thread[] writers = new Thread[numWriters];
+                for (int w = 0; w < numWriters; w++) {
+                    final int batch = 5 + rnd.nextInt(20);
+                    writers[w] = newConcurrentWriterThread(
+                            w, numWriters, preCount, rowCount, batch, tsv, symIdx, iv, xv, baseToken, barrier, errors);
+                }
+
+                // Only the driver touches the clock during the concurrent phase; the
+                // final quiescence drive runs after it has joined.
+                final LiveViewRefreshJob driverJob = job;
+                final Thread driver = concurrentRefresh ? new Thread(() -> {
+                    try {
+                        barrier.await();
+                        while (ingesting.get()) {
+                            setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                            drainWalQueue();
+                            drainJob(driverJob);
+                        }
+                    } catch (Throwable th) {
+                        errors.add(th);
+                    } finally {
+                        Path.clearThreadLocals();
+                    }
+                }, "lv-cw-refresh-driver") : null;
+
+                for (Thread t : writers) {
+                    t.start();
+                }
+                if (driver != null) {
+                    driver.start();
+                }
+                for (Thread t : writers) {
+                    t.join();
+                }
+                ingesting.set(false);
+                if (driver != null) {
+                    driver.join();
+                }
+
+                if (!errors.isEmpty()) {
+                    throw new RuntimeException("worker thread failed", errors.peek());
+                }
+            }
+
+            // Quiesce single-threaded, then assert the differential oracle below.
+            drainWalQueue();
+            driveRefreshToQuiescence(job);
+        } finally {
+            Misc.free(job);
+        }
+
+        // The oracle: the live view must equal the window query recomputed over the
+        // base table. ORDER BY 1 (the unique ts) gives both sides a total order;
+        // genericStringMatch tolerates SYMBOL-vs-STRING on passthrough.
+        TestUtils.assertSqlCursors(
+                engine,
+                sqlExecutionContext,
+                "(" + viewSql + ") ORDER BY 1",
                 "(lv) ORDER BY 1",
                 LOG,
                 true
