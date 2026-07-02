@@ -63,6 +63,11 @@ public class ForwardingLiveViewStateStore implements LiveViewStateStore {
     }
 
     @Override
+    public boolean isLeadReconstructionEnabled() {
+        return delegate.isLeadReconstructionEnabled();
+    }
+
+    @Override
     public boolean isRefreshEnabled() {
         return delegate.isRefreshEnabled();
     }

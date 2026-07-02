@@ -41,10 +41,27 @@ import org.jetbrains.annotations.TestOnly;
 public interface LiveViewStateStore extends QuietCloseable {
 
     /**
+     * Returns true when the refresh workers should reconstruct each live view's in-memory lead
+     * (compute the un-flushed rows into RAM) but must NOT flush, apply, or advance any durable
+     * watermark -- the read-only-replica freshness-parity mode. Distinct from
+     * {@link #isRefreshEnabled()}: a replica store returns {@code isRefreshEnabled() == false}
+     * (no flush, the on-disk tier is fed by the global apply job from replicated WAL) but
+     * {@code isLeadReconstructionEnabled() == true} (rebuild the lead so replica reads match the
+     * primary). Default false: the primary's real store computes the lead as part of its full
+     * cycle (gated by {@link #isRefreshEnabled()}), so it never needs the lead-only path.
+     */
+    default boolean isLeadReconstructionEnabled() {
+        return false;
+    }
+
+    /**
      * Returns false when this store is a quiesced no-op stand-in -- e.g. on a read-only replica
      * before a promote. {@link LiveViewRefreshJob} consults it to skip its entire refresh pass
      * (both the notification-queue drain and the registry fallback scan) without touching the
      * registry, so a replica's refresh workers stay idle until a promote swaps in a real store.
+     * <p>
+     * A store may still enable lead reconstruction (see {@link #isLeadReconstructionEnabled()})
+     * while refresh is disabled: that runs the compute-lead-only pass without any durable write.
      */
     boolean isRefreshEnabled();
 
