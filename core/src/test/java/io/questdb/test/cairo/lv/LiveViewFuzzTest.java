@@ -25,7 +25,9 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.lv.LiveViewInMemoryTier;
@@ -35,6 +37,7 @@ import io.questdb.cairo.lv.LiveViewState;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlCompiler;
@@ -180,6 +183,16 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
             RANGE_SUM_VARIANT, RANGE_AVG_VARIANT, RANGE_FIRST_VALUE_VARIANT,
             LAG_VARIANT, LAG_OFFSET_VARIANT
     };
+    // Window shapes driven over a TIMESTAMP_NS (nanosecond-precision) base by
+    // runNanosBaseFuzz: the ROWS-frame aggregates, ranking OVER (), and
+    // lag()/lag(,k) - every shape whose result is a function of the ROW SET,
+    // independent of the timestamp UNIT. What is under test is the
+    // timestamp-driver-aware refresh path (ns partition arithmetic, IN MEMORY
+    // micros-to-ns scaling), not a unit-sensitive frame; the bounded-RANGE
+    // '<n> MINUTE' variants remain the micros arms' job and are excluded here.
+    private static final int[] NANOS_BASE_VARIANTS = {
+            0, 1, 2, 3, 4, 5, 6, LAG_VARIANT, LAG_OFFSET_VARIANT
+    };
     // Anchored-window fuzz variants (driven via runAnchoredFuzz): sum, avg,
     // count, max, row_number over a named WINDOW carrying ANCHOR EXPRESSION.
     private static final int ANCHORED_VARIANT_COUNT = 5;
@@ -260,6 +273,28 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             for (int i = 0; i < FIXED_WIDTH_VARIANTS.length; i++) {
                 runBaseDdlFuzz(rnd, FIXED_WIDTH_VARIANTS[i], 120 + rnd.nextInt(160),
+                        rnd.nextBoolean(), rnd.nextBoolean(), rnd.nextBoolean());
+            }
+        });
+    }
+
+    @Test
+    public void testFuzzBaseTtl() throws Exception {
+        // Base-table TTL retention is transparent to the view: an insert that
+        // advances the base max timestamp past the TTL window evicts older
+        // partitions at apply time, exactly like DROP PARTITION - a non-DATA
+        // operation the refresh worker walks past. The view stays ACTIVE, its
+        // already-emitted rows below the evicted range are frozen (not
+        // retracted), and forward ingestion continues the window accumulation
+        // as if the evicted rows still existed. The run-end oracle therefore
+        // recomputes over a shadow table holding the LOGICAL dataset (every row
+        // ever inserted). Parametrized over the partition unit (DAY / HOUR),
+        // with the TTL granularity matched to it, plus restart and IN MEMORY.
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1 + rnd.nextInt(4));
+        assertMemoryLeak(() -> {
+            for (int i = 0; i < FIXED_WIDTH_VARIANTS.length; i++) {
+                runBaseTtlFuzz(rnd, FIXED_WIDTH_VARIANTS[i], 120 + rnd.nextInt(160),
                         rnd.nextBoolean(), rnd.nextBoolean(), rnd.nextBoolean());
             }
         });
@@ -404,6 +439,48 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFuzzMultipleLiveViews() throws Exception {
+        // Several live views over ONE base table, all maintained by a single
+        // refresh worker (production runs one LiveViewRefreshJob per worker, and
+        // each scans every view). Every view carries a DISTINCT window shape and
+        // is cross-checked against its own from-scratch recompute at quiescence,
+        // so the one worker must maintain K unrelated views correctly off the
+        // shared base WAL stream. The views also share ONE base WAL retention
+        // floor: WalPurgeJob pins the base WAL to the minimum lvConsumedSeqTxn
+        // across all non-dropped dependents. The run applies a final batch of
+        // base rows WITHOUT refreshing (so the base head is ahead of every view's
+        // floor), drains a real WalPurgeJob - only the shared LV floor can retain
+        // that batch's WAL - and then refreshes: all views must converge, which
+        // they cannot if the purge ignored the floor and dropped the segments.
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1 + rnd.nextInt(4));
+        assertMemoryLeak(() -> {
+            runMultiViewFuzz(rnd, 200 + rnd.nextInt(200), false);
+            runMultiViewFuzz(rnd, 200 + rnd.nextInt(200), true);
+        });
+    }
+
+    @Test
+    public void testFuzzNanosBase() throws Exception {
+        // Differential fuzz over a TIMESTAMP_NS (nanosecond-precision) base
+        // partitioned BY HOUR - a non-DAY partition unit and the ns timestamp
+        // driver at once. The refresh path is timestamp-driver-aware (ns
+        // partition arithmetic, IN MEMORY micros-to-ns scaling), and the
+        // recompute oracle holds identically to the micros arms: a unit-agnostic
+        // window shape over a unique-ts total order is a deterministic function
+        // of the row set. Fuzzed under O3 plus optional restart / BACKFILL /
+        // IN MEMORY.
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1 + rnd.nextInt(4));
+        assertMemoryLeak(() -> {
+            for (int i = 0; i < NANOS_BASE_VARIANTS.length; i++) {
+                runNanosBaseFuzz(rnd, NANOS_BASE_VARIANTS[i], 120 + rnd.nextInt(160),
+                        true, rnd.nextBoolean(), rnd.nextBoolean(), rnd.nextBoolean());
+            }
+        });
+    }
+
+    @Test
     public void testFuzzO3() throws Exception {
         // Out-of-order ingestion across commits, refreshing between each commit
         // so late rows force head replay against already-materialized state.
@@ -424,6 +501,27 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             for (int v = 0; v < variantCount(); v++) {
                 runFuzz(rnd, v, 140, true, true, false, rnd.nextBoolean());
+            }
+        });
+    }
+
+    @Test
+    public void testFuzzParquetBase() throws Exception {
+        // Differential fuzz over a base whose settled partitions are converted to
+        // PARQUET while an incremental live view maintains itself off it. The
+        // refresh consumes the base WAL stream, not base partitions, so converting
+        // an already-consumed partition is physically transparent; in-order runs
+        // convert mid-stream and keep refreshing over the partially-parquet base,
+        // and every run converts once more at the end. The recompute oracle is
+        // unchanged - the from-scratch recompute reads the same parquet/native
+        // base. (A BACKFILL view over a parquet base is deliberately excluded: it
+        // double-counts rows, a separate parquet-read defect - see runParquetBaseFuzz.)
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1 + rnd.nextInt(4));
+        assertMemoryLeak(() -> {
+            for (int i = 0; i < FIXED_WIDTH_VARIANTS.length; i++) {
+                runParquetBaseFuzz(rnd, FIXED_WIDTH_VARIANTS[i], 120 + rnd.nextInt(160),
+                        rnd.nextBoolean(), rnd.nextBoolean());
             }
         });
     }
@@ -1020,6 +1118,41 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
         }
     }
 
+    // Converts settled base partitions in [loTs, hiTs) to parquet through the
+    // WAL apply path. Tolerates the benign outcomes the parquet-conversion fuzz
+    // op also tolerates (an empty range matching no partition, a partition that
+    // could not be converted, or one already parquet) so an unlucky dataset
+    // shape does not fail the run.
+    private void convertPartitionsToParquet(long loTs, long hiTs) throws SqlException {
+        if (hiTs <= loTs) {
+            return;
+        }
+        try {
+            execute("ALTER TABLE base CONVERT PARTITION TO PARQUET WHERE ts >= " + loTs + " AND ts < " + hiTs);
+            drainWalQueue();
+        } catch (CairoException e) {
+            final CharSequence msg = e.getFlyweightMessage();
+            if (Chars.contains(msg, "no partitions matched WHERE clause")
+                    || Chars.contains(msg, "could not convert partition")
+                    || Chars.contains(msg, "already a parquet partition")) {
+                return;
+            }
+            throw e;
+        }
+    }
+
+    // Physical row count of a table (post-eviction base row count for the TTL
+    // arm, so the fuzz can assert TTL actually evicted partitions).
+    private long countRows(String table) throws SqlException {
+        try (
+                RecordCursorFactory factory = select("SELECT count() FROM " + table);
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
+            Assert.assertTrue(cursor.hasNext());
+            return cursor.getRecord().getLong(0);
+        }
+    }
+
     // Drives the named view's backfill sweep to completion on the caller's job,
     // re-fetching the instance each pass so it survives a restart, then applies
     // the LV WAL. Mirrors the smoke test helper.
@@ -1210,6 +1343,52 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
             execute(sink);
         }
         drainWalQueue();
+    }
+
+    // Inserts rows [from, to) of order (the shuffled segment) into the ns base in
+    // one commit. Mirrors insertCommit but casts each timestamp to TIMESTAMP_NS so
+    // the numeric literal is read as nanoseconds since epoch, matching the base's
+    // ns designated timestamp.
+    private void insertNsCommit(
+            StringSink sink,
+            int[] order,
+            int from,
+            int to,
+            long[] tsv,
+            int[] symIdx,
+            long[] iv,
+            double[] xv,
+            boolean[] xNull
+    ) throws Exception {
+        if (from >= to) {
+            return;
+        }
+        sink.clear();
+        sink.put("INSERT INTO base (ts, sym, i, x) VALUES ");
+        for (int r = from; r < to; r++) {
+            final int k = order[r];
+            if (r > from) {
+                sink.put(',');
+            }
+            sink.put('(').put(tsv[k]).put("::timestamp_ns,");
+            if (symIdx[k] < 0) {
+                sink.put("null,");
+            } else {
+                sink.put('\'').put(SYMBOLS[symIdx[k]]).put("',");
+            }
+            if (iv[k] == Numbers.LONG_NULL) {
+                sink.put("null,");
+            } else {
+                sink.put(iv[k]).put(',');
+            }
+            if (xNull[k]) {
+                sink.put("null");
+            } else {
+                sink.put(xv[k]);
+            }
+            sink.put(')');
+        }
+        execute(sink);
     }
 
     // Inserts the var-length rows [from, to) of order (the shuffled segment) into
@@ -1780,6 +1959,210 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
         execute("DROP LIVE VIEW lv");
         execute("DROP TABLE IF EXISTS base");
         execute("DROP TABLE IF EXISTS base2");
+    }
+
+    // Freeze-and-continue fuzz where base-table TTL is the removal trigger (see
+    // testFuzzBaseTtl). Phase 1 ingests and quiesces a multi-partition dataset
+    // over an intact base; a single far-ahead trigger row then advances the base
+    // max past the TTL window, evicting the phase-1 partitions at apply time -
+    // the automatic-retention counterpart to an explicit DROP PARTITION. The view
+    // must walk past the eviction (stay ACTIVE, freeze its emitted rows), so
+    // phase 2 continues strictly in order on top of the frozen state (an O3
+    // replay after a removal is path-dependent - see runRemovalFreezeContinueFuzz).
+    // The run-end oracle recomputes over a shadow table holding the LOGICAL
+    // dataset (every row ever inserted): the walk-past keeps the window
+    // accumulators, so post-eviction rows continue as if the evicted rows still
+    // existed. Parametrized over the partition unit (DAY / HOUR) with a matched
+    // TTL granularity, plus restart and IN MEMORY.
+    private void runBaseTtlFuzz(
+            Rnd rnd,
+            int variant,
+            int rowCount,
+            boolean hourPartition,
+            boolean restart,
+            boolean inMemory
+    ) throws Exception {
+        // Re-pin the clock a day below the data start on EVERY call (not just the
+        // first): this arm later advances the wall clock ABOVE the data to arm TTL
+        // (which evicts relative to min(maxTimestamp, wallClock)), so the shared
+        // per-test clock would otherwise sit above the next variant's data and
+        // push its view lower bound past the early rows. The lower bound is fixed
+        // at CREATE, below every row, so the forward-append path still emits all.
+        setCurrentMicros(MicrosTimestampDriver.floor("2025-12-31T00:00:00.000000Z"));
+
+        final int n = 1 + rnd.nextInt(MAX_FRAME);
+        final int symCount = 1 + rnd.nextInt(SYMBOLS.length);
+        final boolean withWhere = rnd.nextInt(3) == 0;
+
+        // Partition unit + a matched TTL granularity (an hour TTL needs sub-day
+        // partitioning; a day TTL pairs with day partitioning). A one-unit window
+        // evicts every partition older than one partition width below the max.
+        final String partUnit = hourPartition ? "HOUR" : "DAY";
+        final long partWidth = hourPartition ? 3_600_000_000L : 86_400_000_000L;
+        final String ttlClause = "TTL 1 " + partUnit;
+
+        final String projection = projection(variant, n);
+        final String where = withWhere ? " WHERE i > 0" : "";
+        final String viewSql = "SELECT " + projection + " FROM base" + where;
+        final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
+                + (inMemory ? "IN MEMORY 60s " : "")
+                + "AS " + viewSql;
+
+        execute("DROP LIVE VIEW IF EXISTS lv");
+        execute("DROP TABLE IF EXISTS base");
+        execute("DROP TABLE IF EXISTS shadow");
+        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY "
+                + partUnit + " " + ttlClause + " WAL");
+
+        LOG.info().$("LV base-TTL fuzz: variant=").$(variant).$(", rows=").$(rowCount)
+                .$(", n=").$(n).$(", symCount=").$(symCount).$(", partUnit=").$(partUnit)
+                .$(", ttlClause=").$(ttlClause).$(", restart=").$(restart).$(", inMem=").$(inMemory)
+                .$(", where=").$(withWhere).$(", sql=").$(viewSql).$();
+
+        // Strictly-unique, strictly-increasing timestamps so ts is a total order.
+        // Phase-1 rows [0, splitPoint) span several partitions (a partition-width
+        // step every few rows). At splitPoint a big forward jump - well past the
+        // TTL window from phase-1's tail - so applying the trigger row there
+        // evicts every phase-1 partition. Phase-2 rows continue just above it.
+        final int splitPoint = rowCount / 3 + rnd.nextInt(rowCount / 3);
+        final long[] tsv = new long[rowCount];
+        final int[] symIdx = new int[rowCount];
+        final long[] iv = new long[rowCount];
+        final double[] xv = new double[rowCount];
+        final boolean[] xNull = new boolean[rowCount];
+        long ts = MicrosTimestampDriver.floor("2026-01-01T00:00:00.000000Z");
+        for (int k = 0; k < rowCount; k++) {
+            if (k == splitPoint) {
+                // Jump the trigger row three partition widths past phase-1's tail
+                // so applying it advances the max well past the one-unit TTL
+                // window and evicts every phase-1 partition.
+                ts += 3 * partWidth;
+            } else {
+                ts += 1 + rnd.nextInt(1_000_000);
+                if (rnd.nextInt(6) == 0) {
+                    ts += partWidth; // cross a partition boundary
+                }
+            }
+            tsv[k] = ts;
+            symIdx[k] = rnd.nextInt(20) == 0 ? -1 : rnd.nextInt(symCount);
+            iv[k] = rnd.nextInt(20) == 0 ? Numbers.LONG_NULL : (rnd.nextInt(2001) - 1000);
+            xNull[k] = rnd.nextInt(20) == 0;
+            xv[k] = rnd.nextDouble() * 1000.0;
+        }
+
+        final StringSink sink = new StringSink();
+        final StringSink preRemoval = new StringSink();
+        LiveViewRefreshJob job = null;
+        try {
+            execute(createSql);
+            job = new LiveViewRefreshJob(0, engine, 1);
+
+            // Phase 1: O3 churn over an intact base, per-commit refresh.
+            final int[] phase1Order = segmentOrder(rnd, 0, splitPoint, true);
+            final int[] cb = commitBounds(rnd, phase1Order.length);
+            for (int c = 0; c + 1 < cb.length; c++) {
+                insertCommit(sink, phase1Order, cb[c], cb[c + 1], tsv, symIdx, iv, xv, xNull, null);
+                drainWalQueue();
+                refreshCycle(job);
+
+                if (restart && rnd.nextInt(3) == 0) {
+                    LiveViewInstance inst = engine.getLiveViewRegistry().getViewInstance("lv");
+                    if (inst != null
+                            && inst.getStateReader().getBackfillState() == LiveViewState.BACKFILL_STATE_ACTIVE) {
+                        job = Misc.free(job);
+                        engine.getLiveViewRegistry().clear();
+                        engine.buildViewGraphs();
+                        job = new LiveViewRefreshJob(0, engine, 1);
+                    }
+                }
+            }
+            driveRefreshToQuiescence(job);
+
+            // Intact-base checkpoint of the oracle: logical == physical here.
+            TestUtils.assertSqlCursors(
+                    engine,
+                    sqlExecutionContext,
+                    "(" + viewSql + ") ORDER BY 1",
+                    "(lv) ORDER BY 1",
+                    LOG,
+                    true
+            );
+            printSql("(lv) ORDER BY 1", preRemoval);
+
+            final long baseRowsBefore = countRows("base");
+
+            // The TTL trigger: advance the wall clock above the trigger row so
+            // TTL keys off the data max, then insert the single far-ahead row.
+            // Its apply advances the base max past the window and evicts every
+            // phase-1 partition.
+            setCurrentMicros(tsv[splitPoint] + partWidth);
+            final int[] triggerOrder = {splitPoint};
+            insertCommit(sink, triggerOrder, 0, 1, tsv, symIdx, iv, xv, xNull, null);
+            drainWalQueue();
+            refreshCycle(job); // walk past the eviction seqTxn
+
+            final long baseRowsAfter = countRows("base");
+            Assert.assertTrue(
+                    "base TTL must have evicted phase-1 partitions [before=" + baseRowsBefore
+                            + ", after=" + baseRowsAfter + ']',
+                    baseRowsAfter < baseRowsBefore
+            );
+
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            Assert.assertFalse("LV must stay valid after base TTL eviction", instance.isInvalid());
+            // The eviction must not retract emitted rows. The trigger row's ts is
+            // the highest so far, so under ORDER BY 1 it sorts last (or is
+            // filtered out by the optional WHERE) - either way the pre-removal
+            // output stays an exact prefix of the current output.
+            sink.clear();
+            printSql("(lv) ORDER BY 1", sink);
+            Assert.assertTrue(
+                    "TTL eviction must not retract emitted LV rows [pre=\n" + preRemoval + "\npost=\n" + sink + ']',
+                    sink.toString().startsWith(preRemoval.toString())
+            );
+
+            // Phase 2: strictly in-order continuation on top of the frozen state.
+            final int[] phase2Order = segmentOrder(rnd, splitPoint + 1, rowCount, false);
+            final int[] cb2 = commitBounds(rnd, phase2Order.length);
+            for (int c = 0; c + 1 < cb2.length; c++) {
+                insertCommit(sink, phase2Order, cb2[c], cb2[c + 1], tsv, symIdx, iv, xv, xNull, null);
+                drainWalQueue();
+                refreshCycle(job);
+
+                if (restart && rnd.nextInt(3) == 0) {
+                    LiveViewInstance inst = engine.getLiveViewRegistry().getViewInstance("lv");
+                    if (inst != null
+                            && inst.getStateReader().getBackfillState() == LiveViewState.BACKFILL_STATE_ACTIVE) {
+                        job = Misc.free(job);
+                        engine.getLiveViewRegistry().clear();
+                        engine.buildViewGraphs();
+                        job = new LiveViewRefreshJob(0, engine, 1);
+                    }
+                }
+            }
+            driveRefreshToQuiescence(job);
+        } finally {
+            Misc.free(job);
+        }
+
+        // The oracle: the view must equal the window query recomputed over the
+        // LOGICAL dataset - every generated row, as if nothing was evicted -
+        // materialized into the shadow table in ts order.
+        execute("CREATE TABLE shadow (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        insertLogicalDataset("shadow", tsv, symIdx, iv, xv, xNull);
+        TestUtils.assertSqlCursors(
+                engine,
+                sqlExecutionContext,
+                "(SELECT " + projection + " FROM shadow" + where + ") ORDER BY 1",
+                "(lv) ORDER BY 1",
+                LOG,
+                true
+        );
+
+        execute("DROP LIVE VIEW lv");
+        execute("DROP TABLE base");
+        execute("DROP TABLE shadow");
     }
 
     // Differential fuzz where the base is ingested by several concurrent WalWriters
@@ -2382,6 +2765,386 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
                 assertModeBMatchesDiskOnly("SELECT * FROM lv");
             }
         }
+
+        execute("DROP LIVE VIEW lv");
+        execute("DROP TABLE base");
+    }
+
+    // Multiple live views over one base (see testFuzzMultipleLiveViews). K views
+    // with distinct window shapes (a random mix of IN MEMORY) are maintained by a
+    // single refresh worker and each is cross-checked against its own recompute.
+    // The shared WAL retention floor is exercised concretely: after the front of
+    // the dataset quiesces, a final batch of base rows is committed and applied to
+    // the base table but the views are NOT refreshed, so the base's own applied
+    // seqTxn is at the head while every view's lvConsumedSeqTxn lags below it. A
+    // real WalPurgeJob is then drained - the ONLY thing pinning the final batch's
+    // WAL segments is the minimum lvConsumedSeqTxn across the K dependents
+    // (WalPurgeJob.getSafeToPurgeUpToTxn). The views are then refreshed and must
+    // converge; a purge that ignored the shared LV floor would have deleted the
+    // segments they still need, leaving them short of the final batch.
+    private void runMultiViewFuzz(Rnd rnd, int rowCount, boolean o3) throws Exception {
+        if (currentMicros < 0) {
+            setCurrentMicros(MicrosTimestampDriver.floor("2025-12-31T00:00:00.000000Z"));
+        }
+
+        final int viewCount = 2 + rnd.nextInt(3); // 2..4 views
+        final int symCount = 1 + rnd.nextInt(SYMBOLS.length);
+        final int stepMode = rnd.nextInt(3);
+        final int baseStepMax = stepMode == 0 ? 5_000_000 : stepMode == 1 ? 60_000_000 : 900_000_000;
+        final int dayJumpEvery = stepMode == 0 ? 20 : 12;
+
+        // Distinct window shapes, one per view: shuffle the fixed-width set and
+        // take the first viewCount. Each view gets its own frame radius.
+        final int[] variants = Arrays.copyOf(FIXED_WIDTH_VARIANTS, FIXED_WIDTH_VARIANTS.length);
+        for (int k = variants.length - 1; k > 0; k--) {
+            final int j = rnd.nextInt(k + 1);
+            final int tmp = variants[k];
+            variants[k] = variants[j];
+            variants[j] = tmp;
+        }
+        final String[] viewNames = new String[viewCount];
+        final String[] viewSql = new String[viewCount];
+        for (int v = 0; v < viewCount; v++) {
+            viewNames[v] = "lv" + v;
+            viewSql[v] = "SELECT " + projection(variants[v], 1 + rnd.nextInt(MAX_FRAME)) + " FROM base";
+        }
+
+        for (int v = 0; v < viewCount; v++) {
+            execute("DROP LIVE VIEW IF EXISTS " + viewNames[v]);
+        }
+        execute("DROP TABLE IF EXISTS base");
+        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+        LOG.info().$("LV multi-view fuzz: views=").$(viewCount).$(", rows=").$(rowCount)
+                .$(", symCount=").$(symCount).$(", stepMode=").$(stepMode).$(", o3=").$(o3).$();
+
+        // Strictly-unique, strictly-increasing timestamps; no pre-CREATE history,
+        // so every view sees every row and each shares one oracle shape (a
+        // recompute over the full base).
+        final long[] tsv = new long[rowCount];
+        final int[] symIdx = new int[rowCount];
+        final long[] iv = new long[rowCount];
+        final double[] xv = new double[rowCount];
+        final boolean[] xNull = new boolean[rowCount];
+        final int maxDayJumps = 30;
+        int dayJumps = 0;
+        long ts = MicrosTimestampDriver.floor("2026-01-01T00:00:00.000000Z");
+        for (int k = 0; k < rowCount; k++) {
+            ts += 1 + rnd.nextInt(baseStepMax);
+            if (dayJumps < maxDayJumps && rnd.nextInt(dayJumpEvery) == 0) {
+                ts += 86_400_000_000L;
+                dayJumps++;
+            }
+            tsv[k] = ts;
+            symIdx[k] = rnd.nextInt(20) == 0 ? -1 : rnd.nextInt(symCount);
+            iv[k] = rnd.nextInt(20) == 0 ? Numbers.LONG_NULL : (rnd.nextInt(2001) - 1000);
+            xNull[k] = rnd.nextInt(20) == 0;
+            xv[k] = rnd.nextDouble() * 1000.0;
+        }
+
+        // Front [0, splitPoint) is ingested and quiesced; the final batch
+        // [splitPoint, rowCount) - the highest timestamps, so a pure forward
+        // append - is applied to the base but left UN-consumed by the views for
+        // the purge test. Both segments are non-empty.
+        final int splitPoint = rowCount - (1 + rnd.nextInt(Math.max(1, rowCount / 4)));
+
+        final StringSink sink = new StringSink();
+        LiveViewRefreshJob job = null;
+        try {
+            for (int v = 0; v < viewCount; v++) {
+                final String inMem = rnd.nextBoolean() ? "IN MEMORY 60s " : "";
+                execute("CREATE LIVE VIEW " + viewNames[v] + " FLUSH EVERY 100ms " + inMem + "AS " + viewSql[v]);
+            }
+            job = new LiveViewRefreshJob(0, engine, 1);
+
+            final int[] frontOrder = segmentOrder(rnd, 0, splitPoint, o3);
+            final int[] cb = commitBounds(rnd, frontOrder.length);
+            for (int c = 0; c + 1 < cb.length; c++) {
+                insertCommit(sink, frontOrder, cb[c], cb[c + 1], tsv, symIdx, iv, xv, xNull, null);
+                drainWalQueue();
+                refreshCycle(job); // one job refreshes ALL views
+            }
+            driveRefreshToQuiescence(job);
+
+            // The final batch: apply it to the base but do NOT refresh, so every
+            // view's consumed floor stays below the base head.
+            final int[] finalOrder = segmentOrder(rnd, splitPoint, rowCount, false);
+            final int[] cbFinal = commitBounds(rnd, finalOrder.length);
+            for (int c = 0; c + 1 < cbFinal.length; c++) {
+                insertCommit(sink, finalOrder, cbFinal[c], cbFinal[c + 1], tsv, symIdx, iv, xv, xNull, null);
+                drainWalQueue();
+            }
+
+            // A real purge with several dependents. The base table has already
+            // applied the final batch, so only the minimum lvConsumedSeqTxn across
+            // the K views can retain its WAL segments - the shared-floor path.
+            try (WalPurgeJob purgeJob = new WalPurgeJob(engine)) {
+                purgeJob.drain(0);
+            }
+
+            // Now refresh: every view must consume the retained final batch and
+            // converge. A purge that dropped the segments would leave them short.
+            driveRefreshToQuiescence(job);
+        } finally {
+            Misc.free(job);
+        }
+
+        // Every view equals its own from-scratch recompute over the base.
+        for (int v = 0; v < viewCount; v++) {
+            TestUtils.assertSqlCursors(
+                    engine,
+                    sqlExecutionContext,
+                    "(" + viewSql[v] + ") ORDER BY 1",
+                    "(" + viewNames[v] + ") ORDER BY 1",
+                    LOG,
+                    true
+            );
+        }
+
+        for (int v = 0; v < viewCount; v++) {
+            execute("DROP LIVE VIEW " + viewNames[v]);
+        }
+        execute("DROP TABLE base");
+    }
+
+    // Differential fuzz over a TIMESTAMP_NS base partitioned BY HOUR (see
+    // testFuzzNanosBase). Mirrors runFuzz's ingestion shape but with nanosecond
+    // timestamps and an hour partition unit, exercising the driver-aware refresh
+    // path. The recompute oracle is unchanged: the live view must equal the
+    // window query recomputed over the base.
+    private void runNanosBaseFuzz(
+            Rnd rnd,
+            int variant,
+            int rowCount,
+            boolean o3,
+            boolean restart,
+            boolean backfill,
+            boolean inMemory
+    ) throws Exception {
+        // Pin the wall clock (micros) a day below the ns data start. The view's
+        // lower bound is the CREATE moment converted to base (ns) units, so a
+        // wall clock below the data keeps it under every ns row timestamp.
+        if (currentMicros < 0) {
+            setCurrentMicros(MicrosTimestampDriver.floor("2025-12-31T00:00:00.000000Z"));
+        }
+
+        final int n = 1 + rnd.nextInt(MAX_FRAME);
+        final int symCount = 1 + rnd.nextInt(SYMBOLS.length);
+        final int stepMode = rnd.nextInt(3);
+        // Nanosecond step ranges (micros ranges scaled by 1000) plus occasional
+        // hour jumps, so the data spans several HOUR partitions.
+        final long baseStepMaxNs = stepMode == 0 ? 5_000_000_000L : stepMode == 1 ? 60_000_000_000L : 900_000_000_000L;
+        final int hourJumpEvery = stepMode == 0 ? 20 : 12;
+        final long hourNs = 3_600_000_000_000L;
+        final boolean withWhere = rnd.nextInt(3) == 0;
+
+        final String viewSql = "SELECT " + projection(variant, n) + " FROM base" + (withWhere ? " WHERE i > 0" : "");
+        final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
+                + (inMemory ? "IN MEMORY 60s " : "")
+                + (backfill ? "BACKFILL " : "")
+                + "AS " + viewSql;
+
+        execute("DROP LIVE VIEW IF EXISTS lv");
+        execute("DROP TABLE IF EXISTS base");
+        execute("CREATE TABLE base (ts TIMESTAMP_NS, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+
+        LOG.info().$("LV nanos-base fuzz: variant=").$(variant).$(", rows=").$(rowCount)
+                .$(", n=").$(n).$(", symCount=").$(symCount).$(", stepMode=").$(stepMode)
+                .$(", o3=").$(o3).$(", restart=").$(restart).$(", backfill=").$(backfill)
+                .$(", inMem=").$(inMemory).$(", where=").$(withWhere).$(", sql=").$(viewSql).$();
+
+        // Strictly-unique, strictly-increasing nanosecond timestamps.
+        final long[] tsv = new long[rowCount];
+        final int[] symIdx = new int[rowCount];
+        final long[] iv = new long[rowCount];
+        final double[] xv = new double[rowCount];
+        final boolean[] xNull = new boolean[rowCount];
+        final int maxHourJumps = 30;
+        int hourJumps = 0;
+        long ts = NanosTimestampDriver.floor("2026-01-01T00:00:00.000000Z");
+        for (int k = 0; k < rowCount; k++) {
+            ts += 1 + rnd.nextLong(baseStepMaxNs);
+            if (hourJumps < maxHourJumps && rnd.nextInt(hourJumpEvery) == 0) {
+                ts += hourNs;
+                hourJumps++;
+            }
+            tsv[k] = ts;
+            symIdx[k] = rnd.nextInt(20) == 0 ? -1 : rnd.nextInt(symCount);
+            iv[k] = rnd.nextInt(20) == 0 ? Numbers.LONG_NULL : (rnd.nextInt(2001) - 1000);
+            xNull[k] = rnd.nextInt(20) == 0;
+            xv[k] = rnd.nextDouble() * 1000.0;
+        }
+
+        final int preCount = backfill ? rnd.nextInt(rowCount + 1) : 0;
+
+        final StringSink sink = new StringSink();
+        LiveViewRefreshJob job = null;
+        try {
+            if (preCount > 0) {
+                final int[] preOrder = segmentOrder(rnd, 0, preCount, o3);
+                final int[] cb = commitBounds(rnd, preOrder.length);
+                for (int c = 0; c + 1 < cb.length; c++) {
+                    insertNsCommit(sink, preOrder, cb[c], cb[c + 1], tsv, symIdx, iv, xv, xNull);
+                    drainWalQueue();
+                }
+            }
+
+            execute(createSql);
+            job = new LiveViewRefreshJob(0, engine, 1);
+
+            if (backfill) {
+                driveBackfillToCompletion(job, "lv");
+            }
+
+            if (preCount < rowCount) {
+                final int[] postOrder = segmentOrder(rnd, preCount, rowCount, o3);
+                final int[] cb = commitBounds(rnd, postOrder.length);
+                for (int c = 0; c + 1 < cb.length; c++) {
+                    insertNsCommit(sink, postOrder, cb[c], cb[c + 1], tsv, symIdx, iv, xv, xNull);
+                    drainWalQueue();
+                    refreshCycle(job);
+
+                    if (restart && rnd.nextInt(3) == 0) {
+                        LiveViewInstance inst = engine.getLiveViewRegistry().getViewInstance("lv");
+                        if (inst != null
+                                && inst.getStateReader().getBackfillState() == LiveViewState.BACKFILL_STATE_ACTIVE) {
+                            job = Misc.free(job);
+                            engine.getLiveViewRegistry().clear();
+                            engine.buildViewGraphs();
+                            job = new LiveViewRefreshJob(0, engine, 1);
+                        }
+                    }
+                }
+            }
+
+            driveRefreshToQuiescence(job);
+        } finally {
+            Misc.free(job);
+        }
+
+        // The oracle: the live view must equal the window query recomputed over
+        // the ns base.
+        TestUtils.assertSqlCursors(
+                engine,
+                sqlExecutionContext,
+                "(" + viewSql + ") ORDER BY 1",
+                "(lv) ORDER BY 1",
+                LOG,
+                true
+        );
+
+        execute("DROP LIVE VIEW lv");
+        execute("DROP TABLE base");
+    }
+
+    // Differential fuzz over a base whose settled partitions are converted to
+    // PARQUET while a live view maintains itself off it (see testFuzzParquetBase).
+    // The live view is incremental (NOT backfill): its refresh consumes the base
+    // WAL stream, not base partitions, so converting an already-consumed partition
+    // to parquet is physically transparent. Under in-order ingestion the run also
+    // converts settled partitions MID-STREAM (strictly below the current commit's
+    // day, so no later row ever writes into a parquet partition), then continues
+    // refreshing over the partially-parquet base; every run also converts once
+    // more at the end. The recompute oracle is unchanged - the from-scratch
+    // recompute reads the same base, parquet partitions and all.
+    //
+    // NOTE: this arm deliberately does NOT use BACKFILL. BACKFILL reads base
+    // partitions through a page-frame cursor, and a BACKFILL live view over a
+    // base with parquet partitions currently double-counts rows (reproduced
+    // deterministically while writing this arm - the backfill over parquet
+    // partitions over-reads). That is a separate defect in the parquet
+    // partition read path, out of scope for this test-only change; this arm
+    // stays on the incremental (WAL-consuming) path, which is transparent.
+    private void runParquetBaseFuzz(Rnd rnd, int variant, int rowCount, boolean o3, boolean inMemory) throws Exception {
+        if (currentMicros < 0) {
+            setCurrentMicros(MicrosTimestampDriver.floor("2025-12-31T00:00:00.000000Z"));
+        }
+
+        final int n = 1 + rnd.nextInt(MAX_FRAME);
+        final int symCount = 1 + rnd.nextInt(SYMBOLS.length);
+        final boolean withWhere = rnd.nextInt(3) == 0;
+
+        final String viewSql = "SELECT " + projection(variant, n) + " FROM base" + (withWhere ? " WHERE i > 0" : "");
+        final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
+                + (inMemory ? "IN MEMORY 60s " : "")
+                + "AS " + viewSql;
+
+        execute("DROP LIVE VIEW IF EXISTS lv");
+        execute("DROP TABLE IF EXISTS base");
+        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+        LOG.info().$("LV parquet-base fuzz: variant=").$(variant).$(", rows=").$(rowCount)
+                .$(", n=").$(n).$(", symCount=").$(symCount).$(", o3=").$(o3)
+                .$(", inMem=").$(inMemory).$(", where=").$(withWhere).$(", sql=").$(viewSql).$();
+
+        // Strictly-unique, strictly-increasing timestamps with a partition
+        // boundary crossed every few rows, so the run has several settled
+        // partitions to convert to parquet.
+        final long[] tsv = new long[rowCount];
+        final int[] symIdx = new int[rowCount];
+        final long[] iv = new long[rowCount];
+        final double[] xv = new double[rowCount];
+        final boolean[] xNull = new boolean[rowCount];
+        long ts = MicrosTimestampDriver.floor("2026-01-01T00:00:00.000000Z");
+        for (int k = 0; k < rowCount; k++) {
+            ts += 1 + rnd.nextInt(1_000_000);
+            if (rnd.nextInt(8) == 0) {
+                ts += 86_400_000_000L; // cross a day partition boundary
+            }
+            tsv[k] = ts;
+            symIdx[k] = rnd.nextInt(20) == 0 ? -1 : rnd.nextInt(symCount);
+            iv[k] = rnd.nextInt(20) == 0 ? Numbers.LONG_NULL : (rnd.nextInt(2001) - 1000);
+            xNull[k] = rnd.nextInt(20) == 0;
+            xv[k] = rnd.nextDouble() * 1000.0;
+        }
+
+        final StringSink sink = new StringSink();
+        LiveViewRefreshJob job = null;
+        try {
+            execute(createSql);
+            job = new LiveViewRefreshJob(0, engine, 1);
+
+            final int[] order = segmentOrder(rnd, 0, rowCount, o3);
+            final int[] cb = commitBounds(rnd, order.length);
+            long convertedUpToDay = 0;
+            for (int c = 0; c + 1 < cb.length; c++) {
+                insertCommit(sink, order, cb[c], cb[c + 1], tsv, symIdx, iv, xv, xNull, null);
+                drainWalQueue();
+                refreshCycle(job);
+
+                // Mid-stream conversion, in-order runs only: under in-order
+                // ingestion order[] is the identity, so every row already
+                // inserted has ts <= tsv[cb[c+1]-1] and every future row is
+                // strictly higher. Converting partitions strictly below that
+                // row's day is therefore safe (no later insert lands in a
+                // parquet partition), and the view keeps refreshing afterwards
+                // over a partially-parquet base.
+                if (!o3 && rnd.nextInt(3) == 0) {
+                    final long settledDay = tsv[cb[c + 1] - 1] - tsv[cb[c + 1] - 1] % 86_400_000_000L;
+                    convertPartitionsToParquet(convertedUpToDay, settledDay);
+                    convertedUpToDay = settledDay;
+                }
+            }
+
+            // A final conversion over every settled partition below the max day,
+            // so the fully-consumed base is (mostly) parquet before the last read.
+            final long maxDay = tsv[rowCount - 1] - tsv[rowCount - 1] % 86_400_000_000L;
+            convertPartitionsToParquet(convertedUpToDay, maxDay);
+            driveRefreshToQuiescence(job);
+        } finally {
+            Misc.free(job);
+        }
+
+        // The oracle: the live view must equal the window query recomputed over
+        // the base (whose partitions are now a parquet/native mix).
+        TestUtils.assertSqlCursors(
+                engine,
+                sqlExecutionContext,
+                "(" + viewSql + ") ORDER BY 1",
+                "(lv) ORDER BY 1",
+                LOG,
+                true
+        );
 
         execute("DROP LIVE VIEW lv");
         execute("DROP TABLE base");
