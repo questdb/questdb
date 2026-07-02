@@ -160,6 +160,16 @@ public final class QwpConstants {
      */
     public static final byte STATUS_LIMIT_EXCEEDED = 0x0B;
     /**
+     * Status: Reserved. Node cannot accept writes (read-only replica /
+     * demoting primary). Servers currently signal this state with a
+     * reconnect-eligible {@code NORMAL_CLOSURE} close instead of a NACK (see
+     * the role-change close in {@code QwpIngressProcessorState}); the byte is
+     * reserved so a future server can NACK it mid-stream once deployed client
+     * fleets classify it as retriable-with-endpoint-rotation rather than
+     * unknown/terminal.
+     */
+    public static final byte STATUS_NOT_WRITABLE = 0x0C;
+    /**
      * Status: Batch accepted successfully.
      */
     public static final byte STATUS_OK = 0x00;
