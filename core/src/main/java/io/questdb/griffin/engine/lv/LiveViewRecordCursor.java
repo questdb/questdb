@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.lv;
 
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.lv.LiveViewInMemoryBuffer;
 import io.questdb.cairo.lv.LiveViewInMemoryTier;
 import io.questdb.cairo.lv.LiveViewInstance;
@@ -42,12 +43,16 @@ import io.questdb.griffin.engine.table.TablePageFrameCursor;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
+import io.questdb.std.DirectByteSequenceView;
 import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.DirectString;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8SplitString;
 import org.jetbrains.annotations.TestOnly;
 
 /**
@@ -485,6 +490,22 @@ public class LiveViewRecordCursor implements RecordCursor {
      * the disk record.
      */
     private static class MergedRecord extends DelegatingRecord {
+        // Per-column, A/B var-size read flyweights OWNED by this record. The in-mem
+        // tier buffer is shared across every reader cursor pinning a slot (and this
+        // cursor's recordA vs recordB), so routing the var-size getters through the
+        // buffer's own reusable views would let two consumers re-point and clobber
+        // each other's in-flight value - a torn read. Each record instead points its
+        // own view into the (pinned, stable) buffer memory, mirroring the disk read
+        // path where recordA and recordB delegate to two independent disk records.
+        // Lists are lazily populated per column, exactly like PageFrameMemoryRecord.
+        private final ObjList<BorrowedArray> arrayViews = new ObjList<>();
+        private final ObjList<DirectByteSequenceView> bsViews = new ObjList<>();
+        private final ObjList<DirectString> csViewsA = new ObjList<>();
+        private final ObjList<DirectString> csViewsB = new ObjList<>();
+        private final ObjList<Long256Impl> longs256A = new ObjList<>();
+        private final ObjList<Long256Impl> longs256B = new ObjList<>();
+        private final ObjList<Utf8SplitString> utf8ViewsA = new ObjList<>();
+        private final ObjList<Utf8SplitString> utf8ViewsB = new ObjList<>();
         private LiveViewInMemoryBuffer buffer;
         private long bufferRow;
         private RecordCursor cursor;
@@ -492,7 +513,7 @@ public class LiveViewRecordCursor implements RecordCursor {
 
         @Override
         public ArrayView getArray(int col, int columnType) {
-            return inMemMode ? buffer.getArray(bufferRow, col) : super.getArray(col, columnType);
+            return inMemMode ? buffer.getArray(bufferRow, col, arrayView(col)) : super.getArray(col, columnType);
         }
 
         @Override
@@ -502,7 +523,7 @@ public class LiveViewRecordCursor implements RecordCursor {
             }
             // Mirror Record's default getArrayDouble1d2d over the buffer's array view
             // (DelegatingRecord's override would otherwise index the disk record).
-            final ArrayView array = buffer.getArray(bufferRow, col);
+            final ArrayView array = buffer.getArray(bufferRow, col, arrayView(col));
             if (array.isNull() || idx0 >= array.getDimLen(0)) {
                 return Double.NaN;
             }
@@ -517,7 +538,7 @@ public class LiveViewRecordCursor implements RecordCursor {
 
         @Override
         public BinarySequence getBin(int col) {
-            return inMemMode ? buffer.getBin(bufferRow, col) : super.getBin(col);
+            return inMemMode ? buffer.getBin(bufferRow, col, bsView(col)) : super.getBin(col);
         }
 
         @Override
@@ -649,12 +670,12 @@ public class LiveViewRecordCursor implements RecordCursor {
 
         @Override
         public Long256 getLong256A(int col) {
-            return inMemMode ? buffer.getLong256A(bufferRow, col) : super.getLong256A(col);
+            return inMemMode ? buffer.getLong256(bufferRow, col, long256A(col)) : super.getLong256A(col);
         }
 
         @Override
         public Long256 getLong256B(int col) {
-            return inMemMode ? buffer.getLong256B(bufferRow, col) : super.getLong256B(col);
+            return inMemMode ? buffer.getLong256(bufferRow, col, long256B(col)) : super.getLong256B(col);
         }
 
         @Override
@@ -677,12 +698,12 @@ public class LiveViewRecordCursor implements RecordCursor {
 
         @Override
         public CharSequence getStrA(int col) {
-            return inMemMode ? buffer.getStrA(bufferRow, col) : super.getStrA(col);
+            return inMemMode ? buffer.getStr(bufferRow, col, csViewA(col)) : super.getStrA(col);
         }
 
         @Override
         public CharSequence getStrB(int col) {
-            return inMemMode ? buffer.getStrB(bufferRow, col) : super.getStrB(col);
+            return inMemMode ? buffer.getStr(bufferRow, col, csViewB(col)) : super.getStrB(col);
         }
 
         @Override
@@ -713,12 +734,12 @@ public class LiveViewRecordCursor implements RecordCursor {
 
         @Override
         public Utf8Sequence getVarcharA(int col) {
-            return inMemMode ? buffer.getVarcharA(bufferRow, col) : super.getVarcharA(col);
+            return inMemMode ? buffer.getVarchar(bufferRow, col, utf8ViewA(col)) : super.getVarcharA(col);
         }
 
         @Override
         public Utf8Sequence getVarcharB(int col) {
-            return inMemMode ? buffer.getVarcharB(bufferRow, col) : super.getVarcharB(col);
+            return inMemMode ? buffer.getVarchar(bufferRow, col, utf8ViewB(col)) : super.getVarcharB(col);
         }
 
         @Override
@@ -745,6 +766,70 @@ public class LiveViewRecordCursor implements RecordCursor {
         void toInMemMode(long row) {
             this.bufferRow = row;
             this.inMemMode = true;
+        }
+
+        private BorrowedArray arrayView(int col) {
+            BorrowedArray view = arrayViews.getQuiet(col);
+            if (view == null) {
+                arrayViews.extendAndSet(col, view = new BorrowedArray());
+            }
+            return view;
+        }
+
+        private DirectByteSequenceView bsView(int col) {
+            DirectByteSequenceView view = bsViews.getQuiet(col);
+            if (view == null) {
+                bsViews.extendAndSet(col, view = new DirectByteSequenceView());
+            }
+            return view;
+        }
+
+        private DirectString csViewA(int col) {
+            DirectString view = csViewsA.getQuiet(col);
+            if (view == null) {
+                csViewsA.extendAndSet(col, view = new DirectString());
+            }
+            return view;
+        }
+
+        private DirectString csViewB(int col) {
+            DirectString view = csViewsB.getQuiet(col);
+            if (view == null) {
+                csViewsB.extendAndSet(col, view = new DirectString());
+            }
+            return view;
+        }
+
+        private Long256Impl long256A(int col) {
+            Long256Impl view = longs256A.getQuiet(col);
+            if (view == null) {
+                longs256A.extendAndSet(col, view = new Long256Impl());
+            }
+            return view;
+        }
+
+        private Long256Impl long256B(int col) {
+            Long256Impl view = longs256B.getQuiet(col);
+            if (view == null) {
+                longs256B.extendAndSet(col, view = new Long256Impl());
+            }
+            return view;
+        }
+
+        private Utf8SplitString utf8ViewA(int col) {
+            Utf8SplitString view = utf8ViewsA.getQuiet(col);
+            if (view == null) {
+                utf8ViewsA.extendAndSet(col, view = new Utf8SplitString());
+            }
+            return view;
+        }
+
+        private Utf8SplitString utf8ViewB(int col) {
+            Utf8SplitString view = utf8ViewsB.getQuiet(col);
+            if (view == null) {
+                utf8ViewsB.extendAndSet(col, view = new Utf8SplitString());
+            }
+            return view;
         }
     }
 }

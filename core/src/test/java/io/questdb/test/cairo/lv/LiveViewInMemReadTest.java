@@ -42,6 +42,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -180,6 +181,77 @@ public class LiveViewInMemReadTest extends AbstractCairoTest {
                         TestUtils.println(recordB, md, rowSink);
                         Assert.assertEquals("rowId round-trip mismatch at row " + i, forwardRows.get(i), rowSink.toString());
                     }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testInMemVarSizeRecordsAreIndependent() throws Exception {
+        // recordA and recordB must be independent consumers: a var-size value read
+        // from recordA has to survive positioning recordB elsewhere. The disk read
+        // path honours this because recordA and recordB delegate to two separate
+        // disk records, each with its own column flyweights. The in-mem tier,
+        // however, routes BOTH records' getStrA/getVarcharA to the same per-column
+        // buffer flyweight (the data/aux column's csviewA / utf8SplitViewA), keyed
+        // on the getter name rather than the record, so recordB's read re-points and
+        // clobbers recordA's still-live value. This is a single-thread, deterministic
+        // proof of the aliasing that also lets two concurrent reader cursors tear
+        // each other's var-size reads (they share the one pinned slot's flyweights).
+        assertMemoryLeak(() -> {
+            createVarSizeSeamSplitLv();
+            try (RecordCursorFactory factory = select("SELECT * FROM lv")) {
+                LiveViewRecordCursorFactory lvf = unwrapLvFactory(factory);
+                try (LiveViewRecordCursor cursor = (LiveViewRecordCursor) lvf.getCursor(sqlExecutionContext)) {
+                    Assert.assertTrue("view must serve the in-mem tier (Mode B)", cursor.isRoutingEligible());
+                    Record recordA = cursor.getRecord();
+
+                    // Forward pass: collect the in-mem row ids (sign-bit tagged) and a
+                    // stable copy of each in-mem row's var-size values.
+                    LongList inMemIds = new LongList();
+                    ObjList<String> expectedStr = new ObjList<>();
+                    ObjList<String> expectedVarchar = new ObjList<>();
+                    while (cursor.hasNext()) {
+                        long rowId = recordA.getRowId();
+                        if (rowId < 0) { // in-mem row
+                            inMemIds.add(rowId);
+                            expectedStr.add(recordA.getStrA(1).toString());
+                            Utf8Sequence vc = recordA.getVarcharA(2);
+                            expectedVarchar.add(vc == null ? null : vc.toString());
+                        }
+                    }
+                    Assert.assertTrue(
+                            "need at least two in-mem rows for the aliasing check",
+                            inMemIds.size() >= 2
+                    );
+
+                    Record recordB = cursor.getRecordB();
+
+                    // Position recordA at the first in-mem row and read its values.
+                    cursor.recordAt(recordA, inMemIds.getQuick(0));
+                    CharSequence strA = recordA.getStrA(1);
+                    Utf8Sequence vcharA = recordA.getVarcharA(2);
+                    Assert.assertEquals(expectedStr.get(0), strA.toString());
+                    Assert.assertEquals(expectedVarchar.get(0), vcharA.toString());
+
+                    // Position recordB at a different in-mem row and read its values.
+                    // If the flyweights alias, this re-points the very objects strA /
+                    // vcharA still reference.
+                    cursor.recordAt(recordB, inMemIds.getQuick(1));
+                    CharSequence strB = recordB.getStrA(1);
+                    Utf8Sequence vcharB = recordB.getVarcharA(2);
+                    Assert.assertEquals(expectedStr.get(1), strB.toString());
+                    Assert.assertEquals(expectedVarchar.get(1), vcharB.toString());
+
+                    // recordA's values must be unchanged by recordB's reads.
+                    Assert.assertEquals(
+                            "recordA STRING clobbered by recordB read (in-mem flyweight aliasing)",
+                            expectedStr.get(0), strA.toString()
+                    );
+                    Assert.assertEquals(
+                            "recordA VARCHAR clobbered by recordB read (in-mem flyweight aliasing)",
+                            expectedVarchar.get(0), vcharA.toString()
+                    );
                 }
             }
         });
@@ -1930,6 +2002,38 @@ public class LiveViewInMemReadTest extends AbstractCairoTest {
 
             execute("INSERT INTO base (ts, x) VALUES " +
                     "(" + (cycle2Start + 1) + ", 4), (" + (cycle2Start + 2) + ", 5)");
+            drainWalQueue();
+            setCurrentMicros(500_000L);
+            drainJob(job);
+        }
+        drainWalQueue();
+    }
+
+    // Like createSeamSplitLv, but the base carries var-size passthrough columns
+    // (vs STRING, vv VARCHAR) so the in-mem slot holds var-length (data, aux)
+    // regions. Disk ends up with the first 3 rows, the pinned slot with the 2 most
+    // recent; each row's var-size values are distinct (and of different lengths) so
+    // an aliased read across records surfaces as a value mismatch.
+    private void createVarSizeSeamSplitLv() throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_GROWTH_BYTES, 0);
+        execute("CREATE TABLE base (ts TIMESTAMP, vs STRING, vv VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        setCurrentMicros(0L);
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 1s AS " +
+                "SELECT ts, vs, vv, row_number() OVER () AS rn FROM base");
+        final long dataStart = 1_700_000_000_000_000L;
+        final long cycle2Start = dataStart + 5_000_000L; // 5s later, beyond IN MEMORY 1s
+        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            execute("INSERT INTO base (ts, vs, vv) VALUES " +
+                    "(" + (dataStart + 1) + ", 'a1', 'v1'), " +
+                    "(" + (dataStart + 2) + ", 'a2', 'v2'), " +
+                    "(" + (dataStart + 3) + ", 'a3', 'v3')");
+            drainWalQueue();
+            setCurrentMicros(250_000L); // > FLUSH EVERY 100ms
+            drainJob(job);
+
+            execute("INSERT INTO base (ts, vs, vv) VALUES " +
+                    "(" + (cycle2Start + 1) + ", 'bbbb4', 'vvvv4'), " +
+                    "(" + (cycle2Start + 2) + ", 'ccccc5', 'wwwww5')");
             drainWalQueue();
             setCurrentMicros(500_000L);
             drainJob(job);

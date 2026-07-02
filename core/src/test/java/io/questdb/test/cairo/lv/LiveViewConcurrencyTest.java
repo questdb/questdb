@@ -188,6 +188,21 @@ public class LiveViewConcurrencyTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMultiRefreshWorkerConvergence() throws Exception {
+        // Production runs one LiveViewRefreshJob per refresh-pool worker (2-4 by
+        // default, ServerMain.setupLiveViewJobs) with no per-view sharding: every
+        // worker scans the whole registry and contends the shared task queue and the
+        // per-view refresh latch (tryLockForRefresh; the loser bails, no wait). This
+        // soak runs several refresh workers on their own threads against sustained
+        // multi-writer O3 ingestion, with reader threads asserting the prefix
+        // invariant mid-flight, then asserts the quiesced view equals the
+        // from-scratch recompute. Nothing else exercises refresh-vs-refresh: every
+        // other test drives a single LiveViewRefreshJob(0, engine, 1).
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        assertMemoryLeak(() -> runMultiRefreshWorkerSoak(rnd, 4, 3, 3, 800));
+    }
+
+    @Test
     public void testMultiWalWriterInterleaving() throws Exception {
         // Four concurrent writers, then a single-threaded refresh to quiescence.
         final Rnd rnd = TestUtils.generateRandom(LOG);
@@ -265,10 +280,15 @@ public class LiveViewConcurrencyTest extends AbstractCairoTest {
         // crash, not silent corruption. No ARM-specific canary is needed here:
         // unlike the symbol cache, which is shared across BOTH tier slots and grows
         // concurrently with readers (hence its bounded-scan horizon and
-        // volatile-backed list), var-length values live in the PER-SLOT buffers,
-        // are copied per slot by the slow-path swap, and are frozen for a reader's
-        // lifetime once it pins the slot - so the existing slot-pin exclusivity
-        // protocol covers them with zero new cross-slot synchronization.
+        // volatile-backed list), var-length values live in the PER-SLOT buffers and
+        // stay frozen while any reader pins the slot (the writer needs the slot's
+        // exclusive sentinel to mutate it). Reader pins are shared/refcounted, not
+        // exclusive, so several cursors can pin one slot at once; the read flyweights
+        // are therefore NOT shared - each reader cursor owns its own per-column
+        // var-size views (LiveViewRecordCursor's MergedRecord, so recordA vs recordB
+        // do not alias either), pointing into the frozen buffer memory. That is what
+        // makes concurrent var-length reads safe; see LiveViewInMemReadTest's
+        // testInMemVarSizeRecordsAreIndependent for the deterministic proof.
         final Rnd rnd = TestUtils.generateRandom(LOG);
         assertMemoryLeak(() -> runVarSizeReaderChurnSoak(rnd, 4, 4, 800));
     }
@@ -1141,6 +1161,161 @@ public class LiveViewConcurrencyTest extends AbstractCairoTest {
     // tick, so most refreshes publish an un-flushed lead (the tier leads disk) and
     // flushes land only every few ticks - the readers churn against a live lead
     // (Mode A) with flushes underneath, instead of a strict disk subset (Mode B).
+    // Runs several LiveViewRefreshJob workers on their own threads (as production
+    // does, one per pool worker) against sustained multi-writer O3 ingestion, plus
+    // reader threads that assert a per-snapshot prefix invariant. The refresh
+    // workers contend the shared registry, task queue and per-view refresh latch -
+    // the refresh-vs-refresh path a single driver can never reach. After every
+    // thread joins and one worker drives the refresh to quiescence single-threaded,
+    // the view must equal the from-scratch recompute.
+    private void runMultiRefreshWorkerSoak(Rnd rnd, int numWriters, int numRefreshWorkers, int numReaders, int rowCount) throws Exception {
+        setCurrentMicros(MicrosTimestampDriver.floor(CLOCK_START));
+
+        // A SYMBOL-free row_number() IN MEMORY view: the reads route through the
+        // in-mem tier (Mode B) so the multi-worker refresh churns the tier under the
+        // readers, and the readers can assert the gapless-rn prefix invariant.
+        final String viewSql = "SELECT ts, i, row_number() OVER () AS rn FROM base";
+        final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s AS " + viewSql;
+
+        execute("DROP LIVE VIEW IF EXISTS lv");
+        execute("DROP TABLE IF EXISTS base");
+        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+        final long[] tsv = new long[rowCount];
+        final int[] symIdx = new int[rowCount];
+        final long[] iv = new long[rowCount];
+        final double[] xv = new double[rowCount];
+        generateDataset(rnd, rowCount, tsv, symIdx, iv, xv);
+
+        execute(createSql);
+
+        LOG.info().$("LV concurrency multi-refresh-worker soak: writers=").$(numWriters)
+                .$(", refreshWorkers=").$(numRefreshWorkers).$(", readers=").$(numReaders)
+                .$(", rows=").$(rowCount).$(", sql=").$(viewSql).$();
+
+        final TableToken baseToken = engine.verifyTableName("base");
+        final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
+
+        // One LiveViewRefreshJob per worker, exactly as ServerMain.setupLiveViewJobs
+        // creates them (workerId = w). Nothing shards views by workerId, so every job
+        // walks the whole registry.
+        final LiveViewRefreshJob[] jobs = new LiveViewRefreshJob[numRefreshWorkers];
+        for (int w = 0; w < numRefreshWorkers; w++) {
+            jobs[w] = new LiveViewRefreshJob(w, engine, 1);
+        }
+        final AtomicBoolean running = new AtomicBoolean(true);
+        try {
+            // Writers + the base-apply/clock driver are released together; the refresh
+            // workers and readers spin independently until running clears.
+            final CyclicBarrier barrier = new CyclicBarrier(numWriters + 1);
+            final Thread[] writers = new Thread[numWriters];
+            for (int w = 0; w < numWriters; w++) {
+                final int batch = 5 + rnd.nextInt(20);
+                writers[w] = newWriterThread(w, numWriters, 0, rowCount, batch, tsv, symIdx, iv, xv, baseToken, barrier, errors);
+            }
+
+            // A single driver applies the base (and LV) WAL and advances the clock so
+            // FLUSH EVERY ticks come due. Keeping the clock and drainWalQueue on one
+            // thread isolates the refresh-vs-refresh contention (the actual subject)
+            // from driving the shared wal-apply job across many threads.
+            final Thread applyDriver = new Thread(() -> {
+                try {
+                    barrier.await();
+                    while (running.get()) {
+                        setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                        drainWalQueue();
+                    }
+                } catch (Throwable th) {
+                    errors.add(th);
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            }, "lv-apply-driver");
+
+            // The refresh workers: each pumps its OWN job; all contend the same
+            // registry, task queue and per-view latch. This is the production default.
+            final Thread[] refreshWorkers = new Thread[numRefreshWorkers];
+            for (int w = 0; w < numRefreshWorkers; w++) {
+                final LiveViewRefreshJob job = jobs[w];
+                refreshWorkers[w] = new Thread(() -> {
+                    try {
+                        while (running.get()) {
+                            drainJob(job);
+                        }
+                    } catch (Throwable th) {
+                        errors.add(th);
+                    } finally {
+                        Path.clearThreadLocals();
+                    }
+                }, "lv-refresh-worker-" + w);
+            }
+
+            // Readers assert the prefix invariant on every snapshot (ts ascending, rn
+            // gapless 1..N), so a torn slot or a seam dup/gap from two workers racing
+            // the publish surfaces as a value mismatch, not merely a crash.
+            final Thread[] readers = new Thread[numReaders];
+            for (int r = 0; r < numReaders; r++) {
+                readers[r] = new Thread(() -> {
+                    try {
+                        while (running.get()) {
+                            readRowNumberViewOnce();
+                        }
+                    } catch (Throwable th) {
+                        errors.add(th);
+                    } finally {
+                        Path.clearThreadLocals();
+                    }
+                }, "lv-reader-" + r);
+            }
+
+            for (Thread t : writers) {
+                t.start();
+            }
+            applyDriver.start();
+            for (Thread t : refreshWorkers) {
+                t.start();
+            }
+            for (Thread t : readers) {
+                t.start();
+            }
+            for (Thread t : writers) {
+                t.join();
+            }
+            running.set(false);
+            applyDriver.join();
+            for (Thread t : refreshWorkers) {
+                t.join();
+            }
+            for (Thread t : readers) {
+                t.join();
+            }
+
+            if (!errors.isEmpty()) {
+                throw new RuntimeException("worker thread failed", errors.peek());
+            }
+
+            // Quiesce single-threaded through one job, then assert the oracle below.
+            drainWalQueue();
+            driveRefreshToQuiescence(jobs[0]);
+        } finally {
+            for (LiveViewRefreshJob job : jobs) {
+                Misc.free(job);
+            }
+        }
+
+        TestUtils.assertSqlCursors(
+                engine,
+                sqlExecutionContext,
+                "(" + viewSql + ") ORDER BY 1",
+                "(lv) ORDER BY 1",
+                LOG,
+                true
+        );
+
+        execute("DROP LIVE VIEW lv");
+        execute("DROP TABLE base");
+    }
+
     private void runReaderChurnSoak(Rnd rnd, int numWriters, int numReaders, int rowCount, boolean modeB, boolean leadMode) throws Exception {
         setCurrentMicros(MicrosTimestampDriver.floor(CLOCK_START));
 

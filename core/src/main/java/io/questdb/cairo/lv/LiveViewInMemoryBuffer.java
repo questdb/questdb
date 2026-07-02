@@ -36,15 +36,19 @@ import io.questdb.cairo.vm.api.NullMemory;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
+import io.questdb.std.DirectByteSequenceView;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.DirectString;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8SplitString;
 
 /**
  * One slot of the N=2 live-view in-memory tier.
@@ -599,10 +603,16 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
     // driver wrote as null (zero-size aux entry) decodes back to a null ArrayView.
     // The view is reused per column, so two columns never clobber each other's array.
     public ArrayView getArray(long row, int col) {
-        final BorrowedArray ba = borrowedArray(col);
+        return getArray(row, col, borrowedArray(col));
+    }
+
+    // Like getArray(row, col) but binds the caller-supplied array view instead of
+    // the buffer's shared per-column one. A concurrent reader cursor (and a single
+    // cursor's recordA vs recordB) owns its own view, so their reads never alias.
+    public ArrayView getArray(long row, int col, BorrowedArray view) {
         final MemoryCARW aux = auxMem.getQuick(col);
         final MemoryCARWImpl data = dataMem.getQuick(col);
-        return ba.of(
+        return view.of(
                 columnTypes.getQuick(col),
                 aux.addressOf(0),
                 aux.addressHi(),
@@ -618,6 +628,12 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
     // The returned BinarySequence is the dataMem column's own reusable bsview.
     public BinarySequence getBin(long row, int col) {
         return dataMem.getQuick(col).getBin(auxMem.getQuick(col).getLong(row << 3));
+    }
+
+    // Like getBin(row, col) but binds the caller-supplied view; see getArray's note
+    // on per-consumer views.
+    public BinarySequence getBin(long row, int col, DirectByteSequenceView view) {
+        return dataMem.getQuick(col).getBin(auxMem.getQuick(col).getLong(row << 3), view);
     }
 
     public long getBinLen(long row, int col) {
@@ -704,6 +720,13 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
         dataMem.getQuick(col).getLong256(row << 5, sink);
     }
 
+    // Resolves a LONG256 value into the caller-supplied flyweight instead of the
+    // buffer's shared long256A / long256B; see getArray's note on per-consumer views.
+    public Long256 getLong256(long row, int col, Long256Impl view) {
+        dataMem.getQuick(col).getLong256(row << 5, view);
+        return view;
+    }
+
     // Resolves a LONG256 value (4 longs at the absolute offset row << 5). getLong256A
     // / getLong256B return the dataMem column's own distinct reusable flyweights
     // (long256A / long256B), so a caller may hold both at once for an A/B comparison.
@@ -717,6 +740,12 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
 
     public short getShort(long row, int col) {
         return dataMem.getQuick(col).getShort(row << 1);
+    }
+
+    // Resolves a STRING value into the caller-supplied flyweight instead of the
+    // buffer's shared csviewA / csviewB; see getArray's note on per-consumer views.
+    public CharSequence getStr(long row, int col, DirectString view) {
+        return dataMem.getQuick(col).getStr(auxMem.getQuick(col).getLong(row << 3), view);
     }
 
     // Resolves a STRING value: the per-row start offset lives in auxMem at
@@ -741,6 +770,22 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
 
     public int getTimestampColumnIndex() {
         return timestampColumnIndex;
+    }
+
+    // Resolves a VARCHAR value into the caller-supplied split view instead of the
+    // aux memory's shared utf8SplitViewA / utf8SplitViewB; see getArray's note on
+    // per-consumer views.
+    public Utf8Sequence getVarchar(long row, int col, Utf8SplitString view) {
+        final MemoryCARW aux = auxMem.getQuick(col);
+        final MemoryCARWImpl data = dataMem.getQuick(col);
+        return VarcharTypeDriver.getSplitValue(
+                aux.addressOf(0),
+                aux.addressHi(),
+                data.addressOf(0),
+                data.addressHi(),
+                row,
+                view
+        );
     }
 
     // Resolves a VARCHAR value via VarcharTypeDriver: the per-row 16-byte header
