@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.qwp.e2e;
 
+import io.questdb.client.LineSenderServerException;
 import io.questdb.client.Sender;
 import io.questdb.client.SenderConnectionEvent;
 import io.questdb.client.SenderConnectionListener;
@@ -239,8 +240,8 @@ public class QwpWebSocketSenderObservabilityTest extends AbstractQwpWebSocketTes
     /**
      * Exercises {@link QwpWebSocketSender#getTotalErrorNotificationsDelivered()}.
      * Send a string into a column that was first created as DOUBLE; the server
-     * rejects with SCHEMA_MISMATCH (DROP_AND_CONTINUE policy), the error
-     * handler fires, and the delivered counter advances past zero.
+     * rejects with SCHEMA_MISMATCH (a latched TERMINAL under NACK policy v2),
+     * the error handler fires, and the delivered counter advances past zero.
      */
     @Test
     public void testGetTotalErrorNotificationsDeliveredAfterSchemaMismatch() throws Exception {
@@ -254,16 +255,32 @@ public class QwpWebSocketSenderObservabilityTest extends AbstractQwpWebSocketTes
             }
             drainWalQueue();
 
-            CompletableFuture<SenderError> errorFut = new CompletableFuture<>();
-            try (QwpWebSocketSender sender = connectWs(port, errorFut::complete)) {
+            CompletableFuture<SenderError> firstErrFut = new CompletableFuture<>();
+            CompletableFuture<SenderError> terminalFut = new CompletableFuture<>();
+            QwpWebSocketSender sender = connectWs(port, err -> {
+                if (err.getAppliedPolicy() == SenderError.Policy.TERMINAL) {
+                    terminalFut.complete(err);
+                }
+                firstErrFut.complete(err);
+            });
+            SenderError.Category expectedTerminalCategory = null;
+            try {
                 sender.table(table).stringColumn("v", "not-a-double").at(2_000_000L, ChronoUnit.MICROS);
-                sender.flush();
-                SenderError err = errorFut.get(10, TimeUnit.SECONDS);
+                try {
+                    sender.flush();
+                } catch (LineSenderServerException ignored) {
+                    // the I/O thread latched the terminal before flush()'s
+                    // own error poll ran
+                }
+                SenderError err = firstErrFut.get(10, TimeUnit.SECONDS);
                 Assert.assertEquals(SenderError.Category.SCHEMA_MISMATCH, err.getCategory());
                 long delivered = sender.getTotalErrorNotificationsDelivered();
                 Assert.assertTrue("expected at least one delivery, got " + delivered, delivered >= 1L);
                 // Sanity: error did not surface as a drop on the dispatcher inbox.
                 Assert.assertEquals(0L, sender.getDroppedErrorNotifications());
+                expectedTerminalCategory = SenderError.Category.SCHEMA_MISMATCH;
+            } finally {
+                assertRejectionTerminalOnClose(sender, terminalFut, expectedTerminalCategory);
             }
             drainWalQueue();
         });

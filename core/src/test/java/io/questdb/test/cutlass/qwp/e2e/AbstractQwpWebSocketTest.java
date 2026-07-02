@@ -30,7 +30,9 @@ import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpRequestHandlerFactory;
 import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
+import io.questdb.client.LineSenderServerException;
 import io.questdb.client.Sender;
+import io.questdb.client.SenderError;
 import io.questdb.client.SenderErrorHandler;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
 import io.questdb.cutlass.qwp.server.QwpIngressHttpProcessor;
@@ -44,7 +46,11 @@ import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Before;
+
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 
 public class AbstractQwpWebSocketTest extends AbstractCairoTest {
 
@@ -81,8 +87,8 @@ public class AbstractQwpWebSocketTest extends AbstractCairoTest {
      * Plain WS sender with a registered async error handler. Use when a test
      * needs to observe server-side rejections deterministically — the handler
      * fires on the dispatcher daemon thread for every {@code SenderError}
-     * (including {@link io.questdb.client.SenderError.Policy#DROP_AND_CONTINUE},
-     * which never throws from {@code flush()}).
+     * (including informational {@link SenderError.Policy#RETRIABLE} strikes,
+     * which never throw from {@code flush()}).
      */
     protected static QwpWebSocketSender connectWs(int port, SenderErrorHandler errorHandler) {
         return (QwpWebSocketSender) Sender.builder(Sender.Transport.WEBSOCKET)
@@ -90,6 +96,79 @@ public class AbstractQwpWebSocketTest extends AbstractCairoTest {
                 .errorHandler(errorHandler)
                 .closeFlushTimeoutMillis(CLOSE_FLUSH_TIMEOUT_MS)
                 .build();
+    }
+
+    /**
+     * Like {@link #connectWs(int, SenderErrorHandler)} but pins the
+     * poison-frame detector threshold ({@code max_frame_rejections}).
+     * Error-path tests pass {@code 1} so a rejection that is deterministic
+     * under byte-identical replay escalates to its
+     * {@link SenderError.Category#PROTOCOL_VIOLATION} terminal on the first
+     * strike instead of reconnect-replaying the frame
+     * {@code max_frame_rejections - 1} more times.
+     */
+    protected static QwpWebSocketSender connectWs(int port, SenderErrorHandler errorHandler, int maxFrameRejections) {
+        return (QwpWebSocketSender) Sender.builder(Sender.Transport.WEBSOCKET)
+                .address("localhost:" + port)
+                .errorHandler(errorHandler)
+                .maxFrameRejections(maxFrameRejections)
+                .closeFlushTimeoutMillis(CLOSE_FLUSH_TIMEOUT_MS)
+                .build();
+    }
+
+    /**
+     * Close a sender whose last flushed frame the server deterministically
+     * rejected. NACK policy v2 has no drop policy: the rejection ends in a
+     * latched terminal — the poisoned-frame
+     * {@link SenderError.Category#PROTOCOL_VIOLATION} escalation of a
+     * RETRIABLE rejection, or the direct TERMINAL of a
+     * {@link SenderError.Category#SCHEMA_MISMATCH} — that must surface loudly
+     * on exactly one channel: the async error handler, or a throw from
+     * {@code close()} when the handler has not received it yet
+     * ({@code close()} suppresses the double-signal once the handler owns the
+     * terminal). Asserts the surfaced terminal has {@code expectedCategory}
+     * and embeds every {@code expectedMsgParts} fragment (the poison message
+     * carries the server's last NACK verbatim in its {@code last: ...}
+     * suffix).
+     * <p>
+     * When {@code expectedCategory} is null the close is lenient: a body
+     * assertion is already propagating and must not be masked by close-path
+     * signals.
+     */
+    protected static void assertRejectionTerminalOnClose(
+            QwpWebSocketSender sender,
+            CompletableFuture<SenderError> terminalFut,
+            SenderError.Category expectedCategory,
+            String... expectedMsgParts
+    ) {
+        LineSenderServerException closeError = null;
+        try {
+            sender.close();
+        } catch (LineSenderServerException e) {
+            closeError = e;
+        }
+        if (expectedCategory == null) {
+            return;
+        }
+        String msg;
+        if (closeError != null) {
+            Assert.assertSame(expectedCategory, closeError.getServerError().getCategory());
+            msg = closeError.getMessage();
+        } else {
+            SenderError terminal;
+            try {
+                terminal = terminalFut.get(10, TimeUnit.SECONDS);
+            } catch (Exception e) {
+                throw new AssertionError("close() did not throw and no TERMINAL SenderError reached the handler", e);
+            }
+            Assert.assertSame(expectedCategory, terminal.getCategory());
+            msg = terminal.getServerMessage();
+        }
+        for (int i = 0, n = expectedMsgParts.length; i < n; i++) {
+            String part = expectedMsgParts[i];
+            Assert.assertTrue("Expected rejection terminal containing '" + part + "' but got: " + msg,
+                    msg != null && msg.contains(part));
+        }
     }
 
     /**
