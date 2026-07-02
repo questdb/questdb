@@ -57,6 +57,7 @@ import io.questdb.cairo.wal.WalEventCursor;
 import io.questdb.cairo.wal.WalEventReader;
 import io.questdb.cairo.wal.WalTxnDetails;
 import io.questdb.cairo.wal.WalTxnType;
+import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
@@ -806,7 +807,19 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         continue;
                     }
                     final WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
-                    final long txnMinTs = dataInfo.getMinTimestamp();
+                    long txnMinTs = dataInfo.getMinTimestamp();
+                    if (dataInfo.getDedupMode() == WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE) {
+                        // A REPLACE_RANGE commit deletes [rangeLo, rangeHi) beyond its own
+                        // inserted rows, which may all sit above the frontier - or be absent
+                        // entirely in a pure-delete commit whose min timestamp reads
+                        // Long.MAX_VALUE. The range low, clamped to the view's lower bound,
+                        // is the commit's true overlap minimum. Mirrors drainBaseWal's O3
+                        // detection.
+                        final long deleteLo = Math.max(dataInfo.getReplaceRangeTsLow(), viewLowerBoundTimestamp);
+                        if (deleteLo < dataInfo.getReplaceRangeTsHi()) {
+                            txnMinTs = deleteLo;
+                        }
+                    }
                     if (batchMinTs == Numbers.LONG_NULL || txnMinTs < batchMinTs) {
                         batchMinTs = txnMinTs;
                     }
@@ -1103,7 +1116,33 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // break out of the loop, and hand off to o3Replay.
                 final long latestSeen = instance.getLatestSeenTs();
                 final long txnMinTs = dataInfo.getMinTimestamp();
-                final boolean crossCommitO3 = latestSeen != Numbers.LONG_NULL && txnMinTs < latestSeen;
+                boolean crossCommitO3 = latestSeen != Numbers.LONG_NULL && txnMinTs < latestSeen;
+                long o3TriggerTs = txnMinTs;
+                if (dataInfo.getDedupMode() == WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE) {
+                    // A REPLACE_RANGE data commit atomically deletes every base row in
+                    // [rangeLo, rangeHi) and inserts the commit's rows, all inside the
+                    // range (WalWriter and TableWriter both assert this). The raw WAL
+                    // carries only the inserted rows, so the deletion side is visible
+                    // solely through the commit's range metadata: a range reaching at
+                    // or below the frontier may have deleted rows the view already
+                    // emitted even when every inserted row sits above the frontier, or
+                    // when the commit carries no rows at all (a pure delete). Treat the
+                    // range low - clamped to the view's lower bound, since deletions
+                    // below it cannot affect derived rows - as the commit's effective
+                    // minimum, and compare non-strictly: a range starting exactly at
+                    // the frontier deletes the frontier row itself. The o3Replay
+                    // hand-off then re-reads the applied (post-replace) base and
+                    // rewrites the affected range, converging the view instead of
+                    // keeping ghost rows the base no longer holds. The clamped range
+                    // low also serves as the replay's lateRowTs so the head-miss
+                    // REPLACE_RANGE covers a deleted band even when the recompute
+                    // produces no output row at its bottom.
+                    final long deleteLo = Math.max(dataInfo.getReplaceRangeTsLow(), viewLowerBoundTimestamp);
+                    if (deleteLo < dataInfo.getReplaceRangeTsHi()) {
+                        o3TriggerTs = deleteLo;
+                        crossCommitO3 |= latestSeen != Numbers.LONG_NULL && deleteLo <= latestSeen;
+                    }
+                }
                 if (crossCommitO3 || dataInfo.isOutOfOrder()) {
                     if (walWriter != null) {
                         walWriter.rollback();
@@ -1115,7 +1154,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     // be misclassified as O3.
                     instance.forceSetLatestSeenTs(latestSeenTsSnapshot);
                     o3Detected = true;
-                    o3LateRowTs = txnMinTs;
+                    o3LateRowTs = o3TriggerTs;
                     o3SeqTxn = txn;
                     // Reset cycle-local accounting so the caller's post-loop
                     // branch does not see stale state (it diverts to o3Replay,
