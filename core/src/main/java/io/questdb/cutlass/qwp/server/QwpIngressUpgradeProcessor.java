@@ -821,7 +821,6 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
 
             // Process the QWP v1 message
             state.processMessage();
-            roleChangeClose = state.isRoleChangeClosePending();
 
             if (state.isOk() && !deferCommit) {
                 state.commit();
@@ -829,6 +828,12 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             if (state.isOk() && deferCommit) {
                 state.commitIfMaxUncommittedRowsReached();
             }
+            // Read AFTER the commit calls: processMessage's read-only gate AND the
+            // commit path's authorization-refusal containment (rejectCairoError)
+            // can both flag the role-change close; reading before commit() would
+            // miss the latter and send a client-visible error status instead of
+            // the graceful reconnect-eligible close.
+            roleChangeClose = state.isRoleChangeClosePending();
             // commit() swallows exceptions internally
             if (state.isOk()) {
                 if (deferCommit) {

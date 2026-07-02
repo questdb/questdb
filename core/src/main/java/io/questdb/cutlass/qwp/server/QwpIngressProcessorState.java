@@ -706,7 +706,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
             rejectCommitError(e.getReason());
         } catch (CairoException e) {
             LOG.error().$('[').$(fd).$("] cairo error: ").$(e.getFlyweightMessage()).$();
-            reject(cairoExceptionStatus(e), e.getFlyweightMessage(), fd);
+            rejectCairoError(e);
         } catch (Throwable e) {
             LOG.critical().$('[').$(fd).$("] unexpected error: ").$(e).$();
             tudCache.setDistressed();
@@ -836,9 +836,37 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         }
     }
 
+    /**
+     * Rejects a batch that failed with a {@link CairoException}, with Invariant B
+     * containment for the in-place demote race.
+     * <p>
+     * The {@code engine.isReadOnlyMode()} gate at the top of
+     * {@link #processMessage()} re-checks the live role per batch, but the flag
+     * can flip BETWEEN that check and the WAL writer acquisition (or the commit)
+     * within the same batch. The deeper engine gates then refuse with
+     * {@code CairoException.authorization()} ("replica access is read-only"),
+     * which {@link #cairoExceptionStatus} would map to
+     * {@link Status#SECURITY_ERROR} -- a status a store-and-forward client
+     * latches as a terminal HALT and surfaces to its producer. Re-checking the
+     * live flag at catch time closes that window: if the node is (now)
+     * read-only, the refusal is the transient demote, so the connection is
+     * flagged for the same reconnect-eligible close as the top-gate path (the
+     * client reconnects, hits the 421 role reject on the now-replica endpoint,
+     * and retries from SF until a primary is reachable). A genuine ACL denial on
+     * a writable node (isReadOnlyMode() == false) still maps to SECURITY_ERROR.
+     */
+    private void rejectCairoError(CairoException e) {
+        if (e.isAuthorizationError() && engine.isReadOnlyMode()) {
+            roleChangeClosePending = true;
+            reject(Status.NOT_ACCEPTING_WRITES, e.getFlyweightMessage(), fd);
+            return;
+        }
+        reject(cairoExceptionStatus(e), e.getFlyweightMessage(), fd);
+    }
+
     private void rejectCommitError(Throwable th) {
         if (th instanceof CairoException e) {
-            reject(cairoExceptionStatus(e), e.getFlyweightMessage(), fd);
+            rejectCairoError(e);
             return;
         }
 
