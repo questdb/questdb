@@ -205,6 +205,16 @@ public class LiveViewInstance implements QuietCloseable {
     // it without extra synchronisation; mutated only under the refresh latch.
     private volatile boolean leadEligible;
     private volatile boolean leadEligibilityComputed;
+    // Read-only-replica lead catch-up seam: the on-disk (LV table) maximum timestamp the lead
+    // loop's window accumulators must reach before the drain resumes staging rows into the lead.
+    // A replicated flush can advance the on-disk tier (and the applied watermark) past the point
+    // the loop has computed -- the loop fell behind, or the LV WAL applied ahead of the base -- so
+    // the accumulators (row_number(), running aggregates) trail disk over the (latestSeenTs,
+    // diskMaxTs] band. reconcileLeadWithDisk arms this seam; drainAppliedBaseForLead drives the
+    // accumulators over that band without staging it (a plain drain would re-stage rows disk
+    // already holds, double-counting size()), then clears the seam once caught up. LONG_NULL means
+    // "not catching up". In-RAM only; mutated under the refresh latch only.
+    private long leadReconcileSeamTs = Numbers.LONG_NULL;
     // In-RAM lead row count: the number of output rows refreshed into the in-mem
     // tier but not yet flushed to the LV's on-disk table. Grows with each refresh
     // tick, reset to 0 at flush. Stamped onto the published slot so reads can serve
@@ -524,6 +534,15 @@ public class LiveViewInstance implements QuietCloseable {
 
     public long getLastRefreshTimeUs() {
         return lastRefreshTimeUs;
+    }
+
+    /**
+     * @return the read-only-replica lead catch-up seam (LV on-disk max ts the accumulators must
+     * reach before staging resumes), or {@link Numbers#LONG_NULL} when not catching up. See
+     * {@link #leadReconcileSeamTs}.
+     */
+    public long getLeadReconcileSeamTs() {
+        return leadReconcileSeamTs;
     }
 
     /**
@@ -928,6 +947,13 @@ public class LiveViewInstance implements QuietCloseable {
     public void setLeadEligible(boolean value) {
         this.leadEligible = value;
         this.leadEligibilityComputed = true;
+    }
+
+    /**
+     * Sets the read-only-replica lead catch-up seam. See {@link #leadReconcileSeamTs}.
+     */
+    public void setLeadReconcileSeamTs(long leadReconcileSeamTs) {
+        this.leadReconcileSeamTs = leadReconcileSeamTs;
     }
 
     /**

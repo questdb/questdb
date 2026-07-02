@@ -1048,6 +1048,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * the reliably-replicated WAL-E event min-ts (never the race-prone data columns); finishLeadRefresh's
      * replica hatch then drops the tentative lead and waits for the primary's replicated o3 correction
      * to land on disk -- the replica never rewrites its own tier.
+     * <p>
+     * When {@link #reconcileLeadWithDisk} has armed {@link LiveViewInstance#getLeadReconcileSeamTs()}
+     * (a replicated flush outran the loop's accumulators -- Case B), rows at or below the seam are
+     * already on disk: the scan drives the accumulators over them (the catch-up) but does not stage
+     * them, so the reconstructed lead does not double-count durable rows. The seam clears once the
+     * accumulators reach it.
      */
     private void drainAppliedBaseForLead(
             LiveViewInstance instance,
@@ -1079,6 +1085,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
 
             final long latestSeenTs = instance.getLatestSeenTs();
+            // Case B catch-up seam (reconcileLeadWithDisk armed it when a replicated flush outran the
+            // loop's accumulators): output rows at or below it are already on the replicated on-disk
+            // tier, so the scan drives the accumulators over them but does not stage them. LONG_NULL in
+            // steady state, where every scanned row (ts > latestSeenTs) is genuine un-flushed lead.
+            final long reconcileSeamTs = instance.getLeadReconcileSeamTs();
             // Overlap trigger over (fromSeqTxn, effectiveSeqTxn]. The min ts comes from the base WAL-E
             // event files, which replicate reliably (only the column DATA read races), so a
             // below-frontier arrival is detected without touching the race-prone data columns.
@@ -1164,10 +1175,21 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         final Record outRecord = windowCursor.getRecord();
                         while (windowCursor.hasNext()) {
                             final long ts = outRecord.getTimestamp(cursorTimestampIndex);
+                            // Advance the frontier for every row, including the on-disk catch-up band
+                            // below the seam, so the accumulators (row_number(), running aggregates)
+                            // reach disk truth.
+                            instance.setLatestSeenTs(ts);
+                            if (reconcileSeamTs != Numbers.LONG_NULL && ts <= reconcileSeamTs) {
+                                // Case B replica catch-up: this output row is already on the replicated
+                                // on-disk tier (a flush produced it). The windowCursor.hasNext() above
+                                // already drove the accumulators over it -- exactly the catch-up we need
+                                // -- but it must NOT enter the lead, or size() would double-count a row
+                                // disk already holds. Drive past it without staging.
+                                continue;
+                            }
                             if (batchMaxTs == Numbers.LONG_NULL || ts > batchMaxTs) {
                                 batchMaxTs = ts;
                             }
-                            instance.setLatestSeenTs(ts);
                             if (populateTier) {
                                 stagingBuffer.copyRowFromRecord(outRecord, appendedRows);
                                 if (internSymbols) {
@@ -1195,6 +1217,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 }
             }
 
+            // The accumulators have reached the on-disk seam, so the Case B catch-up is done and normal
+            // staging resumes next tick. Clear it here (not on the early-return above) so a base that
+            // lags the flush keeps the seam armed until it actually applies the flushed band.
+            if (reconcileSeamTs != Numbers.LONG_NULL && instance.getLatestSeenTs() >= reconcileSeamTs) {
+                instance.setLeadReconcileSeamTs(Numbers.LONG_NULL);
+            }
             if (appendedRows > 0 && populateTier) {
                 stagingBuffer.setRowCount(appendedRows);
                 stagingBuffer.setSeamTs(stagingMinTs);
@@ -1798,18 +1826,19 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * stamped seqTxn no longer matches the advanced disk reader, so the read-path fence routes
      * disk-only until the slot is re-stamped.
      * <p>
-     * <b>Fully-subsumed</b> ({@code refreshedUpToSeqTxn <= appliedWatermark}): the applied point
-     * covers every base commit the lead computed, so every lead row is now on disk. Drop the lead
-     * ({@code leadRowCount = 0}) and resume computing from the applied point. Re-stamp the published
-     * slot to the current LV-table seqTxn only at the exact boundary ({@code refreshedUpToSeqTxn ==
-     * applied}), where the lead rows are precisely the just-flushed disk rows so the re-stamped
-     * subset serves the whole disk range. When disk has OUTRUN the loop ({@code applied >
-     * refreshedUpToSeqTxn}) the slot's max timestamp trails disk's, so re-stamping to disk's seqTxn
-     * would make the seam split drop the on-disk rows above the slot; instead leave the slot's stamp
-     * stale so the fence routes disk-only (complete and correct, since disk already covers the whole
-     * lead range) until the loop catches up and republishes. Catching the window accumulators up over
-     * that skipped range without emitting (via {@code replayToApplied}) is the remaining work -- see
-     * the enterprise V2 handoff, plan item 3 step 2.
+     * <b>Disk outran the loop / Case B</b> ({@code refreshedUpToSeqTxn < appliedWatermark}): the
+     * applied point covers base commits the loop never drove through the window pipeline, so the
+     * accumulators trail disk over the {@code (latestSeenTs, diskMaxTs]} band. Drop the lead, force a
+     * clean tier rebuild ({@code tierStale}) since the slot is missing that band, leave the slot stamp
+     * stale (fence -> disk-only) and arm {@code leadReconcileSeamTs = diskMaxTs}. The drain then drives
+     * the accumulators over the band without staging it (so {@code size()} does not double-count the
+     * durable rows) and stages only the genuine lead above disk; {@code refreshedUpToSeqTxn} stays put
+     * and the drain advances it as it re-derives. The seam persists across ticks when the base itself
+     * lags the replicated flush.
+     * <p>
+     * <b>Exact boundary</b> ({@code refreshedUpToSeqTxn == appliedWatermark}): the flush landed
+     * precisely the lead, so the slot rows are the just-flushed disk rows. Re-stamp the slot as a disk
+     * subset and drop the lead; the accumulators already sit at disk, so no catch-up is armed.
      * <p>
      * <b>Partial-overlap</b> ({@code appliedWatermark < refreshedUpToSeqTxn}): a replicated flush
      * covers only a prefix of the lead, leaving a genuine un-flushed remainder above the applied
@@ -1823,25 +1852,64 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      */
     private void reconcileLeadWithDisk(LiveViewInstance instance) {
         final long applied = instance.getAppliedWatermark();
-        if (instance.getRefreshedUpToSeqTxn() <= applied) {
-            // Fully-subsumed: the whole lead is now on disk. Drop it and resume from the applied point.
-            if (instance.getLeadRowCount() > 0) {
-                // Only re-stamp at the exact boundary, where the slot's max ts equals disk's; when disk
-                // outran the loop the slot trails disk and re-stamping would drop the on-disk tail via
-                // the seam split, so leave the stamp stale (fence -> disk-only, which is complete).
-                if (instance.getRefreshedUpToSeqTxn() == applied) {
-                    final long lvDiskSeqTxn = engine.getTableSequencerAPI()
-                            .getTxnTracker(instance.getLiveViewToken()).getWriterTxn();
-                    restampSlotAfterFlush(instance, lvDiskSeqTxn);
+        final long refreshedUpTo = instance.getRefreshedUpToSeqTxn();
+        if (refreshedUpTo < applied) {
+            // Disk outran the loop (Case B): a replicated flush advanced the on-disk tier (and the
+            // applied watermark) past the point the lead loop has computed -- the loop fell behind, or
+            // the LV WAL applied ahead of the base. Every prior lead row is now on disk, and the
+            // on-disk band (latestSeenTs, diskMaxTs] holds rows the loop never drove through the window
+            // pipeline, so the accumulators (row_number(), running aggregates) trail disk. A plain
+            // drain-forward would re-scan that band (ts > latestSeenTs) and re-stage it as lead,
+            // double-counting rows disk already holds (an inflated size() / count()).
+            //
+            // Drop the stale lead and force a clean tier rebuild -- the slot is missing the outran
+            // band, so appending onto it would leave a gap -- and leave the slot stamp stale so reads
+            // route disk-only until the rebuild lands. Arm the catch-up seam at the on-disk max ts so
+            // the drain drives the accumulators over the flushed band WITHOUT staging it, then stages
+            // only the genuine lead above disk. Keep refreshedUpToSeqTxn where it is: the drain
+            // re-derives the band to catch the accumulators up and advances refreshedUpToSeqTxn as it
+            // goes. When the base itself lags the flush the drain reads nothing until the base applies;
+            // the seam persists across ticks and reads stay disk-only meanwhile.
+            long diskMaxTs = Numbers.LONG_NULL;
+            try (TableReader lvReader = engine.getReader(instance.getLiveViewToken())) {
+                if (lvReader.size() > 0) {
+                    diskMaxTs = lvReader.getMaxTimestamp();
                 }
+            }
+            instance.setLeadRowCount(0);
+            instance.setTierStale(true);
+            // Arm the seam only when the accumulators actually trail disk. latestSeenTs == LONG_NULL is
+            // cold start (no lead computed yet), which does not reach this branch anyway
+            // (getRefreshedUpToSeqTxn falls back to the applied point, so refreshedUpTo == applied);
+            // latestSeenTs == diskMaxTs means the flushed commits produced no rows above the frontier,
+            // so the plain ts > latestSeenTs scan already excludes the on-disk band and no seam is
+            // needed.
+            if (diskMaxTs != Numbers.LONG_NULL
+                    && instance.getLatestSeenTs() != Numbers.LONG_NULL
+                    && instance.getLatestSeenTs() < diskMaxTs) {
+                instance.setLeadReconcileSeamTs(diskMaxTs);
+            } else {
+                instance.setLeadReconcileSeamTs(Numbers.LONG_NULL);
+            }
+            return;
+        }
+        if (refreshedUpTo == applied) {
+            // Exact boundary: the flush landed precisely the lead, so the slot rows are exactly the
+            // just-flushed disk rows. Re-stamp the slot as a disk subset and drop the lead. The
+            // accumulators already sit at disk (latestSeenTs == diskMaxTs), so no catch-up is pending.
+            instance.setLeadReconcileSeamTs(Numbers.LONG_NULL);
+            if (instance.getLeadRowCount() > 0) {
+                final long lvDiskSeqTxn = engine.getTableSequencerAPI()
+                        .getTxnTracker(instance.getLiveViewToken()).getWriterTxn();
+                restampSlotAfterFlush(instance, lvDiskSeqTxn);
                 instance.setLeadRowCount(0);
             }
-            instance.setRefreshedUpToSeqTxn(applied);
             return;
         }
         // Partial-overlap: a genuine un-flushed remainder sits above the applied point. Only act once
         // a replicated flush has advanced the on-disk seqTxn past the slot's stamp; otherwise the
         // lead is still fresh and no row has moved to disk.
+        instance.setLeadReconcileSeamTs(Numbers.LONG_NULL);
         if (instance.getLeadRowCount() <= 0) {
             return;
         }
