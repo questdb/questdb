@@ -46,6 +46,7 @@ import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
 import io.questdb.cutlass.qwp.server.QwpIngressProcessorState;
 import io.questdb.cutlass.qwp.server.QwpTudCache;
 import io.questdb.std.CharSequenceLongHashMap;
+import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.LowerCaseUtf8SequenceObjHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -2354,6 +2355,110 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         Object map = f.get(state);
         // Both CharSequenceLongHashMap and CharSequenceObjHashMap expose size().
         return (int) map.getClass().getMethod("size").invoke(map);
+    }
+
+    @Test
+    public void testIsDurableWorkFullyUploaded() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                state.setDurableAckEnabled(true);
+                FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
+                FakeDurableAckRegistry registry = new FakeDurableAckRegistry();
+
+                // Nothing pending -> trivially covered.
+                Assert.assertTrue(state.isDurableWorkFullyUploaded(registry));
+
+                fake.queueCommit(
+                        new String[]{"t1", "t2"},
+                        new String[]{"t1~1", "t2~1"},
+                        new long[]{10L, 20L}
+                );
+                state.setHighestProcessedSequence(0);
+                state.commit();
+
+                // No uploads at all.
+                Assert.assertFalse(state.isDurableWorkFullyUploaded(registry));
+
+                // One table lagging behind its committed seqTxn.
+                registry.set("t1~1", 10L);
+                registry.set("t2~1", 19L);
+                Assert.assertFalse(state.isDurableWorkFullyUploaded(registry));
+
+                // Watermarks caught up on both tables.
+                registry.set("t2~1", 20L);
+                Assert.assertTrue(state.isDurableWorkFullyUploaded(registry));
+
+                // Coverage survives the durable-ack prune...
+                state.collectDurableProgress(registry);
+                state.onDurableAckSent();
+                Assert.assertTrue(state.isDurableWorkFullyUploaded(registry));
+
+                // ...and a fresh commit re-opens the window until its upload lands.
+                fake.queueCommit(new String[]{"t1"}, new String[]{"t1~1"}, new long[]{11L});
+                state.setHighestProcessedSequence(1);
+                state.commit();
+                Assert.assertFalse(state.isDurableWorkFullyUploaded(registry));
+                registry.set("t1~1", 11L);
+                Assert.assertTrue(state.isDurableWorkFullyUploaded(registry));
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testRoleChangeCloseDeferralLifecycle() throws Exception {
+        assertMemoryLeak(() -> {
+            long[] nowMicros = {0L};
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration) {
+                        @Override
+                        public MicrosecondClock getMicrosecondClock() {
+                            return () -> nowMicros[0];
+                        }
+                    };
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+
+                Assert.assertFalse(state.isRoleChangeCloseDeferred());
+                Assert.assertFalse(state.isRoleChangeCloseGraceExpired());
+
+                state.deferRoleChangeClose("replica access is read-only");
+                Assert.assertTrue(state.isRoleChangeCloseDeferred());
+                Assert.assertFalse(state.isRoleChangeCloseGraceExpired());
+                Assert.assertEquals("replica access is read-only", state.getRoleChangeCloseReason().toString());
+
+                // Follow-on gate hits must not extend the deadline or clobber the reason.
+                nowMicros[0] = QwpIngressProcessorState.ROLE_CHANGE_CLOSE_UPLOAD_GRACE_MICROS - 1;
+                state.deferRoleChangeClose("a different reason");
+                Assert.assertEquals("replica access is read-only", state.getRoleChangeCloseReason().toString());
+                Assert.assertFalse(state.isRoleChangeCloseGraceExpired());
+
+                // The deferral spans messages: per-message resets must not drop it.
+                state.clear();
+                state.clearMessageState();
+                Assert.assertTrue(state.isRoleChangeCloseDeferred());
+
+                // Grace budget exhausts exactly at the deadline.
+                nowMicros[0] = QwpIngressProcessorState.ROLE_CHANGE_CLOSE_UPLOAD_GRACE_MICROS;
+                Assert.assertTrue(state.isRoleChangeCloseGraceExpired());
+
+                // Connection recycle resets the deferral.
+                state.onDisconnected();
+                Assert.assertFalse(state.isRoleChangeCloseDeferred());
+                Assert.assertFalse(state.isRoleChangeCloseGraceExpired());
+                Assert.assertEquals(0, state.getRoleChangeCloseReason().length());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
     }
 
     private static FakeConsumerTudCache installFakeTudCache(

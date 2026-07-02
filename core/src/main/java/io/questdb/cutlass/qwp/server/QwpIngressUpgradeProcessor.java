@@ -875,11 +875,12 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         // INVARIANT B: an in-place PRIMARY->REPLICA demote is TRANSIENT. Close the
         // connection with a reconnect-eligible code instead of sending a
         // SECURITY_ERROR that a store-and-forward client treats as a terminal HALT.
-        // sendFatalClose first flushes any pending ACK (so the client learns what
-        // committed); the client then reconnects, hits the 421 role reject on the
-        // now-replica endpoint, and retries from SF.
+        // For durable-ack connections the close is deferred (bounded) until the
+        // durable-upload registry covers this connection's committed work, so the
+        // final durable ack is delivered BEFORE the CLOSE frame and the client's
+        // replay window is empty -- see roleChangeCloseWithUploadGrace.
         if (roleChangeClose) {
-            sendFatalClose(context, state, WebSocketCloseCode.NORMAL_CLOSURE, errorMessage);
+            roleChangeCloseWithUploadGrace(context, state, errorMessage);
             return;
         }
 
@@ -976,7 +977,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
     }
 
     private void handlePing(HttpConnectionContext context, QwpIngressProcessorState state, long payload, int length)
-            throws PeerDisconnectedException, PeerIsSlowToReadException {
+            throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         // PING is a documented flush point for pending ACK/durable-ACK frames.
         // A client may send PING specifically to prod the server into emitting
         // acks for commits whose uploads have completed since the last message.
@@ -986,6 +987,18 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         // that, the parked ACK bytes would sit unsent in the response sink
         // until the next unrelated write.
         flushPendingAck(context, state);
+
+        // A deferred role-change close completes here: the client's durable-ack
+        // keepalive PING is the recv-driven poll that observes upload completion
+        // (durable acks are only ever flushed on inbound events). The flush above
+        // already delivered any newly-covered durable ack; once coverage is full
+        // (or the grace budget is exhausted) emit the reconnect-eligible close.
+        if (state.isRoleChangeCloseDeferred()
+                && (state.isDurableWorkFullyUploaded(engine.getDurableAckRegistry())
+                || state.isRoleChangeCloseGraceExpired())) {
+            sendFatalClose(context, state, WebSocketCloseCode.NORMAL_CLOSURE, state.getRoleChangeCloseReason());
+            return;
+        }
 
         // Can only send pong when the response sink is clear. If a prior ACK
         // is still draining we skip the pong rather than interleave bytes;
@@ -1026,6 +1039,67 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             LOG.debug().$("Pong send blocked, deferring to resume [fd=").$(context.getFd()).I$();
             throw e;
         }
+    }
+
+    /**
+     * INVARIANT B role-change close with an exactly-once guard for durable-ack
+     * connections.
+     * <p>
+     * The demote cascade flips the engine read-only FIRST and completes pending
+     * WAL uploads AFTERWARDS, so at the instant the read-only gate rejects a
+     * frame the durable-ack watermark can lag this connection's committed work
+     * by the in-flight upload latency. Closing inside that lag loses the final
+     * durable ack forever -- durable acks are recv-driven, so there is no
+     * delivery opportunity after the CLOSE frame -- while the demote drain
+     * still publishes those commits to the object store. A store-and-forward
+     * client (whose replay watermark advances ONLY on durable acks) would then
+     * replay a batch the promoted replica already converged to via replication,
+     * landing it twice on tables without DEDUP UPSERT KEYS.
+     * <p>
+     * So: while committed work remains un-uploaded, DEFER the close (bounded by
+     * {@link QwpIngressProcessorState#ROLE_CHANGE_CLOSE_UPLOAD_GRACE_MICROS})
+     * and keep flushing ack progress. Re-entry points during the deferral are
+     * further gate-rejected data frames (this method) and the client's
+     * durable-ack keepalive PINGs ({@link #handlePing}). Once the registry
+     * covers the connection's pending seqTxns, sendFatalClose flushes the final
+     * durable ack and only then emits NORMAL_CLOSURE: the replay window is
+     * empty and every in-flight batch lands exactly once. If uploads stall past
+     * the grace budget the close proceeds anyway -- availability over the
+     * duplicate guard, matching the pre-deferral behaviour.
+     * <p>
+     * Non-durable-ack connections close immediately: their cumulative OK ack is
+     * flushed synchronously by sendFatalClose and carries no upload lag.
+     */
+    private void roleChangeCloseWithUploadGrace(
+            HttpConnectionContext context,
+            QwpIngressProcessorState state,
+            CharSequence reason
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+        if (state.isDurableAckEnabled()
+                && !state.isDurableWorkFullyUploaded(engine.getDurableAckRegistry())
+                && !state.isRoleChangeCloseGraceExpired()) {
+            boolean firstDeferral = !state.isRoleChangeCloseDeferred();
+            state.deferRoleChangeClose(reason);
+            if (firstDeferral) {
+                LOG.info().$("deferring role-change close until committed work is durably uploaded [fd=")
+                        .$(context.getFd()).I$();
+            }
+            // Push whatever cumulative/durable progress exists right now; the
+            // final durable ack goes out with the close itself once coverage
+            // is confirmed.
+            flushPendingAck(context, state);
+            return;
+        }
+        if (state.isRoleChangeCloseGraceExpired()) {
+            LOG.error().$("role-change close upload grace expired; closing with un-acked durable work, client replay may duplicate [fd=")
+                    .$(context.getFd()).I$();
+        }
+        sendFatalClose(
+                context,
+                state,
+                WebSocketCloseCode.NORMAL_CLOSURE,
+                state.isRoleChangeCloseDeferred() ? state.getRoleChangeCloseReason() : reason
+        );
     }
 
     private void handleWebSocketFrame(HttpConnectionContext context, QwpIngressProcessorState state, int opcode, boolean fin, long payload, int length)

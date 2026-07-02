@@ -56,6 +56,15 @@ import io.questdb.std.str.Utf8s;
  */
 public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware {
     static final int SEND_STATE_READY = 0;
+    // Bounded grace (MicrosecondClock ticks) a role-change close may be deferred
+    // while committed-but-not-yet-durably-uploaded work drains. The demote cascade
+    // flips the engine read-only FIRST and completes pending WAL uploads AFTERWARDS,
+    // so at gate-reject time the durable-ack watermark can lag this connection's
+    // committed work by the in-flight upload latency; closing inside that lag loses
+    // the final durable ack forever and forces a duplicate-producing client replay.
+    // Uploads the demote drain is completing land in milliseconds; 10s is a stall
+    // guard, not an expected wait.
+    public static final long ROLE_CHANGE_CLOSE_UPLOAD_GRACE_MICROS = 10_000_000;
     static final int SEND_STATE_RESUME_ACK = 1;
     static final int SEND_STATE_RESUME_ACK_THEN_CLOSE = 7;
     static final int SEND_STATE_RESUME_ACK_THEN_ERROR = 3;
@@ -82,6 +91,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     private final CharSequenceObjHashMap<String> pendingDurableDirNames = new CharSequenceObjHashMap<>();
     private final CharSequenceLongHashMap pendingDurableSeqTxns = new CharSequenceLongHashMap();
     private final StringSink rejectMsg = new StringSink();
+    private final StringSink roleChangeCloseReason = new StringSink();
     private final CharSequenceLongHashMap resumeAckSeqTxns = new CharSequenceLongHashMap();
     private final ConnectionSymbolCache symbolCache = new ConnectionSymbolCache();
     private final CharSequenceObjHashMap<String> tableDirNames = new CharSequenceObjHashMap<>();
@@ -118,6 +128,12 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     // reconnect-eligible code instead of sending a SECURITY_ERROR that a
     // store-and-forward client would treat as a terminal HALT.
     private boolean roleChangeClosePending;
+    // Deadline (MicrosecondClock ticks) for a deferred role-change close, or -1
+    // when no deferral is in progress. Unlike roleChangeClosePending this survives
+    // per-message clear()/clearMessageState(): the deferral spans multiple inbound
+    // events (gate-rejected frames, keepalive PINGs) until the durable-upload
+    // registry covers pendingDurableSeqTxns or the grace budget expires.
+    private long roleChangeCloseDeferredDeadline = -1;
     private SecurityContext securityContext;
     private int sendState = SEND_STATE_READY;
     private QwpStreamingDecoder streamingDecoder;
@@ -370,6 +386,65 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         return roleChangeClosePending;
     }
 
+    /**
+     * Starts (or keeps, if already started) the bounded deferral of a role-change
+     * close, stashing {@code reason} for the eventual CLOSE frame. No-op when a
+     * deferral is already in progress so the deadline is never extended by
+     * follow-on gate-rejected frames.
+     */
+    public void deferRoleChangeClose(CharSequence reason) {
+        if (roleChangeCloseDeferredDeadline == -1) {
+            roleChangeCloseDeferredDeadline = configuration.getMicrosecondClock().getTicks()
+                    + ROLE_CHANGE_CLOSE_UPLOAD_GRACE_MICROS;
+            roleChangeCloseReason.clear();
+            if (reason != null) {
+                roleChangeCloseReason.put(reason);
+            }
+        }
+    }
+
+    public CharSequence getRoleChangeCloseReason() {
+        return roleChangeCloseReason;
+    }
+
+    /**
+     * True while a role-change close is deferred awaiting durable-upload coverage
+     * of this connection's committed work.
+     */
+    public boolean isRoleChangeCloseDeferred() {
+        return roleChangeCloseDeferredDeadline != -1;
+    }
+
+    /**
+     * True when a deferred role-change close has exhausted its grace budget and
+     * must proceed even with un-acked durable work (availability over the
+     * duplicate guard). Always false when no deferral is in progress.
+     */
+    public boolean isRoleChangeCloseGraceExpired() {
+        return roleChangeCloseDeferredDeadline != -1
+                && configuration.getMicrosecondClock().getTicks() >= roleChangeCloseDeferredDeadline;
+    }
+
+    /**
+     * True when every seqTxn this connection has committed but not yet durably
+     * acked is covered by the registry's durable-upload watermark -- i.e. a
+     * durable ack flushed right now would advance the client's replay watermark
+     * past ALL of this connection's committed work, leaving no replay window.
+     * Trivially true when nothing is pending (or durable ack is disabled:
+     * {@code pendingDurableSeqTxns} is only populated when enabled).
+     */
+    public boolean isDurableWorkFullyUploaded(DurableAckRegistry registry) {
+        ObjList<CharSequence> tableNames = pendingDurableSeqTxns.keys();
+        for (int i = 0, n = tableNames.size(); i < n; i++) {
+            CharSequence tableName = tableNames.getQuick(i);
+            String dirName = pendingDurableDirNames.get(tableName);
+            if (dirName == null || registry.getDurablyUploadedSeqTxn(dirName) < pendingDurableSeqTxns.get(tableName)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     public boolean isSendReady() {
         return sendState == SEND_STATE_READY;
     }
@@ -482,6 +557,8 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         sendState = SEND_STATE_READY;
         clearDeferredError();
         clearDeferredClose();
+        roleChangeCloseDeferredDeadline = -1;
+        roleChangeCloseReason.clear();
         wsHandshakeSent = false;
 
         // Drop any durable-ack state; the connection is going away, so even if
