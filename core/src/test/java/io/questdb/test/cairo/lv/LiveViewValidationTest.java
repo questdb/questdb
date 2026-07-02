@@ -47,6 +47,36 @@ import org.junit.Test;
 public class LiveViewValidationTest extends AbstractCairoTest {
 
     @Test
+    public void testCreateNameCollisionMessage() throws Exception {
+        // A name already taken by a non-live-view (here a plain table) is rejected up
+        // front, mirroring CREATE MATERIALIZED VIEW. Crucially, IF NOT EXISTS does NOT
+        // silently no-op over a wrong-typed name: without the pre-check the shared create
+        // helper would swallow the IF NOT EXISTS branch, leaving a user believing a live
+        // view exists when the name is actually a plain table. A same-kind (live view)
+        // IF NOT EXISTS collision stays a genuine no-op.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE lv (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            // Collision over the plain table, with and without IF NOT EXISTS - both reject.
+            assertCreateLiveViewCollisionRejected(false);
+            assertCreateLiveViewCollisionRejected(true);
+            Assert.assertNull("no live view should be registered over the colliding name",
+                    engine.getLiveViewRegistry().getViewInstance("lv"));
+
+            // Free the name, then a real live view; IF NOT EXISTS over the SAME kind no-ops.
+            execute("DROP TABLE lv");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            execute("CREATE LIVE VIEW IF NOT EXISTS lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            Assert.assertNotNull("IF NOT EXISTS over an existing live view must be a no-op",
+                    engine.getLiveViewRegistry().getViewInstance("lv"));
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testCreateRejectedWhenLiveViewsDisabled() throws Exception {
         // Parity with materialized views (CreateMatViewTest#testCreateMatViewDisabled): when the
         // feature is turned off, CREATE is rejected at parse time rather than silently creating a
@@ -97,6 +127,19 @@ public class LiveViewValidationTest extends AbstractCairoTest {
             assertLiveViewCreateRejected("SELECT ts, x, sum(v + sysdate()::long)" + frame);
             assertLiveViewCreateRejected("SELECT ts, x, sum(v + rnd_double(0))" + frame);
         });
+    }
+
+    private void assertCreateLiveViewCollisionRejected(boolean ifNotExists) throws Exception {
+        try {
+            execute("CREATE LIVE VIEW " + (ifNotExists ? "IF NOT EXISTS " : "") +
+                    "lv FLUSH EVERY 1s AS SELECT ts, x, row_number() OVER () AS rn FROM base");
+            Assert.fail("expected name-collision reject [ifNotExists=" + ifNotExists + ']');
+        } catch (SqlException e) {
+            Assert.assertTrue(
+                    "wrong message [msg=" + e.getFlyweightMessage() + ", ifNotExists=" + ifNotExists + ']',
+                    Chars.contains(e.getFlyweightMessage(), "table or view with the requested name already exists")
+            );
+        }
     }
 
     private void assertLiveViewCreateRejected(String selectSql) throws Exception {

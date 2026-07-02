@@ -197,6 +197,9 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
     // count, max, row_number over a named WINDOW carrying ANCHOR EXPRESSION.
     private static final int ANCHORED_VARIANT_COUNT = 5;
     private static final int MAX_FRAME = 20;
+    // Sentinel i for phantom (rolled-back) rows: large and positive, so a leaked phantom
+    // both survives a WHERE i>0 filter and stands out against the [-1000, 1000] real data.
+    private static final long PHANTOM_SENTINEL = 999_999;
     private static final String[] SYMBOLS = {
             "AA", "BB", "CC", "DD", "EE", "FF", "GG", "HH",
             "II", "JJ", "KK", "LL", "MM", "NN", "OO", "PP"
@@ -622,6 +625,28 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
             for (int i = 0; i < FIXED_WIDTH_VARIANTS.length; i++) {
                 runReplaceRangeFuzz(rnd, FIXED_WIDTH_VARIANTS[i], 120 + rnd.nextInt(160),
                         rnd.nextBoolean(), rnd.nextBoolean(), rnd.nextBoolean());
+            }
+        });
+    }
+
+    @Test
+    public void testFuzzRolledBackCommits() throws Exception {
+        // Rolled-back base transactions must be INVISIBLE to the live view: a WAL
+        // transaction that appends rows then rolls back never advances the base
+        // sequencer, so its rows never reach the seqTxn-driven LV drain (the same
+        // commit-boundary that makes a cancelled row invisible). Between the real
+        // committed batches this arm injects doomed transactions - phantom rows carrying
+        // a large sentinel i and a timestamp drawn just below a committed row, then
+        // WalWriter.rollback(). A leaked phantom would both survive the optional WHERE
+        // i>0 and, being below the frontier, trip an O3 replay - a visible divergence
+        // from the recompute over the committed base at quiescence. Every fixed-width
+        // variant runs under in-order / O3 and optional BACKFILL.
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1 + rnd.nextInt(4));
+        assertMemoryLeak(() -> {
+            for (int i = 0; i < FIXED_WIDTH_VARIANTS.length; i++) {
+                runRolledBackFuzz(rnd, FIXED_WIDTH_VARIANTS[i], 120 + rnd.nextInt(160),
+                        rnd.nextBoolean(), rnd.nextBoolean());
             }
         });
     }
@@ -3671,6 +3696,135 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
 
         execute("DROP LIVE VIEW lv");
         execute("DROP TABLE base");
+    }
+
+    // Differential fuzz proving rolled-back base transactions never reach the view
+    // (see testFuzzRolledBackCommits). Committed rows follow runFuzz's shape - unique,
+    // strictly-increasing timestamps, optional pre-CREATE BACKFILL history - but every
+    // commit is written through a direct WalWriter, so between real batches a doomed
+    // transaction can append phantom rows and then rollback() without ever advancing the
+    // sequencer. Phantoms carry i = PHANTOM_SENTINEL and a timestamp just below a
+    // committed row, so a leak is loud: it survives WHERE i>0 and lands below the
+    // frontier. The recompute over the committed base is the oracle - it can never
+    // contain a phantom, so equality at quiescence proves none leaked.
+    private void runRolledBackFuzz(Rnd rnd, int variant, int rowCount, boolean o3, boolean backfill) throws Exception {
+        setCurrentMicros(MicrosTimestampDriver.floor("2025-12-31T00:00:00.000000Z"));
+
+        final int n = 1 + rnd.nextInt(MAX_FRAME);
+        final int symCount = 1 + rnd.nextInt(SYMBOLS.length);
+        final int stepMode = rnd.nextInt(3);
+        final int baseStepMax = stepMode == 0 ? 5_000_000 : stepMode == 1 ? 60_000_000 : 900_000_000;
+        final int dayJumpEvery = stepMode == 0 ? 20 : 12;
+        final boolean withWhere = rnd.nextInt(3) == 0;
+
+        final String viewSql = "SELECT " + projection(variant, n) + " FROM base" + (withWhere ? " WHERE i > 0" : "");
+        final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
+                + (backfill ? "BACKFILL " : "")
+                + "AS " + viewSql;
+
+        execute("DROP LIVE VIEW IF EXISTS lv");
+        execute("DROP TABLE IF EXISTS base");
+        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+        LOG.info().$("LV rolled-back fuzz: variant=").$(variant).$(", rows=").$(rowCount)
+                .$(", n=").$(n).$(", symCount=").$(symCount).$(", stepMode=").$(stepMode)
+                .$(", o3=").$(o3).$(", backfill=").$(backfill).$(", where=").$(withWhere).$(", sql=").$(viewSql).$();
+
+        final long[] tsv = new long[rowCount];
+        final int[] symIdx = new int[rowCount];
+        final long[] iv = new long[rowCount];
+        final double[] xv = new double[rowCount];
+        final int maxDayJumps = 30;
+        int dayJumps = 0;
+        long ts = MicrosTimestampDriver.floor("2026-01-01T00:00:00.000000Z");
+        for (int k = 0; k < rowCount; k++) {
+            ts += 1 + rnd.nextInt(baseStepMax);
+            if (dayJumps < maxDayJumps && rnd.nextInt(dayJumpEvery) == 0) {
+                ts += 86_400_000_000L;
+                dayJumps++;
+            }
+            tsv[k] = ts;
+            symIdx[k] = rnd.nextInt(20) == 0 ? -1 : rnd.nextInt(symCount);
+            iv[k] = rnd.nextInt(20) == 0 ? Numbers.LONG_NULL : (rnd.nextInt(2001) - 1000);
+            xv[k] = rnd.nextDouble() * 1000.0;
+        }
+
+        final int preCount = backfill ? rnd.nextInt(rowCount + 1) : 0;
+        final TableToken baseToken = engine.verifyTableName("base");
+        LiveViewRefreshJob job = null;
+        try {
+            // Pre-CREATE backfill history (single committed transaction, in ts order).
+            if (preCount > 0) {
+                try (WalWriter walWriter = engine.getWalWriter(baseToken)) {
+                    for (int k = 0; k < preCount; k++) {
+                        appendRow(walWriter, tsv[k], symIdx[k], iv[k], xv[k]);
+                    }
+                    walWriter.commit();
+                }
+                drainWalQueue();
+            }
+
+            execute(createSql);
+            job = new LiveViewRefreshJob(0, engine, 1);
+            if (backfill) {
+                driveBackfillToCompletion(job, "lv");
+            }
+
+            if (preCount < rowCount) {
+                final int[] postOrder = segmentOrder(rnd, preCount, rowCount, o3);
+                final int[] cb = commitBounds(rnd, postOrder.length);
+                for (int c = 0; c + 1 < cb.length; c++) {
+                    // A doomed transaction before the real commit: append phantom rows,
+                    // then roll the whole thing back. It never advances the sequencer, so
+                    // no seqTxn is produced and the LV drain never sees these rows.
+                    if (rnd.nextInt(3) == 0) {
+                        try (WalWriter walWriter = engine.getWalWriter(baseToken)) {
+                            for (int g = 0, ghosts = 1 + rnd.nextInt(3); g < ghosts; g++) {
+                                appendRow(walWriter, phantomTs(rnd, tsv), rnd.nextInt(symCount),
+                                        PHANTOM_SENTINEL, rnd.nextDouble() * 1000.0);
+                            }
+                            walWriter.rollback();
+                        }
+                    }
+
+                    // The real committed batch.
+                    try (WalWriter walWriter = engine.getWalWriter(baseToken)) {
+                        for (int r = cb[c]; r < cb[c + 1]; r++) {
+                            final int idx = postOrder[r];
+                            appendRow(walWriter, tsv[idx], symIdx[idx], iv[idx], xv[idx]);
+                        }
+                        walWriter.commit();
+                    }
+                    drainWalQueue();
+                    refreshCycle(job);
+                }
+            }
+            driveRefreshToQuiescence(job);
+        } finally {
+            Misc.free(job);
+        }
+
+        // The oracle: the live view must equal the window query recomputed over the
+        // committed base. ORDER BY 1 (the unique ts) gives both sides a total order;
+        // genericStringMatch tolerates SYMBOL-vs-STRING on passthrough.
+        TestUtils.assertSqlCursors(
+                engine,
+                sqlExecutionContext,
+                "(" + viewSql + ") ORDER BY 1",
+                "(lv) ORDER BY 1",
+                LOG,
+                true
+        );
+
+        execute("DROP LIVE VIEW lv");
+        execute("DROP TABLE base");
+    }
+
+    // A phantom timestamp just below a randomly-chosen committed row - below the running
+    // frontier once that region is emitted, so a leaked phantom would trip an O3 replay
+    // rather than sit harmlessly above the data.
+    private static long phantomTs(Rnd rnd, long[] tsv) {
+        return tsv[rnd.nextInt(tsv.length)] - 1 - rnd.nextInt(3);
     }
 
     // Differential fuzz for the var-length tier storage. The LV projects every

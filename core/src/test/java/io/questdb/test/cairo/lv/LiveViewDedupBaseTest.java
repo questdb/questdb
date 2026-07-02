@@ -278,6 +278,60 @@ public class LiveViewDedupBaseTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testChangeDedupKeysWhileDedupEnabled() throws Exception {
+        // Changing the dedup UPSERT keys on an already-dedup base (no DISABLE first) is a
+        // structural op that does NOT invalidate the view - SET_DEDUP_ENABLE carries no
+        // mat-view/live-view invalidation reason - and the refresh cadence stays coupled
+        // to the applied, post-dedup base. After switching the key set, a below-frontier
+        // UPSERT that now collides under the NEW keys must collapse in the view; under the
+        // OLD keys the same row would have been a new insert. That the row collapses (not
+        // appends) proves the coupled path reads the re-keyed dedup result, not the raw
+        // WAL stream.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (sym SYMBOL, val INT, ts TIMESTAMP) " +
+                    "TIMESTAMP(ts) PARTITION BY HOUR WAL DEDUP UPSERT KEYS(ts, sym)");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT sym, val, ts, row_number() OVER () AS rn FROM base");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base (sym, val, ts) VALUES " +
+                        "('a', 10, '2026-01-01T00:00:01.000000Z'), " +
+                        "('b', 20, '2026-01-01T00:00:02.000000Z')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                Assert.assertFalse("view must start valid",
+                        engine.getLiveViewRegistry().getViewInstance("lv").isInvalid());
+
+                // Switch the dedup keys in place: (ts, sym) -> (ts, val). No DISABLE
+                // needed; the change must not invalidate the view.
+                execute("ALTER TABLE base DEDUP ENABLE UPSERT KEYS(ts, val)");
+                drainWalQueue();
+                Assert.assertFalse("changing dedup keys must not invalidate the LV",
+                        engine.getLiveViewRegistry().getViewInstance("lv").isInvalid());
+
+                // A below-frontier UPSERT keyed (ts=01, val=10) now collides with
+                // ('a', 10, 01) and replaces its sym; under the OLD (ts, sym) keys it
+                // would have been a distinct row. The coupled O3 replay must collapse it.
+                setCurrentMicros(2_000_000L);
+                execute("INSERT INTO base (sym, val, ts) VALUES ('c', 10, '2026-01-01T00:00:01.000000Z')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                Assert.assertFalse("view must stay valid after the re-keyed replace",
+                        engine.getLiveViewRegistry().getViewInstance("lv").isInvalid());
+            }
+            assertQuery("SELECT sym, val, ts, rn FROM lv ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("sym\tval\tts\trn\n" +
+                            "c\t10\t2026-01-01T00:00:01.000000Z\t1\n" +
+                            "b\t20\t2026-01-01T00:00:02.000000Z\t2\n");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testCreateRejectsUnsnapshottableAnchorKeyOverDedupBase() throws Exception {
         // Replay is the normal correction path for a dedup base, and replay restores
         // window state from a checkpoint whose anchor map is keyed by the PARTITION BY

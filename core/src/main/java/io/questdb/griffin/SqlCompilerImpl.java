@@ -4289,6 +4289,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     private boolean executeCreateLiveView(CreateLiveViewOperation op, SqlExecutionContext executionContext) throws SqlException {
         executionContext.getSecurityContext().authorizeLiveViewCreate();
+        // Reject a name already taken by a table, regular view or materialized view up
+        // front, mirroring CREATE MATERIALIZED VIEW. IF NOT EXISTS only suppresses a
+        // same-kind (live-view) collision; over a wrong-typed name it must still fail,
+        // otherwise the shared create helper silently no-ops the IF NOT EXISTS branch
+        // and a user is left believing a live view exists when the name is actually a
+        // plain table. A same-kind collision falls through to createLiveView, which
+        // honours IF NOT EXISTS (no-op) or reports the name is busy.
+        final TableToken existingToken = executionContext.getTableTokenIfExists(op.getViewName());
+        if (existingToken != null && !existingToken.isLiveView()) {
+            throw SqlException.$(op.getViewNamePosition(), "table or view with the requested name already exists");
+        }
         // validate base table exists and is WAL
         final TableToken baseTableToken = executionContext.getTableTokenIfExists(op.getBaseTableName());
         if (baseTableToken == null) {

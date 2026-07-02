@@ -24,11 +24,13 @@
 
 package io.questdb.test.cairo.lv;
 
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.mp.Job;
 import io.questdb.std.Chars;
+import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -52,6 +54,9 @@ public class LiveViewBaseDdlTest extends AbstractCairoTest {
 
     // > FLUSH EVERY 100ms, so a single driveRefreshToQuiescence pass crosses the flush window.
     private static final long CLOCK_ADVANCE_MICROS = 250_000;
+    // First data timestamp (2026-01-01). Data sits well above the pinned test clock,
+    // which starts at 0 and only creeps forward 250ms per refresh pass.
+    private static final long DATA_EPOCH = MicrosTimestampDriver.floor("2026-01-01T00:00:00.000000Z");
 
     // Pin the test clock below all test data before each test. A non-BACKFILL view's
     // lower bound is the CREATE wall-clock moment, and the forward-append refresh path
@@ -187,6 +192,170 @@ public class LiveViewBaseDdlTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDependencyColumnSetIsNonEmpty() throws Exception {
+        // The invalidation gate (dependsOnMissingOrRetypedColumn) treats an EMPTY
+        // dependency set as "we don't know what the view reads - defer to the broad
+        // path" and returns false, so a view that recorded no dependency columns could
+        // silently miss a referenced-column DROP / retype. A normally-created view always
+        // records the base columns its projection / filter / window read; lock that the
+        // set is non-empty and holds exactly the referenced columns, so the defensive
+        // empty-set branch is never reached by a real view.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE, unused INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, x, sum(x) OVER (PARTITION BY sym ORDER BY ts " +
+                    "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) AS s FROM base");
+
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            final ObjList<String> deps = instance.getDependencyColumnNames();
+            Assert.assertTrue("a real view must record its base dependency columns", deps.size() > 0);
+            Assert.assertTrue("ts must be a dependency", containsDep(deps, "ts"));
+            Assert.assertTrue("sym must be a dependency", containsDep(deps, "sym"));
+            Assert.assertTrue("x must be a dependency", containsDep(deps, "x"));
+            Assert.assertFalse("a column the view never reads must not be a dependency",
+                    containsDep(deps, "unused"));
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testDetachPartitionIsTransparentToLiveView() throws Exception {
+        // DETACH PARTITION removes a settled partition's rows but is a non-structural,
+        // non-DATA operation the refresh worker walks past (like DROP PARTITION / TTL
+        // eviction): the view stays ACTIVE, its already-emitted rows are frozen (not
+        // retracted even though the base rows are gone), and forward ingestion keeps
+        // accumulating as if the detached rows still existed. DETACH cannot target the
+        // active (last) partition, so the base spans three days and the first is
+        // detached while a later day is active.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, x, row_number() OVER () AS rn FROM base");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base (ts, sym, x) VALUES " +
+                        "('2026-01-01T00:00:01.000000Z', 'a', 1.0), " +
+                        "('2026-01-02T00:00:01.000000Z', 'b', 2.0), " +
+                        "('2026-01-03T00:00:01.000000Z', 'c', 3.0)");
+                driveRefreshToQuiescence(job);
+                assertViewValid();
+
+                // Detach the first (non-active) day. Transparent + non-structural.
+                execute("ALTER TABLE base DETACH PARTITION LIST '2026-01-01'");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                assertViewValid();
+
+                // The detached day's derived row is frozen, not retracted: the view still
+                // holds all three rows even though the base now has only two.
+                assertQuery("SELECT count() FROM lv")
+                        .noLeakCheck().noRandomAccess().expectSize().returns("count\n3\n");
+
+                // Forward ingestion continues on top of the frozen prefix (rn keeps going).
+                execute("INSERT INTO base (ts, sym, x) VALUES ('2026-01-04T00:00:01.000000Z', 'd', 4.0)");
+                driveRefreshToQuiescence(job);
+                assertViewValid();
+            }
+
+            assertQuery("SELECT ts, sym, x, rn FROM lv ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tsym\tx\trn\n" +
+                            "2026-01-01T00:00:01.000000Z\ta\t1.0\t1\n" +
+                            "2026-01-02T00:00:01.000000Z\tb\t2.0\t2\n" +
+                            "2026-01-03T00:00:01.000000Z\tc\t3.0\t3\n" +
+                            "2026-01-04T00:00:01.000000Z\td\t4.0\t4\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testNonStructuralAlterIsTransparentToLiveView() throws Exception {
+        // Non-structural base ALTERs - SET PARAM, ADD / DROP INDEX, symbol CACHE /
+        // NOCACHE, SYMBOL CAPACITY - travel the executeAlter apply path, which never
+        // invalidates a live view (only structural referenced-column DROP / RENAME /
+        // retype and base DROP / RENAME do). Each op here targets sym, a column the view
+        // REFERENCES (PARTITION BY sym): changing a referenced column's index / cache /
+        // capacity attributes, none of which touch its name or type, must leave the view
+        // ACTIVE and still equal to a from-scratch recompute after post-change data.
+        final String viewSql = "SELECT ts, sym, x, sum(x) OVER (PARTITION BY sym ORDER BY ts " +
+                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) AS s FROM base";
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " + viewSql);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base (ts, sym, x) VALUES " +
+                        "(" + DATA_EPOCH + "::timestamp, 'a', 1.0), " +
+                        "(" + (DATA_EPOCH + 1_000_000L) + "::timestamp, 'b', 2.0)");
+                driveRefreshToQuiescence(job);
+                assertViewMatchesRecompute(viewSql);
+                assertViewValid();
+
+                // ADD then DROP INDEX must be ordered (DROP needs an existing index).
+                applyTransparentAlterThenData(job, viewSql, "ALTER TABLE base ALTER COLUMN sym ADD INDEX", 1);
+                applyTransparentAlterThenData(job, viewSql, "ALTER TABLE base ALTER COLUMN sym DROP INDEX", 2);
+                applyTransparentAlterThenData(job, viewSql, "ALTER TABLE base ALTER COLUMN sym NOCACHE", 3);
+                applyTransparentAlterThenData(job, viewSql, "ALTER TABLE base ALTER COLUMN sym CACHE", 4);
+                applyTransparentAlterThenData(job, viewSql, "ALTER TABLE base ALTER COLUMN sym SYMBOL CAPACITY 256", 5);
+                applyTransparentAlterThenData(job, viewSql, "ALTER TABLE base SET PARAM maxUncommittedRows = 100", 6);
+                applyTransparentAlterThenData(job, viewSql, "ALTER TABLE base SET PARAM o3MaxLag = 5s", 7);
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testRecreateBaseSameNameDoesNotRebindInvalidLiveView() throws Exception {
+        // Dropping the base terminally invalidates the LV (invalidateLiveViewsForBaseTable).
+        // Re-creating a fresh table with the SAME name must NOT resurrect the view: the LV
+        // binds to the dropped base's unique TableToken (a per-table directory name), and
+        // the invalid flag is terminal, so ingestion into the new same-named table never
+        // reaches the view and its materialized data stays frozen at the pre-drop state.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, x, row_number() OVER () AS rn FROM base");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base (ts, sym, x) VALUES ('2026-01-01T00:00:01.000000Z', 'a', 1.0)");
+                driveRefreshToQuiescence(job);
+                assertViewValid();
+
+                execute("DROP TABLE base");
+                drainWalQueue();
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertTrue("dropping the base must invalidate the LV", instance.isInvalid());
+
+                // Re-create a fresh table with the same name and ingest into it.
+                execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("INSERT INTO base (ts, sym, x) VALUES ('2026-01-05T00:00:01.000000Z', 'z', 9.0)");
+                driveRefreshToQuiescence(job);
+
+                // The invalid view must not rebind to the new same-named base.
+                Assert.assertTrue("re-creating the base must not revive the invalid LV",
+                        engine.getLiveViewRegistry().getViewInstance("lv").isInvalid());
+            }
+
+            // The view's data is unchanged - it never saw the new base's row.
+            assertQuery("SELECT ts, sym, x, rn FROM lv ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tsym\tx\trn\n" +
+                            "2026-01-01T00:00:01.000000Z\ta\t1.0\t1\n");
+
+            execute("DROP LIVE VIEW lv");
+            execute("DROP TABLE base");
+        });
+    }
+
+    @Test
     public void testUnreferencedBaseColumnChangeThenDataMatchesRecompute() throws Exception {
         // The refresh path re-resolves each referenced writer column by NAME every cycle
         // (buildColumnMappings), so an unreferenced ADD / DROP / RENAME - each of which shifts the
@@ -246,6 +415,34 @@ public class LiveViewBaseDdlTest extends AbstractCairoTest {
 
             execute("DROP LIVE VIEW lv");
         });
+    }
+
+    // Applies one transparent (non-structural) base ALTER, asserts the view stays valid,
+    // then ingests two fresh strictly-increasing rows and asserts the view still equals a
+    // from-scratch recompute. step spaces the two rows two seconds apart from every other
+    // step so the whole run keeps unique, increasing timestamps.
+    private void applyTransparentAlterThenData(LiveViewRefreshJob job, String viewSql, String alterSql, int step) throws Exception {
+        execute(alterSql);
+        drainWalQueue();
+        assertViewValid(); // a non-structural change never invalidates the view
+
+        final long t1 = DATA_EPOCH + (2L * step) * 1_000_000L;
+        final long t2 = t1 + 1_000_000L;
+        execute("INSERT INTO base (ts, sym, x) VALUES " +
+                "(" + t1 + "::timestamp, 'a', " + (step + 1) + ".0), " +
+                "(" + t2 + "::timestamp, 'b', " + (step + 2) + ".0)");
+        driveRefreshToQuiescence(job);
+        assertViewMatchesRecompute(viewSql);
+        assertViewValid();
+    }
+
+    private static boolean containsDep(ObjList<String> deps, String name) {
+        for (int i = 0, n = deps.size(); i < n; i++) {
+            if (Chars.equals(deps.getQuick(i), name)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     // The live view must equal the same window recomputed directly over the base table. (lv) and

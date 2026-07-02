@@ -281,6 +281,28 @@ public class LiveViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRejectDropLiveViewOnPlainTable() throws Exception {
+        // DROP LIVE VIEW must refuse a name that is not a live view. The gate is
+        // kind-agnostic (a single !isLiveView() check), so a plain table produces the
+        // "live view name expected [name=...]" reject - distinct from DROP TABLE /
+        // DROP MATERIALIZED VIEW on a live view (tested above), which name the offending
+        // kind. A missing name instead yields "live view does not exist".
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            try {
+                execute("DROP LIVE VIEW t");
+                Assert.fail("expected DROP LIVE VIEW to reject a plain table name");
+            } catch (SqlException e) {
+                Assert.assertTrue(
+                        e.getMessage(),
+                        e.getMessage().contains("live view name expected [name=t]")
+                );
+            }
+            execute("DROP TABLE t");
+        });
+    }
+
+    @Test
     public void testRejectDropTableOnLiveView() throws Exception {
         assertMutationRejected(
                 "DROP TABLE lv",
