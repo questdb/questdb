@@ -558,6 +558,16 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         return false;
     }
 
+    // Shifts one interval boundary from the source driver's resolution into this builder's and applies
+    // the calendar offset, leaving the open-ended sentinels untouched. Throws on timestamp overflow.
+    private long applyOffset(long value, TimestampDriver.TimestampAddMethod addMethod, int offset, TimestampDriver otherDriver) throws SqlException {
+        if (value != Numbers.LONG_NULL && value != Long.MAX_VALUE) {
+            value = timestampDriver.from(value, otherDriver.getTimestampType());
+            return addWithOverflowCheck(addMethod, value, offset);
+        }
+        return value;
+    }
+
     private void intersectBetweenDynamic(Function funcValue1, Function funcValue2) {
         if (isEmptySet()) {
             return;
@@ -660,40 +670,93 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     }
 
     /**
-     * Merges intervals from another builder with calendar-aware offset adjustment.
-     * This avoids allocating an intermediate RuntimeIntervalModel.
+     * Merges intervals from another builder with calendar-aware offset adjustment. This is the
+     * and_offset timestamp-pushdown counterpart of {@link #merge(RuntimeIntervalModel, long, long)}
+     * and avoids allocating an intermediate RuntimeIntervalModel.
+     * <p>
+     * The source predicate may extract multiple disjoint intervals (e.g. {@code tt != <lit>} -> two
+     * ranges). The offset shift must map to the UNION of the shifted ranges, then intersect that union
+     * with this builder's own intervals once - not the per-interval intersection, which collapses to
+     * empty for 2+ disjoint ranges. The caller consumes the and_offset predicate (sets
+     * {@code node.intrinsicValue = TRUE}) only when this method reports success, so a case that cannot
+     * be represented here (a runtime/dynamic source bound, or a multi-interval union that cannot be
+     * encoded because this builder already holds dynamic predicates) returns {@code false} and stays a
+     * residual filter rather than a wrong (empty or unconstrained) interval scan.
      *
      * @param other     the builder to merge from
      * @param addMethod the timestamp add method (from TimestampDriver)
      * @param offset    the offset value to apply
+     * @return true if the offset predicate was fully represented (the caller may consume it); false if
+     * it must be left as a residual filter
      * @throws SqlException if applying the offset would cause timestamp overflow
      */
-    void mergeWithAddMethod(RuntimeIntervalModelBuilder other, TimestampDriver.TimestampAddMethod addMethod, int offset) throws SqlException {
+    boolean mergeWithAddMethod(RuntimeIntervalModelBuilder other, TimestampDriver.TimestampAddMethod addMethod, int offset) throws SqlException {
         if (other == null || isEmptySet() || addMethod == null || !other.intervalApplied) {
-            return;
+            // Nothing to merge, or this builder is already empty; no constraint added, safe to consume.
+            return true;
         }
-        LongList otherIntervals = other.staticIntervals;
-        if (otherIntervals.size() > 0) {
-            int dynamicStart = otherIntervals.size() - other.dynamicRangeList.size() * IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL;
-            TimestampDriver otherDriver = other.timestampDriver;
+        final LongList otherIntervals = other.staticIntervals;
+        if (otherIntervals.size() == 0) {
+            return true;
+        }
+        final int dynamicStart = otherIntervals.size() - other.dynamicRangeList.size() * IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL;
+        if (dynamicStart < otherIntervals.size()) {
+            // The source carries runtime (dynamic) interval bounds whose values are unknown at parse
+            // time, so the calendar offset cannot be baked into them here. Leave the predicate as a
+            // residual filter instead of consuming it and returning unconstrained results.
+            return false;
+        }
+        final TimestampDriver otherDriver = other.timestampDriver;
 
-            for (int i = 0; i < dynamicStart; i += 2) {
-                long lo = otherIntervals.getQuick(i);
-                if (lo != Numbers.LONG_NULL && lo != Long.MAX_VALUE) {
-                    lo = timestampDriver.from(lo, otherDriver.getTimestampType());
-                    lo = addWithOverflowCheck(addMethod, lo, offset);
+        if (dynamicRangeList.size() != 0) {
+            // This builder already holds dynamic predicates, so staticIntervals is in 4-long encoded
+            // form and the plain union append below cannot be used. A single source interval intersects
+            // correctly through the encoded path; a union of 2+ intervals cannot be encoded here, so
+            // leave the predicate as a residual filter.
+            if (dynamicStart > 2) {
+                return false;
+            }
+            final long lo = applyOffset(otherIntervals.getQuick(0), addMethod, offset, otherDriver);
+            final long hi = applyOffset(otherIntervals.getQuick(1), addMethod, offset, otherDriver);
+            if (lo != Numbers.LONG_NULL || hi != Long.MAX_VALUE) {
+                intersect(lo, hi);
+            }
+            return true;
+        }
+
+        final int size = staticIntervals.size();
+        boolean hasUnion = false;
+        for (int i = 0; i < dynamicStart; i += 2) {
+            final long lo = applyOffset(otherIntervals.getQuick(i), addMethod, offset, otherDriver);
+            final long hi = applyOffset(otherIntervals.getQuick(i + 1), addMethod, offset, otherDriver);
+            if (lo == Numbers.LONG_NULL && hi == Long.MAX_VALUE) {
+                // A shifted interval spans the entire range, so the union does too: no constraint from
+                // the offset predicate. Drop any partial union and keep this builder's own intervals.
+                staticIntervals.setPos(size);
+                return true;
+            }
+            if (lo > hi) {
+                continue; // empty interval, contributes nothing to the union
+            }
+            // Source intervals are sorted ascending and non-overlapping, and the same offset preserves
+            // that order, so a single forward pass merges any overlaps the offset introduces.
+            if (hasUnion && lo <= staticIntervals.getLast()) {
+                if (hi > staticIntervals.getLast()) {
+                    staticIntervals.setQuick(staticIntervals.size() - 1, hi);
                 }
-                long hi = otherIntervals.getQuick(i + 1);
-                if (hi != Numbers.LONG_NULL && hi != Long.MAX_VALUE) {
-                    hi = timestampDriver.from(hi, otherDriver.getTimestampType());
-                    hi = addWithOverflowCheck(addMethod, hi, offset);
-                }
-                if (lo == Numbers.LONG_NULL && hi == Long.MAX_VALUE) {
-                    return;
-                } else {
-                    intersect(lo, hi);
-                }
+            } else {
+                staticIntervals.add(lo, hi);
+                hasUnion = true;
             }
         }
+
+        if (hasUnion) {
+            if (intervalApplied) {
+                IntervalUtils.intersectInPlace(staticIntervals, size);
+            } else {
+                intervalApplied = true;
+            }
+        }
+        return true;
     }
 }

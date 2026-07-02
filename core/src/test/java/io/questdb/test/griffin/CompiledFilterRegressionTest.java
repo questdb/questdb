@@ -222,6 +222,46 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testColumnArithmeticWidthUnderBooleanEquality() throws Exception {
+        // The column analog of testConstantFoldWidthUnderBooleanEquality. A boolean
+        // equality of two comparisons -- (cmp) = (cmp) -- forms a SINGLE predicate
+        // context, so a sibling LONG comparison turns the predicate-global narrow-i64
+        // widening on for the whole predicate. An overflowing narrow-int arithmetic
+        // COLUMN product on the wrap-side of the INT-width comparison was then
+        // sign-extended and computed at 64 bits, diverging from the Java filter's
+        // MulInt#getInt (which wraps mod 2^32): for ((a*b) = -727379968) = (nl > 0)
+        // the Java filter returned {1,3} and the JIT {2,4,5}. The narrow-arith leaf
+        // widening is now derived per-comparison (i64WrapLeaves), so both agree.
+        assertMemoryLeak(() -> {
+            execute("create table p as (select cast(1000000 as int) a, cast(1000000 as int) b," +
+                    " cast(x as long) rid," +
+                    " cast(case x when 1 then 1000000000000 when 3 then 5 else 0 end as long) nl," +
+                    " x::short cs, x::byte cbyte, timestamp_sequence(0, 1000000) k" +
+                    " from long_sequence(5)) timestamp(k)");
+            // Previously diverging shapes: an INT-width comparison of a narrow-int
+            // product, ANDed as a boolean equality with a LONG comparison.
+            assertJitMatchesJava("p where ((a*b) = -727379968) = (nl > 0)", true);
+            assertJitMatchesJava("p where ((a*b) > 0) = (nl > 0)", true);           // no magic constant
+            assertJitMatchesJava("p where (nl > 0) = ((a*b) = -727379968)", true);  // operand order
+            assertJitMatchesJava("p where ((a*b) <> -727379968) = (nl > 0)", true);
+            // The plain narrow column read on the LONG-comparison side sign-extends
+            // value-preservingly; only the narrow product on the INT side wraps.
+            assertJitMatchesJava("p where (cs = nl) = (a*b > 0)", true);
+            assertJitMatchesJava("p where (cbyte = nl) = (a*b = -727379968)", true);
+            // Controls: a LONG-width comparison inside the boolean equality still
+            // widens the product on both paths.
+            assertJitMatchesJava("p where (a*b > nl) = (nl > 0)", true);
+            // Controls: single comparison, AND, OR each form separate predicate
+            // contexts and were always correct.
+            assertJitMatchesJava("p where (a*b) = -727379968", true);
+            assertJitMatchesJava("p where (a*b) = -727379968 and nl > 0", true);
+            assertJitMatchesJava("p where (a*b) = -727379968 or nl > 0", true);
+            // Control: INT arith directly compared to a LONG column widens.
+            assertJitMatchesJava("p where a*b >= -432577000000L", true);
+        });
+    }
+
+    @Test
     public void testColumnFloatComparisonWithNulls() throws Exception {
         // Regression test for ARM64 NaN condition code handling.
         // ARM64 fcmp with NaN sets NZCV=0011. Ordered less-than must use MI (not LT),

@@ -282,6 +282,113 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMultiIntervalOffsetPushdown() throws Exception {
+        // A predicate that extracts multiple disjoint intervals (e.g. tt != <lit> -> two ranges) must
+        // push down the UNION of the offset-shifted ranges, not their per-interval intersection. The
+        // and_offset merge previously intersected each shifted range in turn, collapsing 2+ disjoint
+        // ranges to an empty scan; because analyzeAndOffset consumes the predicate (no residual filter),
+        // the empty scan was the final result (0 rows instead of 2). The merge now unions the ranges.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;");
+            execute("INSERT INTO trades VALUES " +
+                    "(1, '2022-01-01T10:00:00.000000Z')," +
+                    "(2, '2022-06-01T10:00:00.000000Z')," +
+                    "(3, '2022-12-01T10:00:00.000000Z');");
+
+            // != -> two intervals around the shifted literal, unioned.
+            assertQuery("""
+                    SELECT * FROM (
+                        SELECT dateadd('h', -1, ts) as tt, price FROM trades
+                    ) WHERE tt != '2022-01-01T09:00:00.000000Z'
+                    """)
+                    .noLeakCheck()
+                    .timestamp("tt")
+                    .withPlan("""
+                            VirtualRecord
+                              functions: [dateadd('h',-1,ts),price]
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: trades
+                                      intervals: [("MIN","2022-01-01T09:59:59.999999Z"),("2022-01-01T10:00:00.000001Z","MAX")]
+                            """)
+                    .returns("""
+                            tt\tprice
+                            2022-06-01T09:00:00.000000Z\t2.0
+                            2022-12-01T09:00:00.000000Z\t3.0
+                            """);
+
+            // <> is the same shape.
+            assertQuery("""
+                    SELECT * FROM (
+                        SELECT dateadd('h', -1, ts) as tt, price FROM trades
+                    ) WHERE tt <> '2022-06-01T09:00:00.000000Z'
+                    """)
+                    .noLeakCheck()
+                    .timestamp("tt")
+                    .returns("""
+                            tt\tprice
+                            2022-01-01T09:00:00.000000Z\t1.0
+                            2022-12-01T09:00:00.000000Z\t3.0
+                            """);
+
+            // IN (a, b) -> two intervals, unioned.
+            assertQuery("""
+                    SELECT * FROM (
+                        SELECT dateadd('h', -1, ts) as tt, price FROM trades
+                    ) WHERE tt IN ('2022-01-01T09:00:00.000000Z', '2022-06-01T09:00:00.000000Z')
+                    """)
+                    .noLeakCheck()
+                    .timestamp("tt")
+                    .returns("""
+                            tt\tprice
+                            2022-01-01T09:00:00.000000Z\t1.0
+                            2022-06-01T09:00:00.000000Z\t2.0
+                            """);
+
+            // A multi-interval offset predicate intersected with a single-interval one on the same
+            // (offset) column: union first, then intersect with the builder's own intervals.
+            assertQuery("""
+                    SELECT * FROM (
+                        SELECT dateadd('h', -1, ts) as tt, price FROM trades
+                    ) WHERE tt != '2022-01-01T09:00:00.000000Z' AND tt < '2022-12-01T09:00:00.000000Z'
+                    """)
+                    .noLeakCheck()
+                    .timestamp("tt")
+                    .returns("""
+                            tt\tprice
+                            2022-06-01T09:00:00.000000Z\t2.0
+                            """);
+
+            // Calendar-aware (month) offset variant of the multi-interval union.
+            assertQuery("""
+                    SELECT * FROM (
+                        SELECT dateadd('M', -1, ts) as tt, price FROM trades
+                    ) WHERE tt != '2021-12-01T10:00:00.000000Z'
+                    """)
+                    .noLeakCheck()
+                    .timestamp("tt")
+                    .returns("""
+                            tt\tprice
+                            2022-05-01T10:00:00.000000Z\t2.0
+                            2022-11-01T10:00:00.000000Z\t3.0
+                            """);
+
+            // Controls: a single-interval offset predicate is unchanged.
+            assertQuery("""
+                    SELECT * FROM (
+                        SELECT dateadd('h', -1, ts) as tt, price FROM trades
+                    ) WHERE tt = '2022-01-01T09:00:00.000000Z'
+                    """)
+                    .noLeakCheck()
+                    .timestamp("tt")
+                    .returns("""
+                            tt\tprice
+                            2022-01-01T09:00:00.000000Z\t1.0
+                            """);
+        });
+    }
+
+    @Test
     public void testNegativeIntegerOffsetPushdown() throws Exception {
         // Verify that negative integer offsets (using unary minus) are correctly handled
         // This is a regression test for isConstantIntegerExpression handling of unary minus

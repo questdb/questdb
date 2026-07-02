@@ -468,10 +468,14 @@ public final class WhereClauseParser implements Mutable {
         if (extracted || tempModel.hasIntervalFilters()) {
             // Merge directly from the temp model without allocating an intermediate RuntimeIntervalModel.
             // This applies the offset to each interval boundary using the timestamp driver's add method,
-            // which correctly handles variable-length units like months and years.
-            model.mergeIntervalModelWithAddMethod(tempModel, addMethod, offsetValue);
-            node.intrinsicValue = IntrinsicModel.TRUE;
-            return true;
+            // which correctly handles variable-length units like months and years. Consume the predicate
+            // only when the merge fully represents it as an interval; otherwise leave it as a residual
+            // filter so a source it cannot push down (e.g. multiple disjoint intervals that must union,
+            // or a dynamic bound) still filters correctly.
+            if (model.mergeIntervalModelWithAddMethod(tempModel, addMethod, offsetValue)) {
+                node.intrinsicValue = IntrinsicModel.TRUE;
+                return true;
+            }
         }
 
         return false;
