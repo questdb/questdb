@@ -1485,4 +1485,72 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                             """);
         });
     }
+
+    @Test
+    public void testBindVariableOffsetPredicateResidual() throws Exception {
+        // A bind-variable (dynamic) bound on an offset-derived timestamp used to leave the internal
+        // and_offset pseudo-function in the residual filter, crashing with
+        // "unknown function name: and_offset". The offset merge cannot bake a dynamic bound into an
+        // interval, so the predicate now degrades to a compilable residual dateadd(...) <op> bound and
+        // returns the same rows as the equivalent literal form.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("INSERT INTO trades VALUES " +
+                    "(100, '2020-01-01T00:30:00.000000Z')," +   // tt = 2019-12-31T23:30
+                    "(150, '2020-06-01T00:30:00.000000Z')," +   // tt = 2020-05-31T23:30
+                    "(200, '2020-12-01T00:30:00.000000Z');");   // tt = 2020-11-30T23:30
+
+            // tt > :b0
+            bindVariableService.clear();
+            bindVariableService.setTimestamp("b0", parseFloorPartialTimestamp("2020-05-31T23:00:00.000000Z"));
+            assertQuery("SELECT * FROM (SELECT dateadd('h',-1,timestamp) tt, price FROM trades) WHERE tt > :b0")
+                    .timestamp("tt")
+                    .returns("""
+                            tt\tprice
+                            2020-05-31T23:30:00.000000Z\t150.0
+                            2020-11-30T23:30:00.000000Z\t200.0
+                            """);
+
+            // tt = :b0
+            bindVariableService.clear();
+            bindVariableService.setTimestamp("b0", parseFloorPartialTimestamp("2020-05-31T23:30:00.000000Z"));
+            assertQuery("SELECT * FROM (SELECT dateadd('h',-1,timestamp) tt, price FROM trades) WHERE tt = :b0")
+                    .timestamp("tt")
+                    .returns("""
+                            tt\tprice
+                            2020-05-31T23:30:00.000000Z\t150.0
+                            """);
+
+            // tt != :b0
+            bindVariableService.clear();
+            bindVariableService.setTimestamp("b0", parseFloorPartialTimestamp("2020-05-31T23:30:00.000000Z"));
+            assertQuery("SELECT * FROM (SELECT dateadd('h',-1,timestamp) tt, price FROM trades) WHERE tt != :b0")
+                    .timestamp("tt")
+                    .returns("""
+                            tt\tprice
+                            2019-12-31T23:30:00.000000Z\t100.0
+                            2020-11-30T23:30:00.000000Z\t200.0
+                            """);
+
+            // tt in (:b0)
+            bindVariableService.clear();
+            bindVariableService.setTimestamp("b0", parseFloorPartialTimestamp("2020-05-31T23:30:00.000000Z"));
+            assertQuery("SELECT * FROM (SELECT dateadd('h',-1,timestamp) tt, price FROM trades) WHERE tt in (:b0)")
+                    .timestamp("tt")
+                    .returns("""
+                            tt\tprice
+                            2020-05-31T23:30:00.000000Z\t150.0
+                            """);
+
+            // Control: the literal form still pushes down to an interval scan (unchanged behavior).
+            assertQuery("SELECT * FROM (SELECT dateadd('h',-1,timestamp) tt, price FROM trades) WHERE tt > '2020-05-31T23:00:00.000000Z'")
+                    .timestamp("tt")
+                    .withPlanContaining("Interval forward scan on: trades")
+                    .returns("""
+                            tt\tprice
+                            2020-05-31T23:30:00.000000Z\t150.0
+                            2020-11-30T23:30:00.000000Z\t200.0
+                            """);
+        });
+    }
 }

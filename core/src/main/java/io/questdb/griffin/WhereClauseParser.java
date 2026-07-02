@@ -110,6 +110,9 @@ public final class WhereClauseParser implements Mutable {
     private final ObjList<Function> tmpFunctions = new ObjList<>();
     private boolean allKeyExcludedValuesAreKnown = true;
     private boolean allKeyValuesAreKnown = true;
+    // Transient node pool for the current extract() pass, used to rebuild a residual
+    // dateadd predicate when an and_offset pushdown cannot be fully represented.
+    private ObjectPool<ExpressionNode> expressionNodePool;
     private boolean isConstFunction;
     private boolean noIndex;
     private CharSequence preferredKeyColumn;
@@ -135,6 +138,7 @@ public final class WhereClauseParser implements Mutable {
         csPool.clear();
         timestamp = null;
         preferredKeyColumn = null;
+        expressionNodePool = null;
         allKeyValuesAreKnown = true;
         allKeyExcludedValuesAreKnown = true;
     }
@@ -159,6 +163,7 @@ public final class WhereClauseParser implements Mutable {
         this.timestamp = timestampIndex < 0 ? null : m.getColumnName(timestampIndex);
         this.noIndex = noIndex;
         this.preferredKeyColumn = preferredKeyColumn;
+        this.expressionNodePool = expressionNodePool;
 
         // Extracts designated timestamp argument from dateadd predicates, if any.
         rewriteDateaddTimestamp(expressionNodePool, node);
@@ -478,6 +483,14 @@ public final class WhereClauseParser implements Mutable {
             }
         }
 
+        // The offset predicate could not be fully represented as an interval scan (e.g. a dynamic
+        // bind-variable bound, or a multi-interval union over an already-dynamic model). The and_offset
+        // wrapper is an internal pseudo-function with no FunctionFactory, so leaving it in the residual
+        // filter would fail to compile with "unknown function name: and_offset". Rewrite the node in
+        // place into an equivalent, compilable residual dateadd(unit, stride, source_ts) <op> bound.
+        // The stored offset is the inverse of the original dateadd stride (see SqlOptimiser), so the
+        // reconstructed dateadd uses the negated offset to restore the original virtual-column semantics.
+        rebuildAndOffsetResidual(node, predicate, unitToken, -offsetValue);
         return false;
     }
 
@@ -2551,6 +2564,28 @@ public final class WhereClauseParser implements Mutable {
         }
     }
 
+    /**
+     * Rewrites an and_offset pseudo-function node in place into an equivalent, compilable residual
+     * predicate when its timestamp offset cannot be pushed down as an interval scan. The wrapped inner
+     * predicate references the source timestamp column (SqlOptimiser rewrote the virtual alias to the
+     * source column before wrapping), so each such literal is wrapped back in
+     * {@code dateadd(unit, stride, source_ts)} to restore the original {@code tt <op> bound} semantics.
+     * Without this, the internal and_offset node would reach the function compiler and fail with
+     * "unknown function name: and_offset".
+     *
+     * @param node      the and_offset function node to rewrite in place
+     * @param predicate the wrapped inner predicate (and_offset arg 2)
+     * @param unitToken the dateadd period token, e.g. {@code 'h'} (and_offset arg 1)
+     * @param stride    the dateadd stride, i.e. the negated stored (inverse) offset
+     */
+    private void rebuildAndOffsetResidual(ExpressionNode node, ExpressionNode predicate, CharSequence unitToken, int stride) {
+        // The temp interval extraction may have marked predicate sub-nodes as consumed (intrinsicValue
+        // TRUE); reset them so collapseIntrinsicNodes keeps the whole reconstructed residual.
+        resetIntrinsicMarks(predicate);
+        wrapTimestampLiterals(predicate, unitToken, stride);
+        node.copyFrom(predicate);
+    }
+
     private boolean removeAndIntrinsics(
             TimestampDriver timestampDriver,
             AliasTranslator translator,
@@ -2689,6 +2724,19 @@ public final class WhereClauseParser implements Mutable {
 
     private void resetExcludedNodes() {
         revertNodes(keyExclNodes);
+    }
+
+    private void resetIntrinsicMarks(ExpressionNode node) {
+        if (node == null) {
+            return;
+        }
+        node.intrinsicValue = IntrinsicModel.UNDEFINED;
+        resetIntrinsicMarks(node.lhs);
+        resetIntrinsicMarks(node.rhs);
+        final ObjList<ExpressionNode> args = node.args;
+        for (int i = 0, n = args.size(); i < n; i++) {
+            resetIntrinsicMarks(args.getQuick(i));
+        }
     }
 
     private void resetNodes() {
@@ -2888,6 +2936,51 @@ public final class WhereClauseParser implements Mutable {
             return csPool.next().of(value, 1, value.length() - 2);
         }
         return value;
+    }
+
+    /**
+     * If {@code child} is a source-timestamp column literal, replaces it with
+     * {@code dateadd(unit, stride, child)}; otherwise descends to wrap nested literals. Returns the
+     * (possibly replaced) child to store back into the parent slot.
+     */
+    private ExpressionNode wrapTimestampLiteral(ExpressionNode child, CharSequence unitToken, int stride) {
+        if (child == null) {
+            return null;
+        }
+        if (child.type == ExpressionNode.LITERAL) {
+            final ExpressionNode strideNode = expressionNodePool.next().of(
+                    ExpressionNode.CONSTANT, Integer.toString(stride), 0, child.position);
+            final ExpressionNode unitNode = expressionNodePool.next().of(
+                    ExpressionNode.CONSTANT, unitToken, 0, child.position);
+            final ExpressionNode dateadd = expressionNodePool.next().of(
+                    ExpressionNode.FUNCTION, "dateadd", 0, child.position);
+            dateadd.paramCount = 3;
+            // dateadd args are stored in reverse order: [timestamp, stride, unit]
+            dateadd.args.add(child);
+            dateadd.args.add(strideNode);
+            dateadd.args.add(unitNode);
+            return dateadd;
+        }
+        wrapTimestampLiterals(child, unitToken, stride);
+        return child;
+    }
+
+    /**
+     * Wraps every source-timestamp column literal in the predicate subtree with
+     * {@code dateadd(unit, stride, literal)}. referencesOnlyTimestampAlias (SqlOptimiser) guarantees the
+     * only literals present reference the offset source timestamp column, so wrapping each occurrence
+     * faithfully restores the virtual expression {@code tt = dateadd(unit, stride, source_ts)}.
+     */
+    private void wrapTimestampLiterals(ExpressionNode node, CharSequence unitToken, int stride) {
+        if (node == null) {
+            return;
+        }
+        node.lhs = wrapTimestampLiteral(node.lhs, unitToken, stride);
+        node.rhs = wrapTimestampLiteral(node.rhs, unitToken, stride);
+        final ObjList<ExpressionNode> args = node.args;
+        for (int i = 0, n = args.size(); i < n; i++) {
+            args.setQuick(i, wrapTimestampLiteral(args.getQuick(i), unitToken, stride));
+        }
     }
 
     ExpressionNode extractWithin(
