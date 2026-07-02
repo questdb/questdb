@@ -37,6 +37,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.window.BaseWindowFunction;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.mp.Job;
+import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
@@ -186,6 +187,33 @@ public class LiveViewTest extends AbstractCairoTest {
                         e.getMessage().contains("live view does not exist")
                 );
             }
+        });
+    }
+
+    @Test
+    public void testTablesReportsLiveView() throws Exception {
+        // Locks the tables() discriminator asymmetry (documented in TablesFunctionFactory):
+        // a live view is discoverable ONLY via table_type='L'. The matView BOOLEAN is
+        // mat-view-only (false here) and there is deliberately no liveView BOOLEAN -
+        // materialized views carry both matView=true and table_type='M', but adding a
+        // symmetric liveView column would renumber every position-based tables() consumer.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT val, ts, row_number() OVER () AS rn FROM base");
+            assertQuery("SELECT table_type, matView FROM tables() WHERE table_name = 'lv'")
+                    .noLeakCheck().noRandomAccess().returns("table_type\tmatView\nL\tfalse\n");
+            // No liveView boolean column exists (the would-be symmetry with matView).
+            try {
+                execute("SELECT liveView FROM tables() WHERE table_name = 'lv'");
+                Assert.fail("tables() must not expose a liveView column");
+            } catch (SqlException e) {
+                Assert.assertTrue(
+                        "wrong message [msg=" + e.getFlyweightMessage() + ']',
+                        Chars.contains(e.getFlyweightMessage(), "Invalid column")
+                );
+            }
+            execute("DROP LIVE VIEW lv");
         });
     }
 

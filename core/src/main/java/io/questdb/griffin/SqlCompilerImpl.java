@@ -4289,16 +4289,25 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     private boolean executeCreateLiveView(CreateLiveViewOperation op, SqlExecutionContext executionContext) throws SqlException {
         executionContext.getSecurityContext().authorizeLiveViewCreate();
-        // Reject a name already taken by a table, regular view or materialized view up
-        // front, mirroring CREATE MATERIALIZED VIEW. IF NOT EXISTS only suppresses a
-        // same-kind (live-view) collision; over a wrong-typed name it must still fail,
-        // otherwise the shared create helper silently no-ops the IF NOT EXISTS branch
-        // and a user is left believing a live view exists when the name is actually a
-        // plain table. A same-kind collision falls through to createLiveView, which
-        // honours IF NOT EXISTS (no-op) or reports the name is busy.
+        // Reject a name already taken up front, mirroring CREATE MATERIALIZED VIEW so
+        // the collision wording names the offending kind:
+        //   - a table / regular view / materialized view collision is always an error
+        //     ("table or view with the requested name already exists"), even under
+        //     IF NOT EXISTS - otherwise the shared create helper silently no-ops the
+        //     IF NOT EXISTS branch and a user is left believing a live view exists when
+        //     the name is actually a plain table;
+        //   - a same-kind live-view collision without IF NOT EXISTS reports "live view
+        //     already exists" (mirroring "materialized view already exists") instead of
+        //     the generic "table exists" createLiveView would otherwise surface.
+        // A same-kind IF NOT EXISTS falls through to createLiveView, which no-ops.
         final TableToken existingToken = executionContext.getTableTokenIfExists(op.getViewName());
-        if (existingToken != null && !existingToken.isLiveView()) {
-            throw SqlException.$(op.getViewNamePosition(), "table or view with the requested name already exists");
+        if (existingToken != null) {
+            if (!existingToken.isLiveView()) {
+                throw SqlException.$(op.getViewNamePosition(), "table or view with the requested name already exists");
+            }
+            if (!op.isIgnoreIfExists()) {
+                throw SqlException.$(op.getViewNamePosition(), "live view already exists");
+            }
         }
         // validate base table exists and is WAL
         final TableToken baseTableToken = executionContext.getTableTokenIfExists(op.getBaseTableName());

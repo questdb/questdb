@@ -425,6 +425,10 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public boolean dependsOnMissingOrRetypedColumn(@NotNull RecordMetadata baseMetadata) {
         ObjList<String> deps = definition.getDependencyColumnNames();
+        // unreachable in practice for a normally-created view: a real view always
+        // records its referenced base columns (locked by
+        // LiveViewBaseDdlTest#testDependencyColumnSetIsNonEmpty). Defensive: with no
+        // known deps we leave invalidation to the broader base-DROP/RENAME path.
         if (deps.size() == 0) {
             return false;
         }

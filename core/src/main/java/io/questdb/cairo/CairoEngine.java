@@ -467,6 +467,9 @@ public class CairoEngine implements Closeable, WriterSource {
      * steady-state hot path.
      */
     public static void validateLiveViewWindowFunction(WindowFunction f, int position) throws SqlException {
+        // unreachable in practice: a multi-pass / lead / percent_rank shape compiles to
+        // a cached factory and is caught upstream by validateLiveViewFactory; only a
+        // ZERO_PASS stub reaches here (see the javadoc). Kept as a defensive backstop.
         if (f.getPassCount() != WindowFunction.ZERO_PASS) {
             throw SqlException.$(position, "live view select may only use window functions that support incremental refresh");
         }
@@ -1068,6 +1071,9 @@ public class CairoEngine implements Closeable, WriterSource {
         try (TableMetadata baseMetadata = getTableMetadata(baseTableToken)) {
             basePartitionBy = baseMetadata.getPartitionBy();
             int tsIndex = baseMetadata.getTimestampIndex();
+            // unreachable in practice: the base is validated as a WAL table upstream
+            // (executeCreateLiveView), and a WAL table is always partitioned with a
+            // designated timestamp. Kept as a defensive backstop.
             if (tsIndex < 0) {
                 throw SqlException.$(op.getBaseTableNamePosition(),
                         "live view base table must have a designated timestamp");
@@ -3322,6 +3328,9 @@ public class CairoEngine implements Closeable, WriterSource {
         RecordCursorFactory base = wf.getBaseFactory();
         if (base.getFilter() != null) {
             base = base.getBaseFactory();
+            // unreachable in practice: a filter factory always wraps a base cursor
+            // factory; a filter with no base would be a planner invariant break. Kept
+            // as a defensive backstop.
             if (base == null) {
                 throw SqlException.$(position, "live view select has a malformed filter factory");
             }
@@ -3343,6 +3352,8 @@ public class CairoEngine implements Closeable, WriterSource {
             throw SqlException.$(position, "live view select produced an indexed row cursor factory unexpectedly");
         }
         TableToken scannedToken = base.getTableToken();
+        // unreachable in practice: the SELECT is compiled against the declared base
+        // table, so the scanned token always matches it. Kept as a defensive backstop.
         if (scannedToken == null || !scannedToken.equals(baseTableToken)) {
             throw SqlException.$(position, "live view select must read from the declared base table");
         }

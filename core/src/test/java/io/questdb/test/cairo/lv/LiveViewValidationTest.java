@@ -102,6 +102,35 @@ public class LiveViewValidationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateSameKindCollisionMessage() throws Exception {
+        // A same-kind (live view) collision without IF NOT EXISTS reports the
+        // specific "live view already exists" wording, mirroring CREATE MATERIALIZED
+        // VIEW's "materialized view already exists" rather than the generic
+        // "table exists" the shared create helper would otherwise surface. IF NOT
+        // EXISTS over the same kind stays a no-op (covered by
+        // testCreateNameCollisionMessage), so both wordings are locked.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            try {
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                        "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                Assert.fail("expected same-kind collision reject");
+            } catch (SqlException e) {
+                Assert.assertTrue(
+                        "wrong message [msg=" + e.getFlyweightMessage() + ']',
+                        Chars.contains(e.getFlyweightMessage(), "live view already exists")
+                );
+            }
+            // The original view survives the rejected re-create.
+            Assert.assertNotNull("the pre-existing live view must be untouched",
+                    engine.getLiveViewRegistry().getViewInstance("lv"));
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testRejectNonDeterministicFunctionInWhere() throws Exception {
         // WHERE is the worst case: a row admitted on one random draw cannot be
         // un-emitted, so the row set diverges permanently from any recompute.

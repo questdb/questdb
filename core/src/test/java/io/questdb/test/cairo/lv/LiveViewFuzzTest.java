@@ -137,13 +137,23 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
     // base set, so the for-v loops never reach these; their dedicated @Test
     // methods drive them directly. RANGE_* exercise the bounded-RANGE
     // monotonic-deque maintenance path (distinct from the ROWS ring buffer);
-    // LAG_* exercise the lag ZERO_PASS window. Values are contiguous past
-    // DECIMAL_VARIANT so projection() can switch on them.
+    // LAG_* exercise the lag ZERO_PASS window; TIE_PEER_* exercise the
+    // peer/frame-position window shapes (last_value, nth_value, IGNORE NULLS).
+    // Values are contiguous past DECIMAL_VARIANT so projection() can switch on them.
     private static final int RANGE_SUM_VARIANT = 8;
     private static final int RANGE_AVG_VARIANT = 9;
     private static final int RANGE_FIRST_VALUE_VARIANT = 10;
     private static final int LAG_VARIANT = 11;
     private static final int LAG_OFFSET_VARIANT = 12;
+    // Tie/peer-order-sensitive bounded-frame shapes (see testFuzzTiePeerShapes).
+    // Each reads a value at a specific frame position rather than aggregating,
+    // so it is sensitive to how the incremental ring buffer tracks frame ends and
+    // NULL skips; all remain a deterministic function of a unique-ts total order,
+    // so the standard recompute oracle holds.
+    private static final int LAST_VALUE_VARIANT = 13;
+    private static final int LAST_VALUE_IGNORE_NULLS_VARIANT = 14;
+    private static final int NTH_VALUE_VARIANT = 15;
+    private static final int FIRST_VALUE_IGNORE_NULLS_VARIANT = 16;
     // Window shapes driven over concurrent multi-WalWriter base ingestion by
     // runConcurrentWriterFuzz. Every shape here reads the (ts, sym, i, x) base the
     // writer threads populate (so the DECIMAL variant, which needs a d column, is
@@ -193,9 +203,23 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
     private static final int[] NANOS_BASE_VARIANTS = {
             0, 1, 2, 3, 4, 5, 6, LAG_VARIANT, LAG_OFFSET_VARIANT
     };
+    // Tie/peer-order-sensitive bounded-frame shapes driven by runTiePeerShapes:
+    // last_value / last_value IGNORE NULLS / nth_value / first_value IGNORE NULLS
+    // over a PARTITION BY sym ORDER BY ts ROWS frame. Each is a deterministic
+    // function of the unique-ts row set, so the standard recompute oracle holds;
+    // they exercise frame-end tracking and NULL-skip paths the aggregate arms do not.
+    private static final int[] TIE_PEER_VARIANTS = {
+            LAST_VALUE_VARIANT, LAST_VALUE_IGNORE_NULLS_VARIANT,
+            NTH_VALUE_VARIANT, FIRST_VALUE_IGNORE_NULLS_VARIANT
+    };
     // Anchored-window fuzz variants (driven via runAnchoredFuzz): sum, avg,
-    // count, max, row_number over a named WINDOW carrying ANCHOR EXPRESSION.
-    private static final int ANCHORED_VARIANT_COUNT = 5;
+    // count, max, row_number, plus the tie/peer-order ranking shapes rank and
+    // dense_rank (F11) - all over a named WINDOW carrying ANCHOR EXPRESSION.
+    // rank/dense_rank need the unbounded, ordered frame a ranking function
+    // implies, so they ride the anchored harness rather than the bounded-ROWS
+    // one; over a unique-ts total order they collapse to a per-bucket sequence,
+    // which the (sym, bucket)-partitioned oracle recomputes exactly.
+    private static final int ANCHORED_VARIANT_COUNT = 7;
     private static final int MAX_FRAME = 20;
     // Sentinel i for phantom (rolled-back) rows: large and positive, so a leaked phantom
     // both survives a WHERE i>0 filter and stands out against the [-1000, 1000] real data.
@@ -214,7 +238,10 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
         // the oracle is therefore the equivalent (sym, bucket)-partitioned regular
         // window recomputed over the base. Driven under O3 plus optional restart
         // and optional backfill, so the anchor map rebuild on head-miss / head-hit
-        // replay and across a restart is cross-checked against the recompute.
+        // replay and across a restart is cross-checked against the recompute. The
+        // final two variants are the F11 ranking shapes rank() and dense_rank():
+        // they need the unbounded ordered frame a ranking function implies, so
+        // they ride the anchor here rather than a bounded-ROWS frame.
         final Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1 + rnd.nextInt(4));
         assertMemoryLeak(() -> {
@@ -652,6 +679,58 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFuzzStorageTimingProps() throws Exception {
+        // F9: differential fuzz under randomized storage / WAL-apply-timing config.
+        // None of these properties change the query result - the recompute oracle
+        // is unchanged - but they reshape HOW base commits batch into apply cycles:
+        // the apply look-ahead bounds how many base seqTxns one apply cycle folds
+        // into a base-table commit, the apply time quota and commit-to-table lag
+        // (size / txn count) cap how much buffers before a base-table commit, and
+        // the O3 partition-split knobs reshape the physical partition layout the
+        // refresh reads back. A single random config is pinned per run and every
+        // fixed-width variant is driven under O3 with optional restart / backfill /
+        // IN MEMORY; the quiescent view must still equal the from-scratch recompute
+        // regardless of how the base commits were batched underneath it.
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1 + rnd.nextInt(4));
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, 1 + rnd.nextInt(64));
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 1 + rnd.nextInt(250));
+        setProperty(PropertyKey.CAIRO_WAL_MAX_LAG_TXN_COUNT, 1 + rnd.nextInt(20));
+        setProperty(PropertyKey.CAIRO_WAL_MAX_LAG_SIZE, rnd.nextLong(10L * 1024 * 1024));
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 200 + rnd.nextInt(19_800));
+        setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 1 + rnd.nextInt(2));
+        setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, 1L << (16 + rnd.nextInt(6)));
+        assertMemoryLeak(() -> {
+            for (int v = 0; v < variantCount(); v++) {
+                runFuzz(rnd, v, 120 + rnd.nextInt(160), true, rnd.nextBoolean(), rnd.nextBoolean(), rnd.nextBoolean());
+            }
+        });
+    }
+
+    @Test
+    public void testFuzzTiePeerShapes() throws Exception {
+        // F11: tie/peer-order-sensitive window shapes folded into the differential
+        // recompute oracle. last_value (RESPECT and IGNORE NULLS), nth_value(k),
+        // and first_value IGNORE NULLS each read a value at a specific frame
+        // position rather than aggregating the frame, so they stress the
+        // incremental ring buffer's frame-end tracking and NULL-skip bookkeeping
+        // that the sum / avg / min / max arms never touch. Every shape is a
+        // deterministic function of the unique-ts row set, so the standard
+        // recompute oracle (the identical window SQL over the base) holds; each
+        // variant runs under O3 with optional restart / backfill / IN MEMORY. The
+        // ranking peers rank() and dense_rank() need an unbounded ordered frame and
+        // are covered by the anchored arm instead (see testFuzzAnchored).
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1 + rnd.nextInt(4));
+        assertMemoryLeak(() -> {
+            for (int i = 0; i < TIE_PEER_VARIANTS.length; i++) {
+                runFuzz(rnd, TIE_PEER_VARIANTS[i], 120 + rnd.nextInt(160),
+                        true, rnd.nextBoolean(), rnd.nextBoolean(), rnd.nextBoolean());
+            }
+        });
+    }
+
+    @Test
     public void testFuzzVarSize() throws Exception {
         // Var-length passthrough tier coverage: an LV projecting STRING / VARCHAR /
         // BINARY / DOUBLE[] columns straight through alongside row_number() OVER (),
@@ -702,6 +781,8 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
             case 2 -> "ts, sym, count() OVER (" + part + ") AS v";
             case 3 -> "ts, sym, i, max(i) OVER (" + part + ") AS v";
             case 4 -> "ts, sym, row_number() OVER (" + part + ") AS v";
+            case 5 -> "ts, sym, rank() OVER (" + part + ") AS v";
+            case 6 -> "ts, sym, dense_rank() OVER (" + part + ") AS v";
             default -> throw new IllegalArgumentException("anchored variant=" + variant);
         };
     }
@@ -717,6 +798,8 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
             case 2 -> "ts, sym, count() OVER w AS v";
             case 3 -> "ts, sym, i, max(i) OVER w AS v";
             case 4 -> "ts, sym, row_number() OVER w AS v";
+            case 5 -> "ts, sym, rank() OVER w AS v";
+            case 6 -> "ts, sym, dense_rank() OVER w AS v";
             default -> throw new IllegalArgumentException("anchored variant=" + variant);
         };
     }
@@ -987,6 +1070,18 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
             // lag ignores) never changes the cross-check.
             case LAG_VARIANT -> "ts, sym, i, lag(i) OVER (" + frame + ") AS v";
             case LAG_OFFSET_VARIANT -> "ts, sym, i, lag(i, " + (1 + (n & 3)) + ") OVER (" + frame + ") AS v";
+            // Peer/frame-position shapes. last_value / nth_value snapshot support is
+            // gated on the VALUE type (LONG is not migrated; TIMESTAMP is), so these
+            // read the designated ts - last_value tracks the frame's trailing row (a
+            // frame ending one row back, so it is the prior row's ts, NULL near the
+            // partition start), nth_value(k) picks the kth frame row. first_value on
+            // LONG is migrated, so its IGNORE NULLS form reads i and genuinely skips
+            // the NULL i values. All deterministic over a unique-ts total order.
+            case LAST_VALUE_VARIANT ->
+                    "ts, sym, i, last_value(ts) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN " + (n + 1) + " PRECEDING AND 1 PRECEDING) AS v";
+            case LAST_VALUE_IGNORE_NULLS_VARIANT -> "ts, sym, i, last_value(ts) IGNORE NULLS OVER (" + frame + ") AS v";
+            case NTH_VALUE_VARIANT -> "ts, sym, i, nth_value(ts, " + (1 + (n & 3)) + ") OVER (" + frame + ") AS v";
+            case FIRST_VALUE_IGNORE_NULLS_VARIANT -> "ts, sym, i, first_value(i) IGNORE NULLS OVER (" + frame + ") AS v";
             default -> throw new IllegalArgumentException("variant=" + variant);
         };
     }

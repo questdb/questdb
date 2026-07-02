@@ -437,6 +437,12 @@ public class TablesFunctionFactory implements FunctionFactory {
         metadata.add(new TableColumnMetadata("dedup", ColumnType.BOOLEAN));                       // 5
         metadata.add(new TableColumnMetadata("ttlValue", ColumnType.INT));                        // 6
         metadata.add(new TableColumnMetadata("ttlUnit", ColumnType.STRING));                      // 7
+        // A materialized view is discoverable two ways: the matView BOOLEAN here and
+        // table_type='M' (column 13). A live view carries only table_type='L' - there
+        // is deliberately NO liveView BOOLEAN. Adding one would renumber columns 9-44
+        // (every position-based consumer and the whole tables() projection matrix), so
+        // the asymmetry is documented and locked by a test (LiveViewTest#testTablesReportsLiveView)
+        // rather than papered over with a new column.
         metadata.add(new TableColumnMetadata("matView", ColumnType.BOOLEAN));                     // 8
         metadata.add(new TableColumnMetadata("directoryName", ColumnType.STRING));                // 9
         metadata.add(new TableColumnMetadata("maxUncommittedRows", ColumnType.INT));              // 10
