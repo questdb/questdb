@@ -128,6 +128,23 @@ public class DirectLongHashSet implements Closeable, Mutable, Sinkable {
         return keyIndex(key) < 0;
     }
 
+    /**
+     * Appends every stored key to {@code out} in unspecified order. Intended for
+     * cold paths (e.g. rendering the set contents for EXPLAIN); the caller sorts
+     * if a stable order is needed.
+     */
+    public void copyTo(LongList out) {
+        if (hasZero) {
+            out.add(0);
+        }
+        for (long addr = memStart; addr < memLimit; addr += Long.BYTES) {
+            long key = Unsafe.getLong(addr);
+            if (key != 0) {
+                out.add(key);
+            }
+        }
+    }
+
     public boolean excludes(long key) {
         return !contains(key);
     }

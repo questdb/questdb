@@ -39,16 +39,22 @@ public final class FuzzConfig {
     public static final String FAULTS_PROP = "questdb.fuzz.faults";
     public static final String FAULT_PARALLEL_PROP = "questdb.fuzz.fault.parallel";
     public static final String FAULT_PCT_PROP = "questdb.fuzz.fault.pct";
+    public static final String HORIZON_JOIN_PROP = "questdb.fuzz.horizonjoin";
+    public static final String LATEST_ON_PROP = "questdb.fuzz.lateston";
     public static final String QUERIES_PROP = "questdb.fuzz.queries";
     public static final String VERIFY_CURSOR_PROP = "questdb.fuzz.verify.cursor";
+    public static final String WINDOW_JOIN_PROP = "questdb.fuzz.windowjoin";
     public static final String WINDOW_PROP = "questdb.fuzz.window";
 
     private final boolean isDiffJitEnabled;
     private final boolean isDiffShadowEnabled;
     private final boolean isFaultInjectionEnabled;
+    private final boolean isHorizonJoinEnabled;
+    private final boolean isLatestOnEnabled;
     private final boolean isParallelFaultEnabled;
     private final boolean isVerifyCursorEnabled;
     private final boolean isWindowEnabled;
+    private final boolean isWindowJoinEnabled;
     private final String dumpPath;
     private final int faultProbabilityPct;
     private final int maxColumnsPerTable;
@@ -89,6 +95,17 @@ public final class FuzzConfig {
         // seeds that hit them until those are fixed. Pass
         // -Dquestdb.fuzz.window=false to exercise the rest of the corpus.
         this.isWindowEnabled = Boolean.parseBoolean(System.getProperty(WINDOW_PROP, "true"));
+        // HORIZON JOIN and WINDOW JOIN shapes share the 15% join band with the
+        // temporal joins (see QueryGenerator). On by default; pass
+        // -Dquestdb.fuzz.horizonjoin=false / -Dquestdb.fuzz.windowjoin=false to
+        // drop either kind and give the band back to the remaining join shapes.
+        this.isHorizonJoinEnabled = Boolean.parseBoolean(System.getProperty(HORIZON_JOIN_PROP, "true"));
+        this.isWindowJoinEnabled = Boolean.parseBoolean(System.getProperty(WINDOW_JOIN_PROP, "true"));
+        // LATEST ON shapes (latest row per PARTITION BY key) carve a band out of
+        // the SIMPLE range (see QueryGenerator). On by default, like window. Pass
+        // -Dquestdb.fuzz.lateston=false to drop them and give the band back to
+        // SIMPLE.
+        this.isLatestOnEnabled = Boolean.parseBoolean(System.getProperty(LATEST_ON_PROP, "true"));
     }
 
     public String getDumpPath() {
@@ -139,6 +156,14 @@ public final class FuzzConfig {
         return isFaultInjectionEnabled;
     }
 
+    public boolean isHorizonJoinEnabled() {
+        return isHorizonJoinEnabled;
+    }
+
+    public boolean isLatestOnEnabled() {
+        return isLatestOnEnabled;
+    }
+
     public boolean isParallelFaultEnabled() {
         return isParallelFaultEnabled;
     }
@@ -149,5 +174,9 @@ public final class FuzzConfig {
 
     public boolean isWindowEnabled() {
         return isWindowEnabled;
+    }
+
+    public boolean isWindowJoinEnabled() {
+        return isWindowJoinEnabled;
     }
 }

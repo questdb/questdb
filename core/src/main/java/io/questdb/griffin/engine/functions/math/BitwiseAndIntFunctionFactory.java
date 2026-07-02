@@ -74,6 +74,16 @@ public class BitwiseAndIntFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public long getLong(Record rec) {
+            // Recurse via getLong() so nested INT arithmetic computes at long width,
+            // matching the widened arithmetic operators and explicit widening casts.
+            // Sign extension commutes with '&', so a plain INT operand is unaffected.
+            final long l = left.getLong(rec);
+            final long r = right.getLong(rec);
+            return l != Numbers.LONG_NULL && r != Numbers.LONG_NULL ? l & r : Numbers.LONG_NULL;
+        }
+
+        @Override
         public Function getRight() {
             return right;
         }

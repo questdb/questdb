@@ -1826,8 +1826,8 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testSymbolConstIntInDoubleContext() throws Exception {
-        // inlined CASE used in arithmetic with doubles exercises
-        // the getDouble() override that avoids Numbers.intToDouble() NULL check
+        // inlined CASE used in arithmetic with doubles exercises the inherited
+        // IntFunction#getDouble path (Numbers.intToDouble) for a non-null result
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (side SYMBOL, price DOUBLE)");
             execute("""
@@ -1868,6 +1868,35 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                             side\tdir
                             BUY\t-1
                             SELL\t-1
+                            """);
+        });
+    }
+
+    @Test
+    public void testSymbolConstIntNoElseWideCastNull() throws Exception {
+        // A single-WHEN inlined CASE with no ELSE yields elseValue == INT_NULL on
+        // the implicit-null branch. Casting it to a wider type must read NULL, not
+        // a widened -2147483648: getLong()/getDouble()/getFloat()/getDate()/
+        // getTimestamp() inherit IntFunction's Numbers.intTo* NULL-mapping. Bugfix
+        // 9 routed the wide CASTs through these getters, so a raw-int override
+        // here would corrupt them (e.g. TIMESTAMP -> 1969-12-31T23:24:12.516352Z).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL)");
+            execute("INSERT INTO t VALUES ('buy'), ('other')");
+            assertQuery("SELECT sym," +
+                    " cast(case sym when 'buy' then 1 end as long) l," +
+                    " cast(case sym when 'buy' then 1 end as double) d," +
+                    " cast(case sym when 'buy' then 1 end as float) f," +
+                    " cast(case sym when 'buy' then 1 end as date) dt," +
+                    " cast(case sym when 'buy' then 1 end as timestamp) ts," +
+                    " (case sym when 'buy' then 1 end) i" +
+                    " FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            sym	l	d	f	dt	ts	i
+                            buy	1	1.0	1.0	1970-01-01T00:00:00.001Z	1970-01-01T00:00:00.000001Z	1
+                            other	null	null	null			null
                             """);
         });
     }

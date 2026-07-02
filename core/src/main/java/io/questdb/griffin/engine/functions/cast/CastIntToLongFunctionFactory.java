@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class CastIntToLongFunctionFactory implements FunctionFactory {
@@ -51,8 +50,9 @@ public class CastIntToLongFunctionFactory implements FunctionFactory {
 
         @Override
         public long getLong(Record rec) {
-            final int value = arg.getInt(rec);
-            return value != Numbers.INT_NULL ? value : Numbers.LONG_NULL;
+            // getLong() widens: NULL-safe for a plain INT, un-wrapped for overflowing
+            // INT arithmetic, so the wider target holds the full-width result.
+            return arg.getLong(rec);
         }
     }
 }

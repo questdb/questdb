@@ -298,6 +298,10 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
                 this.groupByFunctionToColumnIndex = new IntList(groupByFunctionSize);
                 this.ownerGroupByFunctionArgs = new ObjList<>(groupByFunctionSize);
                 this.groupByFunctionTypes = new IntList(groupByFunctionSize);
+                // Args, types and column slots are all keyed by deduplicated column index. The
+                // per-worker args lists must stay column-indexed too: only grow on a new column
+                // (index < 0). Appending on a deduped function would make them function-indexed and
+                // longer than the owner list, overrunning the types/slots on the worker reduce path.
                 for (int i = 0, n = ownerGroupByFunctions.size(); i < n; i++) {
                     final var func = ownerGroupByFunctions.getQuick(i);
                     final var funcArg = func.getComputeBatchArg();
@@ -318,11 +322,6 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
                         }
                     } else {
                         groupByFunctionToColumnIndex.add(index);
-                        if (perWorkerGroupByFunctions != null) {
-                            for (int j = 0; j < slotCount; j++) {
-                                perWorkerGroupByFunctionArgs.getQuick(j).add(null);
-                            }
-                        }
                     }
                 }
 
@@ -620,6 +619,18 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
             Function.init(bindVarFunctions, symbolTableSource, executionContext, null);
             prepareBindVarMemory(executionContext, symbolTableSource, bindVarFunctions, bindVarMemory);
         }
+    }
+
+    // Binds the owner group-by functions' args to the slave symbol tables at getCursor() time, so a
+    // parent projection over a SYMBOL aggregate can resolve the output column's static symbol table
+    // before the slave time-frame cache is built. initTimeFrameCursors() later re-binds them.
+    public void initOwnerGroupByFunctions(
+            SqlExecutionContext executionContext,
+            SymbolTableSource masterSymbolTableSource,
+            SymbolTableSource slaveSymbolTableSource
+    ) throws SqlException {
+        joinSymbolTableSource.of(masterSymbolTableSource, slaveSymbolTableSource);
+        Function.init(ownerGroupByFunctions, joinSymbolTableSource, executionContext, null);
     }
 
     public void initTimeFrameCursors(

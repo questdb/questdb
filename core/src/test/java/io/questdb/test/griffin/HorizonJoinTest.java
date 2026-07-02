@@ -904,6 +904,72 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinKeyedLong256AggregatesOnMissingSymbol() throws Exception {
+        // A keyed HORIZON JOIN that aggregates a LONG256 slave column for a master
+        // symbol with no ASOF match used to NPE in the reduce path: the combined
+        // HorizonJoinRecord returned a Java-null Long256 for the absent slave row,
+        // so count(p.val) tripped Long256Impl.isNull(null) (NULL_LONG256.equals(null)
+        // dereferencing the null arg), and first/last(p.val) - which fall back to
+        // the LONG overload and read the low 64-bit word via getLong256A(rec).getLong0()
+        // - tripped getLong256A(null).getLong0(). The record now returns the
+        // NULL_LONG256 sentinel, matching the contract a real record honours, so the
+        // absent slave LONG256 reads as null. Run both the parallel and the
+        // single-threaded factories explicitly so the fix is pinned on both paths.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts) PARTITION BY HOUR",
+                    leftTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, val LONG256) TIMESTAMP(ts) PARTITION BY HOUR",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('2024-01-01T00:00:01.000000Z', 'A', 10.0),
+                                ('2024-01-01T00:00:02.000000Z', 'B', 20.0),
+                                ('2024-01-01T00:00:03.000000Z', 'A', 30.0),
+                                ('2024-01-01T00:00:04.000000Z', 'C', 40.0)
+                            """
+            );
+
+            // Slave has A and C but not B, so B's master row has no ASOF match
+            // and its LONG256 aggregates read an absent slave record.
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('2024-01-01T00:00:00.500000Z', 'A', 0x10),
+                                ('2024-01-01T00:00:00.500000Z', 'C', 0x30),
+                                ('2024-01-01T00:00:02.500000Z', 'A', 0x15),
+                                ('2024-01-01T00:00:03.500000Z', 'C', 0x35)
+                            """
+            );
+
+            String sql = "SELECT t.sym, count(p.val) AS n, first(p.val) AS fst, last(p.val) AS lst, sum(p.val) AS s " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "LIST (0) AS h " +
+                    "GROUP BY t.sym " +
+                    "ORDER BY t.sym";
+
+            for (boolean parallel : new boolean[]{true, false}) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(parallel);
+                assertQuery(sql)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                sym\tn\tfst\tlst\ts
+                                A\t2\t16\t21\t0x25
+                                B\t0\tnull\tnull\t
+                                C\t1\t53\t53\t0x35
+                                """);
+            }
+        });
+    }
+
+    @Test
     public void testHorizonJoinKeyedMissingSymbolsMultipleOffsets() throws Exception {
         // Mixed existing and missing symbols with multiple horizon offsets.
         // Ensures forward/backward scan state isn't corrupted by missing symbols.
@@ -1131,6 +1197,71 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .fails(// Missing RANGE or LIST
                             91, "unexpected token [AS]");
+        });
+    }
+
+    @Test
+    public void testHorizonJoinNonKeyedConstantWhereFalse() throws Exception {
+        // A non-keyed HORIZON JOIN aggregate with a compile-time constant-FALSE WHERE must still emit
+        // exactly one row with null aggregates, just like a plain non-keyed aggregate over empty input.
+        // On HEAD without the fix the constant-fold path in generateJoins replaced the whole HORIZON
+        // JOIN factory with an EmptyTableRecordCursorFactory and dropped the mandatory single row, so
+        // it returned 0 rows. The runtime-constant (bind-variable) variant stays a runtime no-op and
+        // returned the single row, so the query fuzzer's bind pass flagged the divergence.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts) PARTITION BY DAY", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY", rightTableTimestampType.getTypeName());
+
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 10)
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 5)
+                            """
+            );
+
+            // Non-keyed: a single null-aggregate row regardless of the constant-false WHERE.
+            String notKeyed = "SELECT avg(p.price) AS a0, sum(t.qty) AS a1 " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "RANGE FROM 0s TO 0s STEP 1s AS h " +
+                    "WHERE FALSE";
+            assertQuery(notKeyed)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            a0\ta1
+                            null\tnull
+                            """);
+
+            // The runtime-constant (bind-variable) form must agree with the literal form.
+            bindVariableService.clear();
+            bindVariableService.setBoolean("b0", false);
+            String notKeyedBind = "SELECT avg(p.price) AS a0, sum(t.qty) AS a1 " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "RANGE FROM 0s TO 0s STEP 1s AS h " +
+                    "WHERE :b0::BOOLEAN";
+            assertSqlCursors(notKeyed, notKeyedBind);
+
+            // Keyed shape is unchanged: an empty grouping key set yields 0 rows.
+            String keyed = "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(p.price) AS a0 " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "RANGE FROM 0s TO 0s STEP 1s AS h " +
+                    "WHERE FALSE";
+            assertQuery(keyed)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            sec_offs\ta0
+                            """);
         });
     }
 
@@ -1942,6 +2073,83 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "RANGE FROM 0s TO 5s STEP 1s AS h")
                     .noLeakCheck()
                     .fails(102, "RANGE generates too many offsets [count=6, max=3]");
+        });
+    }
+
+    @Test
+    public void testHorizonJoinRuntimeConstantWhere() throws Exception {
+        // A runtime-constant WHERE term (e.g. a bind variable behind a cast, as the query fuzzer's
+        // bind-variant oracle produces) references no columns, so the optimiser routes it through
+        // mergeConstIntoPostJoinWhereClause. It must land on the master model rather than the
+        // synthetic offset pseudo-table, which rejects any WHERE clause. The compile-time-constant
+        // literal variant (true IS NOT NULL) folds away and never exercised this path; the
+        // bind-variant did, and tripped "WHERE clause of HORIZON JOIN can only reference left-hand
+        // side columns" on HEAD without the fix. With b0 set to true the term is a runtime no-op,
+        // so the bind-variant must match the same query without it.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts) PARTITION BY DAY", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY", rightTableTimestampType.getTypeName());
+
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('1970-01-01T00:00:00.000000Z', 'AX', 10),
+                                ('1970-01-01T00:00:00.000000Z', 'BX', 30),
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 20)
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 100),
+                                ('1970-01-01T00:00:01.000000Z', 'BX', 200),
+                                ('1970-01-01T00:00:02.000000Z', 'AX', 5)
+                            """
+            );
+
+            bindVariableService.clear();
+            bindVariableService.setBoolean("b0", true);
+
+            // Keyed (GROUP BY) shape with both a runtime-constant term and a master-only predicate,
+            // mirroring the fuzzer repro.
+            String keyedBind = "SELECT t.sym AS s, h.offset / " + getSecondsDivisor() + " AS sec_offs, sum(p.price) AS a0 " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "RANGE FROM 0s TO 1s STEP 1s AS h " +
+                    "WHERE (:b0::BOOLEAN IS NOT NULL AND t.qty > 10) " +
+                    "GROUP BY s, sec_offs " +
+                    "ORDER BY s, sec_offs";
+            String keyedRef = "SELECT t.sym AS s, h.offset / " + getSecondsDivisor() + " AS sec_offs, sum(p.price) AS a0 " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "RANGE FROM 0s TO 1s STEP 1s AS h " +
+                    "WHERE t.qty > 10 " +
+                    "GROUP BY s, sec_offs " +
+                    "ORDER BY s, sec_offs";
+            assertSqlCursors(keyedRef, keyedBind);
+
+            // Non-keyed shape exercises the implicit single-row aggregate path.
+            String notKeyedBind = "SELECT sum(p.price) AS a0 " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "RANGE FROM 0s TO 0s STEP 1s AS h " +
+                    "WHERE (:b0::BOOLEAN IS NOT NULL AND t.qty > 10)";
+            String notKeyedRef = "SELECT sum(p.price) AS a0 " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "RANGE FROM 0s TO 0s STEP 1s AS h " +
+                    "WHERE t.qty > 10";
+            assertSqlCursors(notKeyedRef, notKeyedBind);
+
+            // Sanity check the reference output is non-empty, so the comparison above is meaningful.
+            assertQuery(notKeyedRef)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            a0
+                            50.0
+                            """);
         });
     }
 
@@ -5141,6 +5349,79 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             A\t3\t1.0\t10.0
                             RARE\t3\t100.0\t500.0
                             """);
+        });
+    }
+
+    @Test
+    public void testMultiHorizonJoinKeyedLong256AggregatesOnMissingSymbol() throws Exception {
+        // Multi-slave counterpart of testHorizonJoinKeyedLong256AggregatesOnMissingSymbol:
+        // two HORIZON JOIN clauses route to MultiHorizonJoinRecord, whose getLong256A/B must
+        // return the NULL_LONG256 sentinel (not Java null) for a master symbol with no slave
+        // match, or the LONG256 aggregate reduce path NPEs. Symbol B is absent from both slaves.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts) PARTITION BY HOUR",
+                    leftTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, val LONG256) TIMESTAMP(ts) PARTITION BY HOUR",
+                    rightTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE quotes (ts #TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts) PARTITION BY HOUR",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('2024-01-01T00:00:01.000000Z', 'A', 10.0),
+                                ('2024-01-01T00:00:02.000000Z', 'B', 20.0),
+                                ('2024-01-01T00:00:03.000000Z', 'A', 30.0),
+                                ('2024-01-01T00:00:04.000000Z', 'C', 40.0)
+                            """
+            );
+            // Neither slave carries B, so B's master row has no ASOF match and its
+            // LONG256 aggregates read an absent slave record on the multi-slave path.
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('2024-01-01T00:00:00.500000Z', 'A', 0x10),
+                                ('2024-01-01T00:00:00.500000Z', 'C', 0x30),
+                                ('2024-01-01T00:00:02.500000Z', 'A', 0x15),
+                                ('2024-01-01T00:00:03.500000Z', 'C', 0x35)
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO quotes VALUES
+                                ('2024-01-01T00:00:00.500000Z', 'A', 1.0),
+                                ('2024-01-01T00:00:00.500000Z', 'C', 3.0),
+                                ('2024-01-01T00:00:02.500000Z', 'A', 1.5),
+                                ('2024-01-01T00:00:03.500000Z', 'C', 3.5)
+                            """
+            );
+
+            String sql = "SELECT t.sym, count(p.val) AS n, first(p.val) AS fst, last(p.val) AS lst, sum(p.val) AS s, sum(q.bid) AS qb " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "HORIZON JOIN quotes AS q ON (t.sym = q.sym) " +
+                    "LIST (0) AS h " +
+                    "GROUP BY t.sym " +
+                    "ORDER BY t.sym";
+
+            for (boolean parallel : new boolean[]{true, false}) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(parallel);
+                assertQuery(sql)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                sym\tn\tfst\tlst\ts\tqb
+                                A\t2\t16\t21\t0x25\t2.5
+                                B\t0\tnull\tnull\t\tnull
+                                C\t1\t53\t53\t0x35\t3.5
+                                """);
+            }
         });
     }
 

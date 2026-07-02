@@ -31,6 +31,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
 import io.questdb.std.ObjectPool;
@@ -54,6 +55,10 @@ public class ExpressionNode implements Mutable, Sinkable {
     public static final int SET_OPERATION = QUERY + 1;
     public static final ExpressionNodeFactory FACTORY = new ExpressionNodeFactory();
     public static final int UNKNOWN = 0;
+    // Out-of-INT-range sentinel returned by intConstFold for a subtree that does not
+    // fold to a plain INT constant. A genuine INT fold always lands in the INT range,
+    // so this LONG value can never collide with one.
+    private static final long NOT_INT_CONSTANT = Long.MIN_VALUE;
     public final ObjList<ExpressionNode> args = new ObjList<>(4);
     public boolean implemented;
     public boolean innerPredicate = false;
@@ -365,6 +370,36 @@ public class ExpressionNode implements Mutable, Sinkable {
      * <p>The rewrite is purely structural: it relinks existing {@link ExpressionNode}
      * instances without allocating new nodes.</p>
      *
+     * <p>Two numeric guards apply (see {@link #isReassociationSafe}). First, a constant
+     * pair is not regrouped when one constant is integer-typed and the other widens the
+     * operation (floating-point or DECIMAL). Combining them (e.g. {@code 3 + 0.0 -> 3.0})
+     * widens the inner operation, so {@code (intCol + 3) + 0.0} would become
+     * {@code intCol + 3.0} and evaluate {@code intCol + 3} at double width -- silently
+     * dropping the INT overflow wrap the un-regrouped form (and the constant-folded
+     * literal) produces. Second, an integer pair is not regrouped when its fold lands
+     * exactly on an integer NULL sentinel -- INT_NULL (-2^31) for an INT-typed pair,
+     * LONG_NULL (-2^63) for a LONG-typed one: {@code col + (const1 + const2)} would then
+     * read that sentinel and poison every row to NULL, while the left-associative form
+     * keeps the real wrapped value. Floating pairs are already evaluated at floating-point
+     * width and carry no integer NULL sentinel.</p>
+     *
+     * <p><b>Known limitation.</b> Both guards inspect only the constant pair, so they
+     * cannot see a poison introduced by the left-associative <em>intermediate</em>
+     * {@code col op C1}. Integer arithmetic is associative modulo 2^32 / 2^64 in the
+     * absence of the sentinel, but the wrap that lands exactly on INT_NULL / LONG_NULL is
+     * read as NULL, and that can happen at the intermediate for a particular column value
+     * even when the constant pair itself does not fold to the sentinel. For example
+     * {@code (i + 2147483647) + 2} with {@code i == 1}: the intermediate
+     * {@code i + 2147483647} wraps to INT_NULL and poisons the row to NULL, so the
+     * un-regrouped and fully-literal forms return NULL, while the regrouped
+     * {@code i + (2147483647 + 2)} returns a real value -- the regroup silently changes the
+     * result for that column value. The constant pair {@code 2147483647 + 2} does not fold
+     * to the sentinel, so the second guard does not fire, and detecting the intermediate
+     * poison would need a column value the optimizer does not have. Integer-pair
+     * reassociation therefore still fires in this case. This is pre-existing behaviour --
+     * {@code master} reassociates unconditionally -- that these guards narrow (they close
+     * the case where the constant pair itself is the sentinel) but do not fully close.</p>
+     *
      * @return {@code true} if this subtree is entirely constant (every leaf is a
      * constant and every interior node is a binary operation on constants),
      * {@code false} otherwise
@@ -417,26 +452,30 @@ public class ExpressionNode implements Mutable, Sinkable {
                 && lhs.token.equals(token)) {
             if (lhs.rhs.isConstantExpression) {
                 // Pattern A: (A op C1) op C2 → A op (C1 op C2)
-                ExpressionNode inner = lhs;
-                ExpressionNode a = inner.lhs;
-                ExpressionNode c1 = inner.rhs;
-                ExpressionNode c2 = rhs;
-                this.lhs = a;
-                this.rhs = inner;
-                inner.lhs = c1;
-                inner.rhs = c2;
-                inner.isConstantExpression = true;
+                if (isReassociationSafe(lhs.rhs, rhs, token)) {
+                    ExpressionNode inner = lhs;
+                    ExpressionNode a = inner.lhs;
+                    ExpressionNode c1 = inner.rhs;
+                    ExpressionNode c2 = rhs;
+                    this.lhs = a;
+                    this.rhs = inner;
+                    inner.lhs = c1;
+                    inner.rhs = c2;
+                    inner.isConstantExpression = true;
+                }
             } else if (op.isCommutative() && lhs.lhs.isConstantExpression) {
                 // Pattern B: (C1 op A) op C2 → A op (C1 op C2)
-                ExpressionNode inner = lhs;
-                ExpressionNode c1 = inner.lhs;
-                ExpressionNode a = inner.rhs;
-                ExpressionNode c2 = rhs;
-                this.lhs = a;
-                this.rhs = inner;
-                inner.lhs = c1;
-                inner.rhs = c2;
-                inner.isConstantExpression = true;
+                if (isReassociationSafe(lhs.lhs, rhs, token)) {
+                    ExpressionNode inner = lhs;
+                    ExpressionNode c1 = inner.lhs;
+                    ExpressionNode a = inner.rhs;
+                    ExpressionNode c2 = rhs;
+                    this.lhs = a;
+                    this.rhs = inner;
+                    inner.lhs = c1;
+                    inner.rhs = c2;
+                    inner.isConstantExpression = true;
+                }
             }
 
             return false;
@@ -447,21 +486,25 @@ public class ExpressionNode implements Mutable, Sinkable {
                 && rhs.token.equals(token)) {
             if (op.isCommutative() && rhs.rhs.isConstantExpression) {
                 // Mirror A: C2 op (A op C1) → A op (C2 op C1)
-                ExpressionNode inner = rhs;
-                ExpressionNode c2 = lhs;
-                this.lhs = inner.lhs;
-                inner.lhs = c2;
-                inner.isConstantExpression = true;
+                if (isReassociationSafe(lhs, rhs.rhs, token)) {
+                    ExpressionNode inner = rhs;
+                    ExpressionNode c2 = lhs;
+                    this.lhs = inner.lhs;
+                    inner.lhs = c2;
+                    inner.isConstantExpression = true;
+                }
             } else if (rhs.lhs.isConstantExpression) {
                 // Mirror B: C2 op (C1 op A) → (C2 op C1) op A
-                ExpressionNode inner = rhs;
-                ExpressionNode c2 = lhs;
-                ExpressionNode c1 = inner.lhs;
-                this.rhs = inner.rhs;
-                this.lhs = inner;
-                inner.lhs = c2;
-                inner.rhs = c1;
-                inner.isConstantExpression = true;
+                if (isReassociationSafe(lhs, rhs.lhs, token)) {
+                    ExpressionNode inner = rhs;
+                    ExpressionNode c2 = lhs;
+                    ExpressionNode c1 = inner.lhs;
+                    this.rhs = inner.rhs;
+                    this.lhs = inner;
+                    inner.lhs = c2;
+                    inner.rhs = c1;
+                    inner.isConstantExpression = true;
+                }
             }
         }
 
@@ -609,6 +652,79 @@ public class ExpressionNode implements Mutable, Sinkable {
         return Objects.toString(token);
     }
 
+    /**
+     * Applies one INT arithmetic operator at INT width, wrapping mod 2^32 and
+     * propagating the INT_NULL sentinel exactly as the runtime AddInt / SubInt /
+     * MulInt / DivInt / RemInt / Bitwise{And,Or,Xor}Int functions do. A zero
+     * divisor folds to INT_NULL, matching DivInt / RemInt getInt(). Returns
+     * {@link #NOT_INT_CONSTANT} for an operator outside that set.
+     */
+    private static long applyIntFold(CharSequence opToken, int a, int b) {
+        if (a == Numbers.INT_NULL || b == Numbers.INT_NULL) {
+            return Numbers.INT_NULL;
+        }
+        if (opToken.length() != 1) {
+            return NOT_INT_CONSTANT;
+        }
+        switch (opToken.charAt(0)) {
+            case '+':
+                return a + b;
+            case '-':
+                return a - b;
+            case '*':
+                return a * b;
+            case '/':
+                return b == 0 ? Numbers.INT_NULL : a / b;
+            case '%':
+                return b == 0 ? Numbers.INT_NULL : a % b;
+            case '&':
+                return a & b;
+            case '|':
+                return a | b;
+            case '^':
+                return a ^ b;
+            default:
+                return NOT_INT_CONSTANT;
+        }
+    }
+
+    /**
+     * Applies one LONG arithmetic operator at LONG width, wrapping mod 2^64 and
+     * propagating the LONG_NULL sentinel exactly as the runtime AddLong / SubLong /
+     * MulLong / DivLong / RemLong / Bitwise{And,Or,Xor}Long functions do. A zero
+     * divisor folds to LONG_NULL, matching DivLong / RemLong getLong(). Throws
+     * {@link NumericException} for an operator outside that set so the LONG-width
+     * fold in {@link #longConstFold} bails like a non-constant operand.
+     */
+    private static long applyLongFold(CharSequence opToken, long a, long b) {
+        if (a == Numbers.LONG_NULL || b == Numbers.LONG_NULL) {
+            return Numbers.LONG_NULL;
+        }
+        if (opToken.length() != 1) {
+            throw NumericException.INSTANCE;
+        }
+        switch (opToken.charAt(0)) {
+            case '+':
+                return a + b;
+            case '-':
+                return a - b;
+            case '*':
+                return a * b;
+            case '/':
+                return b == 0 ? Numbers.LONG_NULL : a / b;
+            case '%':
+                return b == 0 ? Numbers.LONG_NULL : a % b;
+            case '&':
+                return a & b;
+            case '|':
+                return a | b;
+            case '^':
+                return a ^ b;
+            default:
+                throw NumericException.INSTANCE;
+        }
+    }
+
     private static boolean compareArgs(
             ExpressionNode groupByExpr,
             ExpressionNode columnExpr,
@@ -652,6 +768,179 @@ public class ExpressionNode implements Mutable, Sinkable {
             }
         }
         return true;
+    }
+
+    /**
+     * Folds a constant integer subtree to its INT-width value (wrapping mod 2^32),
+     * mirroring the runtime IntFunction getInt() semantics. Returns the wrapped value
+     * (always within the INT range) when every leaf is an INT-range integer literal and
+     * every interior node is one of the modeled INT arithmetic operators; returns
+     * {@link #NOT_INT_CONSTANT} for anything wider-typed (LONG / floating point),
+     * non-numeric, or otherwise not foldable at INT width.
+     */
+    private static long intConstFold(ExpressionNode node) {
+        if (node == null) {
+            return NOT_INT_CONSTANT;
+        }
+        if (node.type == CONSTANT) {
+            try {
+                // parseInt rejects an 'L' suffix, a decimal/exponent, and out-of-INT-range
+                // literals, so only genuine INT constants fold here; wider types fall through.
+                return Numbers.parseInt(node.token);
+            } catch (NumericException notIntLiteral) {
+                return NOT_INT_CONSTANT;
+            }
+        }
+        if (node.type == OPERATION && node.paramCount == 2 && node.token != null) {
+            long a = intConstFold(node.lhs);
+            if (a == NOT_INT_CONSTANT) {
+                return NOT_INT_CONSTANT;
+            }
+            long b = intConstFold(node.rhs);
+            if (b == NOT_INT_CONSTANT) {
+                return NOT_INT_CONSTANT;
+            }
+            return applyIntFold(node.token, (int) a, (int) b);
+        }
+        return NOT_INT_CONSTANT;
+    }
+
+    /**
+     * Reports whether the integer constant pair {@code (a OP b)} wraps exactly onto a
+     * NULL sentinel at its natural width. An INT-typed pair (both operands fold at INT
+     * width) is checked against INT_NULL; otherwise, when at least one operand is wider
+     * (an L-suffixed or LONG-range literal that {@link #intConstFold} rejects), the pair
+     * is LONG-typed and checked against LONG_NULL via {@link #longConstFold}. Regrouping
+     * such a pair would hoist it under the column as {@code col OP NULL} and poison every
+     * row to NULL, while the left-associative literal form keeps the real wrapped value.
+     * A floating-point / non-numeric operand (which widens the pair and so cannot poison
+     * via an integer NULL sentinel) or an unmodeled operator yields false.
+     */
+    private static boolean integerPairFoldsToNull(ExpressionNode a, ExpressionNode b, CharSequence opToken) {
+        long va = intConstFold(a);
+        long vb = intConstFold(b);
+        if (va != NOT_INT_CONSTANT && vb != NOT_INT_CONSTANT) {
+            // Both operands are INT-typed: the runtime op (AddInt / MulInt / ...) wraps
+            // mod 2^32, so the poison sentinel is INT_NULL.
+            return applyIntFold(opToken, (int) va, (int) vb) == Numbers.INT_NULL;
+        }
+        // At least one operand is wider than INT. The runtime op is LONG-typed and wraps
+        // mod 2^64, so the poison sentinel is LONG_NULL. A floating-point / non-numeric
+        // operand makes longConstFold (parseLong) or applyLongFold throw -> not a poison.
+        try {
+            return applyLongFold(opToken, longConstFold(a), longConstFold(b)) == Numbers.LONG_NULL;
+        } catch (NumericException notLongConstant) {
+            return false;
+        }
+    }
+
+    /**
+     * Reports whether regrouping the constant pair {@code (a OP b)} is value-preserving,
+     * so {@link #reassociateConstants} may combine them. Two hazards block it:
+     * <ul>
+     *   <li>mixing an integer constant with a widening (floating-point or DECIMAL) one
+     *   (see {@link #mixesIntegerAndWidening}), which would widen an INT operation to
+     *   floating point / DECIMAL and drop its overflow wrap;</li>
+     *   <li>an integer pair whose fold lands exactly on an integer NULL sentinel -- the
+     *   INT_NULL (-2^31) sentinel for an INT-typed pair, or the LONG_NULL (-2^63) sentinel
+     *   for a LONG-typed one. The regrouped {@code col OP (a OP b)} would then read that
+     *   sentinel and poison every row to NULL (AddInt / AddLong / MulInt / ... all return
+     *   the matching NULL on a NULL operand), while the left-associative literal /
+     *   un-regrouped form keeps the real wrapped value.</li>
+     * </ul>
+     * <p>Both checks see only the constant pair, not the column, so a "safe" verdict here
+     * still permits an integer-pair regroup whose left-associative intermediate
+     * {@code col OP a} wraps onto the sentinel for some column value (see the "Known
+     * limitation" note on {@link #reassociateConstants}). The method reports value-preserving
+     * for the pair, not for every column value.</p>
+     */
+    private static boolean isReassociationSafe(ExpressionNode a, ExpressionNode b, CharSequence opToken) {
+        return !mixesIntegerAndWidening(a, b) && !integerPairFoldsToNull(a, b, opToken);
+    }
+
+    /**
+     * Reports whether a constant node resolves to a value that widens an INT
+     * operation -- a floating-point or DECIMAL value. A constant arithmetic
+     * subtree widens when any of its leaves does, since +, -, *, / promote to the
+     * wider type when either operand is wider. Used by {@link #reassociateConstants}
+     * to keep an integer constant from being regrouped with a widening one.
+     */
+    private static boolean isWideningConstant(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == CONSTANT) {
+            return isWideningConstantToken(node.token);
+        }
+        return isWideningConstant(node.lhs) || isWideningConstant(node.rhs);
+    }
+
+    /**
+     * Classifies a constant token as widening an INT operation, mirroring the type
+     * precedence in {@link io.questdb.griffin.FunctionParser}: a DECIMAL literal
+     * (an {@code m}/{@code M} suffix) widens, as does a DOUBLE or FLOAT literal. An
+     * integer literal (INT, then LONG) does not widen -- an integer pair is governed
+     * by the NULL-sentinel guard instead. A non-numeric token (string, geohash, type
+     * keyword, ...) does not widen.
+     */
+    private static boolean isWideningConstantToken(CharSequence token) {
+        final int len = token.length();
+        // A DECIMAL literal ends with 'm'/'M' (see FunctionParser); parseLong /
+        // parseDouble / parseFloat all reject it, so it must be recognized first.
+        if (len > 1 && (token.charAt(len - 1) | 32) == 'm') {
+            return true;
+        }
+        try {
+            // parseLong accepts every token parseInt does, plus the 'L' suffix.
+            Numbers.parseLong(token);
+            return false;
+        } catch (NumericException notInteger) {
+            // not an integer literal; fall through
+        }
+        try {
+            Numbers.parseDouble(token);
+            return true;
+        } catch (NumericException notDouble) {
+            // not a double literal; fall through
+        }
+        try {
+            Numbers.parseFloat(token);
+            return true;
+        } catch (NumericException notFloat) {
+            return false;
+        }
+    }
+
+    /**
+     * Folds a constant integer subtree to its LONG-width value (wrapping mod 2^64),
+     * mirroring the runtime LongFunction getLong() semantics. Accepts INT and LONG
+     * literals (via {@link Numbers#parseLong}) and the LONG arithmetic operators
+     * {@link #applyLongFold} models; throws {@link NumericException} for a
+     * floating-point / DECIMAL / non-numeric leaf or an unmodeled operator.
+     */
+    private static long longConstFold(ExpressionNode node) {
+        if (node == null) {
+            throw NumericException.INSTANCE;
+        }
+        if (node.type == CONSTANT) {
+            // parseLong rejects a decimal/exponent and a DECIMAL 'm' suffix, so only
+            // genuine INT / LONG constants fold here; wider types throw.
+            return Numbers.parseLong(node.token);
+        }
+        if (node.type == OPERATION && node.paramCount == 2 && node.token != null) {
+            return applyLongFold(node.token, longConstFold(node.lhs), longConstFold(node.rhs));
+        }
+        throw NumericException.INSTANCE;
+    }
+
+    /**
+     * Reports whether exactly one of the two constants widens an INT operation (is
+     * floating-point or DECIMAL) and the other is integer. Regrouping such a pair
+     * would widen an integer operation and drop an INT overflow wrap; see
+     * {@link #reassociateConstants}.
+     */
+    private static boolean mixesIntegerAndWidening(ExpressionNode a, ExpressionNode b) {
+        return isWideningConstant(a) != isWideningConstant(b);
     }
 
     private static void toSink(CharSink<?> sink, ExpressionNode e) {

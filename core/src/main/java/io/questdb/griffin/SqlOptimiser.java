@@ -5249,6 +5249,34 @@ public class SqlOptimiser implements Mutable {
                 runtimeTerms = concatFilters(legacy, expressionNodePool, runtimeTerms, term);
             }
         }
+        if (isHorizonJoin(model)) {
+            // A HORIZON JOIN folds its aggregate into the join factory, so the constant-fold path in
+            // generateJoins must not short-circuit the whole factory to an empty table on a compile-time
+            // constant-FALSE term: a non-keyed aggregate must still emit its single null-aggregate row.
+            // Anchor every const term (compile-time and runtime) on the master's WHERE clause instead,
+            // exactly where assignFilters routes every other master-only HORIZON JOIN predicate. A const
+            // term references no columns and the master is never NULL-extended, so a master filter is
+            // equivalent to a post-join filter; the constant-FALSE master then empties via generateFilter,
+            // and the non-keyed aggregate emits its row while the keyed aggregate emits none. The offset
+            // pseudo-table and slave models reject any WHERE clause (validateHorizonJoinFilter), so the
+            // master is the only valid anchor; leaving compile-time terms on constWhereClause would route
+            // them back through the empty-table short-circuit.
+            ExpressionNode constTerms = compileTimeTerms;
+            if (runtimeTerms != null) {
+                constTerms = concatFilters(legacy, expressionNodePool, constTerms, runtimeTerms);
+            }
+            model.setConstWhereClause(null);
+            if (constTerms != null) {
+                IQueryModel masterModel = model.getJoinModels().getQuick(0);
+                masterModel.setWhereClause(concatFilters(
+                        legacy,
+                        expressionNodePool,
+                        masterModel.getWhereClause(),
+                        constTerms
+                ));
+            }
+            return;
+        }
         model.setConstWhereClause(compileTimeTerms);
         if (runtimeTerms != null) {
             IntList ordered = model.getOrderedJoinModels();

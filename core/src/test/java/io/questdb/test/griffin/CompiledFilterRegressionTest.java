@@ -528,62 +528,213 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConstantFoldDivisionAtIntWidth() throws Exception {
+        // A folded constant with a non-modular operator (division) must replicate
+        // the Java filter's per-op INT wrapping at an INT-width comparison.
+        // (1000000 * 1000000) / 7 folds in long to 142857142857, whose low 32
+        // bits are +1123222089, but DivInt#getInt computes
+        // (int) (1000000 * 1000000) / 7 = -103911424. Folding in long and
+        // truncating diverged: the JIT returned 0 rows where the Java filter
+        // returned every row.
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " cast(x - 100 as byte) i8," +
+                " cast(x - 100 as short) i16," +
+                " cast(x - 100 as int) i32," +
+                " (x - 100) i64" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        assertMemoryLeak(() -> {
+            execute(ddl);
+            // Per-op INT wrap = -103911424; every narrow/INT row (>= -99) exceeds it.
+            assertQueryNotNullNoLeakCheck("x where i8 > (1000000 * 1000000) / 7");
+            assertQueryNotNullNoLeakCheck("x where i16 > (1000000 * 1000000) / 7");
+            assertQueryNotNullNoLeakCheck("x where i32 > (1000000 * 1000000) / 7");
+            // LONG column reads full long width via DivInt#getLong = 142857142857;
+            // no i64 row reaches it, and the I8 fold path already agreed here.
+            assertQueryNullableNoLeakCheck("x where i64 > (1000000 * 1000000) / 7");
+        });
+    }
+
+    @Test
+    public void testConstantFoldIntNullCollision() throws Exception {
+        // An inner constant product that wraps to EXACTLY INT_NULL (-2^31)
+        // poisons the rest of an INT-width fold: the Java filter's
+        // MulInt/AddInt#getInt return INT_NULL once an operand is INT_NULL, so
+        // i8 > (65536 * 32768) * 2 collapses to i8 > NULL (no rows). The JIT I4
+        // fold did pure modular arithmetic (-2^31 * 2 = 0) and returned i8 > 0
+        // (rows). tryFoldConstantArithI4 now propagates INT_NULL like the
+        // runtime ops, so both paths agree.
+        assertMemoryLeak(() -> {
+            execute("create table x as (select timestamp_sequence(0, 1000000) k," +
+                    " cast(x - 2 as byte) i8," +
+                    " cast(x - 2 as short) i16," +
+                    " cast(x - 2 as int) i32," +
+                    " (x - 2) i64" +
+                    " from long_sequence(5)) timestamp(k)");
+            // INT-width comparisons: inner 65536 * 32768 wraps to INT_NULL, so
+            // the whole fold is NULL and no row matches.
+            assertJitMatchesJava("x where i8 > (65536 * 32768) * 2", true);
+            assertJitMatchesJava("x where i16 > (65536 * 32768) * 2", true);
+            assertJitMatchesJava("x where i32 > (65536 * 32768) * 2", true);
+            // LONG column promotes to long width: getLong() never wraps onto the
+            // sentinel, so the constant is the genuine 4294967296 on both paths.
+            assertJitMatchesJava("x where i64 > (65536 * 32768) * 2", true);
+        });
+    }
+
+    @Test
+    public void testConstantFoldLongNullCollision() throws Exception {
+        // The LONG analog of testConstantFoldIntNullCollision. An inner constant
+        // product that lands EXACTLY on Long.MIN_VALUE (-2^63, the LONG null
+        // sentinel) poisons the rest of a long-width fold: the Java filter's
+        // MulLong/AddLong#getLong return LONG_NULL once an operand is LONG_NULL,
+        // so i64 = (4611686018427387904 * -2) + 5 folds the RHS to NULL and
+        // matches the null row. The JIT long fold kept computing full-width
+        // arithmetic ((2^62 * -2) + 5 = Long.MIN + 5) and matched no row.
+        // tryFoldConstantArith now propagates LONG_NULL, so both paths agree.
+        assertMemoryLeak(() -> {
+            execute("create table lp as (select timestamp_sequence(0, 1000000) k," +
+                    " case when x = 1 then cast(null as long) else x end i64" +
+                    " from long_sequence(3)) timestamp(k)");
+            // 4611686018427387904 = 2^62; 2^62 * -2 = Long.MIN (intermediate),
+            // + 5 a non-sentinel final. The fold collapses to LONG_NULL on both
+            // paths, so only the null row matches '='.
+            assertJitMatchesJava("lp where i64 = (4611686018427387904 * -2) + 5", true);
+            assertJitMatchesJava("lp where i64 <> (4611686018427387904 * -2) + 5", true);
+            assertJitMatchesJava("lp where i64 in (1, (4611686018427387904 * -2) + 5)", true);
+            assertJitMatchesJava("lp where i64 not in (1, (4611686018427387904 * -2) + 5)", true);
+            // Control: a fold whose FINAL value is Long.MIN agrees coincidentally
+            // (both paths emit the sentinel), so it was never a divergence.
+            assertJitMatchesJava("lp where i64 = 4611686018427387904 * -2", true);
+        });
+    }
+
+    @Test
+    public void testConstantFoldRootUnderLongWithFloat() throws Exception {
+        // An overflowing constant product (258558 * -259815) nested under a LONG
+        // add (c0 + ...) is read at long width by AddLong#getLong, so the Java
+        // filter never wraps it. A FLOAT in the predicate suppressed the global
+        // narrow-i64 widening, and isLongTypedConstArith only checks LONG *leaves*,
+        // so the JIT folded the product to a wrapped I4 IMM and diverged (JIT all
+        // rows, Java none). The serializer now tags such fold roots for a full I8
+        // IMM.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (c0 LONG, c8 INT, c9 FLOAT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t SELECT rnd_long(-1000000, 1000000, 8), " +
+                    "rnd_int(-1000000, 1000000, 8), rnd_float(8), " +
+                    "timestamp_sequence(to_timestamp('2024-01-01', 'yyyy-MM-dd'), 1800000000L) " +
+                    "FROM long_sequence(122)");
+            // Previously diverging shapes: fold root under a genuine LONG op with a
+            // FLOAT comparison. Still JIT-compiled, now correct.
+            assertJitMatchesJava("SELECT * FROM t WHERE c9 <= (c0 + (258558 * -259815))", true);
+            assertJitMatchesJava("SELECT * FROM t WHERE c9 <= (c0 - (258558 * -259815))", true);
+            assertJitMatchesJava("SELECT * FROM t WHERE c9 <= ((258558 * -259815) + c0)", true);
+            // Control: direct float-vs-overflow comparison still wraps via
+            // getDouble(getInt()), so the wrapped I4 fold remains correct.
+            assertJitMatchesJava("SELECT * FROM t WHERE c9 <= (258558 * -259815)", true);
+            // Control: pure-INT arithmetic under a float wraps (no genuine LONG).
+            assertJitMatchesJava("SELECT * FROM t WHERE c9 <= (c8 + (258558 * -259815))", true);
+        });
+    }
+
+    @Test
+    public void testConstantFoldWidthUnderBooleanEquality() throws Exception {
+        // A boolean equality of two comparisons -- (cmp) = (cmp) -- forms a
+        // SINGLE predicate context, so a predicate-global width signal applies
+        // one width to both comparisons. An overflowing INT fold then took the
+        // wrong width:
+        //   - I4-where-I8: (1000000 * 1000000 > i64) = (f32 > 0) -- the fold
+        //     feeds a LONG comparison and must read at long width, but the float
+        //     suppressed global widening and the fold root went unmarked, so the
+        //     JIT emitted a wrapped I4 (Java 2 rows, JIT 0).
+        //   - I8-where-I4: (ci > 1000000 * 1000000) = (cl > 0) -- the fold feeds
+        //     an INT comparison and must wrap, but the predicate-global
+        //     long-widening (driven by the sibling LONG comparison) forced it to
+        //     I8 (Java 3 rows, JIT 0).
+        // The fold width is now derived from the fold's own comparison context.
+        assertMemoryLeak(() -> {
+            execute("create table x as (select timestamp_sequence(0, 1000000) k, x id," +
+                    " (case when x = 1 then 0L when x = 2 then 5L else 2000000000000L end) i64," +
+                    " x::int ci, x::long cl, 1.0f f32" +
+                    " from long_sequence(3)) timestamp(k)");
+            // Previously diverging shapes, both directions.
+            assertJitMatchesJava("select id from x where (1000000 * 1000000 > i64) = (f32 > 0)", true);
+            assertJitMatchesJava("select id from x where (ci > 1000000 * 1000000) = (cl > 0)", true);
+            // Controls: single comparison, AND, OR each split into separate
+            // predicate contexts and were always correct.
+            assertJitMatchesJava("select id from x where ci > 1000000 * 1000000", true);
+            assertJitMatchesJava("select id from x where ci > 1000000 * 1000000 and cl > 0", true);
+            assertJitMatchesJava("select id from x where ci > 1000000 * 1000000 or cl > 0", true);
+            // Control: the LONG column reads the fold at long width on both paths.
+            assertJitMatchesJava("select id from x where i64 > 1000000 * 1000000", true);
+        });
+    }
+
+    @Test
     public void testConstantOverflowFoldOnByteColumn() throws Exception {
-        // Constant arithmetic subtree whose long-precision value overflows
-        // INT must produce the same result whether the JIT is off, scalar,
-        // or vectorized. The CompiledFilterIRSerializer folds the subtree
-        // to a single i64 IMM in the IR, mirroring FunctionParser's
-        // LongConstant fold for the Java filter.
+        // Overflowing INT constant arithmetic must agree across JIT off/scalar/
+        // vectorized. A BYTE column compares at INT width, so the JIT folds the
+        // constant to a wrapped I4 IMM, matching the Java filter's getInt() wrap.
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
                 " cast(x - 100 as byte) i8" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
         assertMemoryLeak(() -> {
             execute(ddl);
-            // -286452 * (-952151 * -382988) = -1.04e17 (long); BYTE values are
-            // all > -1.04e17 so every row passes.
-            assertQueryNotNullNoLeakCheck("x where i8 > -286452 * (-952151 * -382988)");
-            // Symmetric upper-bound case: huge positive constant fails for every BYTE.
-            assertQueryNullableNoLeakCheck("x where i8 > 286452 * (952151 * 382988)");
+            // -1.04e17 wraps to +1_699_321_072 at INT width; no BYTE exceeds it.
+            assertQueryNullableNoLeakCheck("x where i8 > -286452 * (-952151 * -382988)");
+            // Symmetric: +1.04e17 wraps to -1_699_321_072, below every BYTE.
+            assertQueryNotNullNoLeakCheck("x where i8 > 286452 * (952151 * 382988)");
         });
     }
 
     @Test
     public void testConstantOverflowFoldOnIntColumn() throws Exception {
+        // INT column compares at INT width: the JIT wraps the constant (I4) like
+        // the Java filter rather than widening to i64.
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
                 " cast(x - 100 as int) i32" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
         assertMemoryLeak(() -> {
             execute(ddl);
-            assertQueryNotNullNoLeakCheck("x where i32 > -286452 * (-952151 * -382988)");
-            assertQueryNullableNoLeakCheck("x where i32 > 286452 * (952151 * 382988)");
+            // Wraps to +1_699_321_072: no INT row exceeds it.
+            assertQueryNullableNoLeakCheck("x where i32 > -286452 * (-952151 * -382988)");
+            // Wraps to -1_699_321_072: below every INT row.
+            assertQueryNotNullNoLeakCheck("x where i32 > 286452 * (952151 * 382988)");
         });
     }
 
     @Test
     public void testConstantOverflowFoldOnLongColumn() throws Exception {
+        // A LONG column promotes the comparison to LONG: both the Java filter
+        // (getLong()) and the JIT (i64 fold) read full long width and never wrap.
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
                 " (x - 100) i64" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
         assertMemoryLeak(() -> {
             execute(ddl);
+            // -1.04e17 stays -1.04e17 at LONG width; every LONG row exceeds it.
             assertQueryNotNullNoLeakCheck("x where i64 > -286452 * (-952151 * -382988)");
+            // +1.04e17 stays +1.04e17; no LONG row exceeds it.
             assertQueryNullableNoLeakCheck("x where i64 > 286452 * (952151 * 382988)");
         });
     }
 
     @Test
     public void testConstantOverflowFoldOnShortColumn() throws Exception {
+        // A SHORT column promotes to INT, so the constant wraps at INT width.
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
                 " cast(x - 100 as short) i16" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
         assertMemoryLeak(() -> {
             execute(ddl);
-            assertQueryNotNullNoLeakCheck("x where i16 > -286452 * (-952151 * -382988)");
-            assertQueryNullableNoLeakCheck("x where i16 > 286452 * (952151 * 382988)");
+            // Wraps to +1_699_321_072: no SHORT row exceeds it.
+            assertQueryNullableNoLeakCheck("x where i16 > -286452 * (-952151 * -382988)");
+            // Wraps to -1_699_321_072: below every SHORT row.
+            assertQueryNotNullNoLeakCheck("x where i16 > 286452 * (952151 * 382988)");
         });
     }
 
@@ -604,11 +755,12 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             assertQueryNotNullNoLeakCheck("x where i64 > -5000000000 - 5000000000");
             assertQueryNotNullNoLeakCheck("x where i64 > -100000 * 100000");
             assertQueryNotNullNoLeakCheck("x where i64 > -1000000000000 / 1");
-            // Unary minus in front of an overflowing product.
+            // Unary minus over an overflowing product. The i64 column promotes
+            // to LONG and reads full width (-1.04e17); every row passes.
             assertQueryNotNullNoLeakCheck("x where i64 > -(286452 * (-952151 * -382988))");
-            // Same overflow constants on a BYTE column exercise the scalar
-            // mode path that the fold's markArithmetic call forces.
-            assertQueryNotNullNoLeakCheck("x where i8 > -(286452 * (-952151 * -382988))");
+            // Same constant on a BYTE column compares at INT width: wraps to
+            // +1_699_321_072, which no BYTE row exceeds (wrapped-I4 fold path).
+            assertQueryNullableNoLeakCheck("x where i8 > -(286452 * (-952151 * -382988))");
         });
     }
 
@@ -814,6 +966,306 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 " rnd_int(1, 10, 0) b" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
         assertQueryNotNull(query, ddl);
+    }
+
+    @Test
+    public void testInOperatorOverflowFoldMatchesJavaOnConstantKey() throws Exception {
+        // C1 regression: an overflowing INT arithmetic CONSTANT key on the left of a multi-value
+        // IN() list. `k IN (e0, e1, ...)` is `k = e0 OR k = e1 OR ...`, and the Java filter reads
+        // the key at EACH element's '=' width -- widened (getLong, 10^12) against a LONG/TIMESTAMP
+        // element, wrapped (getInt, -727379968) against an INT element. The JIT re-serializes the
+        // key per element (serializeIn) but folded it to a single wrapped I4 IMM for the whole list
+        // (one width per node), so against a LONG element it matched the wrapped image instead of
+        // the widened value. serializeIn now drives the key's fold width per element via
+        // inKeyFoldWidthOverride, exactly as the elements are folded. The table carries the widened
+        // value (10^12) and its wrapped INT image (-727379968) so a wrong key width matches the
+        // wrong row instead of the right one.
+        assertMemoryLeak(() -> {
+            execute("create table x as (select cast(v as long) i64, cast(v as timestamp) tsc " +
+                    "from (select 1000000000000 v union all select -727379968 v))");
+            // LONG element: the key must widen to 10^12 and match the widened row, not the wrapped one.
+            assertJitMatchesJava("x where (1000000 * 1000000) in (i64, 5)", true);
+            assertJitMatchesJava("x where (1000000 * 1000000) in (5, i64)", true);        // order independent
+            assertJitMatchesJava("x where (1000000 * 1000000) in (5, 6, i64)", true);     // multi value
+            assertJitMatchesJava("x where (1000000 * 1000000) in (i64, i64)", true);      // all long
+            assertJitMatchesJava("x where (1000000 * 1000000) not in (i64, 5)", true);    // inverse
+            // TIMESTAMP element widens the key the same way.
+            assertJitMatchesJava("x where (1000000 * 1000000) in (tsc, 5)", true);
+            // Controls: '=' and single-value IN already widened; an INT element still wraps the key.
+            assertJitMatchesJava("x where (1000000 * 1000000) = i64", true);
+            assertJitMatchesJava("x where (1000000 * 1000000) in (i64)", true);
+            assertJitMatchesJava("x where (1000000 * 1000000) in (i64, -727379968)", true);
+        });
+    }
+
+    @Test
+    public void testInOperatorOverflowFoldMatchesJavaOnLongColumn() throws Exception {
+        // An overflowing INT arithmetic fold inside an IN() list against a LONG column: the
+        // Java filter reads the IN element at long width (10^12), so the JIT must too. The
+        // table carries both the widened value (10^12) and its wrapped INT image
+        // (-727379968) so a wrong fold matches the wrong row instead of returning empty.
+        // markI64WidenFoldRoots used to bail on the IN node (it is a FUNCTION, not an
+        // OPERATION) for the single-value form, and could not derive the comparison width
+        // for the multi-value form (the operands live in args with lhs/rhs null), so it
+        // emitted a wrapped I4 IMM and diverged from the Java filter.
+        assertMemoryLeak(() -> {
+            execute("create table x as (select cast(v as long) i64 " +
+                    "from (select 1000000000000 v union all select -727379968 v))");
+            assertJitMatchesJava("x where i64 in (1000000 * 1000000)", true);          // single value
+            assertJitMatchesJava("x where i64 in (1, 1000000 * 1000000)", true);       // two values
+            assertJitMatchesJava("x where i64 in (1, 2, 1000000 * 1000000)", true);    // multi value
+            assertJitMatchesJava("x where i64 not in (1, 1000000 * 1000000)", true);   // inverse
+            assertJitMatchesJava("x where i64 = 1000000 * 1000000", true);             // control: plain '='
+        });
+    }
+
+    @Test
+    public void testInOperatorOverflowFoldMatchesJavaOnNarrowArithKey() throws Exception {
+        // C1 regression: an overflowing INT *arithmetic* KEY on the left of IN(). The narrow-int
+        // IN fix wrapped the IN-list elements at INT width (matching '=') but every InLong*.getBool
+        // still read the KEY via getLong(), which WIDENS an overflowing INT arithmetic. So IN
+        // disagreed with '=' even with the JIT off, and the JIT (which computes the key at I4 and
+        // wraps) disagreed with the Java IN. The key is now read at INT width too, symmetric with
+        // the elements. a + a = 3*10^9 wraps to INT -1294967296; '=' (EqInt) and the JIT both wrap,
+        // so a correctly-wrapping IN matches the single row.
+        assertMemoryLeak(() -> {
+            execute("create table x as (select cast(1500000000 as int) a, cast(1500000000 as int) b)");
+
+            // const IN shapes: the JIT wraps the key at I4, the Java IN must wrap too.
+            assertJitMatchesJava("x where (a + a) in (1500000000 + 1500000000)", true);        // single const
+            assertJitMatchesJava("x where (a + a) in (1, 1500000000 + 1500000000)", true);     // two const
+            assertJitMatchesJava("x where (a + a) in (1, 2, 1500000000 + 1500000000)", true);  // multi const
+            assertJitMatchesJava("x where (a + a) not in (1500000000 + 1500000000)", true);    // inverse
+            // an in-range literal equal to the wrapped key must match too (pre-existing slice).
+            assertJitMatchesJava("x where (a + a) in (-1294967296)", true);
+            assertJitMatchesJava("x where (a + a) = 1500000000 + 1500000000", true);           // control: '='
+
+            // Java (JIT-disabled) IN must agree with '=' across the const InLong* variants.
+            Assert.assertEquals(1, runQuery("x where (a + a) in (1500000000 + 1500000000)"));      // single
+            Assert.assertEquals(1, runQuery("x where (a + a) in (1, 1500000000 + 1500000000)"));   // two
+            Assert.assertEquals(1, runQuery("x where (a + a) in (1, 2, 1500000000 + 1500000000)"));// multi
+            Assert.assertEquals(0, runQuery("x where (a + a) not in (1500000000 + 1500000000)"));  // inverse
+            Assert.assertEquals(1, runQuery("x where (a + a) = 1500000000 + 1500000000"));         // '='
+
+            // runtime-const variant: a bind variable forces InLongRuntimeConstFunction. The const
+            // element still matches the wrapped key; :p (= 0) does not.
+            bindVariableService.setInt("p", 0);
+            Assert.assertEquals(1, runQuery("x where (a + a) in (1500000000 + 1500000000, :p)"));
+
+            // var variant: a non-constant element forces InLongVarFunction.
+            Assert.assertEquals(1, runQuery("x where (a + a) in (b + b)"));
+            Assert.assertEquals(1, runQuery("x where (a + a) = (b + b)"));
+        });
+    }
+
+    @Test
+    public void testInOperatorOverflowFoldMatchesJavaOnNarrowColumn() throws Exception {
+        // An overflowing INT arithmetic fold inside an IN() list against a NARROW integer
+        // key (INT/SHORT/BYTE). '=' (EqInt) wraps the fold mod 2^32 and the JIT emits the
+        // wrapped I4, but the Java IN path read the element via getLong() and WIDENED it to
+        // the full-width product. So IN disagreed with '=' even with the JIT off, and the
+        // JIT disagreed with the Java IN. InLongFunctionFactory now reads narrow-key IN
+        // elements at INT width (wrap), matching '='. The columns hold the wrapped image of
+        // each overflow product so the correct (wrapping) behaviour matches a row.
+        assertMemoryLeak(() -> {
+            // 1000000 * 1000000 = 10^12 wraps to INT -727379968; 3 * 1431655767 = 2^32 + 5
+            // wraps to INT 5 (matchable by SHORT/BYTE keys too).
+            execute("create table x as (select cast(-727379968 as int) i32b, " +
+                    "cast(5 as int) i32, cast(5 as short) i16, cast(5 as byte) i8)");
+
+            // INT key, canonical 10^12 product, JIT-vs-Java parity across IN forms.
+            assertJitMatchesJava("x where i32b in (1000000 * 1000000)", true);         // single value
+            assertJitMatchesJava("x where i32b in (1, 1000000 * 1000000)", true);      // two values
+            assertJitMatchesJava("x where i32b in (1, 2, 1000000 * 1000000)", true);   // multi value
+            assertJitMatchesJava("x where i32b not in (1, 1000000 * 1000000)", true);  // inverse
+            assertJitMatchesJava("x where i32b = 1000000 * 1000000", true);            // control: '='
+
+            // The Java (JIT-disabled) IN must agree with '=' -- it widened before the fix.
+            Assert.assertEquals(1, runQuery("x where i32b in (1000000 * 1000000)"));
+            Assert.assertEquals(1, runQuery("x where i32b = 1000000 * 1000000"));
+
+            // INT/SHORT/BYTE keys all wrap the element to 5 and match.
+            assertJitMatchesJava("x where i32 in (3 * 1431655767)", true);
+            assertJitMatchesJava("x where i16 in (3 * 1431655767)", true);
+            assertJitMatchesJava("x where i8 in (3 * 1431655767)", true);
+            Assert.assertEquals(1, runQuery("x where i32 in (3 * 1431655767)"));
+            Assert.assertEquals(1, runQuery("x where i16 in (3 * 1431655767)"));
+            Assert.assertEquals(1, runQuery("x where i8 in (3 * 1431655767)"));
+            Assert.assertEquals(1, runQuery("x where i32 = 3 * 1431655767"));
+            Assert.assertEquals(1, runQuery("x where i16 = 3 * 1431655767"));
+            Assert.assertEquals(1, runQuery("x where i8 = 3 * 1431655767"));
+        });
+    }
+
+    @Test
+    public void testInOperatorOverflowFoldMatchesJavaOnNarrowKeyWithLongElement() throws Exception {
+        // C4 regression: a narrow/INT KEY IN() list that mixes an overflowing INT-arithmetic
+        // element with a genuine-LONG element. The Java InLong path reads the INT element at
+        // the narrow key's width (getInt -> wrap), so the JIT must too. But
+        // markI64WidenFoldRoots used to fold ONE comparison width across the whole IN list,
+        // so a single coexisting LONG element (3000000000) promoted the list to I8 and WIDENED
+        // the overflowing INT element to its full-width product -- the JIT then read 10^12
+        // while the Java filter wrapped to -727379968 == the stored key, so the row matched in
+        // Java but not in the JIT. The width is now derived per element (key vs that element),
+        // so the INT element wraps (matching the key) while the LONG element stays at long
+        // width (and never matches the narrow key either way).
+        assertMemoryLeak(() -> {
+            execute("create table x as (select cast(-727379968 as int) c)"); // -727379968 = (int)(1000000*1000000)
+
+            // overflow-INT element coexists with a genuine-LONG element against the narrow key.
+            assertJitMatchesJava("x where c in (1000000 * 1000000, 3000000000)", true);        // RED on HEAD
+            assertJitMatchesJava("x where c in (3000000000, 1000000 * 1000000)", true);        // element order swapped
+            assertJitMatchesJava("x where c in (1, 1000000 * 1000000, 3000000000)", true);     // plus a plain element
+            assertJitMatchesJava("x where c not in (1000000 * 1000000, 3000000000)", true);    // inverse
+
+            // The Java (JIT-disabled) path is the oracle: c matches the wrapped INT element only.
+            Assert.assertEquals(1, runQuery("x where c in (1000000 * 1000000, 3000000000)"));
+            Assert.assertEquals(0, runQuery("x where c not in (1000000 * 1000000, 3000000000)"));
+
+            // control: an all-INT list against the narrow key already wrapped correctly.
+            assertJitMatchesJava("x where c in (1, 1000000 * 1000000)", true);
+        });
+    }
+
+    @Test
+    public void testInOperatorOverflowWidenColumnArithKeyPerElement() throws Exception {
+        // C2 regression: a COLUMN-arithmetic IN key (a * b) whose product overflows INT, in a
+        // multi-value list that mixes a genuine-LONG element with an overflowing-INT element.
+        // The Java InLong path reads the key per element -- widened (getLong) against the LONG
+        // element, wrapped (getInt) against the INT element. But the JIT decided narrow-int
+        // widening once for the WHOLE predicate: a single coexisting LONG element flipped
+        // needsNarrowI64Widening on, so the JIT sign-extended a and b for EVERY comparison,
+        // computing a * b at 64 bits (10^12) even against the INT element where Java wraps the
+        // key to -727379968. A row whose wrapped key matched the INT element matched in Java
+        // but not in the JIT (which returned empty). The key width is now driven per element
+        // (widen against LONG/TIMESTAMP, wrap against INT), matching the Java path.
+        //
+        // a*b = 10^12 widens to 10^12, wraps to INT -727379968. el = 0 (matches neither image);
+        // the INT element -727379968 matches only the WRAPPED key.
+        assertMemoryLeak(() -> {
+            execute("create table y (a int, b int, el long, k timestamp) timestamp(k)");
+            execute("insert into y values (1000000, 1000000, 0, 1)");
+
+            // A LONG COLUMN element coexists with an overflowing-INT constant element. RED on
+            // HEAD: the JIT widened the key against the INT element and missed the wrapped match.
+            assertJitMatchesJava("select a from y where (a * b) in (el, -727379968)", true);    // RED on HEAD
+            assertJitMatchesJava("select a from y where (a * b) in (-727379968, el)", true);    // element order swapped
+            assertJitMatchesJava("select a from y where (a * b) in (5, el, -727379968)", true); // plus a plain element
+            assertJitMatchesJava("select a from y where (a * b) not in (el, -727379968)", true);// inverse
+
+            // The Java (JIT-disabled) path is the oracle: the wrapped key matches the INT element.
+            Assert.assertEquals("a\n1000000\n", runJavaToString("select a from y where (a * b) in (el, -727379968)"));
+            Assert.assertEquals("a\n", runJavaToString("select a from y where (a * b) not in (el, -727379968)"));
+
+            // controls that already agreed: an all-INT list wraps the key, a single LONG element
+            // widens it, and '=' wraps -- none of these mix widths across the list.
+            assertJitMatchesJava("select a from y where (a * b) = -727379968", true);           // '=' wraps
+            assertJitMatchesJava("select a from y where (a * b) in (-727379968)", true);        // single INT: wraps
+            assertJitMatchesJava("select a from y where (a * b) in (5, -727379968)", true);     // all-INT list: wraps
+            assertJitMatchesJava("select a from y where (a * b) in (el)", true);                // single LONG: widens
+        });
+    }
+
+    @Test
+    public void testInOperatorOverflowWidenElementPerPairing() throws Exception {
+        // C1/C2: an overflowing INT-arithmetic IN key against a list that mixes a genuine-LONG
+        // element with an overflowing INT-arith element (C1) or a NULL element (C2). The Java
+        // InLong path reads the key per element: wrapped (getInt) against the INT-arith element,
+        // widened (getLong) against the LONG/NULL element. The JIT set the key width per element
+        // but left the element on the predicate-global widen flag, so a coexisting LONG element
+        // over-widened the INT-arith element (C1), and a wrapped key hitting INT_MIN spuriously
+        // equalled the NULL sentinel against a NULL element (C2). serializeIn now reads both the
+        // element and the key at the pairing width.
+        //
+        // row1: a*b and c*d both wrap to -727379968 (widen to 10^12); el=999 matches neither.
+        // row2: a*b = 2^31 wraps to INT_MIN (== INT_NULL); c*d = 1; el=999.
+        assertMemoryLeak(() -> {
+            execute("create table y (a int, b int, c int, d int, el long, k timestamp) timestamp(k)");
+            execute("insert into y values (1000000, 1000000, 1000000, 1000000, 999, 1)," +
+                    " (2, 1073741824, 1, 1, 999, 2)");
+
+            // C1: the INT-arith element must wrap with the key. RED on HEAD -- the key wrapped
+            // but the element widened, so the (key = c*d) pairing missed the wrapped match.
+            assertJitMatchesJava("select a from y where (a*b) in (c*d, el)", true);
+            assertJitMatchesJava("select a from y where (a*b) in (el, c*d)", true);
+            assertJitMatchesJava("select a from y where (a*b) in (5, c*d, el)", true);
+            assertJitMatchesJava("select a from y where (a*b) not in (c*d, el)", true);
+            Assert.assertEquals("a\n1000000\n", runJavaToString("select a from y where (a*b) in (c*d, el)"));
+
+            // C2: the key must widen against a NULL element, not wrap into INT_MIN and match the
+            // NULL sentinel. RED on HEAD -- row2's wrapped key (INT_MIN == INT_NULL) matched null.
+            assertJitMatchesJava("select a from y where (a*b) in (null, el)", true);
+            assertJitMatchesJava("select a from y where (a*b) in (el, null)", true);
+            assertJitMatchesJava("select a from y where (a*b) not in (null, el)", true);
+            Assert.assertEquals("a\n", runJavaToString("select a from y where (a*b) in (null, el)"));
+
+            // control: an all-narrow list wraps both key and element (no width to mix).
+            assertJitMatchesJava("select a from y where (a*b) in (c*d, 5)", true);
+        });
+    }
+
+    @Test
+    public void testInOperatorOverflowWidenKeyOnLongElement() throws Exception {
+        // C1 regression: an overflowing INT *arithmetic* KEY on the left of IN() against a
+        // LONG element. 'in (LONG)' is 'key = LONG', which promotes to long, so the key must
+        // WIDEN via getLong() (a * b = 10^12), NOT wrap via getInt() (= -727379968). The
+        // narrow-int IN fix read the key at INT width for every element, so a LONG-column
+        // element wrongly matched the wrapped key -- IN returned a different row than '=',
+        // CAST and the JIT even with the JIT disabled. The IN path now derives the compare
+        // width per element: a LONG/TIMESTAMP element widens the key, an INT element wraps it.
+        //
+        // Rows: a*b widens to 10^12 (both rows); el row1 = -727379968 (the wrapped image),
+        // el row2 = 10^12 (the widened value); ei = -727379968 (the wrapped image, both rows).
+        assertMemoryLeak(() -> {
+            execute("create table x (id long, a int, b int, el long, ei int, k timestamp) timestamp(k)");
+            execute("insert into x values (1, 1000000, 1000000, -727379968, -727379968, 1)," +
+                    " (2, 1000000, 1000000, 1000000000000, -727379968, 2)");
+
+            // A LONG COLUMN element forces InLongVarFunction (non-constant). The key widens,
+            // so it matches the widened image (id 2), NOT the wrapped image (id 1). '=', CAST
+            // and the JIT all agree, so JIT-vs-Java parity holds too.
+            assertJitMatchesJava("select id from x where (a * b) in (el)", true);
+            assertJitMatchesJava("select id from x where (a * b) not in (el)", true);
+            assertJitMatchesJava("select id from x where (a * b) = el", true);              // control: '='
+            // absolute correctness: the widened key selects row 2, not the wrapped row 1.
+            Assert.assertEquals("id\n2\n", runJavaToString("select id from x where (a * b) in (el)"));
+            Assert.assertEquals("id\n1\n", runJavaToString("select id from x where (a * b) not in (el)"));
+            Assert.assertEquals(
+                    runJavaToString("select id from x where (a * b) = el"),
+                    runJavaToString("select id from x where (a * b) in (el)"));
+            Assert.assertEquals(
+                    runJavaToString("select id from x where cast(a * b as long) in (el)"),
+                    runJavaToString("select id from x where (a * b) in (el)"));
+
+            // A LONG CONSTANT element widens the key too (matching '='). Both rows carry the
+            // same a*b = 10^12, so the widened key matches both; a wrapped key would match
+            // neither. The JIT now emits the long constant at long width under narrow-i64
+            // widening (serializeConstant), so it widens the key to match Java for '=', IN
+            // (single / two / multi) and relational, closing the narrow-vs-long-const asymmetry
+            // that predated this PR.
+            assertJitMatchesJava("select id from x where (a * b) = 1000000000000", true);
+            assertJitMatchesJava("select id from x where (a * b) in (1000000000000)", true);        // single
+            assertJitMatchesJava("select id from x where (a * b) in (1000000000000, 5)", true);     // two
+            assertJitMatchesJava("select id from x where (a * b) in (1000000000000, 5, 6)", true);  // multi
+            assertJitMatchesJava("select id from x where (a * b) > 999999999999", true);            // relational
+            assertJitMatchesJava("select id from x where (a * b) not in (1000000000000)", true);
+            Assert.assertEquals("id\n1\n2\n", runJavaToString("select id from x where (a * b) = 1000000000000"));
+            Assert.assertEquals("id\n", runJavaToString("select id from x where (a * b) not in (1000000000000)"));
+
+            // A runtime-constant (bind variable) LONG element forces InLongRuntimeConstFunction.
+            bindVariableService.setLong("p", 1000000000000L);
+            assertJitMatchesJava("select id from x where (a * b) in (:p)", true);
+            assertJitMatchesJava("select id from x where (a * b) = :p", true);
+            Assert.assertEquals("id\n1\n2\n", runJavaToString("select id from x where (a * b) in (:p)"));
+
+            // Control -- an INT element must still WRAP the key (matching EqInt and the JIT).
+            // master read the key via getLong() and WIDENED it, so IN wrongly returned no row
+            // where '=' matched both; the wrapped key now matches the stored wrapped image.
+            assertJitMatchesJava("select id from x where (a * b) in (ei)", true);
+            assertJitMatchesJava("select id from x where (a * b) = ei", true);
+            Assert.assertEquals("id\n1\n2\n", runJavaToString("select id from x where (a * b) in (ei)"));
+            Assert.assertEquals("id\n1\n2\n", runJavaToString("select id from x where (a * b) in (1000000 * 1000000)"));
+        });
     }
 
     @Test
@@ -1687,6 +2139,18 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 CursorPrinter.println(cursor, metadata, jitSink);
             }
         }
+    }
+
+    private String runJavaToString(CharSequence query) throws SqlException {
+        StringSink javaSink = new StringSink();
+        sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+        try (RecordCursorFactory factory = select(query)) {
+            Assert.assertFalse("JIT was enabled for query: " + query, factory.usesCompiledFilter());
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                CursorPrinter.println(cursor, factory.getMetadata(), javaSink);
+            }
+        }
+        return javaSink.toString();
     }
 
     private long runQuery(CharSequence query) throws SqlException {

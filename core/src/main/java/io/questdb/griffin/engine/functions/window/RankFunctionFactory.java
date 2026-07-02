@@ -453,7 +453,7 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
                 // Only the ORDER BY columns decide whether two consecutive rows are peers, so the
                 // MapValue holds just those (compacted) plus the running rank and count. Copying the
                 // whole projected row would force pass-through columns the MapValue cannot store
-                // (UUID, STRING, VARCHAR, BINARY, LONG256, arrays, ...) through RecordValueSinkFactory
+                // (STRING, VARCHAR, BINARY, arrays, ...) through RecordValueSinkFactory
                 // and crash compilation. The value sink reads the ORDER BY columns from the live
                 // record at their base indices and writes them into MapValue slots 0..k-1; the
                 // comparator and rank maps are built over a matching compacted metadata so they read
@@ -476,13 +476,16 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
                     // compares. That is sound only when each value is cached by value: a var-size
                     // column (STRING, VARCHAR, BINARY, array, INTERVAL) or a non-static symbol would be
                     // cached as a flyweight aliasing the record and get corrupted by the overwrite,
-                    // silently producing wrong ranks. Only the designated timestamp and static indexed
-                    // SYMBOLs reach the streaming path today; assert the cached-by-value invariant so a
-                    // future routing change that admits another type fails fast here instead of
-                    // returning wrong results.
-                    assert ColumnType.isFixedSize(orderByColumnType)
+                    // silently producing wrong ranks. LONG256 is fixed-size but still excluded: its
+                    // comparator reads the right-hand operand via getLong256B, which FlyweightPackedMapValue
+                    // does not implement (it throws), so a LONG256 ORDER BY would crash here rather than
+                    // return a wrong rank. Only the designated timestamp and static indexed SYMBOLs reach
+                    // the streaming path today; assert the comparable-and-cached-by-value invariant so a
+                    // future routing change that admits another type fails fast here instead of crashing
+                    // or returning wrong results.
+                    assert (ColumnType.isFixedSize(orderByColumnType) && ColumnType.tagOf(orderByColumnType) != ColumnType.LONG256)
                             || (ColumnType.isSymbol(orderByColumnType) && src.isSymbolTableStatic())
-                            : "streaming rank ORDER BY column must be fixed-size or a static symbol, was "
+                            : "streaming rank ORDER BY column must be fixed-size (excluding LONG256) or a static symbol, was "
                             + ColumnType.nameOf(orderByColumnType);
                     // Synthetic unique names keep duplicate ORDER BY columns from clashing; only the
                     // type and the static-symbol flag matter to the comparator and the rank maps.

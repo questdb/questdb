@@ -157,6 +157,68 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
                 f.close();
             }
         }
+        // INT overflow widening: an overflowing INT arithmetic arg wraps mod 2^32 in getInt() but
+        // widens to the full-width product in getLong()/getTimestamp() (the dual behavior the
+        // constant folder preserves). The wrapper must serve the widened value, not re-wrap the
+        // cached int -- otherwise a LONG-promoting context (e.g. INT*LONG) over the memoized
+        // constant disagrees with the same expression over a column. -2_856_928_958 wraps to
+        // +1_438_038_338 as INT.
+        {
+            final RuntimeConstFunction f = RuntimeConstFunction.newInstance(new IntFunction() {
+                @Override
+                public int getInt(Record rec) {
+                    return (int) -2_856_928_958L; // +1_438_038_338
+                }
+
+                @Override
+                public long getLong(Record rec) {
+                    return -2_856_928_958L;
+                }
+
+                @Override
+                public long getTimestamp(Record rec) {
+                    return -2_856_928_958L;
+                }
+
+                @Override
+                public boolean isRuntimeConstant() {
+                    return true;
+                }
+            });
+            try {
+                f.init(null, sqlExecutionContext);
+                assertEquals(1_438_038_338, f.getInt(null));
+                assertEquals(-2_856_928_958L, f.getLong(null));
+                assertEquals(-2_856_928_958L, f.getTimestamp(null));
+            } finally {
+                f.close();
+            }
+        }
+        // INT NULL: an IntFunction arg whose getInt() returns INT_NULL. init() reads getInt() directly,
+        // so the cached int is INT_NULL with no LONG_NULL round-trip. getLong() fills the widened value
+        // lazily from the arg's inherited IntFunction.getLong(), which maps INT_NULL to LONG_NULL, and the
+        // inherited getDouble() widens INT_NULL to NaN -- exactly like a real INT function over a NULL column.
+        {
+            final RuntimeConstFunction f = RuntimeConstFunction.newInstance(new IntFunction() {
+                @Override
+                public int getInt(Record rec) {
+                    return Numbers.INT_NULL;
+                }
+
+                @Override
+                public boolean isRuntimeConstant() {
+                    return true;
+                }
+            });
+            try {
+                f.init(null, sqlExecutionContext);
+                assertEquals(Numbers.INT_NULL, f.getInt(null));
+                assertEquals(Numbers.LONG_NULL, f.getLong(null));
+                assertTrue("NULL int must widen to NaN", Numbers.isNull(f.getDouble(null)));
+            } finally {
+                f.close();
+            }
+        }
     }
 
     @Test
@@ -517,6 +579,130 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testIntRuntimeConstIsNeverThreadSafeWhileOthersInherit() throws SqlException {
+        // IntRuntimeConstFunction fills its widened long lazily in getLong() (see its comments),
+        // mutating state outside init(), so it must declare isThreadSafe()=false even over a
+        // thread-safe arg -- the engine then hands each parallel worker its own clone instead of
+        // sharing one instance and racing on the lazy fill. The other foldable wrappers carry no
+        // lazy state and simply inherit the arg's thread-safety (UnaryFunction.isThreadSafe). This
+        // pins the override: dropping it would let the INT wrapper inherit a thread-safe arg's true
+        // and silently reintroduce the race with no other failing test.
+
+        // INT: thread-safe arg, but the wrapper still reports not-thread-safe.
+        final RuntimeConstFunction intFn = RuntimeConstFunction.newInstance(new IntFunction() {
+            @Override
+            public int getInt(Record rec) {
+                return 42;
+            }
+
+            @Override
+            public boolean isRuntimeConstant() {
+                return true;
+            }
+
+            @Override
+            public boolean isThreadSafe() {
+                return true;
+            }
+        });
+        try {
+            assertFalse("INT wrapper must never be thread-safe (lazy getLong())", intFn.isThreadSafe());
+        } finally {
+            intFn.close();
+        }
+
+        // LONG: no lazy state, so the wrapper inherits the thread-safe arg.
+        final RuntimeConstFunction longFnSafe = RuntimeConstFunction.newInstance(new LongFunction() {
+            @Override
+            public long getLong(Record rec) {
+                return 42L;
+            }
+
+            @Override
+            public boolean isRuntimeConstant() {
+                return true;
+            }
+
+            @Override
+            public boolean isThreadSafe() {
+                return true;
+            }
+        });
+        try {
+            assertTrue("LONG wrapper inherits a thread-safe arg", longFnSafe.isThreadSafe());
+        } finally {
+            longFnSafe.close();
+        }
+
+        // ... and inherits a non-thread-safe arg too -- pure delegation, no override.
+        final RuntimeConstFunction longFnUnsafe = RuntimeConstFunction.newInstance(new LongFunction() {
+            @Override
+            public long getLong(Record rec) {
+                return 42L;
+            }
+
+            @Override
+            public boolean isRuntimeConstant() {
+                return true;
+            }
+
+            @Override
+            public boolean isThreadSafe() {
+                return false;
+            }
+        });
+        try {
+            assertFalse("LONG wrapper inherits a non-thread-safe arg", longFnUnsafe.isThreadSafe());
+        } finally {
+            longFnUnsafe.close();
+        }
+    }
+
+    @Test
+    public void testIntRuntimeConstReInitRefreshesLazyWidenedLong() throws SqlException {
+        // getLong() fills the widened long lazily on first use and caches it for the remaining rows;
+        // init() must reset that cache (longValueComputed=false) so re-running the same factory for a
+        // new cursor re-evaluates the arg instead of serving the previous cursor's widened value. Model
+        // an overflowing-INT-style arg whose getLong() is not derivable from getInt() and whose value
+        // changes between inits. Dropping the reset would make the second getLong() serve the stale long.
+        final int[] narrow = {10};
+        final long[] wide = {10_000_000_000L}; // distinct from the wrapped int, as a division/overflow widen would be
+        final RuntimeConstFunction f = RuntimeConstFunction.newInstance(new IntFunction() {
+            @Override
+            public int getInt(Record rec) {
+                return narrow[0];
+            }
+
+            @Override
+            public long getLong(Record rec) {
+                return wide[0];
+            }
+
+            @Override
+            public boolean isRuntimeConstant() {
+                return true;
+            }
+        });
+        try {
+            // first cursor
+            f.init(null, sqlExecutionContext);
+            assertEquals(10, f.getInt(null));
+            assertEquals(10_000_000_000L, f.getLong(null)); // lazily fills and caches
+            assertEquals(10_000_000_000L, f.getLong(null)); // served from cache
+
+            // re-bind / re-cursor: the arg now evaluates to new values
+            narrow[0] = 20;
+            wide[0] = 20_000_000_000L;
+            f.init(null, sqlExecutionContext);
+            assertEquals(20, f.getInt(null));
+            // the lazy long must re-fill, not serve the stale 10_000_000_000L from the first cursor
+            assertEquals(20_000_000_000L, f.getLong(null));
+        } finally {
+            f.close();
+        }
+    }
+
+    @Test
     public void testIsFoldableTypeMatrix() {
         // Exactly these fixed-width scalar tags fold; every other type (variable-width STRING/VARCHAR/
         // BINARY, SYMBOL, LONG256, the 128-bit LONG128, decimals, intervals, arrays, cursors, ...)
@@ -738,6 +924,53 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
                     "SELECT sum(CASE WHEN ts >= dateadd('s', -2, $1::timestamp) THEN amount ELSE 0 END) s FROM trades"
             );
         });
+    }
+
+    @Test
+    public void testEndToEndParallelFilterReadsIntRuntimeConstViaGetLong() throws Exception {
+        // Companion to testEndToEndParallelFilterSharesFoldedThreshold, but for the INT wrapper's
+        // lazy getLong() path: an overflowing INT runtime-const product (:b0::INT * 17161::SHORT)
+        // read through a LONG-promoting multiply by a per-row LONG column, inside an async (parallel)
+        // filter. The INT wrapper is not thread-safe, so each worker gets its own clone; this asserts
+        // the cloned copies re-init and serve the widened long correctly, matching the literal form
+        // whose constants fold at compile time. 166478 * 17161 = 2856928958 overflows INT (getInt()
+        // wraps to -1438038338, getLong() widens to +2856928958), so the product with the positive
+        // LONG column is positive on every row and the filter keeps them all.
+        final WorkerPool pool = new WorkerPool(() -> 4);
+        TestUtils.execute(
+                pool,
+                (engine, compiler, sqlExecutionContext) -> {
+                    engine.execute(
+                            "CREATE TABLE t AS (" +
+                                    "  SELECT (x * 1000000)::timestamp ts, x::long bigv" +
+                                    "  FROM long_sequence(1000)" +
+                                    ") TIMESTAMP(ts) PARTITION BY NONE",
+                            sqlExecutionContext
+                    );
+
+                    // prove the async (parallel) filter path is taken for this table/config
+                    assertQuery("SELECT bigv FROM t WHERE (166478 * 17161::SHORT) * bigv > 0")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .assertsPlanContaining("Async");
+
+                    sqlExecutionContext.getBindVariableService().clear();
+                    sqlExecutionContext.getBindVariableService().setStr("b0", "166478");
+
+                    // folded ($b0-derived) INT runtime-const vs literal, both executed in parallel
+                    TestUtils.assertSqlCursors(
+                            compiler,
+                            sqlExecutionContext,
+                            "SELECT bigv FROM t WHERE (166478 * 17161::SHORT) * bigv > 0",
+                            "SELECT bigv FROM t WHERE (:b0::INT * 17161::SHORT) * bigv > 0",
+                            LOG,
+                            false
+                    );
+                },
+                configuration,
+                LOG
+        );
     }
 
     @Test

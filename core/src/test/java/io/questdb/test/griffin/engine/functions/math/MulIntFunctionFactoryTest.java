@@ -37,7 +37,10 @@ public class MulIntFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testIntOverflow() throws Exception {
-        assertQuery("SELECT 1720468802 * 1000000").expectSize().returns("column\n1720468802000000\n");
+        // A constant INT*INT that overflows wraps mod 2^32, exactly like the column/
+        // bind path - it is no longer folded to a wider LONG. Wider numeric/temporal
+        // casts still widen, see testTimestampIntOverflow.
+        assertQuery("SELECT 1720468802 * 1000000").expectSize().returns("column\n-607497088\n");
     }
 
     @Test

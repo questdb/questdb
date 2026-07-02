@@ -26,6 +26,7 @@ package io.questdb.test.griffin.fuzz;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.ImplicitCastException;
@@ -190,6 +191,13 @@ public final class QueryRunner {
     private int faultsFired;
     // Per-type count of faults that actually fired, indexed by FaultType.ordinal().
     private final int[] faultsFiredByType = new int[FaultType.values().length];
+    // Per-output-column FLOAT/DOUBLE mask of the most recent runOnce projection.
+    // Gates the floating-point reduction-order tolerance to FP-typed columns so a
+    // genuine integer COUNT/SUM divergence is never absorbed as FP drift. Refreshed
+    // on every runOnce; all compared variants of one query share a projection, so a
+    // single mask serves both sides of a reconcile. Empty until the first runOnce,
+    // which leaves the tolerance disabled (every differing cell compared exactly).
+    private boolean[] fpColumnMask = new boolean[0];
     // Reused per parseFunction call. Stateful (metadataStack, function stacks)
     // but parseFunction is contractually re-entrant: it pushes/pops its own
     // state in try/finally, so a single instance is safe across the runner's
@@ -662,6 +670,18 @@ public final class QueryRunner {
      *       time; the same logical query against a non-indexed sibling
      *       full-scans and compiles fine. Same planner-sensitivity shape as
      *       the ASC-timestamp check above.</li>
+     *   <li>"left/right-hand side of HORIZON JOIN can only be a table with an
+     *       optional filter" - HORIZON JOIN's single-threaded path (taken when
+     *       parallel HORIZON JOIN is off, or when the aggregate/key functions
+     *       are not parallelism-safe) needs the master to support random access
+     *       (to revisit rows in sorted order) and the slave to support time
+     *       frames. When the filtered SYMBOL column on the master carries a
+     *       POSTING index whose covering set serves the whole filter, the
+     *       planner routes it through a covering-index access path that does not
+     *       support random access, and the LHS is rejected at compile time; the
+     *       same query against a non-indexed sibling full-scans, supports random
+     *       access, and compiles. The RHS check is the slave-side analogue. Same
+     *       planner-sensitivity shape as the SPLICE check above.</li>
      *   <li>"right side column ... is of unsupported type" - ASOF JOIN
      *       falls back to {@code createFullFatJoin} when the slave factory
      *       does not support random access (e.g. shadow's slave becomes a
@@ -733,6 +753,7 @@ public final class QueryRunner {
         return o.exceptionMessage.contains("doesn't have ASC timestamp order")
                 || o.exceptionMessage.contains("RANGE is supported only for queries ordered by designated timestamp")
                 || o.exceptionMessage.contains("side of splice join doesn't support random access")
+                || o.exceptionMessage.contains("of HORIZON JOIN can only be a table with an optional filter")
                 || o.exceptionMessage.contains("column must appear in GROUP BY clause")
                 || o.exceptionMessage.contains("constant expected")
                 || o.exceptionMessage.contains("there is no matching function")
@@ -914,14 +935,32 @@ public final class QueryRunner {
     }
 
     /**
-     * Returns true iff every cell in {@code a} either matches the
-     * corresponding cell in {@code b} exactly or both parse as finite
-     * doubles within a small relative tolerance. Used as a fallback for
-     * floating-point aggregates whose last-digit value depends on the
-     * order of summation, which legitimately differs between an indexed
-     * scan and a full scan or between parquet and native partitions.
+     * Builds the per-output-column FLOAT/DOUBLE mask for a projection. Cell
+     * {@code i} of a materialized row is FP-typed iff {@code mask[i]} is true;
+     * only those cells get the floating-point reduction-order tolerance, so an
+     * exact (integer / non-FP) column always compares bit for bit.
      */
-    private static boolean rowEqualsWithFpTolerance(String a, String b) {
+    private static boolean[] buildFpColumnMask(RecordMetadata metadata, int columnCount) {
+        boolean[] mask = new boolean[columnCount];
+        for (int i = 0; i < columnCount; i++) {
+            int type = metadata.getColumnType(i);
+            mask[i] = type == ColumnType.FLOAT || type == ColumnType.DOUBLE;
+        }
+        return mask;
+    }
+
+    /**
+     * Returns true iff every cell in {@code a} either matches the
+     * corresponding cell in {@code b} exactly or, for a FLOAT/DOUBLE-typed
+     * column (per {@code fpColumnMask}), both parse as finite doubles within
+     * a small relative tolerance. Used as a fallback for floating-point
+     * aggregates whose last-digit value depends on the order of summation,
+     * which legitimately differs between an indexed scan and a full scan or
+     * between parquet and native partitions. Cells in non-FP columns are
+     * compared exactly even when both parse as doubles, so a genuine integer
+     * COUNT/SUM divergence is never absorbed as FP drift.
+     */
+    static boolean rowEqualsWithFpTolerance(String a, String b, boolean[] fpColumnMask) {
         if (a.equals(b)) {
             return true;
         }
@@ -933,6 +972,14 @@ public final class QueryRunner {
         for (int i = 0; i < tokensA.length; i++) {
             if (tokensA[i].equals(tokensB[i])) {
                 continue;
+            }
+            // A differing cell in a non-FP column is a real divergence: only
+            // FLOAT/DOUBLE columns carry reduction-order drift, so everything
+            // else must match exactly. The trailing empty token (materialize
+            // appends a tab after the last column) has no mask entry but is
+            // always equal on both sides, so it never reaches here.
+            if (i >= fpColumnMask.length || !fpColumnMask[i]) {
+                return false;
             }
             double da;
             double db;
@@ -954,14 +1001,27 @@ public final class QueryRunner {
             if (Math.abs(da - db) <= doubleEps) {
                 continue;
             }
-            // Parallel SUM/AVG over FLOAT (or DOUBLE columns whose values
-            // were promoted from FLOAT) drifts at single-precision ulps
-            // when partial sums are merged across worker threads, which
-            // is several orders of magnitude looser than 1e-12 relative.
-            // Allow up to 32 FLOAT ulps -- still tight enough to flag a
-            // real arithmetic bug, which would shift the result by far
-            // more than ulp-scale noise.
-            double floatEps = Math.max(1e-15, Math.ulp((float) scale) * 32.0);
+            // Parallel/storage-partitioned SUM/AVG over FLOAT (or DOUBLE
+            // columns whose values were promoted from FLOAT) drifts at
+            // single-precision relative scale: per-frame partial sums merge
+            // in an order set by the worker/frame partition, which
+            // legitimately differs between an indexed scan and a full scan,
+            // between parquet and native partitions, and even run to run
+            // under work stealing. The drift is a small multiple of FLOAT
+            // epsilon relative to the magnitude -- a HORIZON JOIN sum over a
+            // FLOAT slave column drifted ~32x FLOAT epsilon between a native
+            // and a parquet shadow -- so allow 64x to cover the tail with
+            // margin. This stays far below the shift a real row-set error
+            // produces (dropping or adding even one FLOAT term moves the sum
+            // by thousands of FLOAT epsilons). The mask check above already
+            // restricted this tolerance to FLOAT/DOUBLE columns, so an integer
+            // COUNT or LONG SUM that diverges by even one unit is flagged
+            // regardless of magnitude.
+            //
+            // scale * Math.ulp(1f) is the relative ulp at the magnitude;
+            // unlike Math.ulp((float) scale) it does not quantize to the
+            // bottom of the binade, where the bare ulp runs up to 2x tight.
+            double floatEps = Math.max(1e-15, scale * (Math.ulp(1f) * 64.0));
             if (Math.abs(da - db) > floatEps) {
                 return false;
             }
@@ -1054,13 +1114,13 @@ public final class QueryRunner {
      * Multiset comparison with floating-point tolerance: the two row sets
      * are equivalent iff each line in {@code a} can be paired with a
      * distinct line in {@code b} that matches under
-     * {@link #rowEqualsWithFpTolerance(String, String)}. Used after a
+     * {@link #rowEqualsWithFpTolerance(String, String, boolean[])}. Used after a
      * strict {@link #rowsetEquals} fails to absorb FP-reduction-order
      * drift in {@code SUM}/{@code AVG} aggregates whose last digits depend
      * on the access path the planner picks. Greedy matching is O(n^2);
      * fuzz queries produce small row sets so this is fine.
      */
-    private static boolean rowsetEqualsWithFpTolerance(StringSink a, StringSink b) {
+    private static boolean rowsetEqualsWithFpTolerance(StringSink a, StringSink b, boolean[] fpColumnMask) {
         String[] linesA = a.toString().split("\n", -1);
         String[] linesB = b.toString().split("\n", -1);
         if (linesA.length != linesB.length) {
@@ -1070,7 +1130,7 @@ public final class QueryRunner {
         for (String lineA : linesA) {
             boolean matched = false;
             for (int j = 0; j < linesB.length; j++) {
-                if (!usedB[j] && rowEqualsWithFpTolerance(lineA, linesB[j])) {
+                if (!usedB[j] && rowEqualsWithFpTolerance(lineA, linesB[j], fpColumnMask)) {
                     usedB[j] = true;
                     matched = true;
                     break;
@@ -1368,7 +1428,7 @@ public final class QueryRunner {
             // index/parquet access paths and across JIT modes. The
             // tolerance is tight enough to flag a real arithmetic
             // divergence while absorbing reduction-order noise.
-            if (a.rowsRead == b.rowsRead && rowsetEqualsWithFpTolerance(rowsA, rowsB)) {
+            if (a.rowsRead == b.rowsRead && rowsetEqualsWithFpTolerance(rowsA, rowsB, fpColumnMask)) {
                 return Result.skipped("rowset matches with floating-point tolerance");
             }
             // Literal-vs-bind diff where every differing cell is the INT
@@ -1573,6 +1633,11 @@ public final class QueryRunner {
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
                 RecordMetadata metadata = factory.getMetadata();
                 int columnCount = metadata.getColumnCount();
+                // Refresh the FP-column mask for this projection so the reconcile
+                // tolerance only fires on FLOAT/DOUBLE cells. Both compared
+                // variants of a query share a projection, so the mask the last
+                // runOnce leaves is correct for the pending reconcile.
+                fpColumnMask = buildFpColumnMask(metadata, columnCount);
                 rowsRead = materialize(cursor, metadata, columnCount, rows);
                 // toTop() must rewind without re-executing, and size() /
                 // calculateSize() must agree with the materialized row count.

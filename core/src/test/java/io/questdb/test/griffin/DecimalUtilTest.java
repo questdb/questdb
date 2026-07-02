@@ -292,6 +292,70 @@ public class DecimalUtilTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEqualPrecisionAndScaleCast() throws Exception {
+        // A DECIMAL(p, p) type has zero integer digits and p fractional digits, so it can hold
+        // any purely fractional value in (-1, 1). The literal cast used to reject every value
+        // with "requires precision of p + 1", which also showed up as a storage divergence in
+        // the query fuzzer (the indexed shadow pruned the throwing cast away, the primary did not).
+        assertMemoryLeak(() -> {
+            assertQuery("SELECT -0.3574::DECIMAL(4, 4) x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x
+                            -0.3574
+                            """);
+
+            assertQuery("SELECT 0.0001::DECIMAL(4, 4) x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x
+                            0.0001
+                            """);
+
+            assertQuery("SELECT 0.0000::DECIMAL(4, 4) x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x
+                            0.0000
+                            """);
+
+            assertQuery("SELECT 0.5::DECIMAL(2, 2) x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x
+                            0.50
+                            """);
+
+            // A bare integer zero literal is the value 0 and fits DECIMAL(p, p).
+            assertQuery("SELECT 0::DECIMAL(4, 4) x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x
+                            0.0000
+                            """);
+
+            // The string -> DECIMAL(p, p) cast routes through DecimalParser, where the integer
+            // zero "0" used to be rejected by the same precision floor.
+            assertQuery("SELECT cast('0' as DECIMAL(2, 2)) x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x
+                            0.00
+                            """);
+
+            // A value with a non-zero integer part still does not fit DECIMAL(p, p).
+            assertQuery("SELECT 1.5::DECIMAL(2, 2) x")
+                    .fails(7, "requires precision of 3 but is limited to 2");
+        });
+    }
+
+    @Test
     public void testGetDecimal128() {
         Assert.assertTrue(DecimalUtil.getDecimal(sqlExecutionContext, Decimal128.MAX_PRECISION) instanceof Decimal128);
         Assert.assertTrue(DecimalUtil.getDecimal(sqlExecutionContext, 19) instanceof Decimal128);
@@ -785,6 +849,37 @@ public class DecimalUtilTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParseDecimalConstantEqualPrecisionAndScale() throws SqlException {
+        // A purely fractional value fits a DECIMAL(p, p) type: precision p == scale p means zero
+        // integer digits and exactly p fractional digits. The floor on the required precision is
+        // therefore `scale`, not `scale + 1`; the latter made every literal report
+        // "requires precision of p + 1" and so left no value castable to a DECIMAL(p, p) type.
+        assertEqualPrecisionAndScale("0.3574", (short) 3574);
+        assertEqualPrecisionAndScale("-0.3574", (short) -3574);
+        assertEqualPrecisionAndScale("0.9999", (short) 9999);
+        assertEqualPrecisionAndScale("-0.9999", (short) -9999);
+        assertEqualPrecisionAndScale("0.0001", (short) 1);
+        assertEqualPrecisionAndScale("0.0000", (short) 0);
+        assertEqualPrecisionAndScale("0.5", (short) 5000);
+
+        // A bare integer zero is the value 0, which fits any DECIMAL(p, p): the leading "0"
+        // carries no significant digits, so it must not demand precision p + 1.
+        assertEqualPrecisionAndScale("0", (short) 0);
+        assertEqualPrecisionAndScale("-0", (short) 0);
+        assertEqualPrecisionAndScale("00", (short) 0);
+
+        // A value with a non-zero integer part still does not fit a DECIMAL(p, p) type.
+        for (String value : new String[]{"1.5", "5", "1.0000", "-1.0000"}) {
+            try {
+                DecimalUtil.parseDecimalConstant(0, sqlExecutionContext, value, 4, 4);
+                Assert.fail("Expected SqlException for " + value);
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getMessage(), "requires precision of 5 but is limited to 4");
+            }
+        }
+    }
+
+    @Test
     public void testParseDecimalConstantExceedsMaxPrecision() {
         String tooLarge = "1234567890123456789012345678901234567890123456789012345678901234567890123456789"; // 80 digits
         try {
@@ -1238,6 +1333,13 @@ public class DecimalUtilTest extends AbstractCairoTest {
         assertStoreRow(value, 36);
         value.ofLong(12345678901234L, 0);
         assertStoreRow(value, 72);
+    }
+
+    private void assertEqualPrecisionAndScale(String literal, short expectedUnscaled) throws SqlException {
+        // precision 4 maps to DECIMAL16, whose backing value is a short.
+        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, sqlExecutionContext, literal, 4, 4);
+        Assert.assertTrue(literal, result instanceof Decimal16Constant);
+        Assert.assertEquals(literal, expectedUnscaled, result.getDecimal16(null));
     }
 
     private void assertLoadDecimal(Decimal256 value, int type) {

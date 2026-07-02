@@ -51,8 +51,10 @@ public class CastIntToDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public double getDouble(Record rec) {
-            final int value = arg.getInt(rec);
-            return value != Numbers.INT_NULL ? value : Double.NaN;
+            // getLong() widens: NULL-safe for a plain INT, un-wrapped for overflowing
+            // INT arithmetic, so the wider target holds the full-width result.
+            final long value = arg.getLong(rec);
+            return value != Numbers.LONG_NULL ? value : Double.NaN;
         }
     }
 }

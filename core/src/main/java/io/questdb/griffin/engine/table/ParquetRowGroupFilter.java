@@ -200,13 +200,16 @@ public final class ParquetRowGroupFilter {
                                     filterValues.putInt(f.getChar(null));
                                     break;
                                 case ColumnType.INT:
+                                    // INT value compares at INT precision (BYTE promotes to INT):
+                                    // getInt() wraps overflowing INT arithmetic like the native
+                                    // scan; getLong() would keep the un-wrapped product and prune
+                                    // wrongly.
+                                    filterValues.putInt(f.getInt(null));
+                                    break;
                                 case ColumnType.LONG:
-                                    // Read via getLong() so INT arithmetic (Mul/Add/Sub/Neg)
-                                    // returns the long-precise result that the native filter
-                                    // sees after BYTE-to-LONG comparison promotion. Clamp into
-                                    // INT range for the parquet stats slot; values outside that
-                                    // range cannot equal any BYTE row anyway, and the saturated
-                                    // bound preserves the GT/GE/LT/LE result against BYTE stats.
+                                    // LONG value compares at LONG precision: take the full width
+                                    // and clamp into the INT stats slot (out-of-range values match
+                                    // no BYTE row, and the saturated bound preserves GT/GE/LT/LE).
                                     filterValues.putInt(clampLongToInt(f.getLong(null)));
                                     break;
                                 case ColumnType.FLOAT:
@@ -223,7 +226,12 @@ public final class ParquetRowGroupFilter {
                             Function f = valueFunctions.getQuick(j);
                             switch (f.getType()) {
                                 case ColumnType.INT:
+                                    // INT precision (SHORT promotes to INT); getInt() wraps like
+                                    // the native scan.
+                                    filterValues.putInt(f.getInt(null));
+                                    break;
                                 case ColumnType.LONG:
+                                    // LONG precision: full width, clamped into the INT stats slot.
                                     filterValues.putInt(clampLongToInt(f.getLong(null)));
                                     break;
                                 case ColumnType.FLOAT:
@@ -244,11 +252,14 @@ public final class ParquetRowGroupFilter {
                         for (int j = 0; j < valueCount; j++) {
                             Function f = valueFunctions.getQuick(j);
                             int vType = f.getType();
-                            if (vType == ColumnType.INT || vType == ColumnType.LONG) {
+                            if (vType == ColumnType.LONG) {
+                                // LONG precision: full width, clamped into the INT stats slot.
                                 filterValues.putInt(clampLongToInt(f.getLong(null)));
                             } else if (vType == ColumnType.FLOAT || vType == ColumnType.DOUBLE) {
                                 filterValues.putInt((int) f.getDouble(null));
                             } else {
+                                // INT (and narrower) compare at INT precision; getInt() wraps
+                                // overflowing INT arithmetic like the native scan.
                                 filterValues.putInt(f.getInt(null));
                             }
                         }

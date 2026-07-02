@@ -245,46 +245,92 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     }
 
     /**
-     * Merges intervals from another RuntimeIntervalModel into this builder.
-     * Currently only support static intervals.
+     * Derives the WINDOW JOIN slave page-frame scan interval from the master interval shifted by the
+     * window frame bounds (loOffset/hiOffset). The slave scan must cover, for every qualifying master
+     * row, the slave window around it, so when the master predicate yields multiple disjoint intervals
+     * (e.g. {@code t.ts != <literal>} -> two ranges) the slave range is the UNION of the per-range
+     * offsets, not their intersection. This builds that union and intersects it with the builder's own
+     * intervals once. Only static intervals are supported.
      *
-     * @param model the RuntimeIntervalModel to merge from
+     * @param model    the RuntimeIntervalModel to merge from
+     * @param loOffset the window frame lo offset, subtracted from each master interval lo; {@code LONG_NULL}
+     *                 or {@code Long.MAX_VALUE} leaves the lower bound open (include-prevailing)
+     * @param hiOffset the window frame hi offset, added to each master interval hi; {@code LONG_NULL}
+     *                 or {@code Long.MAX_VALUE} leaves the upper bound open
      */
     public void merge(RuntimeIntervalModel model, long loOffset, long hiOffset) {
         if (model == null || isEmptySet()) {
             return;
         }
-        ObjList<Function> dynamicRangeList = model.getDynamicRangeList();
+        ObjList<Function> modelDynamicRangeList = model.getDynamicRangeList();
         LongList modelIntervals = model.getStaticIntervals();
-        if (modelIntervals != null && modelIntervals.size() > 0) {
-            int dynamicStart = modelIntervals.size() - (dynamicRangeList != null ? dynamicRangeList.size() * IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL : 0);
-            TimestampDriver driver = model.getTimestampDriver();
+        if (modelIntervals == null || modelIntervals.size() == 0) {
+            return;
+        }
+        final int dynamicStart = modelIntervals.size() - (modelDynamicRangeList != null ? modelDynamicRangeList.size() * IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL : 0);
+        if (dynamicStart <= 0) {
+            // Master carries only dynamic (runtime) intervals (e.g. t.ts != :b0), unsupported here.
+            // Leave the slave unconstrained; a full scan is always a safe superset.
+            return;
+        }
+        final TimestampDriver driver = model.getTimestampDriver();
 
+        if (dynamicRangeList.size() != 0) {
+            // The builder's own dynamic predicates encode staticIntervals in 4-long form, so the union
+            // path cannot append plain intervals. Fall back to per-interval intersect. This only unions
+            // correctly for a single master interval (dynamicStart == 2): for >= 2 master intervals the
+            // per-interval intersect would compute their intersection (often empty) instead of the union,
+            // collapsing the slave frame. In practice the WINDOW JOIN slave is a plain table with no
+            // designated-timestamp filter, so the builder is static and this branch carries a single
+            // interval, but guard the multi-interval case rather than rely on that invariant: leaving the
+            // slave unconstrained is always a safe superset.
+            if (dynamicStart > 2) {
+                return;
+            }
             for (int i = 0; i < dynamicStart; i += 2) {
-                long lo = modelIntervals.getQuick(i);
-                if (loOffset == Numbers.LONG_NULL || loOffset == Long.MAX_VALUE) {
-                    lo = loOffset;
-                } else if (lo != Numbers.LONG_NULL && lo != Long.MAX_VALUE) {
-                    lo = timestampDriver.from(lo, driver.getTimestampType());
-                    lo -= loOffset;
-                }
-                long hi = modelIntervals.getQuick(i + 1);
-                if (hiOffset == Numbers.LONG_NULL || hiOffset == Long.MAX_VALUE) {
-                    hi = hiOffset;
-                } else if (hi != Numbers.LONG_NULL && hi != Long.MAX_VALUE) {
-                    hi = timestampDriver.from(hi, driver.getTimestampType());
-                    hi += hiOffset;
-                }
+                final long lo = offsetIntervalLo(modelIntervals.getQuick(i), loOffset, driver);
+                final long hi = offsetIntervalHi(modelIntervals.getQuick(i + 1), hiOffset, driver);
                 if (lo == Numbers.LONG_NULL && hi == Long.MAX_VALUE) {
                     return;
-                } else {
-                    intersect(lo, hi);
                 }
+                intersect(lo, hi);
             }
+            return;
+        }
 
-            // TODO: Add support for dynamic intervals in merge() method
-            // When merging RuntimeIntervalModel with dynamic intervals, need to:
-            // Extend STATIC_LONGS_PER_DYNAMIC_INTERVAL to include offset metadata
+        final int size = staticIntervals.size();
+        boolean hasUnion = false;
+        for (int i = 0; i < dynamicStart; i += 2) {
+            final long lo = offsetIntervalLo(modelIntervals.getQuick(i), loOffset, driver);
+            final long hi = offsetIntervalHi(modelIntervals.getQuick(i + 1), hiOffset, driver);
+            if (lo == Numbers.LONG_NULL && hi == Long.MAX_VALUE) {
+                // an offset interval spans the entire range, so the union does too: no constraint.
+                staticIntervals.setPos(size);
+                return;
+            }
+            if (lo > hi) {
+                continue; // empty offset interval, contributes nothing
+            }
+            // Master intervals are sorted ascending and non-overlapping, and the same offsets preserve
+            // that order, so a single forward pass merges any overlaps the offsets introduce.
+            if (hasUnion && lo <= staticIntervals.getLast()) {
+                if (hi > staticIntervals.getLast()) {
+                    staticIntervals.setQuick(staticIntervals.size() - 1, hi);
+                }
+            } else {
+                staticIntervals.add(lo, hi);
+                hasUnion = true;
+            }
+        }
+
+        // hasUnion is always true here (lo <= hi for a valid window frame); guard stays defensive so an
+        // empty append leaves the slave unconstrained rather than empty.
+        if (hasUnion) {
+            if (intervalApplied) {
+                IntervalUtils.intersectInPlace(staticIntervals, size);
+            } else {
+                intervalApplied = true;
+            }
         }
     }
 
@@ -555,6 +601,44 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         IntervalUtils.encodeInterval(0L, 0L, IntervalOperation.INTERSECT_INTERVALS, staticIntervals);
         dynamicRangeList.add(expr);
         intervalApplied = true;
+    }
+
+    // Shifts a master interval's upper bound into the slave's resolution and adds the frame's hi
+    // offset, leaving open-ended bounds/offsets as their sentinel. On overflow the wrapped result is
+    // a smaller upper bound that skips real slave rows, so clamp to the open upper sentinel (a safe
+    // superset that over-scans rather than dropping data).
+    private long offsetIntervalHi(long hi, long hiOffset, TimestampDriver driver) {
+        if (hiOffset == Numbers.LONG_NULL || hiOffset == Long.MAX_VALUE) {
+            return hiOffset;
+        }
+        if (hi != Numbers.LONG_NULL && hi != Long.MAX_VALUE) {
+            final long base = timestampDriver.from(hi, driver.getTimestampType());
+            final long result = base + hiOffset;
+            if (((base ^ result) & (hiOffset ^ result)) < 0) {
+                return Long.MAX_VALUE;
+            }
+            return result;
+        }
+        return hi;
+    }
+
+    // Shifts a master interval's lower bound into the slave's resolution and subtracts the frame's lo
+    // offset, leaving open-ended bounds/offsets as their sentinel. On overflow the wrapped result is
+    // a larger lower bound that skips real slave rows, so clamp to the open lower sentinel (a safe
+    // superset that over-scans rather than dropping data).
+    private long offsetIntervalLo(long lo, long loOffset, TimestampDriver driver) {
+        if (loOffset == Numbers.LONG_NULL || loOffset == Long.MAX_VALUE) {
+            return loOffset;
+        }
+        if (lo != Numbers.LONG_NULL && lo != Long.MAX_VALUE) {
+            final long base = timestampDriver.from(lo, driver.getTimestampType());
+            final long result = base - loOffset;
+            if (((base ^ loOffset) & (base ^ result)) < 0) {
+                return Numbers.LONG_NULL;
+            }
+            return result;
+        }
+        return lo;
     }
 
     private void subtractCompiledTickExpr(CompiledTickExpression expr) {

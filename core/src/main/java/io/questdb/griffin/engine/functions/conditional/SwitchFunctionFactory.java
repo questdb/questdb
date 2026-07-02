@@ -662,8 +662,6 @@ public class SwitchFunctionFactory implements FunctionFactory {
      * to the else value without an explicit check.
      */
     private static class SymbolSwitchConstIntFunction extends IntFunction {
-        private final double doubleElseValue;
-        private final double doubleThenValue;
         private final int elseValue;
         private final SymbolFunction keyFunction;
         private final String strKey;
@@ -680,13 +678,6 @@ public class SwitchFunctionFactory implements FunctionFactory {
             this.strKey = strKey;
             this.thenValue = thenValue;
             this.elseValue = elseValue;
-            this.doubleThenValue = thenValue;
-            this.doubleElseValue = elseValue;
-        }
-
-        @Override
-        public double getDouble(Record rec) {
-            return keyFunction.getInt(rec) == resolvedKey ? doubleThenValue : doubleElseValue;
         }
 
         @Override
@@ -694,10 +685,12 @@ public class SwitchFunctionFactory implements FunctionFactory {
             return keyFunction.getInt(rec) == resolvedKey ? thenValue : elseValue;
         }
 
-        @Override
-        public long getLong(Record rec) {
-            return keyFunction.getInt(rec) == resolvedKey ? thenValue : elseValue;
-        }
+        // getDouble()/getLong()/getFloat()/getDate()/getTimestamp() are
+        // intentionally NOT overridden: a no-ELSE branch yields elseValue ==
+        // INT_NULL, and the base IntFunction widens it through Numbers.intToLong
+        // / intToDouble / intToFloat, mapping INT_NULL to the matching wide NULL.
+        // A raw ternary here would widen INT_NULL to -2147483648 / -2.147e9 and
+        // corrupt wide-type CASTs that read these getters (see Bugfix 9).
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {

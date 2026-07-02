@@ -259,9 +259,23 @@ public final class DecimalParser {
         // Note that contrary to the scale, it's alright to have a precision that is different than the user provided
         // precision, as long as it's lower.
 
-        // Compute the final precision of the decimal
+        // Compute the final precision of the decimal. A purely fractional value (no integer
+        // digits, e.g. 0.3574) needs exactly `scale` digits, so the floor is `scale`, not
+        // `scale + 1`; flooring at `scale + 1` would make every literal uncastable to a
+        // DECIMAL(p, p) type. A zero value carries no significant digits at all, so its precision
+        // is just max(scale, 1) regardless of how the literal is written ("0", "-0", "0e3"): the
+        // leading integer zero that the strip loop keeps (it never empties the mantissa) must not
+        // inflate the precision, or 0 would be uncastable to DECIMAL(p, p) either. The floor of 1
+        // keeps a single digit for a zero with no scale.
         int pow = literalDigits + exp;
-        final int finalPrecision = Math.max(pow, scale + 1);
+        boolean isZero = true;
+        for (int i = digitLo; i < digitHi; i++) {
+            if (i != dot && cs.charAt(i) != '0') {
+                isZero = false;
+                break;
+            }
+        }
+        final int finalPrecision = isZero ? Math.max(scale, 1) : Math.max(pow, scale);
         if (precision != -1 && finalPrecision > precision) {
             throw NumericException.instance()
                     .put("decimal '").put(cs)

@@ -27,11 +27,14 @@ package io.questdb.test.griffin.fuzz;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.test.griffin.fuzz.clauses.GroupByClause;
+import io.questdb.test.griffin.fuzz.clauses.HorizonJoinClause;
+import io.questdb.test.griffin.fuzz.clauses.LatestOnClause;
 import io.questdb.test.griffin.fuzz.clauses.PostingClause;
 import io.questdb.test.griffin.fuzz.clauses.SampleByClause;
 import io.questdb.test.griffin.fuzz.clauses.SimpleClause;
 import io.questdb.test.griffin.fuzz.clauses.TemporalJoinClause;
 import io.questdb.test.griffin.fuzz.clauses.WindowClause;
+import io.questdb.test.griffin.fuzz.clauses.WindowJoinClause;
 import io.questdb.test.griffin.fuzz.expr.BindContext;
 
 /**
@@ -40,15 +43,18 @@ import io.questdb.test.griffin.fuzz.expr.BindContext;
  * Shape distribution is roughly: temporal JOIN 15% (when two or more
  * tables exist), posting-index read 15% (when the table has a
  * posting-indexed symbol), SAMPLE BY 20%, GROUP BY 20%, and the remaining
- * ~30% split between SIMPLE and WINDOW. The join and posting bands fall
- * through to the generic single-table shapes when their precondition is
- * not met; SAMPLE BY and WINDOW downgrade to SIMPLE on sources without a
- * designated timestamp.
+ * ~30% split between SIMPLE, LATEST ON and WINDOW. The join and posting
+ * bands fall through to the generic single-table shapes when their
+ * precondition is not met; SAMPLE BY, LATEST ON and WINDOW downgrade to
+ * SIMPLE on sources without a designated timestamp.
  * <p>
  * When window fuzzing is enabled ({@code windowEnabled}, on by default), a
- * WINDOW band is carved out of the upper half of the SIMPLE range; the
- * SAMPLE BY and GROUP BY bands are unchanged, so disabling window restores
- * the exact pre-window shape distribution (SIMPLE ~30%).
+ * WINDOW band is carved out of the top of the SIMPLE range ([85, 100)); when
+ * LATEST ON fuzzing is enabled ({@code latestOnEnabled}, on by default), a
+ * LATEST ON band is carved just below it ([78, 85)). Both carve from the
+ * SIMPLE range and leave the SAMPLE BY and GROUP BY bands untouched, so
+ * disabling either knob independently restores the exact prior shape
+ * distribution.
  * <p>
  * For non-join shapes the {@link FuzzSource} is usually a direct
  * reference to a real table, but occasionally wrapped in a subquery or
@@ -67,7 +73,7 @@ public final class QueryGenerator {
     private QueryGenerator() {
     }
 
-    public static GeneratedQuery generate(Rnd rnd, ObjList<FuzzTable> tables, BindContext ctx, boolean injectFaultFn, boolean windowEnabled) {
+    public static GeneratedQuery generate(Rnd rnd, ObjList<FuzzTable> tables, BindContext ctx, boolean injectFaultFn, boolean windowEnabled, boolean latestOnEnabled, boolean horizonJoinEnabled, boolean windowJoinEnabled) {
         int pick = rnd.nextInt(100);
         FuzzTable t = tables.getQuick(rnd.nextInt(tables.size()));
 
@@ -76,10 +82,12 @@ public final class QueryGenerator {
             if (other == t) {
                 other = tables.getQuick((tables.indexOf(t) + 1) % tables.size());
             }
-            // Joins stay on direct, real tables: ASOF/LT/SPLICE need a
-            // designated timestamp on both sides which virtual tables
-            // don't carry.
-            return TemporalJoinClause.generate(rnd, FuzzSource.direct(t), FuzzSource.direct(other), ctx, injectFaultFn);
+            // Joins stay on direct, real tables: ASOF/LT/SPLICE, HORIZON and
+            // WINDOW joins all need a designated timestamp on both sides which
+            // virtual tables don't carry. The 15% join band is split across the
+            // enabled join kinds; with both new kinds off it stays temporal-only
+            // and draws no extra rnd op, preserving the original distribution.
+            return generateJoin(rnd, t, other, ctx, injectFaultFn, horizonJoinEnabled, windowJoinEnabled);
         }
 
         // Posting-index read shapes (distinct key enumeration / covering read)
@@ -108,14 +116,49 @@ public final class QueryGenerator {
             return GroupByClause.generate(rnd, source, ctx, injectFaultFn);
         }
         // pick in [70, 100) is SIMPLE. When window fuzzing is enabled, carve the
-        // upper half [85, 100) into a WINDOW band; this leaves the SAMPLE BY and
-        // GROUP BY bands untouched, so disabling window restores the exact
-        // pre-window distribution. Window functions order by the designated
-        // timestamp, so a source without one falls through to SIMPLE.
+        // upper band [85, 100) into WINDOW; when LATEST ON fuzzing is enabled,
+        // carve [78, 85) into LATEST ON. Both carve from the SIMPLE range and
+        // leave the SAMPLE BY and GROUP BY bands untouched, so disabling either
+        // knob independently restores the exact prior distribution. Window
+        // functions order by the designated timestamp and LATEST ON names it, so
+        // a source without one falls through to SIMPLE in both cases.
         if (windowEnabled && pick >= 85 && source.getTable().getTsColumnName() != null) {
             return WindowClause.generate(rnd, source, ctx, injectFaultFn);
         }
+        if (latestOnEnabled && pick >= 78 && pick < 85 && source.getTable().getTsColumnName() != null) {
+            return LatestOnClause.generate(rnd, source, ctx, injectFaultFn);
+        }
         return SimpleClause.generate(rnd, source, ctx, injectFaultFn);
+    }
+
+    /**
+     * Picks one of the enabled join kinds for the join band. Temporal
+     * (ASOF/LT/SPLICE) is always available; HORIZON and WINDOW joins are added
+     * when their config flags are on. The sub-pick is drawn only when more than
+     * one kind is enabled, so the both-off case reproduces the pre-existing
+     * temporal-only rnd stream exactly. All three kinds run on direct real
+     * tables and thread {@code injectFaultFn} into their master-only WHERE.
+     */
+    private static GeneratedQuery generateJoin(
+            Rnd rnd,
+            FuzzTable t,
+            FuzzTable other,
+            BindContext ctx,
+            boolean injectFaultFn,
+            boolean horizonJoinEnabled,
+            boolean windowJoinEnabled
+    ) {
+        int kinds = 1 + (horizonJoinEnabled ? 1 : 0) + (windowJoinEnabled ? 1 : 0);
+        int joinPick = kinds > 1 ? rnd.nextInt(kinds) : 0;
+        if (joinPick == 0) {
+            return TemporalJoinClause.generate(rnd, FuzzSource.direct(t), FuzzSource.direct(other), ctx, injectFaultFn);
+        }
+        if (horizonJoinEnabled && joinPick == 1) {
+            return HorizonJoinClause.generate(rnd, t, other, ctx, injectFaultFn);
+        }
+        // The remaining slot is WINDOW: either joinPick == 2 (both kinds on) or
+        // joinPick == 1 with only WINDOW enabled.
+        return WindowJoinClause.generate(rnd, t, other, ctx, injectFaultFn);
     }
 
     private static FuzzSource pickSource(Rnd rnd, FuzzTable realTable) {

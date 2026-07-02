@@ -34,6 +34,7 @@ import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -235,15 +236,19 @@ public class HorizonJoinRecord implements Record {
     }
 
     @Override
-    public @Nullable Long256 getLong256A(int col) {
+    public Long256 getLong256A(int col) {
+        // Return the NULL_LONG256 sentinel, not Java null, when the slave row is
+        // absent: callers such as Long256Impl.isNull() / the LONG256 group-by
+        // functions dereference the result without a null check, matching the
+        // contract that a real record never returns a Java-null Long256.
         Record src = getSourceRecord(col);
-        return src != null ? src.getLong256A(columnIndices[col]) : null;
+        return src != null ? src.getLong256A(columnIndices[col]) : Long256Impl.NULL_LONG256;
     }
 
     @Override
-    public @Nullable Long256 getLong256B(int col) {
+    public Long256 getLong256B(int col) {
         Record src = getSourceRecord(col);
-        return src != null ? src.getLong256B(columnIndices[col]) : null;
+        return src != null ? src.getLong256B(columnIndices[col]) : Long256Impl.NULL_LONG256;
     }
 
     @Override

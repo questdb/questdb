@@ -1415,10 +1415,22 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 } else {
                     int intConst = function.getInt(null);
                     long longConst = function.getLong(null);
-                    if (intConst == Numbers.INT_NULL || intConst == longConst) {
+                    // Key the null fold off longConst, not intConst: a genuine null
+                    // widens to LONG_NULL via getLong(), but an INT arithmetic that
+                    // merely wraps ONTO the -2^31 sentinel (e.g. 2147483647 + 1, whose
+                    // getLong() holds the real 2147483648) does not. Testing
+                    // intConst == INT_NULL cannot tell the two apart and would fold the
+                    // wrap-to-sentinel case to NULL, diverging from the column/bind path.
+                    if (longConst == Numbers.LONG_NULL || intConst == longConst) {
                         return IntConstant.newInstance(intConst);
                     } else {
-                        return new LongConstant(longConst);
+                        // INT arithmetic overflowed: getInt() wrapped mod 2^32, getLong()
+                        // holds the full-width product. Folding to LONG would change the
+                        // static type INT->LONG and diverge from the column/bind path,
+                        // which keeps INT and wraps. Leave it unfolded so getInt() wraps
+                        // like the runtime path while getLong()/getTimestamp() still widen
+                        // for the wider numeric/temporal casts that read them.
+                        return function;
                     }
                 }
             case ColumnType.BOOLEAN:
