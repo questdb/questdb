@@ -36,6 +36,7 @@ import io.questdb.cairo.file.ReadableBlock;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
+import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
@@ -66,7 +67,14 @@ public class LiveViewDefinition {
     // finds a higher value refuses to load the view and surfaces it as
     // version_unsupported. Bump this when the CORE layout changes incompatibly;
     // each bump needs explicit per-version read handling.
-    public static final int LIVE_VIEW_DEFINITION_FORMAT_VERSION = 1;
+    //
+    // Version history:
+    //   1 - initial CORE layout.
+    //   2 - appends the dependency columns' compile-time types after their names,
+    //       so a referenced base column whose TYPE changes invalidates the view.
+    //       A version-1 block has no types; readFrom leaves the type list empty and
+    //       the invalidation gate falls back to name-only checking for it.
+    public static final int LIVE_VIEW_DEFINITION_FORMAT_VERSION = 2;
     // _lv.drop is the durable "DROP in progress" sentinel. dropLiveView creates
     // it (and fsyncs it) before any in-memory or on-disk teardown so a crash
     // mid-drop leaves an unambiguous signal for the startup loader to reap.
@@ -85,6 +93,14 @@ public class LiveViewDefinition {
     // using this set: only changes touching one of these columns mark the view
     // INVALID; unrelated ALTERs leave it ACTIVE.
     private final ObjList<String> dependencyColumnNames;
+    // Compile-time types of the dependency columns, positionally parallel to
+    // dependencyColumnNames. ApplyWal2TableJob's schema-change hook compares these
+    // against the post-change base metadata: a referenced column whose TYPE changed
+    // (same name, different stride) must invalidate the view, since the cached
+    // compiled factory would keep reading the new on-disk bytes through the old
+    // stride. Empty for a version-1 definition read from disk (no types persisted);
+    // the gate then falls back to name-only checking for it.
+    private final IntList dependencyColumnTypes;
     private final long flushEveryInterval;
     private final char flushEveryIntervalUnit;
     // User-facing knob for the in-memory tier: how much of the most recent data
@@ -115,6 +131,7 @@ public class LiveViewDefinition {
             boolean backfillRequested,
             @Nullable LvAnchorSpec anchorSpec,
             ObjList<String> dependencyColumnNames,
+            IntList dependencyColumnTypes,
             GenericRecordMetadata metadata
     ) {
         this.viewName = viewName;
@@ -131,6 +148,7 @@ public class LiveViewDefinition {
         this.backfillRequested = backfillRequested;
         this.anchorSpec = anchorSpec;
         this.dependencyColumnNames = dependencyColumnNames;
+        this.dependencyColumnTypes = dependencyColumnTypes;
         this.metadata = metadata;
     }
 
@@ -147,9 +165,16 @@ public class LiveViewDefinition {
         block.putInt(definition.partitionBy);
         block.putLong(definition.viewLowerBoundTimestamp);
         block.putBool(definition.backfillRequested);
-        block.putInt(definition.dependencyColumnNames.size());
-        for (int i = 0, n = definition.dependencyColumnNames.size(); i < n; i++) {
+        final int depCount = definition.dependencyColumnNames.size();
+        block.putInt(depCount);
+        for (int i = 0; i < depCount; i++) {
             block.putStr(definition.dependencyColumnNames.getQuick(i));
+        }
+        // Version 2+: the dependency columns' compile-time types, positionally
+        // parallel to the names above (same count). Read back only when the CORE
+        // block stamps version >= 2.
+        for (int i = 0; i < depCount; i++) {
+            block.putInt(definition.dependencyColumnTypes.getQuick(i));
         }
         block.commit(LIVE_VIEW_DEFINITION_CORE_MSG_TYPE);
 
@@ -280,6 +305,7 @@ public class LiveViewDefinition {
         long viewLowerBoundTimestamp = 0;
         boolean backfillRequested = false;
         ObjList<String> dependencyColumnNames = new ObjList<>();
+        IntList dependencyColumnTypes = new IntList();
         LvAnchorSpec anchorSpec = null;
 
         final BlockFileReader.BlockCursor cursor = reader.getCursor();
@@ -288,7 +314,8 @@ public class LiveViewDefinition {
             if (block.type() == LIVE_VIEW_DEFINITION_CORE_MSG_TYPE) {
                 coreFound = true;
                 long offset = 0;
-                requireSupportedFormatVersion(block.getInt(offset), liveViewToken);
+                final int onDiskVersion = block.getInt(offset);
+                requireSupportedFormatVersion(onDiskVersion, liveViewToken);
                 offset += Integer.BYTES;
                 CharSequence viewSqlCs = block.getStr(offset);
                 offset += Vm.getStorageLength(viewSqlCs);
@@ -321,6 +348,17 @@ public class LiveViewDefinition {
                     CharSequence colNameCs = block.getStr(offset);
                     offset += Vm.getStorageLength(colNameCs);
                     dependencyColumnNames.add(Chars.toString(colNameCs));
+                }
+                // Version 2+ appends one int per dependency column: its compile-time
+                // type, parallel to the names just read. A version-1 block has none,
+                // so the type list stays empty and the invalidation gate degrades to
+                // name-only checking for that view.
+                if (onDiskVersion >= 2) {
+                    dependencyColumnTypes = new IntList(depCount);
+                    for (int i = 0; i < depCount; i++) {
+                        dependencyColumnTypes.add(block.getInt(offset));
+                        offset += Integer.BYTES;
+                    }
                 }
             } else if (block.type() == LIVE_VIEW_DEFINITION_ANCHOR_MSG_TYPE) {
                 // block.getStr returns a flyweight backed by the block's memory; subsequent
@@ -378,6 +416,7 @@ public class LiveViewDefinition {
                 backfillRequested,
                 anchorSpec,
                 dependencyColumnNames,
+                dependencyColumnTypes,
                 metadata
         );
     }
@@ -404,6 +443,10 @@ public class LiveViewDefinition {
 
     public ObjList<String> getDependencyColumnNames() {
         return dependencyColumnNames;
+    }
+
+    public IntList getDependencyColumnTypes() {
+        return dependencyColumnTypes;
     }
 
     public long getFlushEveryInterval() {

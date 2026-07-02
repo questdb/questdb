@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.RecordToRowCopier;
+import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -405,19 +406,36 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
-     * Returns {@code true} if any of this view's dependency columns is missing from
-     * the post-change writer metadata — i.e. the column was dropped or renamed away.
-     * Callers use this to decide whether a base-table schema change must invalidate
-     * the view. An empty dependency set returns {@code false} (defensive: we don't
-     * know what the view reads, so we leave invalidation to the broader path).
+     * Returns {@code true} if any of this view's dependency columns is either missing
+     * from the post-change writer metadata — dropped or renamed away — or still
+     * present under the same name but with a different {@code TYPE} than the view
+     * compiled against. Callers use this to decide whether a base-table schema change
+     * must invalidate the view.
+     * <p>
+     * The type check closes a memory-safety hole: the cached compiled factory derives
+     * each column's stride from its compile-time type, so a referenced column whose
+     * type changed (e.g. INT-&gt;LONG, LONG-&gt;INT, INT-&gt;VARCHAR) would otherwise
+     * keep being read through the stale stride — wrong results on a widening change,
+     * an out-of-bounds native read on a narrowing or fixed&lt;-&gt;var-size change.
+     * <p>
+     * An empty dependency set returns {@code false} (defensive: we don't know what the
+     * view reads, so we leave invalidation to the broader path). A version-1 definition
+     * carries no persisted types, so its type list is empty and the check degrades to
+     * name-only for that view.
      */
-    public boolean dependsOnMissingColumn(@NotNull RecordMetadata baseMetadata) {
+    public boolean dependsOnMissingOrRetypedColumn(@NotNull RecordMetadata baseMetadata) {
         ObjList<String> deps = definition.getDependencyColumnNames();
         if (deps.size() == 0) {
             return false;
         }
+        IntList depTypes = definition.getDependencyColumnTypes();
         for (int i = 0, n = deps.size(); i < n; i++) {
-            if (baseMetadata.getColumnIndexQuiet(deps.getQuick(i)) < 0) {
+            final int columnIndex = baseMetadata.getColumnIndexQuiet(deps.getQuick(i));
+            if (columnIndex < 0) {
+                return true;
+            }
+            // depTypes is empty for a version-1 definition; skip the type check then.
+            if (i < depTypes.size() && baseMetadata.getColumnType(columnIndex) != depTypes.getQuick(i)) {
                 return true;
             }
         }

@@ -4307,7 +4307,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     public void testSchemaChangeColumnRenameInvalidatesOnlyReferencedColumn() throws Exception {
         // Counterpart to testSchemaChangeNarrowsToReferencedColumns (which covers
         // DROP COLUMN): a base RENAME COLUMN drops the old name, so a view that
-        // references the renamed column flips to INVALID via dependsOnMissingColumn,
+        // references the renamed column flips to INVALID via dependsOnMissingOrRetypedColumn,
         // while a rename of a column the view never reads leaves it ACTIVE.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, y INT) TIMESTAMP(ts) PARTITION BY DAY WAL");

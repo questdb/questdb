@@ -156,6 +156,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
@@ -1105,13 +1106,28 @@ public class CairoEngine implements Closeable, WriterSource {
         // using this set: only changes that touch one of these columns mark the
         // view INVALID; unrelated ALTERs leave it ACTIVE.
         final ObjList<String> dependencyColumnNames = new ObjList<>();
+        // Compile-time type of each dependency column, positionally parallel to
+        // dependencyColumnNames. Persisted in _lv so a later ALTER COLUMN TYPE on a
+        // referenced base column invalidates the view instead of re-reading the new
+        // bytes through the stale compile-time stride.
+        final IntList dependencyColumnTypes = new IntList();
         try (SqlCompiler compiler = getSqlCompiler()) {
+            // Arm the shared non-determinism guard for the LV body, mirroring the
+            // mat-view compile (SqlCompilerImpl.compileCreateMatView). With it armed,
+            // FunctionParser rejects now()/sysdate()/systimestamp()/rnd_*/etc. anywhere
+            // in the SELECT - projection, WHERE filter, and window-function arguments -
+            // so the view can never produce non-reproducible results that diverge on a
+            // re-refresh, O3 replay, or checkpoint restore. The ANCHOR EXPRESSION is
+            // covered separately by validateAnchorPurity below.
+            final boolean ogAllowNonDeterministic = executionContext.allowNonDeterministicFunctions();
             executionContext.setLiveViewCompile(true);
+            executionContext.setAllowNonDeterministicFunction(false);
             CompiledQuery cq;
             try {
                 cq = compiler.compile(op.getSelectSql(), executionContext);
             } finally {
                 executionContext.setLiveViewCompile(false);
+                executionContext.setAllowNonDeterministicFunction(ogAllowNonDeterministic);
             }
             try (RecordCursorFactory factory = cq.getRecordCursorFactory()) {
                 final PageFrameRecordCursorFactory pfrcf = validateLiveViewFactory(factory, baseTableToken, op.getViewNamePosition());
@@ -1129,12 +1145,14 @@ public class CairoEngine implements Closeable, WriterSource {
                     }
                     for (int i = 0, n = baseProjMeta.getColumnCount(); i < n; i++) {
                         CharSequence colName = baseProjMeta.getColumnName(i);
-                        if (baseTable.getColumnQuiet(colName) == null) {
+                        final CairoColumn baseColumn = baseTable.getColumnQuiet(colName);
+                        if (baseColumn == null) {
                             throw CairoException.critical(0)
                                     .put("live view base column not found [view=").put(op.getViewName())
                                     .put(", column=").put(colName).put(']');
                         }
                         dependencyColumnNames.add(Chars.toString(colName));
+                        dependencyColumnTypes.add(baseColumn.getType());
                     }
                 }
 
@@ -1216,6 +1234,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 backfillRequested,
                 op.getAnchorSpec(),
                 dependencyColumnNames,
+                dependencyColumnTypes,
                 metadata
         );
         LiveViewTableStructure struct = new LiveViewTableStructure(configuration, op.getViewName(), partitionBy, metadata, definition);
@@ -2335,7 +2354,7 @@ public class CairoEngine implements Closeable, WriterSource {
         ) {
             for (int i = 0, n = sink.size(); i < n; i++) {
                 LiveViewInstance instance = sink.getQuick(i);
-                if (postChangeMetadata != null && !instance.dependsOnMissingColumn(postChangeMetadata)) {
+                if (postChangeMetadata != null && !instance.dependsOnMissingOrRetypedColumn(postChangeMetadata)) {
                     // Schema change touches columns the LV doesn't read — leave it valid.
                     continue;
                 }
