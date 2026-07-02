@@ -1332,18 +1332,24 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         try {
             ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
 
+            // A zero-copy split suffix child appends at the true tail of the shared donor file:
+            // file rows = logical rows + partitionTop (same convention as appendFixColumn).
+            // partitionTop is 0 for a normal partition, keeping all math below byte-identical.
+            final long partitionTop = tableWriter.getPartitionTopByTimestamp(partitionTimestamp);
+            final long srcDataFileRows = srcDataMax + partitionTop - srcDataTop;
+
             long o3DataSize = columnTypeDriver.getDataVectorSize(srcOooAuxAddr, srcOooLo, srcOooHi);
-            dstAuxSize = columnTypeDriver.getAuxVectorSize(dstRowCount);
+            dstAuxSize = columnTypeDriver.getAuxVectorSize(dstRowCount + partitionTop);
 
             if (dstAuxMem == null || dstAuxMem.getAppendAddressSize() < dstAuxSize || dstDataMem.getAppendAddressSize() < o3DataSize) {
-                assert dstAuxMem == null || dstAuxMem.getAppendOffset() - columnTypeDriver.getMinAuxVectorSize() == columnTypeDriver.getAuxVectorOffset(srcDataMax - srcDataTop);
+                assert dstAuxMem == null || dstAuxMem.getAppendOffset() - columnTypeDriver.getMinAuxVectorSize() == columnTypeDriver.getAuxVectorOffset(srcDataFileRows);
 
-                dstAuxOffset = columnTypeDriver.getAuxVectorOffset(srcDataMax - srcDataTop);
+                dstAuxOffset = columnTypeDriver.getAuxVectorOffset(srcDataFileRows);
                 dstAuxFileOffset = dstAuxOffset;
                 dstAuxAddr = mapRW(ff, Math.abs(activeFixFd), dstAuxSize, MemoryTag.MMAP_O3);
 
                 if (dstAuxOffset > 0) {
-                    dstDataOffset = columnTypeDriver.getDataVectorSizeAt(dstAuxAddr, srcDataMax - 1 - srcDataTop);
+                    dstDataOffset = columnTypeDriver.getDataVectorSizeAt(dstAuxAddr, srcDataFileRows - 1);
                 } else {
                     dstDataOffset = 0;
                 }
@@ -1353,9 +1359,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 dstDataAdjust = 0;
             } else {
                 assert dstAuxMem.getAppendOffset() >= columnTypeDriver.getMinAuxVectorSize();
-                assert dstAuxMem.getAppendOffset() - columnTypeDriver.getMinAuxVectorSize() == columnTypeDriver.getAuxVectorOffset(srcDataMax - srcDataTop);
+                assert dstAuxMem.getAppendOffset() - columnTypeDriver.getMinAuxVectorSize() == columnTypeDriver.getAuxVectorOffset(srcDataFileRows);
 
-                dstAuxFileOffset = columnTypeDriver.getAuxVectorOffset(srcDataMax - srcDataTop);
+                dstAuxFileOffset = columnTypeDriver.getAuxVectorOffset(srcDataFileRows);
                 // this formula is a derivative of:
                 // dstAuxMem.getAppendOffset() - columnTypeDriver.getMinAuxVectorSize() == columnTypeDriver.getAuxVectorOffset(srcDataMax - srcDataTop);
                 dstAuxAddr = dstAuxMem.getAppendAddress() - (dstAuxMem.getAppendOffset() - dstAuxFileOffset);
@@ -1839,11 +1845,16 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         long dstFixSize;
         final int shl = ColumnType.pow2SizeOf(columnType);
         final FilesFacade ff = tableWriter.getFilesFacade();
+        // A zero-copy split suffix child appends at the true tail of the shared donor file: the dst byte offset
+        // and mapped size widen by partitionTop rows so file_row = srcDataMax + partitionTop - srcDataTop. The
+        // index row-id adjust (dstIndexAdjust) stays srcDataTop, so stored row ids are PHYSICAL (logical + P),
+        // matching the partition-top-aware index reader. partitionTop is 0 for a normal partition (byte-identical).
+        final long partitionTop = tableWriter.getPartitionTopByTimestamp(partitionTimestamp);
 
         dstFixAddr = 0;
-        dstFixSize = dstLen << shl;
+        dstFixSize = (dstLen + partitionTop) << shl;
         try {
-            dstFixOffset = (srcDataMax - srcDataTop) << shl;
+            dstFixOffset = (srcDataMax + partitionTop - srcDataTop) << shl;
             if (dstFixMem == null || dstFixMem.getAppendAddressSize() < dstFixSize) {
                 // Area we want to write is not mapped
                 dstFixAddr = mapRW(ff, Math.abs(dstFixFd), dstFixSize, MemoryTag.MMAP_O3);
@@ -2316,9 +2327,13 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         long dstFixSize;
         final FilesFacade ff = tableWriter.getFilesFacade();
         try {
-            dstFixSize = dstLen * Long.BYTES;
+            // A zero-copy split suffix child appends at the true tail of the shared donor file:
+            // file rows = logical rows + partitionTop (same convention as appendFixColumn).
+            // partitionTop is 0 for a normal partition, keeping all math below byte-identical.
+            final long partitionTop = tableWriter.getPartitionTopByTimestamp(partitionTimestamp);
+            dstFixSize = (dstLen + partitionTop) * Long.BYTES;
             if (dstFixMem == null || dstFixMem.getAppendAddressSize() < dstFixSize) {
-                dstFixOffset = srcDataMax * Long.BYTES;
+                dstFixOffset = (srcDataMax + partitionTop) * Long.BYTES;
                 dstFixFileOffset = dstFixOffset;
                 dstFixFd = -Math.abs(srcTimestampFd);
                 dstFixAddr = mapRW(ff, -dstFixFd, dstFixSize, MemoryTag.MMAP_O3);

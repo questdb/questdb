@@ -38,6 +38,7 @@ import io.questdb.std.str.Path;
 public class IndexFwdNullReader implements IndexReader {
     private final ObjList<NullCursor> freeCursors = new ObjList<>();
     private long columnTxn;
+    private long partitionTop;
     private long partitionTxn;
 
     public IndexFwdNullReader(long columnTxn, long partitionTxn) {
@@ -58,6 +59,11 @@ public class IndexFwdNullReader implements IndexReader {
     @Override
     public long getColumnTxn() {
         return columnTxn;
+    }
+
+    @Override
+    public long getPartitionTop() {
+        return partitionTop;
     }
 
     @Override
@@ -122,9 +128,12 @@ public class IndexFwdNullReader implements IndexReader {
     @Override
     public void of(CairoConfiguration configuration, Path path, CharSequence columnName, long columnNameTxn,
                    long partitionTxn, long columnTop, RecordMetadata metadata,
-                   ColumnVersionReader columnVersionReader, long partitionTimestamp) {
+                   ColumnVersionReader columnVersionReader, long partitionTimestamp, long partitionTop) {
+        // Null reader synthesizes nulls in logical space and never touches .k/.v, so partitionTop does not
+        // affect its output; store it only so TableReader.getIndexReader's cache-validity check stabilizes.
         this.partitionTxn = partitionTxn;
         this.columnTxn = columnNameTxn;
+        this.partitionTop = partitionTop;
     }
 
     @Override

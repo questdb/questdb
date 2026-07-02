@@ -171,9 +171,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // 5. o3SplitPartitionSize size of "split" partition, new partition that branches out of the old one
     // 6. original partition timestamp (before the split)
     // 7. parquet partition file size
+    // 8. splitMode (SPLIT_NONE / SPLIT_THREE_WAY_HARDLINK) for the zero-copy hardlink suffix child
+    // 9. suffixChildTimestamp (floor timestamp of the hardlinked suffix child)
+    // 10. suffixPartitionTop (R2, donor file-row where the suffix child's logical row 0 begins)
+    // 11. suffixChildRowCount (logical row count of the suffix child)
     // ... column top for every column
-    public static final int PARTITION_SINK_SIZE_LONGS = 8;
+    public static final int PARTITION_SINK_SIZE_LONGS = 12;
     public static final int PARTITION_SINK_COL_TOP_OFFSET = PARTITION_SINK_SIZE_LONGS * Long.BYTES;
+    // splitMode values carried in sink slot 8 (see above)
+    public static final int SPLIT_NONE = 0;
+    public static final int SPLIT_THREE_WAY_HARDLINK = 1;
     public static final int SWITCH_NO_PARQUET = -1;
     public static final int SWITCH_OK = 0;
     public static final int SWITCH_SKIPPED = -2;
@@ -340,6 +347,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private boolean isInCtorRecovery;
     private int lastErrno;
     private boolean lastOpenPartitionIsReadOnly;
+    // Partition top (R2) of the active partition when it is a zero-copy split suffix child; 0 otherwise.
+    // Threaded into the active-append addressing so shared columns land at the true tail of the donor file.
+    private long lastOpenPartitionTop;
+    // Lazily-created bitmap indexer used to restore a hardlinked suffix child's index entries into the
+    // shared .k/.v after the donor's O3 index rollback truncated them (see hardlinkSuffixChild).
+    private SymbolColumnIndexer splitChildReindexer;
     private long lastOpenPartitionTs = Long.MIN_VALUE;
     private long lastOpenPartitionTxnName = -1;
     private long lastPartitionTimestamp;
@@ -2308,6 +2321,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp);
     }
 
+    // Partition top (R2) of a zero-copy split suffix child at the given partition timestamp; 0 for a normal
+    // (or parquet) partition. Used by the O3 write path to place/read columns at file_row = logical + R2 - colTop.
+    public long getPartitionTopByTimestamp(long partitionTimestamp) {
+        return txWriter.isPartitionParquetByPartitionTimestamp(partitionTimestamp)
+                ? 0
+                : txWriter.getPartitionTopByTimestamp(partitionTimestamp);
+    }
+
     public long getPartitionO3SplitThreshold() {
         long splitMinSizeBytes = configuration.getPartitionO3SplitMinSize();
         return splitMinSizeBytes /
@@ -2476,8 +2497,50 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return distressed;
     }
 
+    // Whether the config allows zero-copy (hardlink) partition splits for this table. The split
+    // creates a partition with a non-zero partition top; reading such partitions is always
+    // supported, this only gates their creation.
+    public boolean isHardlinkSplitEnabled() {
+        return metadata.isWalEnabled()
+                ? configuration.isPartitionTopWalEnabled()
+                : configuration.isPartitionTopNonWalEnabled();
+    }
+
+    // Whether a 3-way hardlink split of the given partition keeps its logical partition's piece count
+    // within the split cap the post-commit squash enforces (the split adds TWO pieces: the merged middle
+    // and the hardlinked suffix child). When the cap would be exceeded, the commit folds the pieces back
+    // immediately, and a fold range that contains a hardlink donor must copy the whole partition - more
+    // expensive than the classic 2-way copy split whose fold is a cheap tail-append. The split decision
+    // falls back to the 2-way copy in that case. maxTimestamp is read pre-commit: a commit that extends
+    // the table into a later logical partition can demote this one from last to mid after the fact; the
+    // resulting fold pays the donor copy once and later splits see the updated state.
+    public boolean isHardlinkSplitWithinSquashCap(long partitionTimestamp) {
+        final long logicalTs = txWriter.getLogicalPartitionTimestamp(partitionTimestamp);
+        final boolean lastLogical = txWriter.getLogicalPartitionTimestamp(txWriter.getMaxTimestamp()) == logicalTs;
+        final int cap = Math.max(1, lastLogical
+                ? configuration.getO3LastPartitionMaxSplits()
+                : configuration.getO3MidPartitionMaxSplits());
+        int pieces = 0;
+        for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+            if (txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(i)) == logicalTs
+                    && ++pieces + 2 > cap) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     public boolean isOpen() {
         return tempMem16b != 0;
+    }
+
+    // True when the native partition at the given floor timestamp shares column-file inodes with a
+    // zero-copy split relative (prefix donor or suffix child). Parquet partitions are never donors.
+    public boolean isPartitionDonorByTimestamp(long partitionTimestamp) {
+        final int indexRaw = txWriter.findAttachedPartitionRawIndexByLoTimestamp(partitionTimestamp);
+        return indexRaw > -1
+                && !txWriter.isPartitionParquet(indexRaw / LONGS_PER_TX_ATTACHED_PARTITION)
+                && txWriter.isPartitionDonorByRawIndex(indexRaw);
     }
 
     public boolean isPartitionReadOnly(int partitionIndex) {
@@ -3624,10 +3687,27 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private static boolean linkFile(FilesFacade ff, LPSZ from, LPSZ to) {
         if (ff.exists(from)) {
-            if (ff.hardLink(from, to) == FILES_RENAME_OK) {
+            final int linkResult = ff.hardLink(from, to);
+            if (linkResult == FILES_RENAME_OK) {
                 LOG.debug().$("renamed [from=").$(from).$(", to=").$(to).I$();
                 return true;
-            } else if (ff.exists(to)) {
+            }
+            if (linkResult == FILES_RENAME_ERR_EXDEV) {
+                // Hard links cannot cross devices/filesystems. Fall back to a full one-off copy so a
+                // zero-copy split child (or any other hardlink user) still works when 'to' lands on a
+                // different mount than 'from'. Correctness is unaffected; only the shared-inode disk
+                // saving is lost for this file.
+                if (ff.copy(from, to) < 0) {
+                    throw CairoException.critical(ff.errno())
+                            .put("could not copy file across devices [errno=").put(ff.errno())
+                            .put(", from=").put(from)
+                            .put(", to=").put(to)
+                            .put(']');
+                }
+                LOG.info().$("hard link crossed devices, copied instead [from=").$(from).$(", to=").$(to).I$();
+                return true;
+            }
+            if (ff.exists(to)) {
                 LOG.info().$("rename destination file exists, assuming previously failed rename attempt [path=").$(to).I$();
                 try {
                     ff.remove(to);
@@ -5696,7 +5776,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             .I$();
                 }
 
-                final long committedRowCount = committedTransientRowCount - columnTop;
+                // A zero-copy split suffix child stores its rows in the shared donor file at
+                // file_row = logical + partitionTop - columnTop (see setColumnAppendPosition); the
+                // uncommitted tail must be read back from the same physical offset. partitionTop applies
+                // only to columns shared from the donor (born before this child); 0 for normal partitions.
+                final long colPartitionTop = lastOpenPartitionTop > 0
+                        && columnVersionWriter.getColumnTopPartitionTimestamp(columnIndex) < lastOpenPartitionTs
+                        ? lastOpenPartitionTop : 0;
+                final long committedRowCount = committedTransientRowCount + colPartitionTop - columnTop;
                 if (ColumnType.isVarSize(columnType)) {
                     final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
                     final MemoryMA colAuxMem = getSecondaryColumn(columnIndex);
@@ -5770,8 +5857,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // Timestamp column
                 int shl = ColumnType.pow2SizeOf(timestampType);
                 MemoryMA srcDataMem = getPrimaryColumn(columnIndex);
-                // this cannot have "top"
-                long srcFixOffset = committedTransientRowCount << shl;
+                // this cannot have "top", but on a zero-copy split suffix child the shared donor file
+                // holds the child's rows at file_row = logical + partitionTop (0 for normal partitions)
+                final long tsPartitionTop = lastOpenPartitionTop > 0
+                        && columnVersionWriter.getColumnTopPartitionTimestamp(columnIndex) < lastOpenPartitionTs
+                        ? lastOpenPartitionTop : 0;
+                long srcFixOffset = (committedTransientRowCount + tsPartitionTop) << shl;
                 long srcFixLen = transientRowsAdded << shl;
                 long alignedExtraLen;
                 long address = srcDataMem.map(srcFixOffset, srcFixLen);
@@ -6263,6 +6354,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         Misc.free(attachMetaMem);
         Misc.free(attachColumnVersionReader);
         Misc.free(attachIndexBuilder);
+        splitChildReindexer = Misc.free(splitChildReindexer);
         Misc.free(columnVersionWriter);
         Misc.free(o3PartitionUpdateSink);
         Misc.free(slaveTxReader);
@@ -7000,6 +7092,114 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } finally {
             path.trimTo(pathSize);
             other.trimTo(pathSize);
+        }
+    }
+
+    // Zero-copy split suffix child: hardlink the donor partition's column files into a fresh child
+    // directory and record, per column, the donor's FULL column top unchanged in the child's _cv.
+    // The child's partition top (R2) is stored separately in _txn slot 3 by the caller; the read path
+    // combines them as file_row = logical + R2 - colTop. The child shares the donor's inodes, so POSIX
+    // link-count keeps them alive until the last hardlinked directory is unlinked.
+    private void hardlinkSuffixChild(long donorTs, long donorNameTxn, long childTs, long childNameTxn, long r2, long suffixRowCount) {
+        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, donorTs, donorNameTxn);
+        final int srcDirLen = path.size();
+        setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, childTs, childNameTxn);
+        final int dstDirLen = other.size();
+        createDirsOrFail(ff, other, configuration.getMkDirMode());
+        try {
+            final long donorFullSize = txWriter.getPartitionRowCountByTimestamp(donorTs);
+            for (int i = 0; i < columnCount; i++) {
+                final int columnType = metadata.getColumnType(i);
+                if (columnType < 0) {
+                    continue; // dropped column
+                }
+                final long donorColumnTop = columnVersionWriter.getColumnTop(donorTs, i);
+                if (donorColumnTop < 0) {
+                    // Column not present in the donor partition: nothing to link, and the child inherits
+                    // the same absent state (no _cv record).
+                    continue;
+                }
+                final CharSequence columnName = metadata.getColumnName(i);
+                final long columnNameTxn = getColumnNameTxn(donorTs, i);
+                // Primary .d for every column; .i aux for var-size; .k/.v (+ posting aux) for indexed symbol.
+                linkFile(ff,
+                        dFile(path.trimTo(srcDirLen), columnName, columnNameTxn),
+                        dFile(other.trimTo(dstDirLen), columnName, columnNameTxn));
+                if (ColumnType.isVarSize(columnType)) {
+                    linkFile(ff,
+                            iFile(path.trimTo(srcDirLen), columnName, columnNameTxn),
+                            iFile(other.trimTo(dstDirLen), columnName, columnNameTxn));
+                }
+                // Index files (BITMAP .k/.v and POSTING .pk/.pv) are never shared with the donor: the
+                // donor's own index maintenance truncates/rebuilds them to the donor size R1, which would
+                // evict the child's entries from a shared file. buildSuffixChildBitmapIndexes() creates
+                // fresh independent bitmap indexes after this method returns, and creates empty posting
+                // index files that the posting seal sweep of this commit rebuilds.
+                // The child records the donor's FULL column top unchanged (NOT max(0, T - R2)); the caller
+                // stores R2 in slot 3 and the read path combines them. Record the donor's actual columnNameTxn
+                // (the file just linked), NOT the default, so a column whose txn moved (e.g. after UPDATE)
+                // still resolves to the hardlinked file in the child dir.
+                columnVersionWriter.upsert(childTs, i, columnNameTxn, donorColumnTop);
+            }
+        } catch (Throwable e) {
+            // Partial-failure cleanup: remove the half-linked child dir before rethrowing so no orphan
+            // directory survives under disk pressure (risk #7). The _txn entries are not committed yet.
+            other.trimTo(dstDirLen);
+            if (!ff.rmdir(other.slash())) {
+                LOG.error().$("could not remove suffix child dir after failed hardlink [path=").$(other).I$();
+            }
+            throw e;
+        } finally {
+            path.trimTo(pathSize);
+            other.trimTo(pathSize);
+        }
+    }
+
+    // Builds fresh, INDEPENDENT bitmap indexes for a zero-copy split suffix child. Unlike the shared .d/.i
+    // (hardlinked), a shared bitmap .k/.v is unusable: the donor's O3 index rollbacks (O3CopyJob truncates the
+    // shared file to the donor size R1) evict the child's entries. Instead each indexed bitmap column gets its
+    // own .k/.v holding only the child's rows at PHYSICAL row ids [r2, srcDataMax), read from the shared .d, so
+    // the +R2 read-path shift (Step 3) still resolves them. Runs single-threaded in o3ConsumePartitionUpdateSink
+    // after hardlinkSuffixChild (which linked the .d), and owns `path` (restored on exit).
+    private void buildSuffixChildBitmapIndexes(long childTs, long childNameTxn, long r2, long srcDataMax) {
+        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, childTs, childNameTxn);
+        final int plen = path.size();
+        try {
+            for (int i = 0; i < columnCount; i++) {
+                final int columnType = metadata.getColumnType(i);
+                if (columnType < 0 || !ColumnType.isSymbol(columnType) || !metadata.isColumnIndexed(i)) {
+                    continue;
+                }
+                final byte indexType = metadata.getColumnIndexType(i);
+                final long donorColumnTop = columnVersionWriter.getColumnTop(childTs, i);
+                if (donorColumnTop < 0 || donorColumnTop >= srcDataMax) {
+                    continue; // column absent or has no data in the shared range
+                }
+                final CharSequence columnName = metadata.getColumnName(i);
+                final long columnNameTxn = getColumnNameTxn(childTs, i);
+                createIndexFiles(columnName, columnNameTxn, metadata.getIndexValueBlockCapacity(i), indexType, plen, true, false);
+                if (IndexType.isPosting(indexType)) {
+                    // POSTING: the empty .pk created above is enough here; the posting seal sweep of
+                    // this same commit (sealPostingIndexesForO3Partitions handles sink slot 9) rebuilds
+                    // the chain from the shared .d at physical row ids and materializes covering sidecars.
+                    continue;
+                }
+                if (splitChildReindexer == null) {
+                    splitChildReindexer = new SymbolColumnIndexer(configuration);
+                }
+                splitChildReindexer.configureWriter(path.trimTo(plen), columnName, columnNameTxn, donorColumnTop, childTs, childNameTxn);
+                final long dataFd = openRO(ff, dFile(path.trimTo(plen), columnName, columnNameTxn), LOG);
+                try {
+                    // index() reads the shared .d at (row - columnTop) and stores physical row ids [r2, srcDataMax).
+                    // partitionTop is 0 on this reindexer, so it does NOT shift -- r2/srcDataMax are already physical.
+                    splitChildReindexer.index(ff, dataFd, r2, srcDataMax);
+                    splitChildReindexer.getWriter().commit();
+                } finally {
+                    ff.close(dataFd);
+                }
+            }
+        } finally {
+            path.trimTo(pathSize);
         }
     }
 
@@ -8041,6 +8241,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 final boolean partitionMutates = Numbers.decodeLowInt(flags) != 0;
                 final boolean isLastWrittenPartition = o3PartitionUpdateSink.nextBlockIndex(blockIndex) == -1;
                 final long o3SplitPartitionSize = Unsafe.getLong(blockAddress + 5 * Long.BYTES);
+                // Zero-copy hardlink split (slots 8..11); splitMode is SPLIT_NONE (0) on every other path.
+                final long splitMode = Unsafe.getLong(blockAddress + 8 * Long.BYTES);
+                final long suffixChildTimestamp = Unsafe.getLong(blockAddress + 9 * Long.BYTES);
+                final long suffixChildPartitionTop = Unsafe.getLong(blockAddress + 10 * Long.BYTES); // R2
+                final long suffixChildRowCount = Unsafe.getLong(blockAddress + 11 * Long.BYTES);
+                final boolean isHardlinkSplit = splitMode == SPLIT_THREE_WAY_HARDLINK;
                 if (!partitionMutates && srcDataNewPartitionSize < 0) {
                     // noop
                     continue;
@@ -8096,8 +8302,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
 
                 if (partitionTimestamp < lastPartitionTimestamp) {
-                    // increment fixedRowCount by number of rows old partition incremented
-                    txWriter.fixedRowCount += srcDataNewPartitionSize - srcDataOldPartitionSize + o3SplitPartitionSize;
+                    // increment fixedRowCount by number of rows old partition incremented.
+                    // On a 3-way hardlink split the donor is not the last partition, so donor (R1),
+                    // middle (o3SplitPartitionSize) and the suffix child are all fixed. suffixChildRowCount
+                    // is 0 on every non-hardlink path, so this stays byte-identical there.
+                    txWriter.fixedRowCount += srcDataNewPartitionSize - srcDataOldPartitionSize + o3SplitPartitionSize + suffixChildRowCount;
                 } else {
                     if (partitionTimestamp != lastPartitionTimestamp) {
                         txWriter.fixedRowCount += commitTransientRowCount;
@@ -8106,7 +8315,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // yep, it was
                         // the "current" active becomes fixed
                         txWriter.fixedRowCount += srcDataNewPartitionSize;
-                        commitTransientRowCount = o3SplitPartitionSize;
+                        if (isHardlinkSplit) {
+                            // The suffix child is the new last (transient) partition. The donor (R1, already
+                            // added above) and the middle both become fixed; only the suffix child stays transient.
+                            txWriter.fixedRowCount += o3SplitPartitionSize;
+                            commitTransientRowCount = suffixChildRowCount;
+                        } else {
+                            commitTransientRowCount = o3SplitPartitionSize;
+                        }
                     } else {
                         commitTransientRowCount = srcDataNewPartitionSize;
                     }
@@ -8145,9 +8361,29 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     txWriter.bumpPartitionTableVersion();
                     txWriter.updateAttachedPartitionSizeByRawIndex(newPartitionIndex, newPartitionTimestamp, o3SplitPartitionSize, txWriter.txn);
                     if (partitionTimestamp == lastPartitionTimestamp) {
-                        // Close the last partition without truncating it.
+                        // Close the last partition without truncating it. This flushes the donor's active
+                        // column files to disk at their full size BEFORE hardlinkSuffixChild links them --
+                        // otherwise a still-mmapped column (e.g. a late-added var column) would be linked at
+                        // its stale on-disk size (0), corrupting the suffix child.
                         long committedLastPartitionSize = txWriter.getPartitionRowCountByTimestamp(partitionTimestamp);
                         closeActivePartition(committedLastPartitionSize);
+                    }
+                    if (isHardlinkSplit) {
+                        // Zero-copy suffix child: hardlink the donor's column files into a fresh child dir,
+                        // attach the child with partition top R2, and mark BOTH shared-inode partitions
+                        // (the prefix donor and the suffix child) as donors so neither is appended /
+                        // overwritten in place. The donor is resized to R1 below (the shared 8281 path).
+                        final long donorNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp);
+                        hardlinkSuffixChild(partitionTimestamp, donorNameTxn, suffixChildTimestamp, txWriter.txn, suffixChildPartitionTop, suffixChildRowCount);
+                        // Bitmap indexes are not shared: build fresh independent ones for the child's rows.
+                        buildSuffixChildBitmapIndexes(suffixChildTimestamp, txWriter.txn, suffixChildPartitionTop, suffixChildPartitionTop + suffixChildRowCount);
+                        // Attach after the middle insert so the child's insertion point reflects it.
+                        final int suffixChildIndexRaw = txWriter.findAttachedPartitionRawIndexByLoTimestamp(suffixChildTimestamp);
+                        txWriter.updateAttachedPartitionSizeByRawIndex(suffixChildIndexRaw, suffixChildTimestamp, suffixChildRowCount, txWriter.txn);
+                        txWriter.setPartitionTop(suffixChildTimestamp, suffixChildPartitionTop);
+                        txWriter.setPartitionDonor(suffixChildTimestamp);
+                        txWriter.setPartitionDonor(partitionTimestamp);
+                        this.minSplitPartitionTimestamp = Math.min(this.minSplitPartitionTimestamp, suffixChildTimestamp);
                     }
                 }
 
@@ -8159,6 +8395,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             .$(", txn=").$(txWriter.txn)
                             .$(", rows=").$(srcDataNewPartitionSize)
                             .I$();
+
+                    if (!isParquet
+                            && partitionIndexRaw > -1
+                            && txWriter.isPartitionDonorByRawIndex(partitionIndexRaw)
+                            && txWriter.getPartitionTopByRawIndex(partitionIndexRaw) == 0) {
+                        // The fresh-directory rewrite severed a prefix donor's inode sharing (the suffix
+                        // child keeps reading the old files through its own hardlinks): clear the stale
+                        // donor flag so future commits can in-place append to this partition again.
+                        txWriter.resetPartitionTop(partitionIndexRaw / LONGS_PER_TX_ATTACHED_PARTITION);
+                    }
 
                     if (isCommitReplaceMode() && srcDataNewPartitionSize == 0) {
                         // Partition data is fully removed by the replace-commit
@@ -8815,6 +9061,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             lastOpenPartitionTs = timestamp;
             lastOpenPartitionIsReadOnly = partitionBy != PartitionBy.NONE && txWriter.isPartitionReadOnlyByPartitionTimestamp(lastOpenPartitionTs);
+            // Cache the active partition's partition top (R2 of a zero-copy split suffix child; 0 otherwise).
+            lastOpenPartitionTop = txWriter.isPartitionParquetByPartitionTimestamp(lastOpenPartitionTs)
+                    ? 0
+                    : txWriter.getPartitionTopByTimestamp(lastOpenPartitionTs);
 
             for (int i = 0; i < columnCount; i++) {
                 if (metadata.getColumnType(i) > 0) {
@@ -8839,6 +9089,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             indexer.getWriter().setCurrentTableTxn(txWriter.getTxn());
                         }
                         indexer.configureFollowerAndWriter(path, name, columnNameTxn, getPrimaryColumn(i), columnTop, lastOpenPartitionTs, lastOpenPartitionTxnName);
+                        // A zero-copy split suffix child indexes into the shared donor .k/.v at PHYSICAL row
+                        // ids: the indexer shifts the logical range by +partitionTop. Only columns shared from
+                        // the donor carry it (a column added after the child is child-local; see reloadColumnAt).
+                        final long colPartitionTop = lastOpenPartitionTop > 0
+                                && columnVersionWriter.getColumnTopPartitionTimestamp(i) < lastOpenPartitionTs
+                                ? lastOpenPartitionTop : 0;
+                        indexer.setPartitionTop(colPartitionTop);
                         configureCoveringIfNeeded(indexer, i, lastOpenPartitionTs);
                         // Recover from a crash that left .pk's sealTxn advanced
                         // past what _txn committed. finishO3Commit runs
@@ -8852,7 +9109,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // are cheap no-ops on a clean reopen.
                         if (IndexType.isPosting(metadata.getColumnIndexType(i))) {
                             indexer.mergeTentativeIntoActiveIfAny();
-                            indexer.getWriter().rollbackConditionally(rowCount);
+                            indexer.getWriter().rollbackConditionally(rowCount + colPartitionTop);
                         }
                     }
                 }
@@ -9368,6 +9625,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     latchCount++;
                     // Set column top memory to -1, no need to initialize partition update memory, it always set by O3 partition tasks
                     Vect.memset(partitionUpdateSinkAddr + (long) PARTITION_SINK_SIZE_LONGS * Long.BYTES, (long) metadata.getColumnCount() * Long.BYTES, -1);
+                    // Zero the zero-copy split header slots 8..11: O3PartitionJob only writes them on the
+                    // hardlink split path, so a reused block must default splitMode to SPLIT_NONE (0) elsewhere.
+                    Vect.memset(partitionUpdateSinkAddr + 8L * Long.BYTES, 4L * Long.BYTES, 0);
                     Unsafe.putLong(partitionUpdateSinkAddr, partitionTimestamp);
                     // original partition timestamp
                     Unsafe.putLong(partitionUpdateSinkAddr + 6 * Long.BYTES, partitionTimestamp);
@@ -12377,6 +12637,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         getPrimaryColumn(colIdx), columnTop,
                         lastOpenPartitionTs, currentNameTxn
                 );
+                // configureFollowerAndWriter resets partitionTop; when the last partition is a
+                // zero-copy split suffix child, re-apply the shift for donor-shared columns so
+                // subsequent active-partition indexing stores physical row ids.
+                indexer.setPartitionTop(
+                        lastOpenPartitionTop > 0
+                                && columnVersionWriter.getColumnTopPartitionTimestamp(colIdx) < lastOpenPartitionTs
+                                ? lastOpenPartitionTop : 0
+                );
                 configureCoveringIfNeeded(indexer, colIdx, lastOpenPartitionTs);
             }
         } finally {
@@ -12783,6 +13051,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             plen = path.size();
         }
         long partitionSize = txWriter.getPartitionRowCountByTimestamp(partitionTimestamp);
+        // A zero-copy split suffix child stores logical row L of a donor-shared column at physical
+        // file row L + partitionTop; its chain must hold those PHYSICAL row ids to match the
+        // partition-top-aware index reader. 0 for normal partitions (all math below is identity).
+        final long partitionTop = getPartitionTopByTimestamp(partitionTimestamp);
         try {
             for (int colIdx = 0; colIdx < columnCount; colIdx++) {
                 if (metadata.getColumnType(colIdx) <= 0 || !metadata.isColumnIndexed(colIdx)
@@ -12792,8 +13064,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 // Column added after this partition (getColumnTop == -1) or partition has no
                 // column data (columnTop >= partitionSize) has no .pk file here — skip.
+                // partitionTop applies only to columns shared from the split donor (born before
+                // this child); a column added later is child-local (no shift).
                 long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, colIdx);
-                if (columnTop == -1 || columnTop >= partitionSize) {
+                final long colPartitionTop = partitionTop > 0
+                        && columnVersionWriter.getColumnTopPartitionTimestamp(colIdx) < partitionTimestamp
+                        ? partitionTop : 0;
+                if (columnTop == -1 || Math.max(0, columnTop - colPartitionTop) >= partitionSize) {
                     continue;
                 }
                 CharSequence colName = metadata.getColumnName(colIdx);
@@ -12818,6 +13095,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 getPrimaryColumn(colIdx), columnTop,
                                 partitionTimestamp, partitionNameTxn
                         );
+                        // configureFollowerAndWriter resets partitionTop; re-apply the split-child shift.
+                        indexer.setPartitionTop(colPartitionTop);
                         // REBUILD intermediate entry: getTxn()+1 keeps it
                         // invisible to T-pinned readers (it lacks a cover
                         // footer until rebuildSidecars() supersedes it),
@@ -12837,7 +13116,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             // pure append because getMaxValue() <
                             // partitionSize) and the trailing
                             // rebuildSidecars publishes the chain as is.
-                            indexer.getWriter().rollbackConditionally(partitionSize);
+                            indexer.getWriter().rollbackConditionally(partitionSize + colPartitionTop);
                         } else {
                             // Rebuild the chain from the column data file.
                             // rollbackConditionally(partitionSize) only
@@ -12854,7 +13133,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             indexer.getWriter().discardForRebuild();
                             long dataFd = openRO(ff, dFile(path.trimTo(plen), colName, colNameTxn), LOG);
                             try {
-                                indexer.index(ff, dataFd, columnTop, partitionSize);
+                                indexer.index(ff, dataFd, Math.max(0, columnTop - colPartitionTop), partitionSize);
                             } finally {
                                 ff.close(dataFd);
                             }
@@ -12910,6 +13189,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             getPrimaryColumn(colIdx), columnTop,
                             partitionTimestamp, partitionNameTxn
                     );
+                    // configureFollowerAndWriter resets partitionTop; re-apply the split-child shift.
+                    indexer.setPartitionTop(colPartitionTop);
                     try {
                         // Same getTxn()+1 convention as O3CopyJob and the
                         // covering branch above. See comment there.
@@ -12917,7 +13198,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         indexer.mergeTentativeIntoActiveIfAny();
                         if (canSkipRebuild) {
                             // See pure-append fast-path comment in the covering branch above.
-                            indexer.getWriter().rollbackConditionally(partitionSize);
+                            indexer.getWriter().rollbackConditionally(partitionSize + colPartitionTop);
                             // Defer compaction to switchPartition's threshold rather than seal eagerly:
                             // pool writer's sparse gens are already the correct final state for a pure-append O3.
                             indexer.getWriter().sealIfMultiGen(configuration.getPostingSealGenThreshold());
@@ -12926,7 +13207,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             indexer.getWriter().discardForRebuild();
                             long dataFd = openRO(ff, dFile(path.trimTo(plen), colName, colNameTxn), LOG);
                             try {
-                                indexer.index(ff, dataFd, columnTop, partitionSize);
+                                indexer.index(ff, dataFd, Math.max(0, columnTop - colPartitionTop), partitionSize);
                             } finally {
                                 ff.close(dataFd);
                             }
@@ -12991,6 +13272,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     && sealPostingIndexForPartition(dataPartitionTimestamp, false)) {
                 anyPartitionProcessed = true;
             }
+            // A zero-copy hardlink split also created a suffix child partition (sink slot 9)
+            // that no open-column task wrote: its posting index files were created empty by
+            // buildSuffixChildBitmapIndexes and need the full rebuild here. The child cannot
+            // share the donor's posting files -- the donor's own reseal above rebuilds only
+            // [columnTop, R1) and would evict the child's entries from a shared chain.
+            if (Unsafe.getLong(blockAddress + 8 * Long.BYTES) == SPLIT_THREE_WAY_HARDLINK) {
+                final long suffixChildTimestamp = Unsafe.getLong(blockAddress + 9 * Long.BYTES);
+                if (suffixChildTimestamp != -1L && sealPostingIndexForPartition(suffixChildTimestamp, false)) {
+                    anyPartitionProcessed = true;
+                }
+            }
         }
 
         if (anyPartitionProcessed) {
@@ -13021,7 +13313,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             MemoryMA auxMem = getSecondaryColumn(columnIndex);
             int columnType = metadata.getColumnType(columnIndex);
             if (columnType > 0) { // Not deleted
-                final long pos = size - getColumnTop(columnIndex);
+                // A zero-copy split suffix child appends at the true tail of the shared donor file: file_row =
+                // size + partitionTop - columnTop. partitionTop applies only to columns shared from the donor
+                // (born before this child); a column added after is child-local (offset 0). 0 for normal partitions.
+                final long colPartitionTop = lastOpenPartitionTop > 0
+                        && columnVersionWriter.getColumnTopPartitionTimestamp(columnIndex) < lastOpenPartitionTs
+                        ? lastOpenPartitionTop : 0;
+                final long pos = size + colPartitionTop - getColumnTop(columnIndex);
                 if (ColumnType.isVarSize(columnType)) {
                     ColumnTypeDriver driver = ColumnType.getDriver(columnType);
                     dataSizeBytes = driver.setAppendPosition(
@@ -13281,10 +13579,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long targetPartition = Long.MIN_VALUE;
         boolean copyTargetFrame = false;
 
-        // Move targetPartitionIndex to the first unlocked partition in the range
+        // Move targetPartitionIndex to the first unlocked partition in the range.
+        // A donor-flagged partition (a zero-copy split prefix donor or suffix child) shares hardlinked
+        // files with another partition; it must never be squashed INTO (overwritten in place). Non-force
+        // squash skips donor targets (isHardlinkSplitWithinSquashCap keeps hardlink children within the
+        // split cap, so donors rarely block a policy fold; a mid-commit copy-target fold is NOT safe
+        // here). Force squash (ALTER SQUASH, partition switch) accepts any first target and copies it
+        // out to a fresh contiguous dir when it cannot be overwritten in place (reader-locked or donor).
+        // The && order matters: isPartitionDonor asserts !isPartitionParquet, and a parquet tail is
+        // never overwritable.
         int targetPartitionIndex = partitionIndexLo;
         for (int n = partitionIndexHi - 1; targetPartitionIndex < n; targetPartitionIndex++) {
-            boolean canOverwrite = canSquashOverwritePartitionTail(targetPartitionIndex);
+            boolean canOverwrite = canSquashOverwritePartitionTail(targetPartitionIndex) && !txWriter.isPartitionDonor(targetPartitionIndex);
             if (canOverwrite || force) {
                 targetPartition = txWriter.getPartitionTimestampByIndex(targetPartitionIndex);
                 copyTargetFrame = !canOverwrite;
@@ -13310,7 +13616,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         boolean rw = !copyTargetFrame;
         Frame targetFrame = null;
         FrameFactory frameFactory = engine.getFrameFactory();
-        Frame firstPartitionFrame = frameFactory.open(rw, path, targetPartition, metadata, columnVersionWriter, originalSize);
+        // A zero-copy split suffix child target stores its rows in the shared donor files at
+        // file row partitionTop; the copy-target read must start there. An overwritable (rw)
+        // target is never donor-flagged, so its top is always 0.
+        final long targetPartitionTop = getPartitionTopByTimestamp(targetPartition);
+        assert !rw || targetPartitionTop == 0;
+        Frame firstPartitionFrame = rw
+                ? frameFactory.open(true, path, targetPartition, metadata, columnVersionWriter, originalSize)
+                : frameFactory.openRO(path, targetPartition, metadata, columnVersionWriter, originalSize, targetPartitionTop);
         try {
             if (copyTargetFrame) {
                 try {
@@ -13360,7 +13673,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         .$(", sourceSize=").$(partitionRowCount)
                         .I$();
 
-                try (Frame sourceFrame = frameFactory.openRO(other, sourcePartition, metadata, columnVersionWriter, partitionRowCount)) {
+                // A zero-copy split suffix child source reads its slice from the shared donor files via its
+                // partition top (offset). A plain contiguous source has partition top 0 (offset-free open).
+                long srcPartitionTop = txWriter.getPartitionTopByTimestamp(sourcePartition);
+                try (Frame sourceFrame = frameFactory.openRO(other, sourcePartition, metadata, columnVersionWriter, partitionRowCount, srcPartitionTop)) {
                     FrameAlgebra.append(targetFrame, sourceFrame, txWriter.getTxn() + 1L, configuration.getCommitMode());
                     addPhysicallyWrittenRows(sourceFrame.getRowCount());
                 } catch (Throwable th) {
@@ -13378,6 +13694,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             txWriter.updatePartitionSizeByTimestamp(targetPartition, targetFrame.getRowCount());
+            // The consolidated target is a single contiguous partition now; clear any partition top / donor
+            // flag it may have carried (e.g. a donor target routed through copyTargetFrame into a fresh dir),
+            // so the read path treats it as contiguous. No-op (-1L sentinel) for an already-contiguous target.
+            txWriter.resetPartitionTop(targetPartitionIndex);
             if (!txWriter.incrementPartitionSquashCounter(targetPartitionIndex)) {
                 // The squash counter overflew its 16 bits
                 // To help back to detect partition changes we will save a file inside the partition with the current timestamp

@@ -1653,6 +1653,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isPartitionTopNonWalEnabled() {
+        return false;
+    }
+
+    @Override
+    public boolean isPartitionTopWalEnabled() {
+        return false;
+    }
+
+    @Override
     public boolean isPostingIndexAutoIncludeTimestamp() {
         return true;
     }

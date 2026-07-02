@@ -168,6 +168,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         private int partitionBy = -1;
         private int partitionIndex = -1;
         private long partitionSize = -1L;
+        private long partitionTop = 0;
         private int rootLen;
         private TableReader tableReader;
         private int timestampType;
@@ -272,6 +273,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
             maxTimestamp = Long.MIN_VALUE;
             numRows = -1L;
             partitionSize = -1L;
+            partitionTop = 0;
             partitionName.clear();
             dynamicPartitionIndex = partitionIndex;
             CharSequence dynamicTsColName = tsColName;
@@ -292,6 +294,11 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                     openParquetMeta(path, tableTxReader.getPartitionParquetFileSize(partitionIndex));
                 }
                 numRows = tableTxReader.getPartitionSize(partitionIndex);
+                if (!isParquet) {
+                    // A zero-copy split suffix child shares the donor's column files; its rows start
+                    // at file row partitionTop, not 0. 0 for normal partitions.
+                    partitionTop = tableTxReader.getPartitionTopByTimestamp(timestamp);
+                }
             } else {
                 // partition table is over, we will iterate over detached and attachable partitions
                 isDetached = true;
@@ -377,8 +384,8 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                     long fd = -1;
                     try {
                         fd = TableUtils.openRO(ff, path.$(), LOG);
-                        long lastOffset = (numRows - 1) * Long.BYTES; // timestamp size
-                        minTimestamp = ff.readNonNegativeLong(fd, 0);
+                        long lastOffset = (partitionTop + numRows - 1) * Long.BYTES; // timestamp size
+                        minTimestamp = ff.readNonNegativeLong(fd, partitionTop * Long.BYTES);
                         maxTimestamp = ff.readNonNegativeLong(fd, lastOffset);
                     } catch (CairoException e) {
                         dynamicPartitionIndex = Numbers.INT_NULL;

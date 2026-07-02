@@ -1441,12 +1441,36 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 oldPartitionTimestamp = partitionTimestamp;
                 boolean partitionSplit = false;
 
-                // Split partition if the prefix is large enough (relatively and absolutely)
+                // Zero-copy 3-way hardlink split candidate: a merge that leaves the whole untouched data
+                // tail of the partition as a DATA suffix. Instead of copying that tail into the new
+                // partition (the O(N) cost of the classic 2-way split), the suffix rows become a separate
+                // "suffix child" partition that hardlinks the donor's column files and records a
+                // partition top of R2 (the donor file-row where the child's logical row 0 begins). The
+                // child floor timestamp ts[R2] must be strictly greater than the middle's max timestamp
+                // (o3TimestampHi in the only geometry branch that reaches here with a DATA tail suffix);
+                // a same-timestamp run straddling the boundary defeats this and falls back to a 2-way copy.
+                final long suffixChildPartitionTop = mergeDataHi + 1; // R2
+                final long suffixChildRowCount = srcDataMax - suffixChildPartitionTop;
+                final long suffixChildTimestamp = suffixChildRowCount > 0
+                        ? Unsafe.getLong(srcTimestampAddr + suffixChildPartitionTop * Long.BYTES)
+                        : Long.MIN_VALUE;
+                final boolean canHardlinkSplit = !isParquet
+                        && tableWriter.isHardlinkSplitEnabled()
+                        && suffixType == O3_BLOCK_DATA
+                        && suffixHi == srcDataMax - 1
+                        && suffixLo == suffixChildPartitionTop
+                        && suffixChildRowCount > 0
+                        && suffixChildTimestamp > o3TimestampHi
+                        && tableWriter.isHardlinkSplitWithinSquashCap(partitionTimestamp);
+
+                // Split partition if the prefix is large enough (relatively and absolutely), OR whenever the
+                // zero-copy hardlink path applies (nothing to copy, so no cost threshold to amortize).
                 if (
                         prefixType == O3_BLOCK_DATA
                                 && (mergeType == O3_BLOCK_MERGE || mergeType == O3_BLOCK_O3)
-                                && prefixHi >= tableWriter.getPartitionO3SplitThreshold()
-                                && prefixHi > 2 * (mergeDataHi - mergeDataLo + suffixHi - suffixLo + mergeO3Hi - mergeO3Lo)
+                                && (canHardlinkSplit
+                                || (prefixHi >= tableWriter.getPartitionO3SplitThreshold()
+                                && prefixHi > 2 * (mergeDataHi - mergeDataLo + suffixHi - suffixLo + mergeO3Hi - mergeO3Lo)))
                 ) {
                     // large prefix copy, better to split the partition
                     long maxSourceTimestamp = Unsafe.getLong(srcTimestampAddr + prefixHi * Long.BYTES);
@@ -1468,9 +1492,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         if (newPrefixHi > -1L) {
                             long shiftLeft = prefixHi - newPrefixHi;
                             long newMergeDataLo = mergeDataLo - shiftLeft;
-                            // Check that splitting still makes sense
-                            if (newPrefixHi >= tableWriter.getPartitionO3SplitThreshold()
-                                    && newPrefixHi > 2 * (mergeDataHi - newMergeDataLo + suffixHi - suffixLo + mergeO3Hi - mergeO3Lo)
+                            // Check that splitting still makes sense. The reduction only moves the
+                            // prefix->merge boundary (mergeDataLo), never the merge->suffix boundary, so the
+                            // hardlink suffix child stays valid; skip the cost threshold on the hardlink path.
+                            if (canHardlinkSplit
+                                    || (newPrefixHi >= tableWriter.getPartitionO3SplitThreshold()
+                                    && newPrefixHi > 2 * (mergeDataHi - newMergeDataLo + suffixHi - suffixLo + mergeO3Hi - mergeO3Lo))
                             ) {
                                 prefixHi = newPrefixHi;
                                 mergeDataLo = newMergeDataLo;
@@ -1501,6 +1528,18 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         // size of the new partition, old (0) and new
                         o3SplitPartitionSize = newPartitionSize - srcDataNewPartitionSize;
 
+                        if (canHardlinkSplit) {
+                            // 3-way: prefix donor [0,R1) + freshly written middle (merge only) + hardlinked
+                            // suffix child [R2, srcDataMax). Suppress the suffix DATA copy so the open-column
+                            // tasks write only the merged middle, and shrink the middle size accordingly.
+                            suffixType = O3_BLOCK_NONE;
+                            o3SplitPartitionSize -= suffixChildRowCount;
+                            Unsafe.putLong(partitionUpdateSinkAddr + 8 * Long.BYTES, SPLIT_THREE_WAY_HARDLINK);
+                            Unsafe.putLong(partitionUpdateSinkAddr + 9 * Long.BYTES, suffixChildTimestamp);
+                            Unsafe.putLong(partitionUpdateSinkAddr + 10 * Long.BYTES, suffixChildPartitionTop);
+                            Unsafe.putLong(partitionUpdateSinkAddr + 11 * Long.BYTES, suffixChildRowCount);
+                        }
+
                         // large prefix copy, better to split the partition
                         LOG.info().$("o3 split partition [table=").$(tableWriter.getTableToken())
                                 .$(", timestamp=").$ts(timestampDriver, oldPartitionTimestamp)
@@ -1509,6 +1548,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 .$(", o3SplitPartitionSize=").$(o3SplitPartitionSize)
                                 .$(", newPartitionTimestamp=").$ts(timestampDriver, partitionTimestamp)
                                 .$(", nameTxn=").$(txn)
+                                .$(", hardlinkSuffix=").$(canHardlinkSplit)
+                                .$(", suffixChildRowCount=").$(canHardlinkSplit ? suffixChildRowCount : 0)
                                 .I$();
                     }
                 }
@@ -1518,6 +1559,17 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     canAppendOnly &= (!overlaps && suffixType == O3_BLOCK_O3);
                 } else {
                     canAppendOnly &= mergeType == O3_BLOCK_NONE && (prefixType == O3_BLOCK_NONE || prefixType == O3_BLOCK_DATA);
+                }
+                if (canAppendOnly
+                        && tableWriter.isPartitionDonorByTimestamp(oldPartitionTimestamp)
+                        && tableWriter.getPartitionTopByTimestamp(oldPartitionTimestamp) == 0) {
+                    // A zero-copy split prefix donor shares its column files with a hardlinked suffix
+                    // child, which owns the file bytes from row R1 up; an in-place tail append would
+                    // overwrite the child's data. Rewrite the donor into a fresh directory instead
+                    // (the child keeps reading the old inodes through its own hardlinks). A suffix
+                    // child (top > 0) is exempt: its in-place append lands at the true tail of the
+                    // shared file, beyond every other sharer's range.
+                    canAppendOnly = false;
                 }
                 if (canAppendOnly) {
                     // We do not need to create a copy of partition when we simply need to append

@@ -48,6 +48,9 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
     private volatile boolean distressed = false;
     private long fd = -1;
     private FilesFacade ff;
+    // Partition top (R2) of a zero-copy split suffix child; 0 for a normal partition. index() shifts the
+    // logical row range by +partitionTop so it reads the shared donor file and stores physical row ids.
+    private long partitionTop;
     @SuppressWarnings({"FieldCanBeLocal", "FieldMayBeFinal"})
     private volatile long sequence = 0L;
 
@@ -123,6 +126,7 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
             long partitionNameTxn
     ) {
         this.columnTop = columnTop;
+        this.partitionTop = 0;
         try {
             this.writer.of(path, name, columnNameTxn, partitionTimestamp, partitionNameTxn);
             this.ff = columnMem.getFilesFacade();
@@ -144,6 +148,7 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
             long partitionNameTxn
     ) {
         this.columnTop = columnTop;
+        this.partitionTop = 0;
         try {
             writer.of(path, name, columnNameTxn, partitionTimestamp, partitionNameTxn);
         } catch (Throwable e) {
@@ -187,6 +192,11 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
     public void index(FilesFacade ff, long dataColumnFd, long loRow, long hiRow) {
         // while we may have to read column starting with zero offset
         // index values have to be adjusted to partition-level row id
+        // A zero-copy split suffix child indexes into the shared donor .k/.v: shift the logical range to
+        // PHYSICAL row ids (logical + partitionTop) so the read at (row - columnTop) hits the shared donor
+        // file and the stored row ids match what the partition-top-aware index reader queries. 0 == no-op.
+        loRow += partitionTop;
+        hiRow += partitionTop;
         writer.rollbackConditionally(loRow);
 
         long lo = Math.max(loRow, columnTop);
@@ -252,6 +262,12 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
     @Override
     public void resetColumnTop() {
         columnTop = 0;
+        partitionTop = 0;
+    }
+
+    @Override
+    public void setPartitionTop(long partitionTop) {
+        this.partitionTop = partitionTop;
     }
 
     @Override

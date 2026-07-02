@@ -48,7 +48,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             long partitionTxn,
             long columnTop
     ) {
-        of(configuration, path, name, columnNameTxn, partitionTxn, columnTop, null, null, 0);
+        of(configuration, path, name, columnNameTxn, partitionTxn, columnTop, null, null, 0, 0);
     }
 
     public PostingIndexFwdReader(
@@ -62,7 +62,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             io.questdb.cairo.ColumnVersionReader columnVersionReader,
             long partitionTimestamp
     ) {
-        of(configuration, path, name, columnNameTxn, partitionTxn, columnTop, metadata, columnVersionReader, partitionTimestamp);
+        of(configuration, path, name, columnNameTxn, partitionTxn, columnTop, metadata, columnVersionReader, partitionTimestamp, 0);
     }
 
     public PostingIndexFwdReader(
@@ -77,8 +77,24 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             long partitionTimestamp,
             long pinnedTableTxn
     ) {
+        this(configuration, path, name, columnNameTxn, partitionTxn, columnTop, metadata, columnVersionReader, partitionTimestamp, pinnedTableTxn, 0);
+    }
+
+    public PostingIndexFwdReader(
+            CairoConfiguration configuration,
+            Path path,
+            CharSequence name,
+            long columnNameTxn,
+            long partitionTxn,
+            long columnTop,
+            io.questdb.cairo.sql.RecordMetadata metadata,
+            io.questdb.cairo.ColumnVersionReader columnVersionReader,
+            long partitionTimestamp,
+            long pinnedTableTxn,
+            long partitionTop
+    ) {
         setPinnedTableTxn(pinnedTableTxn);
-        of(configuration, path, name, columnNameTxn, partitionTxn, columnTop, metadata, columnVersionReader, partitionTimestamp);
+        of(configuration, path, name, columnNameTxn, partitionTxn, columnTop, metadata, columnVersionReader, partitionTimestamp, partitionTop);
     }
 
     @Override
@@ -103,6 +119,14 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
     public RowCursor getCursor(int key, long minValue, long maxValue, int[] requiredCoverColumns) {
         assert assertStampOperatingThread();
         reloadConditionally();
+
+        // Shift the logical query window into shared donor .pv (physical) space. columnTop is the donor's
+        // physical column top and the chain entryMaxValue is physical, so the clamps below stay consistent;
+        // the cursor returns next - minValue, so returned rows stay logical.
+        minValue += partitionTop;
+        if (maxValue != Long.MAX_VALUE) {
+            maxValue += partitionTop;
+        }
 
         // Clamp the index-walked range to the picked chain entry's
         // tracked maxValue. Writers can leave dirty (key, rowId) entries

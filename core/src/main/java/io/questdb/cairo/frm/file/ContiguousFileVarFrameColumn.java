@@ -61,6 +61,9 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
     private long dataMapAddr;
     private long dataMapSize;
     private boolean isReadOnly;
+    // Per-partition partition top of a zero-copy split suffix child (0 for a normal contiguous column). When
+    // this column is a SOURCE, its donor aux/data address follows file_row = logical + offset - columnTop.
+    private long offset;
     private RecycleBin<FrameColumn> recycleBin;
 
     public ContiguousFileVarFrameColumn(CairoConfiguration configuration) {
@@ -81,6 +84,11 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
         }
         sourceLo -= sourceColumn.getColumnTop();
         sourceHi -= sourceColumn.getColumnTop();
+        // Canonical formula: file_row = logical - columnTop + offset. A split suffix child source reads its
+        // aux/data slice from the shared donor file; aux maps from byte 0 and data offsets are file-absolute,
+        // so shifting sourceLo/sourceHi is all that's needed. offset is 0 for a normal source.
+        sourceLo += sourceColumn.getOffset();
+        sourceHi += sourceColumn.getOffset();
         appendOffsetRowCount -= columnTop;
 
         assert sourceHi >= 0;
@@ -284,7 +292,7 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
 
     @Override
     public long getContiguousAuxAddr(long rowHi) {
-        if (rowHi <= columnTop) {
+        if (rowHi + offset <= columnTop) {
             return 0;
         }
 
@@ -294,12 +302,17 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
 
     @Override
     public long getContiguousDataAddr(long rowHi) {
-        if (rowHi <= columnTop) {
+        if (rowHi + offset <= columnTop) {
             return 0;
         }
 
         mapAllRows(rowHi);
         return dataMapAddr;
+    }
+
+    @Override
+    public long getOffset() {
+        return offset;
     }
 
     @Override
@@ -318,6 +331,10 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
     }
 
     public void ofRO(Path partitionPath, CharSequence columnName, long columnTxn, int columnType, long columnTop, int columnIndex, boolean isEmpty) {
+        ofRO(partitionPath, columnName, columnTxn, columnType, columnTop, columnIndex, isEmpty, 0);
+    }
+
+    public void ofRO(Path partitionPath, CharSequence columnName, long columnTxn, int columnType, long columnTop, int columnIndex, boolean isEmpty, long partitionTop) {
         assert auxFd == -1;
         closed = false;
         int plen = partitionPath.size();
@@ -327,6 +344,7 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
             this.columnTypeDriver = ColumnType.getDriver(columnType);
             this.columnTop = columnTop;
             this.columnIndex = columnIndex;
+            this.offset = partitionTop;
             this.appendOffsetRowCount = -1;
 
             if (!isEmpty) {
@@ -352,11 +370,12 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
 
         try {
             // Negative col top means column does not exist in the partition.
-            // Create it.
+            // Create it. A writable (target) column is always contiguous -> offset 0.
             this.columnType = columnType;
             this.columnTypeDriver = ColumnType.getDriver(columnType);
             this.columnTop = columnTop;
             this.columnIndex = columnIndex;
+            this.offset = 0;
             this.appendOffsetRowCount = -1;
 
             dFile(partitionPath, columnName, columnTxn);
@@ -393,7 +412,9 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
             throw new UnsupportedOperationException("Cannot map writable column");
         }
 
-        long newAuxMemSize = columnTypeDriver.getAuxVectorSize(rowHi - columnTop);
+        // A split suffix child maps the WHOLE shared donor slice: aux from byte 0 over (rowHi-columnTop+offset)
+        // entries, data from byte 0 (data offsets are file-absolute). offset is 0 for a normal column.
+        long newAuxMemSize = columnTypeDriver.getAuxVectorSize(rowHi - columnTop + offset);
         if (auxMapSize > 0) {
             if (auxMapSize <= newAuxMemSize) {
                 // Already mapped to same or bigger size
@@ -409,7 +430,7 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
             auxMapAddr = TableUtils.mapRO(ff, auxFd, auxMapSize, 0, MEMORY_TAG);
         }
 
-        dataMapSize = columnTypeDriver.getDataVectorSize(auxMapAddr, 0, rowHi - columnTop - 1);
+        dataMapSize = columnTypeDriver.getDataVectorSize(auxMapAddr, 0, rowHi - columnTop + offset - 1);
         if (dataMapSize > 0) {
             dataMapAddr = TableUtils.mapRO(ff, dataFd, dataMapSize, 0, MEMORY_TAG);
         }

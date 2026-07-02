@@ -414,6 +414,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int partitionEncoderParquetRowGroupSize;
     private final boolean partitionEncoderParquetStatisticsEnabled;
     private final int partitionEncoderParquetVersion;
+    private final boolean partitionTopNonWalEnabled;
+    private final boolean partitionTopWalEnabled;
     private final PGConfiguration pgConfiguration = new PropPGConfiguration();
     private final boolean pgEnabled;
     private final PropPGWireConcurrentCacheConfiguration pgWireConcurrentCacheConfiguration = new PropPGWireConcurrentCacheConfiguration();
@@ -1893,6 +1895,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.o3MidPartitionMaxSplits = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 1));
             this.o3PartitionSplitMinSize = getLongSize(properties, env, PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 50 * Numbers.SIZE_1MB);
             this.o3PartitionOverwriteControlEnabled = getBoolean(properties, env, PropertyKey.CAIRO_O3_PARTITION_OVERWRITE_CONTROL_ENABLED, false);
+            this.partitionTopWalEnabled = getBoolean(properties, env, PropertyKey.CAIRO_PARTITION_TOP_WAL_ENABLED, false);
+            this.partitionTopNonWalEnabled = getBoolean(properties, env, PropertyKey.CAIRO_PARTITION_TOP_NON_WAL_ENABLED, false);
 
             parseBindTo(properties, env, PropertyKey.LINE_UDP_BIND_TO, "0.0.0.0:9009", (a, p) -> {
                 this.lineUdpBindIPV4Address = a;
@@ -5317,6 +5321,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isPartitionO3OverwriteControlEnabled() {
             return o3PartitionOverwriteControlEnabled;
+        }
+
+        @Override
+        public boolean isPartitionTopNonWalEnabled() {
+            return partitionTopNonWalEnabled;
+        }
+
+        @Override
+        public boolean isPartitionTopWalEnabled() {
+            return partitionTopWalEnabled;
         }
 
         @Override

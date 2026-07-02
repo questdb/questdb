@@ -112,8 +112,10 @@ public class FrameAlgebra {
             long partitionDataAddr = partitionColumn.getContiguousDataAddr(partitionHi);
             long commitDataAddr = commitColumn.getContiguousDataAddr(commitHi);
 
+            // The designated timestamp column has no column top, so its donor file address is logical + offset.
+            // The commit frame is incoming (offset 0). offset is 0 for a normal contiguous partition.
             return isDesignatedTimestampColumnReplaceIdentical0(
-                    partitionDataAddr + partitionLo * Long.BYTES,
+                    partitionDataAddr + (partitionLo + partitionColumn.getOffset()) * Long.BYTES,
                     commitDataAddr + commitLo * Long.BYTES * 2,
                     partitionHi - partitionLo
             );
@@ -127,7 +129,12 @@ public class FrameAlgebra {
             throw new UnsupportedOperationException();
         }
 
-        final long sourceColumnTop = sourceColumn.getColumnTop();
+        // A zero-copy split suffix child stores the DONOR's full column top but reads it through an offset
+        // (partitionTop), so its null-row count in the child's LOGICAL space is max(0, columnTop - offset).
+        // FrameColumn.append still subtracts the raw donor columnTop and adds the offset (canonical
+        // file_row = logical - columnTop + offset), so passing the clamped count here keeps the split of
+        // null-padding vs copied data rows correct. offset is 0 for a normal source (reduces to columnTop).
+        final long sourceColumnTop = Math.max(0, sourceColumn.getColumnTop() - sourceColumn.getOffset());
         final long nullPaddingRowCount = Math.max(0, Math.min(sourceColumnTop, sourceHi) - sourceLo);
         if (nullPaddingRowCount > 0) {
             long targetColTop = targetColumn.getColumnTop();
@@ -161,6 +168,12 @@ public class FrameAlgebra {
             long mergeIndexAddr,
             long mergeIndexRows
     ) {
+        // The native replace-identical comparison is not yet zero-copy-split-offset aware: it computes partition
+        // file addresses from columnTop/partitionLo without adding a donor offset. A donor-flagged split child is
+        // always materialized to a fresh contiguous partition before it can be a replace target (invariant 3.2),
+        // so a source column here always has offset 0. Thread the offset through here too if that ever changes.
+        assert partitionColumn.getOffset() == 0;
+
         long partitionAddrAux = partitionColumn.getContiguousAuxAddr(partitionHi);
         long partitionDataAddr = partitionColumn.getContiguousDataAddr(partitionHi);
 

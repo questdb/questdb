@@ -53,7 +53,19 @@ public class BitmapIndexFwdReader extends AbstractBitmapIndexReader {
             long partitionTxn,
             long columnTop
     ) {
-        of(configuration, path, name, columnNameTxn, partitionTxn, columnTop, null, null, 0);
+        this(configuration, path, name, columnNameTxn, partitionTxn, columnTop, 0);
+    }
+
+    public BitmapIndexFwdReader(
+            CairoConfiguration configuration,
+            Path path,
+            CharSequence name,
+            long columnNameTxn,
+            long partitionTxn,
+            long columnTop,
+            long partitionTop
+    ) {
+        of(configuration, path, name, columnNameTxn, partitionTxn, columnTop, null, null, 0, partitionTop);
     }
 
     @Override
@@ -65,6 +77,14 @@ public class BitmapIndexFwdReader extends AbstractBitmapIndexReader {
 
     @Override
     public RowCursor getCursor(int key, long minValue, long maxValue) {
+        // Shift the logical query window into the shared donor .k/.v (physical) space. columnTop below is
+        // the donor's physical column top, so "physical minValue < columnTop" still means NULL. The cursor
+        // returns next - minValue, so the +partitionTop cancels and returned rows stay logical.
+        minValue += partitionTop;
+        if (maxValue != Long.MAX_VALUE) {
+            maxValue += partitionTop;
+        }
+
         if (key >= keyCount) {
             updateKeyCount();
         }
@@ -101,6 +121,11 @@ public class BitmapIndexFwdReader extends AbstractBitmapIndexReader {
 
     @Override
     public IndexFrameCursor getFrameCursor(int key, long minRowId, long maxRowId) {
+        // NOTE: partitionTop is intentionally NOT applied here yet. getFrameCursor's only consumer is
+        // SampleByFirstLastRecordCursorFactory, whose raw-physical arithmetic (frameBaseOffset, the native
+        // findFirstLastInFrame0 row-id space, and the frameNextRowId resume feedback) must be threaded
+        // together with this shift in one change, guarded by the straddle-the-boundary SampleBy parity test.
+        // Until that lands, split children (partitionTop>0) must not reach this path; partitionTop==0 is unaffected.
         if (key >= keyCount) {
             updateKeyCount();
         }

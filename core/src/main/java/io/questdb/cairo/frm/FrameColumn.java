@@ -65,6 +65,16 @@ public interface FrameColumn extends Closeable {
 
     long getContiguousDataAddr(long rowHi);
 
+    /**
+     * Per-partition "partition top" of a zero-copy split suffix child (0 for a normal contiguous column and
+     * for every memory column). When this column is the SOURCE of a squash append, its donor slice is read at
+     * {@code file_row = sourceLo + offset - columnTop} (the canonical formula). A write/target column is always
+     * offset 0.
+     */
+    default long getOffset() {
+        return 0;
+    }
+
     long getPrimaryFd();
 
     long getSecondaryFd();

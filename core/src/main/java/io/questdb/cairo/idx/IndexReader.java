@@ -75,6 +75,16 @@ public interface IndexReader extends Closeable {
     long getColumnTxn();
 
     /**
+     * Per-partition "partition top" of a zero-copy split suffix child: the count of leading donor
+     * file rows below this partition's logical row 0. 0 for every contiguous partition. The reader
+     * shifts the incoming logical {@code minValue}/{@code maxValue} by {@code +partitionTop} into the
+     * shared donor {@code .k/.v} space; {@code getCursor}-returned rows stay logical.
+     */
+    default long getPartitionTop() {
+        return 0;
+    }
+
+    /**
      * Acquire a value cursor bounded by the given min/max (inclusive). The returned
      * cursor must be {@link RowCursor#close() closed} when iteration is done — prefer
      * try-with-resources. On close, pool-backed cursors return to a free list for
@@ -121,7 +131,8 @@ public interface IndexReader extends Closeable {
             long columnTop,
             RecordMetadata metadata,
             ColumnVersionReader columnVersionReader,
-            long partitionTimestamp
+            long partitionTimestamp,
+            long partitionTop
     );
 
     void reloadConditionally();

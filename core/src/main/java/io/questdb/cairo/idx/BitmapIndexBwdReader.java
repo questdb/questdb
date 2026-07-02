@@ -49,7 +49,19 @@ public class BitmapIndexBwdReader extends AbstractBitmapIndexReader {
             long partitionTxn,
             long columnTop
     ) {
-        of(configuration, path, name, columnNameTxn, partitionTxn, columnTop, null, null, 0);
+        this(configuration, path, name, columnNameTxn, partitionTxn, columnTop, 0);
+    }
+
+    public BitmapIndexBwdReader(
+            CairoConfiguration configuration,
+            Path path,
+            CharSequence name,
+            long columnNameTxn,
+            long partitionTxn,
+            long columnTop,
+            long partitionTop
+    ) {
+        of(configuration, path, name, columnNameTxn, partitionTxn, columnTop, null, null, 0, partitionTop);
     }
 
     @Override
@@ -62,6 +74,13 @@ public class BitmapIndexBwdReader extends AbstractBitmapIndexReader {
     @Override
     public RowCursor getCursor(int key, long minValue, long maxValue) {
         assert minValue <= maxValue;
+
+        // Shift the logical query window into the shared donor .k/.v (physical) space (columnTop is the
+        // donor's physical top; the cursor returns next - minValue so results stay logical).
+        minValue += partitionTop;
+        if (maxValue != Long.MAX_VALUE) {
+            maxValue += partitionTop;
+        }
 
         if (key >= keyCount) {
             updateKeyCount();

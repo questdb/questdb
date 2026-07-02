@@ -76,16 +76,20 @@ public class ContiguousFileColumnPool implements FrameColumnPool, Closeable {
                 long columnTop,
                 int columnIndex,
                 boolean isEmpty,
-                boolean canWrite
+                boolean canWrite,
+                long partitionTop
         ) {
             boolean isIndexed = indexBlockCapacity > 0;
+            // A writable (target) frame column is always contiguous and never carries a partition top;
+            // partitionTop only shifts the file address of a read-only (source) donor column.
+            assert !canWrite || partitionTop == 0;
 
             if (ColumnType.isVarSize(columnType)) {
                 ContiguousFileVarFrameColumn column = getVarColumn();
                 if (canWrite) {
                     column.ofRW(partitionPath, columnName, columnTxn, columnType, columnTop, columnIndex);
                 } else {
-                    column.ofRO(partitionPath, columnName, columnTxn, columnType, columnTop, columnIndex, isEmpty);
+                    column.ofRO(partitionPath, columnName, columnTxn, columnType, columnTop, columnIndex, isEmpty, partitionTop);
                 }
                 return column;
             }
@@ -102,7 +106,7 @@ public class ContiguousFileColumnPool implements FrameColumnPool, Closeable {
             if (canWrite) {
                 column.ofRW(partitionPath, columnName, columnTxn, columnType, columnTop, columnIndex);
             } else {
-                column.ofRO(partitionPath, columnName, columnTxn, columnType, columnTop, columnIndex, isEmpty);
+                column.ofRO(partitionPath, columnName, columnTxn, columnType, columnTop, columnIndex, isEmpty, partitionTop);
             }
             return column;
         }

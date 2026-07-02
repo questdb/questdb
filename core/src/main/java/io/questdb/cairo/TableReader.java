@@ -71,6 +71,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private static final int PARTITIONS_SLOT_OFFSET_COLUMN_VERSION = PARTITIONS_SLOT_OFFSET_NAME_TXN + 1;
     private static final int PARTITIONS_SLOT_OFFSET_FORMAT = PARTITIONS_SLOT_OFFSET_COLUMN_VERSION + 1;
     private static final int PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN = PARTITIONS_SLOT_OFFSET_FORMAT + 1;
+    private static final int PARTITIONS_SLOT_OFFSET_PARTITION_TOP = PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN + 1; // slot 6: cached txFile partition top
     private static final int PARTITIONS_SLOT_SIZE = 8; // must be power of 2
     private static final int PARTITIONS_SLOT_SIZE_MSB = Numbers.msb(PARTITIONS_SLOT_SIZE);
     private final BitSet activeColumns = new BitSet();
@@ -380,6 +381,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                     !indexReader.isOpen()
                             || indexReader.getColumnTxn() != columnNameTxn
                             || indexReader.getPartitionTxn() != partitionTxn
+                            || indexReader.getPartitionTop() != getPartitionTop(partitionIndex)
             ) {
                 int plen = path.size();
                 try {
@@ -389,10 +391,13 @@ public class TableReader implements Closeable, SymbolTableSource {
                             metadata.getColumnName(columnIndex),
                             columnNameTxn,
                             partitionTxn,
+                            // DONOR/physical column top (unchanged); partitionTop is passed separately and the
+                            // reader shifts its query window into donor .k/.v space by +partitionTop.
                             getColumnTop(columnBase, columnIndex),
                             metadata,
                             columnVersionReader,
-                            partitionTimestamp
+                            partitionTimestamp,
+                            getPartitionTop(partitionIndex)
                     );
                 } finally {
                     path.trimTo(plen);
@@ -541,6 +546,16 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     public long getPartitionTimestampByIndex(int partitionIndex) {
         return txFile.getPartitionTimestampByIndex(partitionIndex);
+    }
+
+    /**
+     * Per-partition "partition top": the count of leading file rows below this partition's logical row 0,
+     * cached at open time from the {@code _txn} packed slot 3. It is 0 for every contiguous partition and
+     * positive only for a zero-copy split suffix child that shares hardlinked column files with its donor.
+     * Applied at slice time via the canonical file-address formula {@code file_row = logical + partitionTop - columnTop}.
+     */
+    public long getPartitionTop(int partitionIndex) {
+        return openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_PARTITION_TOP);
     }
 
     public int getPartitionedBy() {
@@ -1062,11 +1077,13 @@ public class TableReader implements Closeable, SymbolTableSource {
                         metadata.getColumnName(columnIndex),
                         columnNameTxn,
                         partitionTxn,
+                        // DONOR/physical column top (unchanged); partitionTop passed separately.
                         getColumnTop(columnBase, columnIndex),
                         metadata,
                         columnVersionReader,
                         partitionTimestamp,
-                        txn
+                        txn,
+                        getPartitionTop(partitionIndex)
                 );
                 if (direction == IndexReader.DIR_BACKWARD) {
                     indexes.setQuick(globalIndex, reader);
@@ -1241,6 +1258,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, columnVersionReader.getMaxPartitionVersion(partitionTimestamp));
             openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_FORMAT, isParquet ? PartitionFormat.PARQUET : PartitionFormat.NATIVE);
             openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN, 0);
+            openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_PARTITION_TOP, 0);
         }
         return openPartitionInfo;
     }
@@ -1269,6 +1287,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, -1);
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT, -1);
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN, 0);
+        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_PARTITION_TOP, 0);
         partitionCount++;
         LOG.debug().$("inserted partition [index=").$(partitionIndex).$(", table=").$(tableToken)
                 .$(", timestamp=").$ts(ColumnType.getTimestampDriver(timestampType), timestamp).I$();
@@ -1426,6 +1445,8 @@ public class TableReader implements Closeable, SymbolTableSource {
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN, partitionNameTxn);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, columnVersionReader.getMaxPartitionVersion(partitionTimestamp));
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT, PartitionFormat.PARQUET);
+                        // Parquet partitions never carry a native partition top; slot 3 holds the file size.
+                        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_PARTITION_TOP, 0);
 
                         final long parquetFileSize = openParquetMetadata(partitionIndex, partitionNameTxn);
                         path.trimTo(rootLen);
@@ -1480,6 +1501,9 @@ public class TableReader implements Closeable, SymbolTableSource {
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN, partitionNameTxn);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, columnVersionReader.getMaxPartitionVersion(partitionTimestamp));
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT, PartitionFormat.NATIVE);
+                        // Cache the partition top BEFORE openPartitionColumns: reloadColumnAt reads slot 6
+                        // to widen the column mmap by partitionTop rows (a zero-copy split suffix child).
+                        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_PARTITION_TOP, txFile.getPartitionTop(partitionIndex));
                         openPartitionColumns(partitionIndex, path, getColumnBase(partitionIndex), partitionSize);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, partitionSize);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN, 1);
@@ -1800,7 +1824,6 @@ public class TableReader implements Closeable, SymbolTableSource {
                 columnTxn = columnVersionReader.getDefaultColumnNameTxn(writerIndex);
             }
             final long columnRowCount = partitionRowCount - columnTop;
-
             // When column is added mid-table existence, the top record is only
             // created in the current partition. Older partitions would simply have no
             // column file. This makes it necessary to check the partition timestamp in Column Version file
@@ -1808,7 +1831,20 @@ public class TableReader implements Closeable, SymbolTableSource {
             final boolean hasVersionRecord = versionRecordIndex > -1;
             final long colTopPartTs = columnVersionReader.getColumnTopPartitionTimestamp(writerIndex);
             final boolean isColTopPartTsOk = colTopPartTs <= partitionTimestamp;
-            if (columnRowCount > 0 && (hasVersionRecord || isColTopPartTsOk)) {
+            // A zero-copy split suffix child shares the donor's column files and reads them through a
+            // per-partition partition top. The mmap must cover the WHOLE shared file, i.e. up to the
+            // highest donor file row this child can address: file_row = (partitionRowCount-1) + partitionTop
+            // - columnTop = mappedRowCount - 1. So every mmap size below uses mappedRowCount, not
+            // columnRowCount (which can even go negative when columnTop > partitionRowCount, yet the child
+            // still has data because partitionTop pushes the addresses into the donor's data region).
+            // partitionTop is 0 for every contiguous partition, so mappedRowCount == columnRowCount there.
+            // A column added AFTER this child was created (colTopPartTs == this child's own timestamp) is
+            // child-local: its file is not shared with the donor, so the donor partition top must NOT offset
+            // it -- it is a normal added column with its own (empty for now) file at offset 0.
+            final long partitionTopRaw = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_PARTITION_TOP);
+            final long partitionTop = colTopPartTs < partitionTimestamp ? partitionTopRaw : 0;
+            final long mappedRowCount = partitionTop + columnRowCount;
+            if (mappedRowCount > 0 && (hasVersionRecord || isColTopPartTsOk)) {
                 if (partitionFormat == PartitionFormat.NATIVE) {
                     final int columnType = metadata.getColumnType(columnIndex);
 
@@ -1820,13 +1856,13 @@ public class TableReader implements Closeable, SymbolTableSource {
                     boolean lastPartition = partitionIndex == partitionCount - 1;
                     if (ColumnType.isVarSize(columnType)) {
                         final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
-                        long auxSize = columnTypeDriver.getAuxVectorSize(columnRowCount);
+                        long auxSize = columnTypeDriver.getAuxVectorSize(mappedRowCount);
                         TableUtils.iFile(path.trimTo(plen), name, columnTxn);
                         MemoryCMR auxMem = columns.getQuick(secondaryIndex);
                         // Keep aux files fds open, they are read every time TableReader partition is reopened
                         // to find out what memory to map of the data file.
                         auxMem = openOrCreateColumnMemory(path, columns, secondaryIndex, auxMem, auxSize, lastPartition);
-                        long dataSize = columnTypeDriver.getDataVectorSizeAt(auxMem.addressOf(0), columnRowCount - 1);
+                        long dataSize = columnTypeDriver.getDataVectorSizeAt(auxMem.addressOf(0), mappedRowCount - 1);
                         if (dataSize < columnTypeDriver.getDataVectorMinEntrySize() || dataSize >= (1L << 40)) {
                             LOG.critical().$("Invalid var len column size [column=").$safe(name)
                                     .$(", size=").$(dataSize)
@@ -1845,7 +1881,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                                 columns,
                                 primaryIndex,
                                 dataMem,
-                                columnRowCount << ColumnType.pow2SizeOf(columnType),
+                                mappedRowCount << ColumnType.pow2SizeOf(columnType),
                                 lastPartition
                         );
                         Misc.free(columns.getAndSetQuick(secondaryIndex, null));
@@ -1861,7 +1897,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 if (metadata.isColumnIndexed(columnIndex)) {
                     IndexReader indexReader = indexReaders.getQuick(primaryIndex);
                     if (indexReader != null) {
-                        indexReader.of(configuration, path.trimTo(plen), name, columnTxn, partitionTxn, columnTop, metadata, columnVersionReader, partitionTimestamp);
+                        indexReader.of(configuration, path.trimTo(plen), name, columnTxn, partitionTxn, columnTop, metadata, columnVersionReader, partitionTimestamp, partitionTop);
                     }
                 } else {
                     Misc.free(indexReaders.getAndSetQuick(primaryIndex, null));
@@ -1891,6 +1927,12 @@ public class TableReader implements Closeable, SymbolTableSource {
      */
     private boolean reloadColumnFiles(int partitionIndex, long rowCount) {
         int columnBase = getColumnBase(partitionIndex);
+        // This in-place re-map runs unconditionally on the open last native partition (the dedup/var-rewrite
+        // safety re-map). Like reloadColumnAt, a zero-copy split suffix child maps the WHOLE shared donor file
+        // (mappedRowCount rows), so growColumn must be sized by mappedRowCount, not the child's own row count.
+        // partitionTop is 0 for every contiguous partition, so this is byte-identical there.
+        final long partitionTopRaw = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_PARTITION_TOP);
+        final long partitionTimestamp = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE);
         for (int i = 0; i < columnCount; i++) {
             final int index = getPrimaryColumnIndex(columnBase, i);
             MemoryCMR mem1 = columns.getQuick(index);
@@ -1898,13 +1940,17 @@ public class TableReader implements Closeable, SymbolTableSource {
                 continue; // column was never opened — nothing to grow
             }
 
-            long columnFilesRowCount = rowCount - getColumnTop(columnBase, i);
-            if (columnFilesRowCount > 0 &&
+            // Only columns shared from the donor carry the partition top; a column added after the child
+            // was created is child-local (see reloadColumnAt).
+            final long colTopPartTs = columnVersionReader.getColumnTopPartitionTimestamp(metadata.getWriterIndex(i));
+            final long partitionTop = colTopPartTs < partitionTimestamp ? partitionTopRaw : 0;
+            long mappedRowCount = partitionTop + (rowCount - getColumnTop(columnBase, i));
+            if (mappedRowCount > 0 &&
                     (mem1 == NullMemoryCMR.INSTANCE || !growColumn(
                             (MemoryCMRDetachedImpl) mem1,
                             (MemoryCMRDetachedImpl) columns.getQuick(index + 1),
                             metadata.getColumnType(i),
-                            columnFilesRowCount
+                            mappedRowCount
                     ))) {
                 return false;
             }

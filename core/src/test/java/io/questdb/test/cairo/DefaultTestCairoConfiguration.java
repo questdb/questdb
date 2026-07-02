@@ -109,6 +109,16 @@ public class DefaultTestCairoConfiguration extends DefaultCairoConfiguration {
     }
 
     @Override
+    public boolean isPartitionTopNonWalEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isPartitionTopWalEnabled() {
+        return true;
+    }
+
+    @Override
     public boolean mangleTableDirNames() {
         return true;
     }

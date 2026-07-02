@@ -101,6 +101,9 @@ public class FrameImpl implements Frame {
         this.canWrite = false;
         this.create = false;
         this.frameType = COLUMN_MEMORY;
+        // Reset offset: FrameImpl instances are pooled/recycled, so a stale offset from a prior
+        // zero-copy split-child open must never leak into a non-offset open.
+        this.offset = 0;
         assert columns.size() == metadata.getColumnCount() * 2;
         this.columnsMemory = columns;
     }
@@ -114,6 +117,7 @@ public class FrameImpl implements Frame {
         this.canWrite = true;
         this.create = true;
         this.frameType = COLUMN_CONTIGUOUS_FILE;
+        this.offset = 0;
     }
 
     @Override
@@ -127,6 +131,15 @@ public class FrameImpl implements Frame {
     }
 
     public void openRO(Path partitionPath, long partitionTimestamp, RecordMetadata metadata, ColumnVersionReader cvr, long partitionRowCount) {
+        openRO(partitionPath, partitionTimestamp, metadata, cvr, partitionRowCount, 0);
+    }
+
+    /**
+     * Opens a partition for reading with a per-partition partition top (a zero-copy split suffix child).
+     * The offset is carried into every column via {@link FrameColumn#getOffset()} so a squash append reads
+     * the donor slice at {@code file_row = sourceLo + offset - columnTop}. offset 0 == a normal contiguous partition.
+     */
+    public void openRO(Path partitionPath, long partitionTimestamp, RecordMetadata metadata, ColumnVersionReader cvr, long partitionRowCount, long partitionTop) {
         this.metadata = metadata;
         this.crv = cvr;
         this.rowCount = partitionRowCount;
@@ -135,6 +148,7 @@ public class FrameImpl implements Frame {
         this.canWrite = false;
         this.create = false;
         this.frameType = COLUMN_CONTIGUOUS_FILE;
+        this.offset = partitionTop;
     }
 
     public void openRO(
@@ -161,6 +175,7 @@ public class FrameImpl implements Frame {
         this.canWrite = false;
         this.create = false;
         this.frameType = COLUMN_CONTIGUOUS_FILE;
+        this.offset = 0;
     }
 
     public void openRW(@Transient Path partitionPath, long partitionTimestamp, RecordMetadata metadata, ColumnVersionWriter cvw, long size) {
@@ -172,6 +187,7 @@ public class FrameImpl implements Frame {
         this.canWrite = true;
         this.create = false;
         this.frameType = COLUMN_CONTIGUOUS_FILE;
+        this.offset = 0;
     }
 
     public void saveChanges(FrameColumn frameColumn) {
@@ -209,8 +225,17 @@ public class FrameImpl implements Frame {
         long columnTxn = crv.getColumnNameTxn(partitionTimestamp, columnIndex);
 
         FrameColumnTypePool columnTypePool = columnPool.getPool(columnType);
-        boolean createNew = columnTop >= rowCount || create;
-        columnTop = Math.min(columnTop, rowCount);
+        // A column added AFTER this suffix child was created is child-local: its file is not shared with the
+        // donor, so the partition top must not offset it (same rule as TableReader.reloadColumnAt). A donor-shared
+        // column was born at an earlier partition timestamp; a child-local column was born at this partition's own.
+        final long colOffset = crv.getColumnTopPartitionTimestamp(columnIndex) < partitionTimestamp ? offset : 0;
+        // Emptiness and the columnTop clamp must be evaluated in LOGICAL space for a zero-copy split suffix child:
+        // its column has data when max(0, columnTop - colOffset) < rowCount, i.e. columnTop < rowCount + colOffset.
+        // Clamp columnTop to (rowCount + colOffset), the read/append path's mapped-row boundary, so the donor
+        // columnTop stays unclamped whenever the column actually has data. colOffset (partitionTop) is per-column
+        // and never clamped. Both reduce to the legacy columnTop >= rowCount / min(columnTop, rowCount) at offset 0.
+        boolean createNew = columnTop >= rowCount + colOffset || create;
+        columnTop = Math.min(columnTop, rowCount + colOffset);
         return columnTypePool.create(
                 partitionPath,
                 metadata.getColumnName(columnIndex),
@@ -221,7 +246,8 @@ public class FrameImpl implements Frame {
                 columnTop,
                 columnIndex,
                 createNew,
-                canWrite
+                canWrite,
+                colOffset
         );
     }
 

@@ -53,6 +53,7 @@ import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 
 import java.io.IOException;
@@ -203,6 +204,159 @@ public class TxnTest extends AbstractCairoTest {
                 TestUtils.assertEquals(incrementalLoad, tw.toString());
             }
         }
+    }
+
+    @Test
+    public void testPartitionTopAndDonorRoundTrip() throws Exception {
+        // Writes partition-top and DONOR-flag combinations through a full _txn commit, reloads
+        // them in a fresh reader, and checks the packed slot-3 layout round-trips intact.
+        TestUtils.assertMemoryLeak(() -> {
+            FilesFacade ff = engine.getConfiguration().getFilesFacade();
+            String tableName = "txntop";
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY);
+            model.timestamp();
+            AbstractCairoTest.create(model);
+
+            try (Path path = new Path()) {
+                TableToken tableToken = engine.verifyTableName(tableName);
+                path.of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
+                final int partitionCount = 4;
+
+                try (TxWriter txWriter = new TxWriter(ff, configuration).ofRW(path.$(), ColumnType.TIMESTAMP, PartitionBy.DAY)) {
+                    for (int i = 0; i < partitionCount; i++) {
+                        txWriter.updatePartitionSizeByTimestamp(i * Micros.DAY_MICROS, (i + 1) * 100L);
+                    }
+                    txWriter.updateMaxTimestamp((partitionCount - 1) * Micros.DAY_MICROS + 1);
+                    txWriter.finishPartitionSizeUpdate();
+
+                    // partition 0: untouched -> sentinel {0, false}
+                    // partition 1: suffix child -> partitionTop AND DONOR flag (packed long is negative)
+                    txWriter.setPartitionTop(1 * Micros.DAY_MICROS, 37);
+                    txWriter.setPartitionDonor(1 * Micros.DAY_MICROS);
+                    // partition 2: prefix donor -> DONOR flag only, partitionTop stays 0
+                    txWriter.setPartitionDonor(2 * Micros.DAY_MICROS);
+                    // partition 3 (last): partitionTop only, no DONOR flag
+                    txWriter.setPartitionTop(3 * Micros.DAY_MICROS, 5);
+
+                    txWriter.commit(new ObjList<>());
+                }
+
+                try (TxReader txReader = new TxReader(ff)) {
+                    txReader.ofRO(path.$(), ColumnType.TIMESTAMP, PartitionBy.DAY);
+                    txReader.unsafeLoadAll();
+
+                    Assert.assertEquals(partitionCount, txReader.getPartitionCount());
+
+                    // partition 0: zero-migration sentinel
+                    Assert.assertEquals(0, txReader.getPartitionTop(0));
+                    Assert.assertFalse(txReader.isPartitionDonor(0));
+
+                    // partition 1: donor + top both survive; mask-not-sign decode (a v > 0 ? v : 0
+                    // decode would return 0 here because the packed long is negative)
+                    Assert.assertEquals(37, txReader.getPartitionTop(1));
+                    Assert.assertTrue(txReader.getPartitionTop(1) > 0);
+                    Assert.assertTrue(txReader.isPartitionDonor(1));
+
+                    // partition 2: donor-only
+                    Assert.assertEquals(0, txReader.getPartitionTop(2));
+                    Assert.assertTrue(txReader.isPartitionDonor(2));
+
+                    // partition 3: top-only
+                    Assert.assertEquals(5, txReader.getPartitionTop(3));
+                    Assert.assertFalse(txReader.isPartitionDonor(3));
+
+                    // by-timestamp resolution; an unknown timestamp resolves to 0
+                    Assert.assertEquals(37, txReader.getPartitionTopByTimestamp(1 * Micros.DAY_MICROS));
+                    Assert.assertEquals(0, txReader.getPartitionTopByTimestamp(999 * Micros.DAY_MICROS));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSlot3FlagAndTopPreservation() throws Exception {
+        // Exercises the read-modify-write setters: each must preserve the bits it does not own.
+        TestUtils.assertMemoryLeak(() -> {
+            FilesFacade ff = engine.getConfiguration().getFilesFacade();
+            try (Path path = new Path()) {
+                createDayTable("txnpreserve", 3, path);
+
+                try (TxWriter txWriter = new TxWriter(ff, configuration).ofRW(path.$(), ColumnType.TIMESTAMP, PartitionBy.DAY)) {
+                    final long ts = 0; // partition 0 (non-last)
+                    final int idx = 0;
+
+                    // setPartitionDonor preserves an existing partitionTop
+                    txWriter.setPartitionTop(ts, 42);
+                    Assert.assertEquals(42, txWriter.getPartitionTop(idx));
+                    Assert.assertFalse(txWriter.isPartitionDonor(idx));
+                    txWriter.setPartitionDonor(ts);
+                    Assert.assertEquals(42, txWriter.getPartitionTop(idx));
+                    Assert.assertTrue(txWriter.isPartitionDonor(idx));
+
+                    // setPartitionTop preserves an existing DONOR flag
+                    txWriter.setPartitionTop(ts, 7);
+                    Assert.assertEquals(7, txWriter.getPartitionTop(idx));
+                    Assert.assertTrue(txWriter.isPartitionDonor(idx));
+
+                    // clearPartitionDonor preserves the partitionTop
+                    txWriter.clearPartitionDonor(ts);
+                    Assert.assertEquals(7, txWriter.getPartitionTop(idx));
+                    Assert.assertFalse(txWriter.isPartitionDonor(idx));
+
+                    // a donor-only partition has partitionTop 0
+                    txWriter.setPartitionTop(ts, 0); // clears the top -> slot normalizes to -1L
+                    Assert.assertEquals(0, txWriter.getPartitionTop(idx));
+                    Assert.assertFalse(txWriter.isPartitionDonor(idx));
+                    txWriter.setPartitionDonor(ts);
+                    Assert.assertEquals(0, txWriter.getPartitionTop(idx));
+                    Assert.assertTrue(txWriter.isPartitionDonor(idx));
+                    txWriter.clearPartitionDonor(ts); // back to the sentinel
+                    Assert.assertEquals(0, txWriter.getPartitionTop(idx));
+                    Assert.assertFalse(txWriter.isPartitionDonor(idx));
+
+                    // resetPartitionTop clears BOTH the top and the DONOR flag
+                    txWriter.setPartitionTop(ts, 99);
+                    txWriter.setPartitionDonor(ts);
+                    Assert.assertEquals(99, txWriter.getPartitionTop(idx));
+                    Assert.assertTrue(txWriter.isPartitionDonor(idx));
+                    txWriter.resetPartitionTop(idx);
+                    Assert.assertEquals(0, txWriter.getPartitionTop(idx));
+                    Assert.assertFalse(txWriter.isPartitionDonor(idx));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSlot3ParquetCollisionAsserts() throws Exception {
+        boolean assertsEnabled = false;
+        //noinspection AssertWithSideEffects,ConstantConditions
+        assert assertsEnabled = true;
+        Assume.assumeTrue("slot-3/parquet collision checks require -ea", assertsEnabled);
+
+        TestUtils.assertMemoryLeak(() -> {
+            FilesFacade ff = engine.getConfiguration().getFilesFacade();
+            try (Path path = new Path()) {
+                createDayTable("txnpqcollision", 3, path);
+
+                try (TxWriter txWriter = new TxWriter(ff, configuration).ofRW(path.$(), ColumnType.TIMESTAMP, PartitionBy.DAY)) {
+                    // partition 0 -> parquet: the native packed slot-3 API must reject it
+                    txWriter.setPartitionParquetFormat(0, 4096);
+                    expectAssertionError(() -> txWriter.setPartitionTop(0, 10));
+                    expectAssertionError(() -> txWriter.setPartitionDonor(0));
+                    expectAssertionError(() -> txWriter.getPartitionTop(0));
+                    expectAssertionError(() -> txWriter.isPartitionDonor(0));
+
+                    // convert-to-parquet on a partition-top child must be rejected
+                    txWriter.setPartitionTop(1 * Micros.DAY_MICROS, 5);
+                    expectAssertionError(() -> txWriter.setPartitionParquetFormat(1 * Micros.DAY_MICROS, 4096));
+
+                    // convert-to-parquet on a donor partition must be rejected
+                    txWriter.setPartitionDonor(2 * Micros.DAY_MICROS);
+                    expectAssertionError(() -> txWriter.setPartitionParquetFormat(2 * Micros.DAY_MICROS, 4096));
+                }
+            }
+        });
     }
 
     @Test
@@ -466,6 +620,15 @@ public class TxnTest extends AbstractCairoTest {
         });
     }
 
+    private static void expectAssertionError(Runnable runnable) {
+        try {
+            runnable.run();
+            Assert.fail("expected AssertionError");
+        } catch (AssertionError expected) {
+            // expected
+        }
+    }
+
     private static void loadTxnWriter(TxWriter tw, Path p, String resourceFile) throws IOException {
         try (final InputStream is = TxnTest.class.getResourceAsStream(resourceFile)) {
             // Create temp file
@@ -490,6 +653,23 @@ public class TxnTest extends AbstractCairoTest {
             ss.put(txReader.getPartitionSize(i));
         }
         return ss.toString();
+    }
+
+    private void createDayTable(String tableName, int partitionCount, Path path) {
+        TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY);
+        model.timestamp();
+        AbstractCairoTest.create(model);
+        TableToken tableToken = engine.verifyTableName(tableName);
+        path.of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
+        FilesFacade ff = engine.getConfiguration().getFilesFacade();
+        try (TxWriter txWriter = new TxWriter(ff, configuration).ofRW(path.$(), ColumnType.TIMESTAMP, PartitionBy.DAY)) {
+            for (int i = 0; i < partitionCount; i++) {
+                txWriter.updatePartitionSizeByTimestamp(i * Micros.DAY_MICROS, (i + 1) * 100L);
+            }
+            txWriter.updateMaxTimestamp((partitionCount - 1) * Micros.DAY_MICROS + 1);
+            txWriter.finishPartitionSizeUpdate();
+            txWriter.commit(new ObjList<>());
+        }
     }
 
     @NotNull

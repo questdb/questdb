@@ -50,16 +50,17 @@ public final class IndexFactory {
             RecordMetadata metadata,
             ColumnVersionReader columnVersionReader,
             long partitionTimestamp,
-            long pinnedTableTxn
+            long pinnedTableTxn,
+            long partitionTop
     ) {
         return switch (indexType) {
             case IndexType.BITMAP -> direction == IndexReader.DIR_FORWARD
-                    ? new BitmapIndexFwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop)
-                    : new BitmapIndexBwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop);
+                    ? new BitmapIndexFwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop, partitionTop)
+                    : new BitmapIndexBwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop, partitionTop);
             case IndexType.POSTING, IndexType.POSTING_DELTA, IndexType.POSTING_EF ->
                     direction == IndexReader.DIR_FORWARD
-                            ? new PostingIndexFwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop, metadata, columnVersionReader, partitionTimestamp, pinnedTableTxn)
-                            : new PostingIndexBwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop, metadata, columnVersionReader, partitionTimestamp, pinnedTableTxn);
+                            ? new PostingIndexFwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop, metadata, columnVersionReader, partitionTimestamp, pinnedTableTxn, partitionTop)
+                            : new PostingIndexBwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop, metadata, columnVersionReader, partitionTimestamp, pinnedTableTxn, partitionTop);
             default -> throw unsupportedIndexType(indexType);
         };
     }

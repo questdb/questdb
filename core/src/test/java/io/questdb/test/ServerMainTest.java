@@ -1073,6 +1073,8 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "http.min.connection.pool.initial.capacity\tQDB_HTTP_MIN_CONNECTION_POOL_INITIAL_CAPACITY\t2\tdefault\tfalse\tfalse\n" +
                                     "http.min.multipart.idle.spin.count\tQDB_HTTP_MIN_MULTIPART_IDLE_SPIN_COUNT\t0\tdefault\tfalse\tfalse\n" +
                                     "cairo.o3.partition.overwrite.control.enabled\tQDB_CAIRO_O3_PARTITION_OVERWRITE_CONTROL_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
+                                    "cairo.partition.top.wal.enabled\tQDB_CAIRO_PARTITION_TOP_WAL_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
+                                    "cairo.partition.top.non.wal.enabled\tQDB_CAIRO_PARTITION_TOP_NON_WAL_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
                                     "http.min.worker.priority\tQDB_HTTP_MIN_WORKER_PRIORITY\t8\tdefault\tfalse\tfalse\n" +
                                     "cairo.commit.latency\tQDB_CAIRO_COMMIT_LATENCY\t30000000\tdefault\tfalse\tfalse\n" +
                                     "cairo.create.table.column.model.pool.capacity\tQDB_CAIRO_CREATE_TABLE_COLUMN_MODEL_POOL_CAPACITY\t16\tdefault\tfalse\tfalse\n" +

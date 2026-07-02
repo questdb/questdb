@@ -58,7 +58,7 @@ public class ConcurrentBitmapIndexFwdReader extends AbstractBitmapIndexReader {
             long partitionTxn,
             long columnTop
     ) {
-        of(configuration, path, name, columnNameTxn, partitionTxn, columnTop, null, null, 0);
+        of(configuration, path, name, columnNameTxn, partitionTxn, columnTop, null, null, 0, 0);
     }
 
     @Override
@@ -81,6 +81,13 @@ public class ConcurrentBitmapIndexFwdReader extends AbstractBitmapIndexReader {
      * @return initialised cursor
      */
     public RowCursor initCursor(RowCursor rowCursor, int key, long minValue, long maxValue) {
+        // Shift the logical query window into the shared donor .k/.v (physical) space (columnTop is the
+        // donor's physical top; the cursor returns next - minValue so results stay logical).
+        minValue += partitionTop;
+        if (maxValue != Long.MAX_VALUE) {
+            maxValue += partitionTop;
+        }
+
         Cursor cursor = null;
         if (rowCursor != null && rowCursor != EmptyRowCursor.INSTANCE) {
             cursor = (Cursor) rowCursor;

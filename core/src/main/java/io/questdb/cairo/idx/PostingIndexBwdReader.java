@@ -53,7 +53,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             ColumnVersionReader columnVersionReader,
             long partitionTimestamp
     ) {
-        of(configuration, path, name, columnNameTxn, partitionTxn, columnTop, metadata, columnVersionReader, partitionTimestamp);
+        of(configuration, path, name, columnNameTxn, partitionTxn, columnTop, metadata, columnVersionReader, partitionTimestamp, 0);
     }
 
     public PostingIndexBwdReader(
@@ -68,8 +68,24 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             long partitionTimestamp,
             long pinnedTableTxn
     ) {
+        this(configuration, path, name, columnNameTxn, partitionTxn, columnTop, metadata, columnVersionReader, partitionTimestamp, pinnedTableTxn, 0);
+    }
+
+    public PostingIndexBwdReader(
+            CairoConfiguration configuration,
+            Path path,
+            CharSequence name,
+            long columnNameTxn,
+            long partitionTxn,
+            long columnTop,
+            RecordMetadata metadata,
+            ColumnVersionReader columnVersionReader,
+            long partitionTimestamp,
+            long pinnedTableTxn,
+            long partitionTop
+    ) {
         setPinnedTableTxn(pinnedTableTxn);
-        of(configuration, path, name, columnNameTxn, partitionTxn, columnTop, metadata, columnVersionReader, partitionTimestamp);
+        of(configuration, path, name, columnNameTxn, partitionTxn, columnTop, metadata, columnVersionReader, partitionTimestamp, partitionTop);
     }
 
     @Override
@@ -94,6 +110,12 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
     public RowCursor getCursor(int key, long minValue, long maxValue, int[] requiredCoverColumns) {
         assert assertStampOperatingThread();
         reloadConditionally();
+
+        // Shift the logical query window into shared donor .pv (physical) space (see PostingIndexFwdReader).
+        minValue += partitionTop;
+        if (maxValue != Long.MAX_VALUE) {
+            maxValue += partitionTop;
+        }
 
         // See PostingIndexFwdReader.getCursor: clamp the index-walked
         // upper bound to the picked chain entry's MAX_VALUE so dirty

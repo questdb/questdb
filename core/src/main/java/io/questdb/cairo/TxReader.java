@@ -50,6 +50,16 @@ public class TxReader implements Closeable, Mutable {
     public static final long PARTITION_SIZE_MASK = 0x80000FFFFFFFFFFFL;
     public static final int PARTITION_SQUASH_COUNTER_MAX = 0xFFFF;
     protected static final int NONE_COL_STRUCTURE_VERSION = Integer.MIN_VALUE;
+    // Slot 3 (PARTITION_TOP_OFFSET) of a NATIVE partition packs a per-partition "partition top"
+    // (the count of file rows below this child's logical row 0, in bits 0-43, masked by
+    // PARTITION_TOP_MASK) together with a DONOR flag in bit 63. The DONOR flag marks a partition
+    // that shares its hardlinked column files with another partition: it must never be appended,
+    // overwritten in place, or squashed into. The legacy/unset value -1L decodes to
+    // {partitionTop: 0, donor: false}, so existing tables read unchanged with no migration.
+    // Slot 3 carries this packed value only for native partitions; for parquet partitions the same
+    // slot holds the parquet file size (the parquet-format bit is clear on native partitions, and
+    // bit 63 would be an impossible 8 EiB file size).
+    protected static final long PARTITION_DONOR_FLAG = 0x8000000000000000L; // bit 63 (== Long.MIN_VALUE)
     protected static final int PARTITION_MASKED_SIZE_OFFSET = 1;
     protected static final int PARTITION_MASK_PARQUET_GENERATED_BIT_OFFSET = 60;
     protected static final int PARTITION_MASK_PARQUET_FORMAT_BIT_OFFSET = 61;
@@ -71,6 +81,8 @@ public class TxReader implements Closeable, Mutable {
     // the parquet format bit indicates that the partition has been converted to parquet format
     // the parquet generated bit indicates that a parquet file has been generated for the partition
     // The last long in partition is the parquet file size.
+    protected static final long PARTITION_TOP_MASK = 0x00000FFFFFFFFFFFL; // partition top: bits 0-43 of native slot 3
+    protected static final int PARTITION_TOP_OFFSET = PARTITION_PARQUET_FILE_SIZE_OFFSET; // == 3; native partition top + DONOR flag
     protected static final int PARTITION_TS_OFFSET = 0;
     protected final LongList attachedPartitions = new LongList();
     protected final FilesFacade ff;
@@ -392,6 +404,18 @@ public class TxReader implements Closeable, Mutable {
         return getPartitionFloor(timestamp);
     }
 
+    public long getPartitionTop(int partitionIndex) {
+        return getPartitionTopByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION);
+    }
+
+    public long getPartitionTopByTimestamp(long ts) {
+        final int indexRaw = findAttachedPartitionRawIndexByLoTimestamp(ts);
+        if (indexRaw > -1) {
+            return getPartitionTopByRawIndex(indexRaw);
+        }
+        return 0;
+    }
+
     public long getRecordSize() {
         return size;
     }
@@ -460,6 +484,17 @@ public class TxReader implements Closeable, Mutable {
 
     public boolean isLagOrdered() {
         return lagOrdered;
+    }
+
+    public boolean isPartitionDonor(int partitionIndex) {
+        return isPartitionDonorByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION);
+    }
+
+    public boolean isPartitionDonorByRawIndex(int indexRaw) {
+        assert !isPartitionParquetByRawIndex(indexRaw);
+        // The -1L unset sentinel has bit 63 set but is NOT a donor; decode by mask, not by sign.
+        final long v = attachedPartitions.getQuick(indexRaw + PARTITION_TOP_OFFSET);
+        return v != -1L && (v & PARTITION_DONOR_FLAG) != 0;
     }
 
     public boolean isPartitionParquet(int i) {
@@ -863,6 +898,14 @@ public class TxReader implements Closeable, Mutable {
     int getPartitionSquashCountByRawIndex(int indexRaw) {
         long partitionSizeMasked = attachedPartitions.getQuick(indexRaw + PARTITION_MASKED_SIZE_OFFSET);
         return (int) ((partitionSizeMasked >>> PARTITION_SQUASH_COUNTER_BIT_OFFSET) & PARTITION_SQUASH_COUNTER_MAX);
+    }
+
+    protected long getPartitionTopByRawIndex(int indexRaw) {
+        assert !isPartitionParquetByRawIndex(indexRaw);
+        // The -1L unset sentinel decodes to 0; otherwise mask off the DONOR flag and reserved bits.
+        // Must be mask-based (not v > 0 ? v : 0): a donor-with-top is a negative packed long.
+        final long v = attachedPartitions.getQuick(indexRaw + PARTITION_TOP_OFFSET);
+        return v == -1L ? 0 : (v & PARTITION_TOP_MASK);
     }
 
     protected void initPartitionAt(int index, long partitionTimestampLo, long partitionSize, long partitionNameTxn) {

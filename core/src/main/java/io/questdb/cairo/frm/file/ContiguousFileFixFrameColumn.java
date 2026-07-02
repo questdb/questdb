@@ -54,6 +54,9 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
     private boolean isReadOnly;
     private long mapAddr;
     private long mapSize;
+    // Per-partition partition top of a zero-copy split suffix child (0 for a normal contiguous column). When
+    // this column is a SOURCE, its donor file address is file_row = logical + offset - columnTop.
+    private long offset;
     private RecycleBin<FrameColumn> recycleBin;
     private int shl;
 
@@ -74,6 +77,10 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
         if (sourceColumn.getStorageType() == COLUMN_CONTIGUOUS_FILE) {
             sourceLo -= sourceColumn.getColumnTop();
             sourceHi -= sourceColumn.getColumnTop();
+            // Canonical formula: file_row = logical - columnTop + offset. A zero-copy split suffix child source
+            // reads its slice at a positive file base in the shared donor file; offset is 0 for a normal source.
+            sourceLo += sourceColumn.getOffset();
+            sourceHi += sourceColumn.getOffset();
             appendOffsetRowCount -= columnTop;
 
             assert sourceLo >= 0;
@@ -187,13 +194,18 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
 
     @Override
     public long getContiguousDataAddr(long rowHi) {
-        if (rowHi <= columnTop) {
-            // No data
+        if (rowHi + offset <= columnTop) {
+            // No data (accounts for a split child's donor offset; reduces to rowHi <= columnTop at offset 0)
             return 0;
         }
 
         mapAllRows(rowHi);
         return mapAddr;
+    }
+
+    @Override
+    public long getOffset() {
+        return offset;
     }
 
     @Override
@@ -212,11 +224,15 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
     }
 
     public void ofRO(Path partitionPath, CharSequence columnName, long columnTxn, int columnType, long columnTop, int columnIndex, boolean isEmpty) {
+        ofRO(partitionPath, columnName, columnTxn, columnType, columnTop, columnIndex, isEmpty, 0);
+    }
+
+    public void ofRO(Path partitionPath, CharSequence columnName, long columnTxn, int columnType, long columnTop, int columnIndex, boolean isEmpty, long partitionTop) {
         assert fd == -1;
         int plen = 0;
 
         try {
-            of(columnType, columnTop, columnIndex);
+            of(columnType, columnTop, columnIndex, partitionTop);
 
             if (!isEmpty) {
                 plen = partitionPath.size();
@@ -240,8 +256,8 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
 
         try {
             // Negative col top means column does not exist in the partition.
-            // Create it.
-            of(columnType, columnTop, columnIndex);
+            // Create it. A writable (target) column is always contiguous -> offset 0.
+            of(columnType, columnTop, columnIndex, 0);
             dFile(partitionPath, columnName, columnTxn);
             this.fd = TableUtils.openRW(ff, partitionPath.$(), LOG, fileOpts);
             this.isReadOnly = false;
@@ -266,7 +282,7 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
             throw new UnsupportedOperationException("Cannot map writable column");
         }
 
-        long newMemSize = (rowHi - columnTop) << shl;
+        long newMemSize = (rowHi - columnTop + offset) << shl;
         if (mapSize > 0) {
             if (mapSize <= newMemSize) {
                 // Already mapped to same or bigger size
@@ -283,11 +299,12 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
         }
     }
 
-    private void of(int columnType, long columnTop, int columnIndex) {
+    private void of(int columnType, long columnTop, int columnIndex, long offset) {
         this.shl = ColumnType.pow2SizeOf(columnType);
         this.columnType = columnType;
         this.columnTop = columnTop;
         this.columnIndex = columnIndex;
+        this.offset = offset;
         this.closed = false;
     }
 }

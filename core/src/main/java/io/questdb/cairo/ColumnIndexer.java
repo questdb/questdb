@@ -139,6 +139,15 @@ public interface ColumnIndexer extends QuietCloseable {
 
     void rollback(long maxRow);
 
+    /**
+     * Sets the per-partition partition top (R2) of a zero-copy split suffix child, or 0 for a normal
+     * partition. The indexer shifts the logical row range it is asked to index by {@code +partitionTop},
+     * so it reads the shared donor file at {@code file_row = logical + partitionTop - columnTop} and stores
+     * PHYSICAL row ids into the shared .k/.v -- exactly what the partition-top-aware index reader expects.
+     */
+    default void setPartitionTop(long partitionTop) {
+    }
+
     default void seal() {
     }
 

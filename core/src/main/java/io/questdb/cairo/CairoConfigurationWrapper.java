@@ -1679,6 +1679,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isPartitionTopNonWalEnabled() {
+        return getDelegate().isPartitionTopNonWalEnabled();
+    }
+
+    @Override
+    public boolean isPartitionTopWalEnabled() {
+        return getDelegate().isPartitionTopWalEnabled();
+    }
+
+    @Override
     public boolean isPostingIndexAutoIncludeTimestamp() {
         return getDelegate().isPostingIndexAutoIncludeTimestamp();
     }

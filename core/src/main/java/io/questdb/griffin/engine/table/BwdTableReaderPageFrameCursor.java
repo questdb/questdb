@@ -260,13 +260,18 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
 
     private TableReaderPageFrame computeNativeFrame(long partitionLo, long partitionHi) {
         final int base = reader.getColumnBase(reenterPartitionIndex);
+        // Per-partition partition top of a zero-copy split suffix child (0 for every contiguous partition).
+        // Read once per partition, applied uniformly to every column via the canonical file-address formula.
+        final long partitionTop = reader.getPartitionTop(reenterPartitionIndex);
 
         // we may need to split this partition frame either along "top" lines, or along
-        // max page frame sizes; to do this, we calculate min top value from given position
+        // max page frame sizes; to do this, we calculate min top value from given position.
+        // The null/present boundary of a column is at logical row max(0, colTop - partitionTop), so the
+        // top-split scans on that clamped boundary, not on the raw column top.
         long adjustedLo = Math.max(partitionLo, partitionHi - reenterPageFrameRowLimit);
         for (int i = 0; i < columnCount; i++) {
             final int columnIndex = columnIndexes.getQuick(i);
-            long top = reader.getColumnTop(base, columnIndex);
+            long top = Math.max(0, reader.getColumnTop(base, columnIndex) - partitionTop);
             if (top > adjustedLo && top < partitionHi) {
                 adjustedLo = top;
             }
@@ -277,9 +282,12 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
             final int readerColIndex = TableReader.getPrimaryColumnIndex(base, columnIndex);
             final MemoryR colMem = reader.getColumn(readerColIndex);
             // when the entire column is NULL we make it skip the whole of the partition frame
-            final long top = colMem instanceof NullMemoryCMR ? partitionHi : reader.getColumnTop(base, columnIndex);
-            final long partitionLoAdjusted = adjustedLo - top;
-            final long partitionHiAdjusted = partitionHi - top;
+            final boolean isNullColumn = colMem instanceof NullMemoryCMR;
+            final long top = isNullColumn ? partitionHi : reader.getColumnTop(base, columnIndex);
+            // file_row = logical + partitionTop - colTop; the NullMemoryCMR sentinel keeps offset 0.
+            final long colPartitionTop = isNullColumn ? 0 : partitionTop;
+            final long partitionLoAdjusted = adjustedLo - top + colPartitionTop;
+            final long partitionHiAdjusted = partitionHi - top + colPartitionTop;
             final int sh = columnSizeShifts.getQuick(i);
 
             if (partitionHiAdjusted > 0) {
@@ -516,6 +524,11 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         @Override
         public IndexReader getIndexReader(int columnIndex, int direction) {
             return reader.getIndexReader(partitionIndex, columnIndexes.getQuick(columnIndex), direction);
+        }
+
+        @Override
+        public long getIndexReaderPartitionTop(int columnIndex) {
+            return reader.getPartitionTop(partitionIndex);
         }
 
         @Override

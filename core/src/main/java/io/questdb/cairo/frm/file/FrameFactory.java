@@ -176,6 +176,25 @@ public class FrameFactory implements RecycleBin<FrameImpl>, Closeable {
     }
 
     /**
+     * Opens a frame for reading with a per-partition partition top (a zero-copy split suffix child). This method
+     * is thread safe. partitionTop 0 is equivalent to the offset-free {@link #openRO} above.
+     *
+     * @param partitionTop the count of leading donor file rows below this partition's logical row 0
+     */
+    public Frame openRO(
+            @Transient Path partitionPath,
+            long partitionTimestamp,
+            RecordMetadata metadata,
+            ColumnVersionReader cvr,
+            long partitionRowCount,
+            long partitionTop
+    ) {
+        FrameImpl frame = getOrCreate();
+        frame.openRO(partitionPath, partitionTimestamp, metadata, cvr, partitionRowCount, partitionTop);
+        return frame;
+    }
+
+    /**
      * Opens a frame for reading and writing. This method is thread safe.
      *
      * @param partitionPath      the path to the partition directory

@@ -2441,7 +2441,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                                 // Simulate a query-boundary reload. Within a query the reader
                                 // stays pinned to its construction-time sealTxn (Principle 5);
                                 // a fresh of() is the contract for switching generations.
-                                reader.of(configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0, null, null, 0);
+                                reader.of(configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0, null, null, 0, 0);
 
                                 // Verify both pages have valid sequences (no corruption)
                                 long keyBase = reader.getKeyBaseAddress();
@@ -2547,7 +2547,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                         }
                         Assert.assertEquals(200, count);
 
-                        reader.of(configuration, path.trimTo(plen), "rb_reader", COLUMN_NAME_TXN_NONE, -1, 0, null, null, 0);
+                        reader.of(configuration, path.trimTo(plen), "rb_reader", COLUMN_NAME_TXN_NONE, -1, 0, null, null, 0, 0);
                         RowCursor cursor2 = reader.getCursor(0, 0, Long.MAX_VALUE);
                         count = 0;
                         while (cursor2.hasNext()) {
@@ -2599,7 +2599,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                         }
                         Assert.assertEquals(BP_BATCH * 3, count);
 
-                        reader.of(configuration, path.trimTo(plen), "trunc_reader", COLUMN_NAME_TXN_NONE, -1, 0, null, null, 0);
+                        reader.of(configuration, path.trimTo(plen), "trunc_reader", COLUMN_NAME_TXN_NONE, -1, 0, null, null, 0, 0);
                         RowCursor cursor2 = reader.getCursor(0, 0, Long.MAX_VALUE);
                         Assert.assertFalse(cursor2.hasNext());
                         Misc.free(cursor2);

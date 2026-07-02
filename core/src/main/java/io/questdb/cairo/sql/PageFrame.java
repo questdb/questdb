@@ -75,6 +75,16 @@ public interface PageFrame {
     IndexReader getIndexReader(int columnIndex, int direction);
 
     /**
+     * Partition top of a zero-copy split suffix child for this frame's partition (0 for every contiguous
+     * partition). Consumers that read raw physical index row ids (e.g. SampleByFirstLast's getFrameCursor
+     * path) apply this offset themselves; the index reader returned by {@link #getIndexReader} already
+     * shifts its cursor query window internally.
+     */
+    default long getIndexReaderPartitionTop(int columnIndex) {
+        return 0;
+    }
+
+    /**
      * Return the address of the start of the page frame or if this page represents
      * a column top (a column that was added to the table when other columns already
      * had data) then return 0.

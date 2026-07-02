@@ -89,6 +89,9 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     protected final ObjList<MemoryMR> sidecarMems = new ObjList<>();
     protected final MemoryMR valueMem = Vm.getCMRInstance();
     protected long columnTop;
+    // Partition top of a zero-copy split suffix child; 0 for every contiguous partition. The concrete
+    // Fwd/Bwd readers shift the incoming logical rowLo/rowHi by +partitionTop into shared donor .pv space.
+    protected long partitionTop;
     protected int coverCount;
     protected boolean[] coveredAvailable;
     // Highest row id the picked chain entry's index data covers
@@ -214,6 +217,11 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     }
 
     @Override
+    public long getPartitionTop() {
+        return partitionTop;
+    }
+
+    @Override
     public long getColumnTxn() {
         return columnTxn;
     }
@@ -268,9 +276,11 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             long columnTop,
             RecordMetadata metadata,
             ColumnVersionReader columnVersionReader,
-            long partitionTimestamp
+            long partitionTimestamp,
+            long partitionTop
     ) {
         this.columnTop = columnTop;
+        this.partitionTop = Math.max(0, partitionTop);
         this.columnTxn = columnNameTxn;
         this.partitionTxn = partitionTxn;
         this.metadata = metadata;

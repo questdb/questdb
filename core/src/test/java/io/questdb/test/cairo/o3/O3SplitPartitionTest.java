@@ -311,6 +311,53 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     2022-06-08T05:30:00.000000Z\t17\t\t4\t3
                                     2022-06-08T05:30:00.000000Z\t19\t\t4\t3
                                     """, timestampTypeName));
+
+                    // The '2' rows all live in the split suffix child, whose column files are shared
+                    // with the prefix donor; re-read them AFTER the donor took backdated writes
+                    // (rows 20, 21) to prove the donor write did not clobber the shared child data.
+                    new QueryAssertion(engine, sqlExecutionContext, () -> {
+                    }, "select * from monthly_col_top where loggerChannel = '2'")
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .returns(replaceTimestampSuffix1("""
+                                    ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel
+                                    2022-06-08T02:50:00.000000Z\t9\t\t\t2
+                                    2022-06-08T02:50:00.000000Z\t10\t\t\t2
+                                    2022-06-08T03:50:00.000000Z\t11\t\t\t2
+                                    2022-06-08T03:50:00.000000Z\t12\t\t\t2
+                                    2022-06-08T04:50:00.000000Z\t13\t\t\t2
+                                    2022-06-08T04:50:00.000000Z\t14\t\t\t2
+                                    """, timestampTypeName));
+
+                    new QueryAssertion(engine, sqlExecutionContext, () -> {
+                    }, "select ts, metric, loggerChannel from monthly_col_top")
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .expectSize()
+                            .returns(replaceTimestampSuffix1("""
+                                    ts\tmetric\tloggerChannel
+                                    2022-06-08T01:40:00.000000Z\t1\t
+                                    2022-06-08T02:41:00.000000Z\t2\t
+                                    2022-06-08T02:42:00.000000Z\t3\t
+                                    2022-06-08T02:43:00.000000Z\t4\t
+                                    2022-06-08T02:50:00.000000Z\t5\t3
+                                    2022-06-08T02:50:00.000000Z\t6\t3
+                                    2022-06-08T02:50:00.000000Z\t7\t1
+                                    2022-06-08T02:50:00.000000Z\t8\t1
+                                    2022-06-08T02:50:00.000000Z\t9\t2
+                                    2022-06-08T02:50:00.000000Z\t10\t2
+                                    2022-06-08T02:50:00.000000Z\t20\t3
+                                    2022-06-08T02:50:00.000000Z\t21\t3
+                                    2022-06-08T03:30:00.000000Z\t15\t3
+                                    2022-06-08T03:30:00.000000Z\t16\t3
+                                    2022-06-08T03:50:00.000000Z\t11\t2
+                                    2022-06-08T03:50:00.000000Z\t12\t2
+                                    2022-06-08T04:50:00.000000Z\t13\t2
+                                    2022-06-08T04:50:00.000000Z\t14\t2
+                                    2022-06-08T04:50:00.000000Z\t18\t3
+                                    2022-06-08T05:30:00.000000Z\t17\t3
+                                    2022-06-08T05:30:00.000000Z\t19\t3
+                                    """, timestampTypeName));
                 }
         );
     }

@@ -51,6 +51,9 @@ public abstract class AbstractBitmapIndexReader implements IndexReader {
     protected MillisecondClock clock;
     protected long columnTop;
     protected int keyCount;
+    // Partition top of a zero-copy split suffix child; 0 for every contiguous partition. The Fwd/Bwd
+    // subclasses shift the query window (minValue/maxValue) by +partitionTop into the shared donor .k/.v space.
+    protected long partitionTop;
     protected long spinLockTimeoutMs;
     private long columnTxn;
     private int keyCountIncludingNulls;
@@ -73,6 +76,11 @@ public abstract class AbstractBitmapIndexReader implements IndexReader {
     @Override
     public long getColumnTxn() {
         return columnTxn;
+    }
+
+    @Override
+    public long getPartitionTop() {
+        return partitionTop;
     }
 
     public long getKeyBaseAddress() {
@@ -120,9 +128,11 @@ public abstract class AbstractBitmapIndexReader implements IndexReader {
             long columnTop,
             RecordMetadata metadata,
             ColumnVersionReader columnVersionReader,
-            long partitionTimestamp
+            long partitionTimestamp,
+            long partitionTop
     ) {
         this.columnTop = columnTop;
+        this.partitionTop = Math.max(0, partitionTop);
         this.columnTxn = columnNameTxn;
         this.partitionTxn = partitionTxn;
         final int plen = path.size();

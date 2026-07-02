@@ -34,6 +34,10 @@ public class NativeTimestampFinder implements TimestampFinder, Mutable {
     private MemoryR column;
     private long maxTimestampApprox;
     private long minTimestampApprox;
+    private int partitionIndex;
+    // File-row offset of a zero-copy split suffix child's logical row 0 (0 for every contiguous partition).
+    // The designated timestamp column never has a column top, so file_row = logical + partitionTop.
+    private long partitionTop;
     private TableReader reader;
     private long rowCount;
     private int timestampColumnOffset;
@@ -42,15 +46,18 @@ public class NativeTimestampFinder implements TimestampFinder, Mutable {
     public void clear() {
         column = null;
         rowCount = 0;
+        partitionTop = 0;
     }
 
     @Override
     public long findTimestamp(long value, long rowLo, long rowHi) {
-        long idx = Vect.binarySearch64Bit(column.getPageAddress(0), value, rowLo, rowHi, BIN_SEARCH_SCAN_DOWN);
+        // Search the physical window [rowLo+partitionTop, rowHi+partitionTop], then map the resolved
+        // physical index back to logical space by subtracting partitionTop.
+        long idx = Vect.binarySearch64Bit(column.getPageAddress(0), value, rowLo + partitionTop, rowHi + partitionTop, BIN_SEARCH_SCAN_DOWN);
         if (idx < 0) {
-            return -idx - 2;
+            return -idx - 2 - partitionTop;
         }
-        return idx;
+        return idx - partitionTop;
     }
 
     @Override
@@ -60,7 +67,7 @@ public class NativeTimestampFinder implements TimestampFinder, Mutable {
 
     @Override
     public long maxTimestampExact() {
-        return column.getLong((rowCount - 1) * 8);
+        return column.getLong((partitionTop + rowCount - 1) * 8);
     }
 
     @Override
@@ -70,12 +77,13 @@ public class NativeTimestampFinder implements TimestampFinder, Mutable {
 
     @Override
     public long minTimestampExact() {
-        return column.getLong(0);
+        return column.getLong(partitionTop * 8);
     }
 
     public NativeTimestampFinder of(TableReader reader, int partitionIndex, int timestampIndex, long rowCount) {
         this.timestampColumnOffset = TableReader.getPrimaryColumnIndex(reader.getColumnBase(partitionIndex), timestampIndex);
         this.reader = reader;
+        this.partitionIndex = partitionIndex;
         this.rowCount = rowCount;
         this.minTimestampApprox = reader.getPartitionMinTimestampFromMetadata(partitionIndex);
         this.maxTimestampApprox = reader.getPartitionMaxTimestampFromMetadata(partitionIndex);
@@ -85,10 +93,13 @@ public class NativeTimestampFinder implements TimestampFinder, Mutable {
     @Override
     public void prepare() {
         this.column = reader.getColumn(timestampColumnOffset);
+        // Read the partition top here, NOT in of(): callers invoke of() before reader.openPartition(),
+        // when the cached slot still holds 0; prepare() runs immediately after openPartition().
+        this.partitionTop = reader.getPartitionTop(partitionIndex);
     }
 
     @Override
     public long timestampAt(long rowIndex) {
-        return column.getLong(rowIndex * 8);
+        return column.getLong((rowIndex + partitionTop) * 8);
     }
 }

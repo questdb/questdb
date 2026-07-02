@@ -1085,6 +1085,14 @@ public interface CairoConfiguration {
 
     boolean isPartitionO3OverwriteControlEnabled();
 
+    // Whether the O3 commit may produce zero-copy (hardlink) partition splits for non-WAL tables.
+    // Such splits create partitions with a non-zero partition top (a row offset into hardlinked
+    // column files). Reading partition tops is always supported; this only gates their creation.
+    boolean isPartitionTopNonWalEnabled();
+
+    // Same as isPartitionTopNonWalEnabled(), but for WAL tables.
+    boolean isPartitionTopWalEnabled();
+
     boolean isPostingIndexAutoIncludeTimestamp();
 
     boolean isQueryTracingEnabled();

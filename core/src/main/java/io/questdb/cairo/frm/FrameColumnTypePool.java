@@ -39,8 +39,37 @@ public interface FrameColumnTypePool {
             long columnTop,
             int columnIndex,
             boolean init,
-            boolean canWrite
+            boolean canWrite,
+            long partitionTop
     );
+
+    default FrameColumn create(
+            Path partitionPath,
+            CharSequence columnName,
+            long columnTxn,
+            int columnType,
+            int indexBlockCapacity,
+            byte indexType,
+            long columnTop,
+            int columnIndex,
+            boolean init,
+            boolean canWrite
+    ) {
+        // Backward-compatible overload - a normal contiguous partition has no partition top (offset 0).
+        return create(
+                partitionPath,
+                columnName,
+                columnTxn,
+                columnType,
+                indexBlockCapacity,
+                indexType,
+                columnTop,
+                columnIndex,
+                init,
+                canWrite,
+                0
+        );
+    }
 
     default FrameColumn create(
             Path partitionPath,
@@ -53,7 +82,7 @@ public interface FrameColumnTypePool {
             boolean init,
             boolean canWrite
     ) {
-        // Backward-compatible overload - defaults to BITMAP index type if indexed
+        // Backward-compatible overload - defaults to BITMAP index type if indexed, offset 0.
         return create(
                 partitionPath,
                 columnName,
@@ -64,7 +93,8 @@ public interface FrameColumnTypePool {
                 columnTop,
                 columnIndex,
                 init,
-                canWrite
+                canWrite,
+                0
         );
     }
 

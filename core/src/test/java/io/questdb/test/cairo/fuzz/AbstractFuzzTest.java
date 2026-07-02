@@ -62,7 +62,11 @@ public class AbstractFuzzTest extends AbstractCairoTest {
     }
 
     public static int getRndO3PartitionSplitMaxCount(Rnd rnd) {
-        return 1 + rnd.nextInt(2);
+        // A zero-copy (hardlink) 3-way split adds two pieces to the logical partition, so
+        // isHardlinkSplitWithinSquashCap only allows it when the split cap is at least 3.
+        // Caps 1..2 keep the classic copy-split/eager-squash behavior; 3..8 let split
+        // partitions accumulate and exercise the hardlink donor/child read and squash paths.
+        return 1 + rnd.nextInt(8);
     }
 
     public static int getRndParquetRowGroupSize(Rnd rnd) {
@@ -102,6 +106,10 @@ public class AbstractFuzzTest extends AbstractCairoTest {
     @Before
     public void setUp() {
         setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, TestUtils.randomSymbolIndexTypeName(setUpRnd));
+        // Fuzz coverage for partition tops (zero-copy hardlink splits) is limited to WAL tables
+        // for now; the non-WAL O3 write path keeps the classic copy splits.
+        setProperty(PropertyKey.CAIRO_PARTITION_TOP_WAL_ENABLED, "true");
+        setProperty(PropertyKey.CAIRO_PARTITION_TOP_NON_WAL_ENABLED, "false");
         super.setUp();
         fuzzer.withDb(engine, sqlExecutionContext);
         fuzzer.clearSeeds();
@@ -374,6 +382,10 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, maxApplyTimePerTable);
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, splitPartitionThreshold);
         node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, o3PartitionSplitMaxCount);
+        // The mid-partition cap defaults to 1, which squashes every non-last logical partition
+        // back to a single piece and blocks hardlink splits there; track the last-partition cap
+        // so backdated O3 writes exercise mid-partition splits too.
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, o3PartitionSplitMaxCount);
     }
 
     protected void setFuzzProperties(
@@ -383,9 +395,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
             long walMaxLagSize,
             int maxWalFdCache
     ) {
-        node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, maxApplyTimePerTable);
-        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, splitPartitionThreshold);
-        node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, o3PartitionSplitMaxCount);
+        setFuzzProperties(maxApplyTimePerTable, splitPartitionThreshold, o3PartitionSplitMaxCount);
         node1.setProperty(PropertyKey.CAIRO_WAL_MAX_LAG_SIZE, walMaxLagSize);
         node1.setProperty(PropertyKey.CAIRO_WAL_MAX_SEGMENT_FILE_DESCRIPTORS_CACHE, maxWalFdCache);
     }
@@ -396,6 +406,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL));
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, getRndO3PartitionSplit(rnd));
         node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, getRndO3PartitionSplitMaxCount(rnd));
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, getRndO3PartitionSplitMaxCount(rnd));
         node1.setProperty(PropertyKey.CAIRO_WAL_MAX_LAG_SIZE, getMaxWalSize(rnd));
         node1.setProperty(PropertyKey.CAIRO_WAL_MAX_SEGMENT_FILE_DESCRIPTORS_CACHE, getMaxWalFdCache(rnd));
         node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, 1 + rnd.nextInt(200));

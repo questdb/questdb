@@ -843,6 +843,74 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSplitMergeIntoHardlinkSuffixChild() throws Exception {
+        // Reproduces WalWriterFuzzTest#testWalMetadataAddDeleteColumnHeavy fuzz failure
+        // (seeds 1526190694382147614L, 2684230139848143701L): an O3 merge into a hardlinked
+        // suffix child must read source column data at file_row = logical_row + partitionTop.
+        // Without the +P offset the merge copies the donor's first rows instead of the
+        // child's rows.
+        assertMemoryLeak(() -> {
+            Overrides overrides = node1.getConfigurationOverrides();
+            overrides.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+            overrides.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 3);
+
+            String tsType = timestampType.getTypeName();
+            // 60*36 minute ticks span 2020-02-04 (1440 rows) and 2020-02-05 (720 rows),
+            // so 2020-02-04 is a mid partition (another logical partition follows it).
+            // All data is deterministic so the oracle can rebuild it at query time.
+            String baseSelect = "SELECT" +
+                    " cast(x AS int) i," +
+                    " -x j," +
+                    " 's' || x AS str," +
+                    " ('2020-02-04'::timestamp + (x - 1) * 60 * 1000000L)::" + tsType + " ts" +
+                    " FROM long_sequence(60 * 36)";
+            // O3 insert at 2020-02-04T20:01 creates a zero-copy 3-way split inside the mid partition:
+            // prefix donor + merged middle + hardlinked suffix child at 2020-02-04T20:05 with
+            // 235 logical rows and partitionTop = 1440 - 235 = 1205.
+            String o3Select1 = "SELECT" +
+                    " cast(x AS int) * 1000000 i," +
+                    " -x - 1000000L AS j," +
+                    " 'a' || x AS str," +
+                    " ('2020-02-04T20:01'::timestamp + (x - 1) * 1000000L)::" + tsType + " ts" +
+                    " FROM long_sequence(200)";
+            // O3 insert strictly inside the suffix child's range (20:05..23:59): merges into
+            // the hardlinked child, exercising the +partitionTop source reads.
+            String o3Select2 = "SELECT" +
+                    " cast(x AS int) * 2000000 i," +
+                    " -x - 2000000L AS j," +
+                    " 'b' || x AS str," +
+                    " ('2020-02-04T21:00:30'::timestamp + (x - 1) * 1000000L)::" + tsType + " ts" +
+                    " FROM long_sequence(10)";
+
+            execute("CREATE TABLE x AS (" + baseSelect + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x " + o3Select1);
+
+            assertQuery("SELECT minTimestamp, numRows, name FROM table_partitions('x') ORDER BY minTimestamp")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("minTimestamp")
+                    .returns(replaceTimestampSuffix1("""
+                            minTimestamp\tnumRows\tname
+                            2020-02-04T00:00:00.000000Z\t1201\t2020-02-04
+                            2020-02-04T20:01:00.000000Z\t204\t2020-02-04T200000-000001
+                            2020-02-04T20:05:00.000000Z\t235\t2020-02-04T200500
+                            2020-02-05T00:00:00.000000Z\t720\t2020-02-05
+                            """, timestampType.getTypeName()));
+
+            execute("INSERT INTO x " + o3Select2);
+
+            TestUtils.assertSqlCursors(
+                    engine,
+                    sqlExecutionContext,
+                    "(" + baseSelect + " UNION ALL " + o3Select1 + " UNION ALL " + o3Select2 + ") ORDER BY ts",
+                    "x",
+                    LOG,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testSplitMidPartitionMaxSplitsConfigured() throws Exception {
         // cairo.o3.mid.partition.max.splits controls how many splits a non-last
         // (mid) logical partition is allowed to keep after commit. Raising the
@@ -867,8 +935,9 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                     timestampType.getTypeName()
             );
 
-            // O3 insert at 2020-02-04T20:01 creates a split inside the mid partition.
-            // With max.splits=3 (> 2 actual splits) the split must survive.
+            // O3 insert at 2020-02-04T20:01 creates a zero-copy 3-way split inside the mid partition:
+            // prefix donor + merged middle + hardlinked suffix child. With max.splits=3 the resulting
+            // 3 pieces (2 splits) stay below the cap and must survive the commit un-squashed.
             execute(
                     "INSERT INTO x " +
                             "SELECT" +
@@ -887,7 +956,8 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                     .returns(replaceTimestampSuffix1("""
                             minTimestamp\tnumRows\tname
                             2020-02-04T00:00:00.000000Z\t1201\t2020-02-04
-                            2020-02-04T20:01:00.000000Z\t439\t2020-02-04T200000-000001
+                            2020-02-04T20:01:00.000000Z\t204\t2020-02-04T200000-000001
+                            2020-02-04T20:05:00.000000Z\t235\t2020-02-04T200500
                             2020-02-05T00:00:00.000000Z\t720\t2020-02-05
                             """, timestampType.getTypeName()));
         });

@@ -162,6 +162,24 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         prevLastSealedPartitionMaxTimestamp = Long.MIN_VALUE;
     }
 
+    public void clearPartitionDonor(long timestamp) {
+        int indexRaw = findAttachedPartitionRawIndex(timestamp);
+        if (indexRaw < 0) {
+            throw CairoException.nonCritical().put("bad partition index -1");
+        }
+        assert !isPartitionParquetByRawIndex(indexRaw);
+        // Clear the DONOR flag (bit 63) while preserving the partitionTop bits, then normalize
+        // a now-empty slot back to the -1L sentinel.
+        long cur = attachedPartitions.getQuick(indexRaw + PARTITION_TOP_OFFSET);
+        if (cur == -1L) {
+            cur = 0;
+        }
+        long packed = cur & ~PARTITION_DONOR_FLAG;
+        attachedPartitions.setQuick(indexRaw + PARTITION_TOP_OFFSET, packed == 0 ? -1L : packed);
+        recordStructureVersion++;
+        partitionTableVersion++;
+    }
+
     @Override
     public void close() {
         try {
@@ -385,6 +403,13 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         attachedPartitions.setQuick(indexRaw + PARTITION_PARQUET_FILE_SIZE_OFFSET, -1L);
     }
 
+    public void resetPartitionTop(int partitionIndex) {
+        // Clears the whole slot 3 (both partitionTop AND the DONOR flag) for a consolidated partition.
+        attachedPartitions.setQuick(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_TOP_OFFSET, -1L);
+        recordStructureVersion++;
+        partitionTableVersion++;
+    }
+
     public void resetStructureVersionUnsafe() {
         txMemBase.putLong(readBaseOffset + TX_OFFSET_STRUCT_VERSION_64, 0);
     }
@@ -442,6 +467,22 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         }
     }
 
+    public void setPartitionDonor(long timestamp) {
+        int indexRaw = findAttachedPartitionRawIndex(timestamp);
+        if (indexRaw < 0) {
+            throw CairoException.nonCritical().put("bad partition index -1");
+        }
+        assert !isPartitionParquetByRawIndex(indexRaw);
+        // Set the DONOR flag (bit 63) while preserving the partitionTop bits (treat -1L as 0).
+        long cur = attachedPartitions.getQuick(indexRaw + PARTITION_TOP_OFFSET);
+        if (cur == -1L) {
+            cur = 0;
+        }
+        attachedPartitions.setQuick(indexRaw + PARTITION_TOP_OFFSET, cur | PARTITION_DONOR_FLAG);
+        recordStructureVersion++;
+        partitionTableVersion++;
+    }
+
     public void setPartitionParquetFormat(long timestamp, long fileLength) {
         setPartitionParquetFormat(timestamp, fileLength, true);
     }
@@ -451,6 +492,17 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         if (indexRaw < 0) {
             throw CairoException.nonCritical().put("bad partition index -1");
         }
+        // A native partition-top/donor child must be materialized (squashed) before it can become
+        // parquet. Only check the native->parquet transition: skip when not converting to parquet
+        // (the reset path passes isParquetFormat=false) and skip when the partition is ALREADY
+        // parquet, where this method merely records the file size (fresh parquet write, in-place
+        // parquet update, parquet rewrite) and slot 3 holds the file size, not a native top. The
+        // short-circuit also keeps the native-only asserts in getPartitionTopByRawIndex /
+        // isPartitionDonorByRawIndex from firing on an already-parquet partition.
+        assert !isParquetFormat
+                || isPartitionParquetByRawIndex(indexRaw)
+                || (getPartitionTopByRawIndex(indexRaw) == 0 && !isPartitionDonorByRawIndex(indexRaw))
+                : "convert-to-parquet on un-materialized partition-top partition";
         int offset = indexRaw + PARTITION_MASKED_SIZE_OFFSET;
         long maskedSize = attachedPartitions.getQuick(offset);
 
@@ -501,6 +553,25 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
     public void setPartitionReadOnlyByTimestamp(long timestamp, boolean isReadOnly) {
         setPartitionReadOnlyByRawIndex(findAttachedPartitionRawIndex(timestamp), isReadOnly);
+    }
+
+    public void setPartitionTop(long timestamp, long partitionTop) {
+        int indexRaw = findAttachedPartitionRawIndex(timestamp);
+        if (indexRaw < 0) {
+            throw CairoException.nonCritical().put("bad partition index -1");
+        }
+        setPartitionTopByRawIndex(indexRaw, partitionTop);
+    }
+
+    public void setPartitionTopByRawIndex(int indexRaw, long partitionTop) {
+        assert !isPartitionParquetByRawIndex(indexRaw);
+        // Clear bits 0-43 and OR in the new partitionTop, preserving the DONOR flag (bit 63) and any
+        // reserved bits (treat -1L as 0). Normalize a now-empty slot back to the -1L sentinel.
+        long cur = attachedPartitions.getQuick(indexRaw + PARTITION_TOP_OFFSET);
+        long packed = ((cur == -1L) ? 0 : (cur & ~PARTITION_TOP_MASK)) | (partitionTop & PARTITION_TOP_MASK);
+        attachedPartitions.setQuick(indexRaw + PARTITION_TOP_OFFSET, packed == 0 ? -1L : packed);
+        recordStructureVersion++;
+        partitionTableVersion++;
     }
 
     public void setSeqTxn(long seqTxn) {
