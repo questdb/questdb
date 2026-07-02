@@ -30,6 +30,8 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxReader;
+import io.questdb.cairo.lv.LiveViewInstance;
+import io.questdb.cairo.lv.LiveViewRegistry;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
@@ -64,6 +66,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private final TableSequencerAPI.TableSequencerCallback broadSweepRef;
     private final long checkInterval;
     private final ObjList<TableToken> childViewSink = new ObjList<>();
+    private final ObjList<LiveViewInstance> liveViewSink = new ObjList<>();
     private final Clock clock;
     private final CairoConfiguration configuration;
     private final CairoEngine engine;
@@ -494,9 +497,16 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private long getSafeToPurgeUpToTxn(long readerSeqTxn) {
         long safeToPurgeTxn = readerSeqTxn;
         childViewSink.clear();
-        engine.getMatViewGraph().getDependentViews(tableToken, childViewSink);
+        engine.getDependentViewGraph().getDependentViews(tableToken, childViewSink);
+        // The dependent-view graph carries both mat-view and live-view tokens.
+        // Live views are enumerated separately below via liveViewRegistry, so
+        // skip them here to avoid the matViewStateStore lookup that would
+        // never produce a state for an LV token.
         for (int v = 0, n = childViewSink.size(); v < n; v++) {
             final TableToken viewToken = childViewSink.get(v);
+            if (viewToken.isLiveView()) {
+                continue;
+            }
             final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
 
             if (state != null && !state.isDropped()) {
@@ -521,6 +531,26 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                         safeToPurgeTxn = Math.min(safeToPurgeTxn, appliedToViewTxn);
                     }
                 }
+            }
+        }
+
+        // Live views publish lv_consumed_seqTxn through this purge floor
+        // alongside mat-view consumers. Only dropped views release their floor:
+        // DROP is the visibility cut that frees the base WAL. An INVALID view
+        // keeps holding the floor at its last published value until it is dropped,
+        // so an invalid-and-readable view can be re-CREATEd to fill the gap
+        // without the base WAL having been purged out from under it.
+        liveViewSink.clear();
+        final LiveViewRegistry liveViewRegistry = engine.getLiveViewRegistry();
+        liveViewRegistry.getViewsForBaseTable(tableToken.getTableName(), liveViewSink);
+        for (int v = 0, n = liveViewSink.size(); v < n; v++) {
+            final LiveViewInstance instance = liveViewSink.getQuick(v);
+            if (instance.isDropped()) {
+                continue;
+            }
+            final long lvConsumed = instance.getStateReader().getLvConsumedSeqTxn();
+            if (lvConsumed > -1) {
+                safeToPurgeTxn = Math.min(safeToPurgeTxn, lvConsumed);
             }
         }
         return safeToPurgeTxn;

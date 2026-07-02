@@ -2354,8 +2354,8 @@ public class ExpressionParser {
             } while (tok.charAt(0) == ',');
         }
 
-        // Handle ROWS/RANGE/GROUPS/CUMULATIVE frame specification
-        if (!Chars.equals(tok, ')')) {
+        // Handle ROWS/RANGE/GROUPS/CUMULATIVE frame specification (or ANCHOR if no frame)
+        if (!Chars.equals(tok, ')') && !SqlKeywords.isAnchorKeyword(tok)) {
             int framingMode = -1;
             int frameModePos = lexer.lastTokenPosition();
 
@@ -2395,9 +2395,72 @@ public class ExpressionParser {
             }
         }
 
+        // Live-view ANCHOR clause. Slots after the frame clause and before
+        // the closing ')'. Two forms:
+        //   ANCHOR EXPRESSION <expr>
+        //   ANCHOR DAILY '<HH:MM>' ['<tz>']
+        // CREATE LIVE VIEW validation enforces "ANCHOR + bounded frame is rejected",
+        // not here — the parser only captures the syntax.
+        if (tok != null && SqlKeywords.isAnchorKeyword(tok)) {
+            int anchorPos = lexer.lastTokenPosition();
+            tok = SqlUtil.fetchNext(lexer);
+            if (tok == null) {
+                throw SqlException.$(lexer.lastTokenPosition(), "'expression' or 'daily' expected after 'anchor'");
+            }
+            if (SqlKeywords.isExpressionKeyword(tok)) {
+                ExpressionNode expr = parseWindowExpr(lexer, sqlParserCallback, decls);
+                if (expr == null) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "expression expected after 'anchor expression'");
+                }
+                windowCol.setAnchorExpression(expr, anchorPos);
+                tok = SqlUtil.fetchNext(lexer);
+            } else if (SqlKeywords.isDailyKeyword(tok)) {
+                CharSequence timeTok = SqlUtil.fetchNext(lexer);
+                if (timeTok == null || !Chars.isQuoted(timeTok)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "quoted 'HH:MM' expected after 'daily'");
+                }
+                int timeUsPos = lexer.lastTokenPosition();
+                CharSequence timeStr = GenericLexer.unquote(timeTok);
+                long timeUs = parseDailyTimeOfDayUs(timeStr, timeUsPos);
+                tok = SqlUtil.fetchNext(lexer);
+                CharSequence tz = null;
+                if (tok != null && Chars.isQuoted(tok)) {
+                    CharacterStoreEntry tzEntry = characterStore.newEntry();
+                    tzEntry.put(GenericLexer.unquote(tok));
+                    tz = tzEntry.toImmutable();
+                    tok = SqlUtil.fetchNext(lexer);
+                }
+                windowCol.setAnchorDaily(timeUs, tz, anchorPos);
+            } else {
+                throw SqlException.$(lexer.lastTokenPosition(), "'expression' or 'daily' expected after 'anchor'");
+            }
+        }
+
         if (tok == null || tok.charAt(0) != ')') {
             throw SqlException.$(lexer.lastTokenPosition(), "')' expected to close window specification");
         }
+    }
+
+    /**
+     * Parses an HH:MM time-of-day literal into microseconds since midnight.
+     */
+    private static long parseDailyTimeOfDayUs(CharSequence tok, int position) throws SqlException {
+        int len = tok.length();
+        if (len != 5 || tok.charAt(2) != ':') {
+            throw SqlException.$(position, "ANCHOR DAILY expects 'HH:MM' (e.g. '00:00')");
+        }
+        int hours;
+        int minutes;
+        try {
+            hours = io.questdb.std.Numbers.parseInt(tok, 0, 2);
+            minutes = io.questdb.std.Numbers.parseInt(tok, 3, 5);
+        } catch (io.questdb.std.NumericException e) {
+            throw SqlException.$(position, "ANCHOR DAILY expects 'HH:MM' (e.g. '00:00')");
+        }
+        if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+            throw SqlException.$(position, "ANCHOR DAILY 'HH:MM' out of range");
+        }
+        return ((long) hours * 60L + minutes) * 60L * 1_000_000L;
     }
 
     private enum Scope {

@@ -30,6 +30,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
+import io.questdb.cairo.lv.LiveViewSnapshotKeyCodec;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
@@ -39,7 +40,9 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryARW;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -70,7 +73,14 @@ import org.jetbrains.annotations.Nullable;
 public class FirstValueWindowFunctionFactoryHelper {
 
     public static final String NAME = "first_value";
+    public static final ArrayColumnTypes FIRST_NOT_NULL_VALUE_OVER_PARTITION_ROWS_COLUMN_TYPES;
+    public static final ArrayColumnTypes FIRST_NOT_NULL_VALUE_OVER_PARTITION_ROWS_COLUMN_TYPES_LV;
     public static final ArrayColumnTypes FIRST_VALUE_COLUMN_TYPES;
+    public static final ArrayColumnTypes FIRST_VALUE_COLUMN_TYPES_LV;
+    public static final ArrayColumnTypes FIRST_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES;
+    public static final ArrayColumnTypes FIRST_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES_LV;
+    public static final ArrayColumnTypes FIRST_VALUE_OVER_PARTITION_ROWS_COLUMN_TYPES;
+    public static final ArrayColumnTypes FIRST_VALUE_OVER_PARTITION_ROWS_COLUMN_TYPES_LV;
 
     static Function newInstance(
             int position,
@@ -82,14 +92,14 @@ public class FirstValueWindowFunctionFactoryHelper {
             PartitionConstructor partitionConstructor,
             PartitionRangeConstructor partitionRangeConstructor,
             PartitionRowsConstructor partitionRowsConstructor,
-            PartitionConstructor unboundedPartitionRowsConstructor,
+            UnboundedPartitionConstructor unboundedPartitionRowsConstructor,
             RangeConstructor rangeConstructor,
             RowsConstructor rowsConstructor,
             WholeResultSetConstructor wholeResultSetConstructor,
             PartitionConstructor notNullPartitionConstructor,
             PartitionRangeConstructor notNullPartitionRangeConstructor,
             PartitionRowsConstructor notNullPartitionRowsConstructor,
-            PartitionConstructor notNullUnboundedPartitionRowsConstructor,
+            UnboundedPartitionConstructor notNullUnboundedPartitionRowsConstructor,
             RangeConstructor notNullRangeConstructor,
             RowsConstructor notNullRowsConstructor,
             WholeResultSetConstructor notNullWholeResultSetConstructor
@@ -149,7 +159,7 @@ public class FirstValueWindowFunctionFactoryHelper {
             PartitionConstructor notNullPartitionConstructor,
             PartitionRangeConstructor notNullPartitionRangeConstructor,
             PartitionRowsConstructor notNullPartitionRowsConstructor,
-            PartitionConstructor notNullUnboundedPartitionRowsConstructor,
+            UnboundedPartitionConstructor notNullUnboundedPartitionRowsConstructor,
             RangeConstructor notNullRangeConstructor,
             RowsConstructor notNullRowsConstructor,
             WholeResultSetConstructor notNullWholeResultSetConstructor
@@ -158,6 +168,7 @@ public class FirstValueWindowFunctionFactoryHelper {
         RecordSink partitionBySink = windowContext.getPartitionBySink();
         ColumnTypes partitionByKeyTypes = windowContext.getPartitionByKeyTypes();
         VirtualRecord partitionByRecord = windowContext.getPartitionByRecord();
+        final boolean liveView = windowContext.isLiveView();
         long rowsLo = windowContext.getRowsLo();
         long rowsHi = windowContext.getRowsHi();
         if (partitionByRecord != null) {
@@ -188,13 +199,16 @@ public class FirstValueWindowFunctionFactoryHelper {
                         map = MapFactory.createUnorderedMap(
                                 configuration,
                                 partitionByKeyTypes,
-                                FIRST_VALUE_COLUMN_TYPES
+                                liveView ? FIRST_VALUE_COLUMN_TYPES_LV : FIRST_VALUE_COLUMN_TYPES
                         );
                         return notNullUnboundedPartitionRowsConstructor.newFunction(
                                 map,
                                 partitionByRecord,
                                 partitionBySink,
-                                args.get(0)
+                                args.get(0),
+                                partitionByKeyTypes,
+                                liveView,
+                                configuration
                         );
                     } catch (Throwable th) {
                         Misc.free(map);
@@ -208,20 +222,14 @@ public class FirstValueWindowFunctionFactoryHelper {
 
                     int timestampIndex = windowContext.getTimestampIndex();
 
-                    ArrayColumnTypes columnTypes = new ArrayColumnTypes();
-                    columnTypes.add(ColumnType.LONG);  // number of values in current frame
-                    columnTypes.add(ColumnType.LONG);  // native array start offset, requires updating on resize
-                    columnTypes.add(ColumnType.LONG);   // native buffer size
-                    columnTypes.add(ColumnType.LONG);   // native buffer capacity
-                    columnTypes.add(ColumnType.LONG);   // index of first buffered element
-
                     Map map = null;
                     MemoryARW mem = null;
                     try {
                         map = MapFactory.createUnorderedMap(
                                 configuration,
                                 partitionByKeyTypes,
-                                columnTypes
+                                liveView ? FIRST_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES_LV
+                                        : FIRST_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES
                         );
                         mem = Vm.getCARWInstance(
                                 configuration.getSqlWindowStorePageSize(),
@@ -229,7 +237,7 @@ public class FirstValueWindowFunctionFactoryHelper {
                                 MemoryTag.NATIVE_CIRCULAR_BUFFER
                         );
 
-                        // moving average over range between timestamp - rowsLo and timestamp + rowsHi (inclusive)
+                        // moving first_value ignore nulls over range between timestamp - rowsLo and timestamp + rowsHi (inclusive)
                         return notNullPartitionRangeConstructor.newFunction(
                                 map,
                                 partitionByRecord,
@@ -239,7 +247,9 @@ public class FirstValueWindowFunctionFactoryHelper {
                                 args.get(0),
                                 mem,
                                 configuration.getSqlWindowInitialRangeBufferSize(),
-                                timestampIndex
+                                timestampIndex,
+                                partitionByKeyTypes,
+                                liveView
                         );
                     } catch (Throwable th) {
                         Misc.free(map);
@@ -255,13 +265,16 @@ public class FirstValueWindowFunctionFactoryHelper {
                         map = MapFactory.createUnorderedMap(
                                 configuration,
                                 partitionByKeyTypes,
-                                FIRST_VALUE_COLUMN_TYPES
+                                liveView ? FIRST_VALUE_COLUMN_TYPES_LV : FIRST_VALUE_COLUMN_TYPES
                         );
                         return notNullUnboundedPartitionRowsConstructor.newFunction(
                                 map,
                                 partitionByRecord,
                                 partitionBySink,
-                                args.get(0)
+                                args.get(0),
+                                partitionByKeyTypes,
+                                liveView,
+                                configuration
                         );
                     } catch (Throwable th) {
                         Misc.free(map);
@@ -292,19 +305,14 @@ public class FirstValueWindowFunctionFactoryHelper {
                 }
                 //between [unbounded | x] preceding and [x preceding | current row] (but not unbounded preceding to current row )
                 else {
-                    ArrayColumnTypes columnTypes = new ArrayColumnTypes();
-                    columnTypes.add(ColumnType.LONG);// position of current oldest element
-                    columnTypes.add(ColumnType.LONG);// start offset of native array
-                    columnTypes.add(ColumnType.LONG);// count of values in buffer
-                    columnTypes.add(ColumnType.LONG);// count of values in buffer
-
                     Map map = null;
                     MemoryARW mem = null;
                     try {
                         map = MapFactory.createUnorderedMap(
                                 configuration,
                                 partitionByKeyTypes,
-                                columnTypes
+                                liveView ? FIRST_NOT_NULL_VALUE_OVER_PARTITION_ROWS_COLUMN_TYPES_LV
+                                        : FIRST_NOT_NULL_VALUE_OVER_PARTITION_ROWS_COLUMN_TYPES
                         );
                         mem = Vm.getCARWInstance(
                                 configuration.getSqlWindowStorePageSize(),
@@ -320,7 +328,9 @@ public class FirstValueWindowFunctionFactoryHelper {
                                 rowsLo,
                                 rowsHi,
                                 args.get(0),
-                                mem
+                                mem,
+                                partitionByKeyTypes,
+                                liveView
                         );
                     } catch (Throwable th) {
                         Misc.free(map);
@@ -398,7 +408,7 @@ public class FirstValueWindowFunctionFactoryHelper {
             PartitionConstructor partitionConstructor,
             PartitionRangeConstructor partitionRangeConstructor,
             PartitionRowsConstructor partitionRowsConstructor,
-            PartitionConstructor unboundedPartitionRowsConstructor,
+            UnboundedPartitionConstructor unboundedPartitionRowsConstructor,
             RangeConstructor rangeConstructor,
             RowsConstructor rowsConstructor,
             WholeResultSetConstructor wholeResultSetConstructor
@@ -407,6 +417,7 @@ public class FirstValueWindowFunctionFactoryHelper {
         RecordSink partitionBySink = windowContext.getPartitionBySink();
         ColumnTypes partitionByKeyTypes = windowContext.getPartitionByKeyTypes();
         VirtualRecord partitionByRecord = windowContext.getPartitionByRecord();
+        final boolean liveView = windowContext.isLiveView();
 
         long rowsLo = windowContext.getRowsLo();
         long rowsHi = windowContext.getRowsHi();
@@ -438,14 +449,17 @@ public class FirstValueWindowFunctionFactoryHelper {
                         map = MapFactory.createUnorderedMap(
                                 configuration,
                                 partitionByKeyTypes,
-                                FIRST_VALUE_COLUMN_TYPES
+                                liveView ? FIRST_VALUE_COLUMN_TYPES_LV : FIRST_VALUE_COLUMN_TYPES
                         );
                         //same as for rows because calculation stops at current rows even if there are 'equal' following rows
                         return unboundedPartitionRowsConstructor.newFunction(
                                 map,
                                 partitionByRecord,
                                 partitionBySink,
-                                args.get(0)
+                                args.get(0),
+                                partitionByKeyTypes,
+                                liveView,
+                                configuration
                         );
                     } catch (Throwable th) {
                         Misc.free(map);
@@ -459,20 +473,14 @@ public class FirstValueWindowFunctionFactoryHelper {
 
                     int timestampIndex = windowContext.getTimestampIndex();
 
-                    ArrayColumnTypes columnTypes = new ArrayColumnTypes();
-                    columnTypes.add(ColumnType.LONG);  // number of values in current frame
-                    columnTypes.add(ColumnType.LONG);  // native array start offset, requires updating on resize
-                    columnTypes.add(ColumnType.LONG);   // native buffer size
-                    columnTypes.add(ColumnType.LONG);   // native buffer capacity
-                    columnTypes.add(ColumnType.LONG);   // index of first buffered element
-
                     Map map = null;
                     MemoryARW mem = null;
                     try {
                         map = MapFactory.createUnorderedMap(
                                 configuration,
                                 partitionByKeyTypes,
-                                columnTypes
+                                liveView ? FIRST_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES_LV
+                                        : FIRST_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES
                         );
                         mem = Vm.getCARWInstance(
                                 configuration.getSqlWindowStorePageSize(),
@@ -480,7 +488,7 @@ public class FirstValueWindowFunctionFactoryHelper {
                                 MemoryTag.NATIVE_CIRCULAR_BUFFER
                         );
 
-                        // moving average over range between timestamp - rowsLo and timestamp + rowsHi (inclusive)
+                        // moving first_value over range between timestamp - rowsLo and timestamp + rowsHi (inclusive)
                         return partitionRangeConstructor.newFunction(
                                 map,
                                 partitionByRecord,
@@ -490,7 +498,9 @@ public class FirstValueWindowFunctionFactoryHelper {
                                 args.get(0),
                                 mem,
                                 configuration.getSqlWindowInitialRangeBufferSize(),
-                                timestampIndex
+                                timestampIndex,
+                                partitionByKeyTypes,
+                                liveView
                         );
                     } catch (Throwable th) {
                         Misc.free(map);
@@ -506,13 +516,16 @@ public class FirstValueWindowFunctionFactoryHelper {
                         map = MapFactory.createUnorderedMap(
                                 configuration,
                                 partitionByKeyTypes,
-                                FIRST_VALUE_COLUMN_TYPES
+                                liveView ? FIRST_VALUE_COLUMN_TYPES_LV : FIRST_VALUE_COLUMN_TYPES
                         );
                         return unboundedPartitionRowsConstructor.newFunction(
                                 map,
                                 partitionByRecord,
                                 partitionBySink,
-                                args.get(0)
+                                args.get(0),
+                                partitionByKeyTypes,
+                                liveView,
+                                configuration
                         );
                     } catch (Throwable th) {
                         Misc.free(map);
@@ -543,18 +556,14 @@ public class FirstValueWindowFunctionFactoryHelper {
                 }
                 //between [unbounded | x] preceding and [x preceding | current row] (but not unbounded preceding to current row )
                 else {
-                    ArrayColumnTypes columnTypes = new ArrayColumnTypes();
-                    columnTypes.add(ColumnType.LONG);// position of current oldest element
-                    columnTypes.add(ColumnType.LONG);// start offset of native array
-                    columnTypes.add(ColumnType.LONG);// count of values in buffer
-
                     Map map = null;
                     MemoryARW mem = null;
                     try {
                         map = MapFactory.createUnorderedMap(
                                 configuration,
                                 partitionByKeyTypes,
-                                columnTypes
+                                liveView ? FIRST_VALUE_OVER_PARTITION_ROWS_COLUMN_TYPES_LV
+                                        : FIRST_VALUE_OVER_PARTITION_ROWS_COLUMN_TYPES
                         );
                         mem = Vm.getCARWInstance(
                                 configuration.getSqlWindowStorePageSize(),
@@ -562,7 +571,7 @@ public class FirstValueWindowFunctionFactoryHelper {
                                 MemoryTag.NATIVE_CIRCULAR_BUFFER
                         );
 
-                        // moving average over preceding N rows
+                        // moving first_value over preceding N rows
                         return partitionRowsConstructor.newFunction(
                                 map,
                                 partitionByRecord,
@@ -570,7 +579,9 @@ public class FirstValueWindowFunctionFactoryHelper {
                                 rowsLo,
                                 rowsHi,
                                 args.get(0),
-                                mem
+                                mem,
+                                partitionByKeyTypes,
+                                liveView
                         );
                     } catch (Throwable th) {
                         Misc.free(map);
@@ -660,7 +671,9 @@ public class FirstValueWindowFunctionFactoryHelper {
                 Function arg,
                 MemoryARW memory,
                 int initialBufferSize,
-                int timestampIdx
+                int timestampIdx,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         );
     }
 
@@ -673,7 +686,9 @@ public class FirstValueWindowFunctionFactoryHelper {
                 long rowsLo,
                 long rowsHi,
                 Function arg,
-                MemoryARW memory
+                MemoryARW memory,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         );
     }
 
@@ -685,6 +700,23 @@ public class FirstValueWindowFunctionFactoryHelper {
     @FunctionalInterface
     interface RowsConstructor {
         WindowFunction newFunction(Function arg, long rowsLo, long rowsHi, MemoryARW memory);
+    }
+
+    // The unbounded-preceding partitioned ROWS/RANGE shape. Carries the live-view
+    // snapshot args (partitionByKeyTypes/liveView) plus the configuration needed to
+    // allocate the frontier-compaction scratch map. Kept separate from
+    // PartitionConstructor, which still serves the un-migrated whole-partition shape.
+    @FunctionalInterface
+    interface UnboundedPartitionConstructor {
+        WindowFunction newFunction(
+                Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                Function arg,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView,
+                CairoConfiguration configuration
+        );
     }
 
     @FunctionalInterface
@@ -808,9 +840,12 @@ public class FirstValueWindowFunctionFactoryHelper {
                 Function arg,
                 MemoryARW memory,
                 int initialBufferSize,
-                int timestampIdx
+                int timestampIdx,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         ) {
-            super(map, partitionByRecord, partitionBySink, rangeLo, rangeHi, arg, memory, initialBufferSize, timestampIdx);
+            super(map, partitionByRecord, partitionBySink, rangeLo, rangeHi, arg, memory, initialBufferSize, timestampIdx,
+                    partitionByKeyTypes, liveView);
         }
 
         /**
@@ -866,6 +901,9 @@ public class FirstValueWindowFunctionFactoryHelper {
             long timestamp = record.getTimestamp(timestampIndex);
 
             if (mapValue.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    mapValue.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 long d = readArgValue(record);
                 capacity = initialBufferSize;
                 startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
@@ -960,6 +998,71 @@ public class FirstValueWindowFunctionFactoryHelper {
         public boolean isIgnoreNulls() {
             return true;
         }
+
+        @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset. Drop the partition's frame to empty; the ring
+            // slab (slot 0 startOffset, slot 2 capacity) stays allocated and the
+            // next row writes from index 0.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.findValue();
+            if (value != null) {
+                value.putLong(1, 0L);
+                value.putLong(3, 0L);
+                if (!value.isNew() && tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 1) {
+                    value.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
+            // Full physical-ring restore. The unbounded-lo IGNORE NULLS path uses
+            // firstIdx as a 0/1 capture flag (the captured value lives at physical
+            // index 0, not at firstIdx), so we cannot rebase to firstIdx=0; we
+            // preserve capacity, size and firstIdx verbatim and copy every slot.
+            final long size = source.getLong(offset);
+            offset += Long.BYTES;
+            final long capacity = source.getLong(offset);
+            offset += Long.BYTES;
+            final long firstIdx = source.getLong(offset);
+            offset += Long.BYTES;
+            final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            for (long i = 0; i < capacity; i++) {
+                final long rec = newStartOffset + i * RECORD_SIZE;
+                memory.putLong(rec, source.getLong(offset));
+                offset += Long.BYTES;
+                memory.putLong(rec + Long.BYTES, source.getLong(offset));
+                offset += Long.BYTES;
+            }
+            value.putLong(0, newStartOffset);
+            value.putLong(1, size);
+            value.putLong(2, capacity);
+            value.putLong(3, firstIdx);
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public void snapshotPartitionState(MemoryA sink, MapValue value) {
+            final long startOffset = value.getLong(0);
+            final long size = value.getLong(1);
+            final long capacity = value.getLong(2);
+            final long firstIdx = value.getLong(3);
+            sink.putLong(size);
+            sink.putLong(capacity);
+            sink.putLong(firstIdx);
+            for (long i = 0; i < capacity; i++) {
+                final long rec = startOffset + i * RECORD_SIZE;
+                sink.putLong(memory.getLong(rec));
+                sink.putLong(memory.getLong(rec + Long.BYTES));
+            }
+        }
     }
 
     // handles first_value() ignore nulls over (partition by x [order by o] rows between y and z)
@@ -982,9 +1085,13 @@ public class FirstValueWindowFunctionFactoryHelper {
                 long rowsLo,
                 long rowsHi,
                 Function arg,
-                MemoryARW memory
+                MemoryARW memory,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         ) {
-            super(map, partitionByRecord, partitionBySink, rowsLo, rowsHi, arg, memory);
+            super(map, partitionByRecord, partitionBySink, rowsLo, rowsHi, arg, memory,
+                    partitionByKeyTypes, liveView,
+                    FIRST_NOT_NULL_VALUE_OVER_PARTITION_ROWS_COLUMN_TYPES_LV, 4);
         }
 
         /**
@@ -1038,6 +1145,9 @@ public class FirstValueWindowFunctionFactoryHelper {
             long count = 0;
 
             if (value.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    value.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 loIdx = 0;
                 startOffset = memory.appendAddressFor((long) bufferSize * Long.BYTES) - memory.getPageAddress(0);
                 value.putLong(1, startOffset);
@@ -1108,6 +1218,64 @@ public class FirstValueWindowFunctionFactoryHelper {
         @Override
         public boolean isIgnoreNulls() {
             return true;
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset. Drop the partition's bounded-ROWS frame to
+            // empty; ring slots return to NULL so the next row re-anchors
+            // cleanly. The startOffset (slot 1) stays allocated.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.findValue();
+            if (value != null) {
+                final long startOffset = value.getLong(1);
+                value.putLong(0, 0L);
+                value.putLong(2, -1L);
+                value.putLong(3, 0L);
+                for (int i = 0; i < bufferSize; i++) {
+                    memory.putLong(startOffset + (long) i * Long.BYTES, Numbers.LONG_NULL);
+                }
+                if (!value.isNew() && tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 1) {
+                    value.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
+            final long loIdx = source.getLong(offset);
+            offset += Long.BYTES;
+            final long firstNotNullIdx = source.getLong(offset);
+            offset += Long.BYTES;
+            final long count = source.getLong(offset);
+            offset += Long.BYTES;
+            final long newStartOffset = memory.appendAddressFor((long) bufferSize * Long.BYTES) - memory.getPageAddress(0);
+            for (int i = 0; i < bufferSize; i++) {
+                memory.putLong(newStartOffset + (long) i * Long.BYTES, source.getLong(offset));
+                offset += Long.BYTES;
+            }
+            value.putLong(0, loIdx);
+            value.putLong(1, newStartOffset);
+            value.putLong(2, firstNotNullIdx);
+            value.putLong(3, count);
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public void snapshotPartitionState(MemoryA sink, MapValue value) {
+            sink.putLong(value.getLong(0));
+            sink.putLong(value.getLong(2));
+            sink.putLong(value.getLong(3));
+            final long startOffset = value.getLong(1);
+            for (int i = 0; i < bufferSize; i++) {
+                sink.putLong(memory.getLong(startOffset + (long) i * Long.BYTES));
+            }
         }
     }
 
@@ -1388,8 +1556,16 @@ public class FirstValueWindowFunctionFactoryHelper {
          * @param partitionBySink   serializes the partition key into map key form
          * @param arg               the argument function that produces the timestamp value for the current row
          */
-        public FirstNotNullValueOverUnboundedPartitionRowsFrameBase(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg) {
-            super(map, partitionByRecord, partitionBySink, arg);
+        public FirstNotNullValueOverUnboundedPartitionRowsFrameBase(
+                Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                Function arg,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView,
+                CairoConfiguration configuration
+        ) {
+            super(map, partitionByRecord, partitionBySink, arg, partitionByKeyTypes, liveView, configuration);
         }
 
         /**
@@ -1399,6 +1575,10 @@ public class FirstValueWindowFunctionFactoryHelper {
          * value to that stored timestamp. If no value exists, it reads the timestamp from the provided record;
          * if that timestamp is non-null it is stored as the partition's first value and becomes the current value;
          * otherwise the current value is set to SQL NULL (Numbers.LONG_NULL).
+         * <p>
+         * In live-view mode the partition entry is created eagerly with an explicit "initialized" byte
+         * (slot 1) so resetPartition can re-arm the slot; the flag stays 0 until the first non-null value,
+         * which is what makes IGNORE NULLS recapture the first non-null after an anchor reset.
          *
          * @param record the input record for the current row; used to determine the partition key and to read the timestamp argument
          */
@@ -1407,17 +1587,39 @@ public class FirstValueWindowFunctionFactoryHelper {
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
-            MapValue mapValue = key.findValue();
-            if (mapValue != null) {
-                this.value = mapValue.getTimestamp(0);
-            } else {
-                long d = readArgValue(record);
-                if (d != Numbers.LONG_NULL) {
-                    mapValue = key.createValue();
-                    mapValue.putLong(0, d);
-                    this.value = d;
+            if (liveView) {
+                MapValue mapValue = key.createValue();
+                boolean isNew = mapValue.isNew();
+                if (isNew) {
+                    mapValue.putByte(tombstoneValueIndex, (byte) 0);
+                }
+                if (isNew || mapValue.getByte(1) == 0) {
+                    long d = readArgValue(record);
+                    if (d != Numbers.LONG_NULL) {
+                        mapValue.putLong(0, d);
+                        mapValue.putByte(1, (byte) 1);
+                        value = d;
+                    } else {
+                        mapValue.putLong(0, Numbers.LONG_NULL);
+                        mapValue.putByte(1, (byte) 0);
+                        value = Numbers.LONG_NULL;
+                    }
                 } else {
-                    this.value = Numbers.LONG_NULL;
+                    value = mapValue.getLong(0);
+                }
+            } else {
+                MapValue mapValue = key.findValue();
+                if (mapValue != null) {
+                    this.value = mapValue.getLong(0);
+                } else {
+                    long d = readArgValue(record);
+                    if (d != Numbers.LONG_NULL) {
+                        mapValue = key.createValue();
+                        mapValue.putLong(0, d);
+                        this.value = d;
+                    } else {
+                        this.value = Numbers.LONG_NULL;
+                    }
                 }
             }
         }
@@ -1711,6 +1913,14 @@ public class FirstValueWindowFunctionFactoryHelper {
         // list of [size, startOffset] pairs marking free space within mem
         protected final LongList freeList = new LongList();
         protected final int initialBufferSize;
+        // Deep copy of the partition-by key column types; outlives the
+        // WindowContext buffer backing the original partitionByKeyTypes argument.
+        // Null outside live-view mode.
+        protected final ArrayColumnTypes keyColumnTypes;
+        protected final boolean liveView;
+        // Full value layout (incl. tombstone slot) for the snapshot codec; null
+        // outside live-view mode.
+        protected final ArrayColumnTypes mapValueTypes;
         protected final long maxDiff;
         // holds resizable ring buffers
         protected final MemoryARW memory;
@@ -1742,7 +1952,9 @@ public class FirstValueWindowFunctionFactoryHelper {
                 Function arg,
                 MemoryARW memory,
                 int initialBufferSize,
-                int timestampIdx
+                int timestampIdx,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             frameLoBounded = rangeLo != Long.MIN_VALUE;
@@ -1753,6 +1965,25 @@ public class FirstValueWindowFunctionFactoryHelper {
             this.timestampIndex = timestampIdx;
 
             frameIncludesCurrentValue = rangeHi == 0;
+
+            this.liveView = liveView;
+            if (liveView) {
+                ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                    keyTypesCopy.add(partitionByKeyTypes.getColumnType(i));
+                }
+                this.keyColumnTypes = keyTypesCopy;
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = FIRST_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(FIRST_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 5;
+            } else {
+                this.keyColumnTypes = null;
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
         }
 
         /**
@@ -1811,6 +2042,9 @@ public class FirstValueWindowFunctionFactoryHelper {
             long d = readArgValue(record);
 
             if (mapValue.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    mapValue.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 capacity = initialBufferSize;
                 startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
                 firstIdx = 0;
@@ -1933,6 +2167,30 @@ public class FirstValueWindowFunctionFactoryHelper {
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
+        public ColumnTypes getSnapshotKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getSnapshotKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : FIRST_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES.getColumnCount();
+        }
+
+        @Override
+        public void onSnapshotRestoreBegin() {
+            super.onSnapshotRestoreBegin();
+            memory.truncate();
+            freeList.clear();
+        }
+
+        @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), firstValue);
@@ -1965,9 +2223,86 @@ public class FirstValueWindowFunctionFactoryHelper {
         }
 
         @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset. Drop the partition's frame to empty; the ring
+            // slab stays allocated and the next row writes from index 0.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.findValue();
+            if (value != null) {
+                value.putLong(0, 0L);
+                value.putLong(2, 0L);
+                value.putLong(4, 0L);
+                if (!value.isNew() && tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 1) {
+                    value.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
+            final long frameSize = source.getLong(offset);
+            offset += Long.BYTES;
+            final long size = source.getLong(offset);
+            offset += Long.BYTES;
+            final long capacity = Math.max(size, initialBufferSize);
+            final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            for (long i = 0; i < size; i++) {
+                final long rec = newStartOffset + i * RECORD_SIZE;
+                memory.putLong(rec, source.getLong(offset));
+                offset += Long.BYTES;
+                memory.putLong(rec + Long.BYTES, source.getLong(offset));
+                offset += Long.BYTES;
+            }
+            value.putLong(0, frameSize);
+            value.putLong(1, newStartOffset);
+            value.putLong(2, size);
+            value.putLong(3, capacity);
+            value.putLong(4, 0L);
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
         public void setMemoryTracker(@Nullable MemoryTracker tracker) {
             super.setMemoryTracker(tracker);
             memory.setMemoryTracker(tracker);
+        }
+
+        @Override
+        public int snapshotFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public int snapshotMinSupportedVersion() {
+            return 1;
+        }
+
+        @Override
+        public void snapshotPartitionState(MemoryA sink, MapValue value) {
+            sink.putLong(value.getLong(0));
+            final long startOffset = value.getLong(1);
+            final long size = value.getLong(2);
+            final long capacity = value.getLong(3);
+            final long firstIdx = value.getLong(4);
+            sink.putLong(size);
+            for (long i = 0; i < size; i++) {
+                final long rec = startOffset + ((firstIdx + i) % capacity) * RECORD_SIZE;
+                sink.putLong(memory.getLong(rec));
+                sink.putLong(memory.getLong(rec + Long.BYTES));
+            }
+        }
+
+        @Override
+        public boolean supportsSnapshot() {
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         /**
@@ -2021,6 +2356,14 @@ public class FirstValueWindowFunctionFactoryHelper {
         protected final boolean frameIncludesCurrentValue;
         protected final boolean frameLoBounded;
         protected final int frameSize;
+        // Deep copy of the partition-by key column types; outlives the
+        // WindowContext buffer backing the original partitionByKeyTypes argument.
+        // Null outside live-view mode.
+        protected final ArrayColumnTypes keyColumnTypes;
+        protected final boolean liveView;
+        // Full value layout (incl. tombstone slot) for the snapshot codec; null
+        // outside live-view mode.
+        protected final ArrayColumnTypes mapValueTypes;
         // holds fixed-size ring buffers of long values
         protected final MemoryARW memory;
         protected long firstValue;
@@ -2051,7 +2394,27 @@ public class FirstValueWindowFunctionFactoryHelper {
                 long rowsLo,
                 long rowsHi,
                 Function arg,
-                MemoryARW memory
+                MemoryARW memory,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
+        ) {
+            this(map, partitionByRecord, partitionBySink, rowsLo, rowsHi, arg, memory,
+                    partitionByKeyTypes, liveView,
+                    FIRST_VALUE_OVER_PARTITION_ROWS_COLUMN_TYPES_LV, 3);
+        }
+
+        protected FirstValueOverPartitionRowsFrameBase(
+                Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                long rowsLo,
+                long rowsHi,
+                Function arg,
+                MemoryARW memory,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView,
+                ArrayColumnTypes valueTypesLv,
+                int longSlotCount
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             if (rowsLo > Long.MIN_VALUE) {
@@ -2065,6 +2428,30 @@ public class FirstValueWindowFunctionFactoryHelper {
             }
             this.frameIncludesCurrentValue = rowsHi == 0;
             this.memory = memory;
+            this.liveView = liveView;
+            if (liveView) {
+                ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                    keyTypesCopy.add(partitionByKeyTypes.getColumnType(i));
+                }
+                this.keyColumnTypes = keyTypesCopy;
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = valueTypesLv.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(valueTypesLv.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = longSlotCount;
+            } else {
+                this.keyColumnTypes = null;
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            memory.close();
         }
 
         /**
@@ -2112,6 +2499,9 @@ public class FirstValueWindowFunctionFactoryHelper {
             long d = readArgValue(record);
 
             if (value.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    value.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 loIdx = 0;
                 count = 0;
                 startOffset = memory.appendAddressFor((long) bufferSize * Long.BYTES) - memory.getPageAddress(0);
@@ -2166,6 +2556,29 @@ public class FirstValueWindowFunctionFactoryHelper {
             return WindowFunction.ZERO_PASS;
         }
 
+        @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
+        public ColumnTypes getSnapshotKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getSnapshotKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : FIRST_VALUE_OVER_PARTITION_ROWS_COLUMN_TYPES.getColumnCount();
+        }
+
+        @Override
+        public void onSnapshotRestoreBegin() {
+            super.onSnapshotRestoreBegin();
+            memory.truncate();
+        }
+
         /**
          * Advance internal state for the current input record and write the current first-value
          * timestamp into the window SPI output column.
@@ -2205,6 +2618,76 @@ public class FirstValueWindowFunctionFactoryHelper {
         public void reset() {
             super.reset();
             memory.close();
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset. Drop the partition's bounded-ROWS frame to
+            // empty; ring slots return to NULL so the next row re-anchors
+            // cleanly. The startOffset (slot 1) stays allocated.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.findValue();
+            if (value != null) {
+                final long startOffset = value.getLong(1);
+                value.putLong(0, 0L);
+                value.putLong(2, 0L);
+                for (int i = 0; i < bufferSize; i++) {
+                    memory.putLong(startOffset + (long) i * Long.BYTES, Numbers.LONG_NULL);
+                }
+                if (!value.isNew() && tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 1) {
+                    value.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
+            final long loIdx = source.getLong(offset);
+            offset += Long.BYTES;
+            final long count = source.getLong(offset);
+            offset += Long.BYTES;
+            final long newStartOffset = memory.appendAddressFor((long) bufferSize * Long.BYTES) - memory.getPageAddress(0);
+            for (int i = 0; i < bufferSize; i++) {
+                memory.putLong(newStartOffset + (long) i * Long.BYTES, source.getLong(offset));
+                offset += Long.BYTES;
+            }
+            value.putLong(0, loIdx);
+            value.putLong(1, newStartOffset);
+            value.putLong(2, count);
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public int snapshotFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public int snapshotMinSupportedVersion() {
+            return 1;
+        }
+
+        @Override
+        public void snapshotPartitionState(MemoryA sink, MapValue value) {
+            sink.putLong(value.getLong(0));
+            sink.putLong(value.getLong(2));
+            final long startOffset = value.getLong(1);
+            for (int i = 0; i < bufferSize; i++) {
+                sink.putLong(memory.getLong(startOffset + (long) i * Long.BYTES));
+            }
+        }
+
+        @Override
+        public boolean supportsSnapshot() {
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         /**
@@ -2764,6 +3247,14 @@ public class FirstValueWindowFunctionFactoryHelper {
     // - first_value(a) over (partition by x rows between unbounded preceding and [current row | x preceding ])
     // - first_value(a) over (partition by x order by ts range between unbounded preceding and [current row | x preceding])
     abstract static class FirstValueOverUnboundedPartitionRowsFrameBase extends BasePartitionedWindowFunction {
+        protected final CairoConfiguration configuration;
+        // Deep copy of the partition-by key column types; outlives the
+        // WindowContext buffer backing the original partitionByKeyTypes argument.
+        protected final ArrayColumnTypes keyColumnTypes;
+        protected final boolean liveView;
+        // Full value layout (incl. tombstone slot) for the newCompactionScratch
+        // map. Null outside live-view mode.
+        protected final ArrayColumnTypes mapValueTypes;
         protected long value;
 
         /**
@@ -2776,8 +3267,38 @@ public class FirstValueWindowFunctionFactoryHelper {
          * @param partitionBySink   sink used to serialize the partition key into the map
          * @param arg               argument function that produces the timestamp value for each row
          */
-        public FirstValueOverUnboundedPartitionRowsFrameBase(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg) {
+        public FirstValueOverUnboundedPartitionRowsFrameBase(
+                Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                Function arg,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView,
+                CairoConfiguration configuration
+        ) {
             super(map, partitionByRecord, partitionBySink, arg);
+            this.liveView = liveView;
+            this.configuration = configuration;
+            this.keyColumnTypes = new ArrayColumnTypes();
+            for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                this.keyColumnTypes.add(partitionByKeyTypes.getColumnType(i));
+            }
+            if (liveView) {
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = FIRST_VALUE_COLUMN_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(FIRST_VALUE_COLUMN_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 2;
+            } else {
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            return MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
         }
 
         /**
@@ -2797,13 +3318,22 @@ public class FirstValueWindowFunctionFactoryHelper {
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
             MapValue mapValue = key.createValue();
-
-            if (mapValue.isNew()) {
+            boolean isNew = mapValue.isNew();
+            if (isNew && tombstoneValueIndex >= 0) {
+                mapValue.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            // LV ANCHOR contract: an explicit "initialized" byte (slot 1) lets
+            // resetPartition re-arm the slot so computeNext recaptures the first
+            // value in the next anchor bucket. The non-LV path never reads slot 1.
+            if (isNew || (liveView && mapValue.getByte(1) == 0)) {
                 long d = readArgValue(record);
                 mapValue.putLong(0, d);
+                if (liveView) {
+                    mapValue.putByte(1, (byte) 1);
+                }
                 value = d;
             } else {
-                value = mapValue.getTimestamp(0);
+                value = mapValue.getLong(0);
             }
         }
 
@@ -2817,6 +3347,11 @@ public class FirstValueWindowFunctionFactoryHelper {
             return NAME;
         }
 
+        @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
         /**
          * Returns the number of evaluation passes required by this window function.
          *
@@ -2825,6 +3360,18 @@ public class FirstValueWindowFunctionFactoryHelper {
         @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public ColumnTypes getSnapshotKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getSnapshotKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : FIRST_VALUE_COLUMN_TYPES.getColumnCount();
         }
 
         /**
@@ -2842,6 +3389,56 @@ public class FirstValueWindowFunctionFactoryHelper {
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), value);
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset. Mark the partition uninitialized so the next
+            // computeNext recaptures the first value on the post-reset row.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mv = key.findValue();
+            if (mv != null) {
+                mv.putByte(1, (byte) 0);
+                if (!mv.isNew() && tombstoneValueIndex >= 0 && mv.getByte(tombstoneValueIndex) != 1) {
+                    mv.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
+            value.putLong(0, source.getLong(offset));
+            offset += Long.BYTES;
+            value.putByte(1, source.getByte(offset));
+            offset += Byte.BYTES;
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public int snapshotFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public int snapshotMinSupportedVersion() {
+            return 1;
+        }
+
+        @Override
+        public void snapshotPartitionState(MemoryA sink, MapValue value) {
+            sink.putLong(value.getLong(0));
+            sink.putByte(value.getByte(1));
+        }
+
+        @Override
+        public boolean supportsSnapshot() {
+            return LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         /**
@@ -2968,5 +3565,57 @@ public class FirstValueWindowFunctionFactoryHelper {
     static {
         FIRST_VALUE_COLUMN_TYPES = new ArrayColumnTypes();
         FIRST_VALUE_COLUMN_TYPES.add(ColumnType.TIMESTAMP);
+
+        // Live-view value layout for the unbounded-preceding shape. The
+        // non-LV FIRST_VALUE_COLUMN_TYPES stays pristine (single value slot);
+        // the LV layout adds an explicit "initialized" byte so resetPartition
+        // can re-arm the slot without relying on MapValue.isNew() (which only
+        // fires on the first access), plus the anchor-driven tombstone byte.
+        FIRST_VALUE_COLUMN_TYPES_LV = new ArrayColumnTypes();
+        FIRST_VALUE_COLUMN_TYPES_LV.add(ColumnType.TIMESTAMP); // captured value
+        FIRST_VALUE_COLUMN_TYPES_LV.add(ColumnType.BYTE);      // initialized flag
+        FIRST_VALUE_COLUMN_TYPES_LV.add(ColumnType.BYTE);      // tombstone (anchor-driven compaction)
+
+        FIRST_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES = new ArrayColumnTypes();
+        FIRST_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.LONG); // number of values in current frame
+        FIRST_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.LONG); // native array start offset
+        FIRST_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.LONG); // native buffer size
+        FIRST_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.LONG); // native buffer capacity
+        FIRST_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.LONG); // index of first buffered element
+
+        // Shared by the RESPECT (FirstValue) and IGNORE (FirstNotNull) RANGE
+        // bases. FirstValue uses slots 0-4; FirstNotNull uses slots 0-3
+        // (slot 4 idle). Tombstone @ slot 5.
+        FIRST_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES_LV = new ArrayColumnTypes();
+        FIRST_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.add(ColumnType.LONG); // number of values in current frame
+        FIRST_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.add(ColumnType.LONG); // native array start offset
+        FIRST_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.add(ColumnType.LONG); // native buffer size
+        FIRST_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.add(ColumnType.LONG); // native buffer capacity
+        FIRST_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.add(ColumnType.LONG); // index of first buffered element
+        FIRST_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.add(ColumnType.BYTE); // tombstone (anchor-driven compaction)
+
+        FIRST_VALUE_OVER_PARTITION_ROWS_COLUMN_TYPES = new ArrayColumnTypes();
+        FIRST_VALUE_OVER_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.LONG); // position of current oldest element
+        FIRST_VALUE_OVER_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.LONG); // start offset of native array
+        FIRST_VALUE_OVER_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.LONG); // count of values in buffer
+
+        FIRST_VALUE_OVER_PARTITION_ROWS_COLUMN_TYPES_LV = new ArrayColumnTypes();
+        FIRST_VALUE_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.LONG); // position of current oldest element
+        FIRST_VALUE_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.LONG); // start offset of native array
+        FIRST_VALUE_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.LONG); // count of values in buffer
+        FIRST_VALUE_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.BYTE); // tombstone (anchor-driven compaction)
+
+        FIRST_NOT_NULL_VALUE_OVER_PARTITION_ROWS_COLUMN_TYPES = new ArrayColumnTypes();
+        FIRST_NOT_NULL_VALUE_OVER_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.LONG); // position of current oldest element
+        FIRST_NOT_NULL_VALUE_OVER_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.LONG); // start offset of native array
+        FIRST_NOT_NULL_VALUE_OVER_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.LONG); // first not null index
+        FIRST_NOT_NULL_VALUE_OVER_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.LONG); // count of values in buffer
+
+        FIRST_NOT_NULL_VALUE_OVER_PARTITION_ROWS_COLUMN_TYPES_LV = new ArrayColumnTypes();
+        FIRST_NOT_NULL_VALUE_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.LONG); // position of current oldest element
+        FIRST_NOT_NULL_VALUE_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.LONG); // start offset of native array
+        FIRST_NOT_NULL_VALUE_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.LONG); // first not null index
+        FIRST_NOT_NULL_VALUE_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.LONG); // count of values in buffer
+        FIRST_NOT_NULL_VALUE_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.BYTE); // tombstone (anchor-driven compaction)
     }
 }

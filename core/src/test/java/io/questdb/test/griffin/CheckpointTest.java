@@ -51,6 +51,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.idx.BitmapIndexUtils;
+import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.security.AllowAllSecurityContext;
@@ -452,6 +453,55 @@ public class CheckpointTest extends AbstractCairoTest {
             // Restore happens during startup, so listener should have been called exactly once
             Assert.assertEquals("Listener onCheckpointRestoreComplete should be called exactly once", 1, restoreCompleteCallCount[0]);
         }
+    }
+
+    @Test
+    public void testCheckpointLiveViewMetadataFiles() throws Exception {
+        // Live views are full WAL-backed tables. The checkpoint
+        // must carry both LV-specific files (_lv, _lv.s) and the standard
+        // table-skeleton files (_meta, _txn, _name, partition data, wal<n>/).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP)" +
+                    " TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            drainWalQueue();
+
+            execute("CREATE LIVE VIEW live_rn FLUSH EVERY 1s AS" +
+                    " SELECT symbol, price, ts, row_number() OVER w AS rn" +
+                    " FROM trades" +
+                    " WINDOW w AS (PARTITION BY symbol ORDER BY ts ANCHOR DAILY '00:00')");
+
+            execute("CHECKPOINT CREATE;");
+
+            TableToken lvToken = engine.getTableTokenIfExists("live_rn");
+            Assert.assertNotNull(lvToken);
+            Assert.assertTrue(lvToken.isLiveView());
+
+            path.trimTo(rootLen).concat(lvToken.getDirName()).slash$();
+            Assert.assertTrue("Live view directory should exist in checkpoint", TestFilesFacadeImpl.INSTANCE.exists(path.$()));
+
+            // _lv definition file (LV-specific, immutable).
+            path.trimTo(rootLen).concat(lvToken.getDirName()).concat(LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME).$();
+            Assert.assertTrue("_lv file should exist in checkpoint", TestFilesFacadeImpl.INSTANCE.exists(path.$()));
+
+            // _lv.s state file (LV-specific, mutable). Required for resumption
+            // after restore - without it the refresh worker has no
+            // lastProcessedSeqTxn watermark to restart from.
+            path.trimTo(rootLen).concat(lvToken.getDirName()).concat(io.questdb.cairo.lv.LiveViewState.LIVE_VIEW_STATE_FILE_NAME).$();
+            Assert.assertTrue("_lv.s file should exist in checkpoint", TestFilesFacadeImpl.INSTANCE.exists(path.$()));
+
+            // Standard WAL-backed-table files copied via the TableReader path.
+            path.trimTo(rootLen).concat(lvToken.getDirName()).concat(TableUtils.META_FILE_NAME).$();
+            Assert.assertTrue("_meta file should exist in checkpoint", TestFilesFacadeImpl.INSTANCE.exists(path.$()));
+
+            path.trimTo(rootLen).concat(lvToken.getDirName()).concat(TableUtils.TABLE_NAME_FILE).$();
+            Assert.assertTrue("_name file should exist in checkpoint", TestFilesFacadeImpl.INSTANCE.exists(path.$()));
+
+            // _txn now exists (live views are WAL-backed tables).
+            path.trimTo(rootLen).concat(lvToken.getDirName()).concat(TableUtils.TXN_FILE_NAME).$();
+            Assert.assertTrue("_txn file should exist in checkpoint", TestFilesFacadeImpl.INSTANCE.exists(path.$()));
+
+            execute("CHECKPOINT RELEASE;");
+        });
     }
 
     @Test
@@ -3144,6 +3194,59 @@ public class CheckpointTest extends AbstractCairoTest {
                             2023-09-20T12:39:01.933062Z\tfoobar\t42
                             """);
             engine.checkpointRelease();
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoresLiveView() throws Exception {
+        final String snapshotId = "id1";
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
+
+            execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP)" +
+                    " TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            drainWalQueue();
+
+            execute("CREATE LIVE VIEW live_rn FLUSH EVERY 1s AS" +
+                    " SELECT symbol, price, ts, row_number() OVER w AS rn" +
+                    " FROM trades" +
+                    " WINDOW w AS (PARTITION BY symbol ORDER BY ts ANCHOR DAILY '00:00')");
+
+            execute("CHECKPOINT CREATE;");
+
+            // Restore from the checkpoint.
+            engine.clear();
+            engine.closeNameRegistry();
+            createTriggerFile();
+            engine.checkpointRecover();
+            engine.reloadTableNames();
+            engine.getMetadataCache().onStartupAsyncHydrator();
+            engine.buildViewGraphs();
+
+            // The live view token should be restored and identified as LIVE_VIEW.
+            TableToken lvToken = engine.getTableTokenIfExists("live_rn");
+            Assert.assertNotNull("live view token should be restored", lvToken);
+            Assert.assertTrue("restored token should be a live view", lvToken.isLiveView());
+
+            // _lv definition file should exist in db root.
+            try (Path p = new Path()) {
+                p.of(configuration.getDbRoot()).concat(lvToken.getDirName()).concat(LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME).$();
+                Assert.assertTrue("_lv file should exist after restore", TestFilesFacadeImpl.INSTANCE.exists(p.$()));
+            }
+
+            // _lv.s state file should exist in db root.
+            try (Path p = new Path()) {
+                p.of(configuration.getDbRoot()).concat(lvToken.getDirName()).concat(io.questdb.cairo.lv.LiveViewState.LIVE_VIEW_STATE_FILE_NAME).$();
+                Assert.assertTrue("_lv.s file should exist after restore", TestFilesFacadeImpl.INSTANCE.exists(p.$()));
+            }
+
+            // _meta file should exist in db root.
+            try (Path p = new Path()) {
+                p.of(configuration.getDbRoot()).concat(lvToken.getDirName()).concat(TableUtils.META_FILE_NAME).$();
+                Assert.assertTrue("_meta file should exist after restore", TestFilesFacadeImpl.INSTANCE.exists(p.$()));
+            }
+
+            execute("CHECKPOINT RELEASE;");
         });
     }
 

@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.lv.LiveViewSnapshotKeyCodec;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
@@ -40,7 +41,9 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryARW;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -59,6 +62,7 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
     private static final String NAME = "sum";
     private static final String SIGNATURE = NAME + "(D)";
     private static final ArrayColumnTypes SUM_COLUMN_TYPES;
+    private static final ArrayColumnTypes SUM_COLUMN_TYPES_LV;
 
     @Override
     public String getSignature() {
@@ -108,10 +112,11 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     );
                 } // between unbounded preceding and current row
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
-                            SUM_COLUMN_TYPES
+                            liveView ? SUM_COLUMN_TYPES_LV : SUM_COLUMN_TYPES
                     );
 
                     // same as for rows because calculation stops at current rows even if there are 'equal' following rows
@@ -119,7 +124,10 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                             map,
                             partitionByRecord,
                             partitionBySink,
-                            args.get(0)
+                            args.get(0),
+                            partitionByKeyTypes,
+                            liveView,
+                            configuration
                     );
                 } // range between [unbounded | x] preceding and [x preceding | current row]
                 else {
@@ -129,21 +137,16 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
                     int timestampIndex = windowContext.getTimestampIndex();
 
-                    ArrayColumnTypes columnTypes = new ArrayColumnTypes();
-                    columnTypes.add(ColumnType.DOUBLE); // current frame sum
-                    columnTypes.add(ColumnType.LONG); // number of (non-null) values in current frame
-                    columnTypes.add(ColumnType.LONG); // native array start offset, requires updating on resize
-                    columnTypes.add(ColumnType.LONG); // native buffer size
-                    columnTypes.add(ColumnType.LONG); // native buffer capacity
-                    columnTypes.add(ColumnType.LONG); // index of first buffered element
-
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = null;
                     MemoryARW mem = null;
                     try {
                         map = MapFactory.createUnorderedMap(
                                 configuration,
                                 partitionByKeyTypes,
-                                columnTypes
+                                liveView
+                                        ? AvgDoubleWindowFunctionFactory.AVG_OVER_PARTITION_RANGE_COLUMN_TYPES_LV
+                                        : AvgDoubleWindowFunctionFactory.AVG_OVER_PARTITION_RANGE_COLUMN_TYPES
                         );
                         mem = Vm.getCARWInstance(
                                 configuration.getSqlWindowStorePageSize(),
@@ -161,7 +164,9 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                                 args.get(0),
                                 mem,
                                 configuration.getSqlWindowInitialRangeBufferSize(),
-                                timestampIndex
+                                timestampIndex,
+                                partitionByKeyTypes,
+                                liveView
                         );
                     } catch (Throwable th) {
                         Misc.free(map);
@@ -172,17 +177,21 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 // between unbounded preceding and current row
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
-                            SUM_COLUMN_TYPES
+                            liveView ? SUM_COLUMN_TYPES_LV : SUM_COLUMN_TYPES
                     );
 
                     return new SumOverUnboundedPartitionRowsFrameFunction(
                             map,
                             partitionByRecord,
                             partitionBySink,
-                            args.get(0)
+                            args.get(0),
+                            partitionByKeyTypes,
+                            liveView,
+                            configuration
                     );
                 } // between current row and current row
                 else if (rowsLo == 0 && rowsHi == 0) {
@@ -204,19 +213,16 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 }
                 // between [unbounded | x] preceding and [x preceding | current row]
                 else {
-                    ArrayColumnTypes columnTypes = new ArrayColumnTypes();
-                    columnTypes.add(ColumnType.DOUBLE); // sum
-                    columnTypes.add(ColumnType.LONG); // current frame size
-                    columnTypes.add(ColumnType.LONG); // position of current oldest element
-                    columnTypes.add(ColumnType.LONG); // start offset of native array
-
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = null;
                     MemoryARW mem = null;
                     try {
                         map = MapFactory.createUnorderedMap(
                                 configuration,
                                 partitionByKeyTypes,
-                                columnTypes
+                                liveView
+                                        ? AvgDoubleWindowFunctionFactory.AVG_OVER_PARTITION_ROWS_COLUMN_TYPES_LV
+                                        : AvgDoubleWindowFunctionFactory.AVG_OVER_PARTITION_ROWS_COLUMN_TYPES
                         );
                         mem = Vm.getCARWInstance(
                                 configuration.getSqlWindowStorePageSize(),
@@ -232,7 +238,9 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                                 rowsLo,
                                 rowsHi,
                                 args.get(0),
-                                mem
+                                mem,
+                                partitionByKeyTypes,
+                                liveView
                         );
                     } catch (Throwable th) {
                         Misc.free(map);
@@ -353,9 +361,12 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 Function arg,
                 MemoryARW memory,
                 int initialBufferSize,
-                int timestampIdx
+                int timestampIdx,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         ) {
-            super(map, partitionByRecord, partitionBySink, rangeLo, rangeHi, arg, memory, initialBufferSize, timestampIdx);
+            super(map, partitionByRecord, partitionBySink, rangeLo, rangeHi, arg, memory, initialBufferSize, timestampIdx,
+                    partitionByKeyTypes, liveView);
         }
 
         @Override
@@ -379,9 +390,12 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 long rowsLo,
                 long rowsHi,
                 Function arg,
-                MemoryARW memory
+                MemoryARW memory,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         ) {
-            super(map, partitionByRecord, partitionBySink, rowsLo, rowsHi, arg, memory);
+            super(map, partitionByRecord, partitionBySink, rowsLo, rowsHi, arg, memory,
+                    partitionByKeyTypes, liveView);
         }
 
         @Override
@@ -475,10 +489,49 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
     // Doesn't require value buffering.
     static class SumOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
 
+        private final CairoConfiguration configuration;
+        private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
+        // Full value layout (including tombstone slot) for the
+        // newCompactionScratch() scratch Map used by the frontier sweep. Null
+        // outside live-view mode.
+        private final ArrayColumnTypes mapValueTypes;
+        // Value-slot index of the per-partition tombstone byte; -1 outside LV.
         private double sum;
+        // Single-writer (refresh worker), not volatile.
 
-        public SumOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg) {
+        public SumOverUnboundedPartitionRowsFrameFunction(
+                Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                Function arg,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView,
+                CairoConfiguration configuration
+        ) {
             super(map, partitionByRecord, partitionBySink, arg);
+            this.liveView = liveView;
+            this.configuration = configuration;
+            this.keyColumnTypes = new ArrayColumnTypes();
+            for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                this.keyColumnTypes.add(partitionByKeyTypes.getColumnType(i));
+            }
+            if (liveView) {
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = SUM_COLUMN_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(SUM_COLUMN_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 2;
+            } else {
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            return MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
         }
 
         @Override
@@ -492,6 +545,9 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             long count;
 
             if (value.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    value.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 sum = 0;
                 count = 0;
             } else {
@@ -525,11 +581,105 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             return WindowFunction.ZERO_PASS;
         }
 
+        @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
+        public ColumnTypes getSnapshotKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getSnapshotKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : SUM_COLUMN_TYPES.getColumnCount();
+        }
+
+        @Override
+        public void markPartitionAlive(Record record) {
+            if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
+                return;
+            }
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.findValue();
+            if (value != null && value.getByte(tombstoneValueIndex) == 1) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+                tombstoneCount--;
+            }
+        }
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), sum);
+        }
+
+        @Override
+        public void reopen() {
+            super.reopen();
+            tombstoneCount = 0;
+        }
+
+        @Override
+        public void reset() {
+            super.reset();
+            tombstoneCount = 0;
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset. Zero the [sum, count] slots; next
+            // computeNext re-anchors on the post-reset row.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.findValue();
+            if (value != null) {
+                value.putDouble(0, 0.0);
+                value.putLong(1, 0L);
+                if (!value.isNew() && tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 1) {
+                    value.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
+            value.putDouble(0, source.getDouble(offset));
+            offset += Double.BYTES;
+            value.putLong(1, source.getLong(offset));
+            offset += Long.BYTES;
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public int snapshotFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public int snapshotMinSupportedVersion() {
+            return 1;
+        }
+
+        @Override
+        public void snapshotPartitionState(MemoryA sink, MapValue value) {
+            sink.putDouble(value.getDouble(0));
+            sink.putLong(value.getLong(1));
+        }
+
+        @Override
+        public boolean supportsSnapshot() {
+            return LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -540,6 +690,12 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             sink.val("partition by ");
             sink.val(partitionByRecord.getFunctions());
             sink.val(" rows between unbounded preceding and current row)");
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            tombstoneCount = 0;
         }
     }
 
@@ -674,5 +830,10 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         SUM_COLUMN_TYPES = new ArrayColumnTypes();
         SUM_COLUMN_TYPES.add(ColumnType.DOUBLE);
         SUM_COLUMN_TYPES.add(ColumnType.LONG);
+
+        SUM_COLUMN_TYPES_LV = new ArrayColumnTypes();
+        SUM_COLUMN_TYPES_LV.add(ColumnType.DOUBLE); // sum
+        SUM_COLUMN_TYPES_LV.add(ColumnType.LONG);   // count
+        SUM_COLUMN_TYPES_LV.add(ColumnType.BYTE);   // tombstone (anchor-driven compaction)
     }
 }

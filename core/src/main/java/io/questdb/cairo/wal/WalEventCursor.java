@@ -56,6 +56,7 @@ public class WalEventCursor {
     private static final int DEDUP_FOOTER_SIZE = REPLACE_RANGE_EXTRA_OFFSET;
     private final DataInfo dataInfo = new DataInfo();
     private final MemoryCMR eventMem;
+    private final LiveViewDataInfo lvDataInfo = new LiveViewDataInfo();
     private final MatViewDataInfo mvDataInfo = new MatViewDataInfo();
     private final MatViewInvalidationInfo mvInvalidationInfo = new MatViewInvalidationInfo();
     private final SqlInfo sqlInfo = new SqlInfo();
@@ -95,7 +96,23 @@ public class WalEventCursor {
         if (!WalTxnType.isDataType(type)) {
             throw CairoException.critical(CairoException.ILLEGAL_OPERATION).put("WAL event type is not DATA, type=").put(type);
         }
-        return (type == DATA) ? dataInfo : mvDataInfo;
+        switch (type) {
+            case DATA:
+                return dataInfo;
+            case MAT_VIEW_DATA:
+                return mvDataInfo;
+            case LIVE_VIEW_DATA:
+                return lvDataInfo;
+            default:
+                throw CairoException.critical(CairoException.ILLEGAL_OPERATION).put("unexpected WAL data type=").put(type);
+        }
+    }
+
+    public LiveViewDataInfo getLiveViewDataInfo() {
+        if (type != LIVE_VIEW_DATA) {
+            throw CairoException.critical(CairoException.ILLEGAL_OPERATION).put("WAL event type is not LIVE_VIEW_DATA, type=").put(type);
+        }
+        return lvDataInfo;
     }
 
     public MatViewDataInfo getMatViewDataInfo() {
@@ -247,6 +264,9 @@ public class WalEventCursor {
                 break;
             case MAT_VIEW_DATA:
                 mvDataInfo.read();
+                break;
+            case LIVE_VIEW_DATA:
+                lvDataInfo.read();
                 break;
             case SQL:
                 sqlInfo.read();
@@ -426,6 +446,21 @@ public class WalEventCursor {
                     }
                 }
             }
+        }
+    }
+
+    public class LiveViewDataInfo extends DataInfo {
+        private long maxBaseSeqTxnInBlock;
+
+        public long getMaxBaseSeqTxnInBlock() {
+            return maxBaseSeqTxnInBlock;
+        }
+
+        @Override
+        protected void read() {
+            super.read();
+            // The single LV-specific extra field; symbol map diffs follow.
+            maxBaseSeqTxnInBlock = readLong();
         }
     }
 

@@ -32,9 +32,20 @@ import io.questdb.Telemetry;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.frm.file.FrameFactory;
+import io.questdb.cairo.lv.LiveViewCheckpointWriter;
+import io.questdb.cairo.lv.LiveViewDefinition;
+import io.questdb.cairo.lv.LiveViewInstance;
+import io.questdb.cairo.lv.LiveViewRecovery;
+import io.questdb.cairo.lv.LiveViewRegistry;
+import io.questdb.cairo.lv.LiveViewState;
+import io.questdb.cairo.lv.LiveViewStateReader;
+import io.questdb.cairo.lv.LiveViewStateStore;
+import io.questdb.cairo.lv.LiveViewStateStoreImpl;
+import io.questdb.cairo.lv.LiveViewTableStructure;
+import io.questdb.cairo.lv.NoOpLiveViewStateStore;
 import io.questdb.cairo.mig.EngineMigration;
+import io.questdb.cairo.mv.DependentViewGraph;
 import io.questdb.cairo.mv.MatViewDefinition;
-import io.questdb.cairo.mv.MatViewGraph;
 import io.questdb.cairo.mv.MatViewRefreshTask;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateReader;
@@ -58,6 +69,7 @@ import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.AsyncWriterCommand;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.OperationFuture;
@@ -102,6 +114,7 @@ import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.FunctionFactoryCacheBuilder;
+import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.QueryRegistry;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlCompilerFactory;
@@ -109,10 +122,23 @@ import io.questdb.griffin.SqlCompilerFactoryImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.functions.BinaryFunction;
+import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.MultiArgFunction;
+import io.questdb.griffin.engine.functions.TernaryFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.ops.CreateLiveViewOperation;
 import io.questdb.griffin.engine.ops.CreateMatViewOperation;
 import io.questdb.griffin.engine.ops.CreateViewOperation;
 import io.questdb.griffin.engine.ops.Operation;
+import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.ops.UpdateOperation;
+import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
+import io.questdb.griffin.engine.window.CachedWindowLightRecordCursorFactory;
+import io.questdb.griffin.engine.window.CachedWindowRecordCursorFactory;
+import io.questdb.griffin.engine.window.WindowFunction;
+import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
+import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
@@ -130,6 +156,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
@@ -174,6 +201,7 @@ public class CairoEngine implements Closeable, WriterSource {
     // metadata/token mismatch into a silent infinite hang (see PR #7031 CI timeout).
     private static final int MAX_EXECUTE_RETRIES = 1000;
     private static final int MAX_SLEEP_MILLIS = 250;
+    private static final CarrierLocal<ObjList<LiveViewInstance>> tlInvalidateSink = new CarrierLocal<>(ObjList::new);
     private static final CarrierLocal<MatViewRefreshTask> tlMatViewRefreshTask = new CarrierLocal<>(MatViewRefreshTask::new);
     protected final CairoConfiguration configuration;
     private final AtomicLong asyncCommandCorrelationId = new AtomicLong();
@@ -184,7 +212,8 @@ public class CairoEngine implements Closeable, WriterSource {
     private final ConcurrentHashMap<TableToken> createTableLock = new ConcurrentHashMap<>();
     private final DataID dataID;
     private final FunctionFactoryCache ffCache;
-    private final MatViewGraph matViewGraph;
+    private final LiveViewRegistry liveViewRegistry = new LiveViewRegistry();
+    private final DependentViewGraph dependentViewGraph;
     private final Queue<MatViewTimerTask> matViewTimerQueue;
     private final MessageBusImpl messageBus;
     // volatile: assigned by completeInit() on the orchestrator thread, read by worker threads
@@ -275,6 +304,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private volatile @NotNull DdlListener ddlListener = DefaultDdlListener.INSTANCE;
     private volatile @NotNull DurableAckRegistry durableAckRegistry = DefaultDurableAckRegistry.INSTANCE;
     private FrameFactory frameFactory;
+    private @NotNull LiveViewStateStore liveViewStateStore = NoOpLiveViewStateStore.INSTANCE;
     private @NotNull MatViewStateStore matViewStateStore = NoOpMatViewStateStore.INSTANCE;
     // Lazily initialized on first call to getMemoryTrackerProvider(), because the
     // FactoryProvider that produces it is not bound until config.init(engine, ...)
@@ -358,7 +388,7 @@ public class CairoEngine implements Closeable, WriterSource {
             this.queryRegistry = new QueryRegistry(configuration);
             this.rootExecutionContext = createRootExecutionContext();
             this.matViewTimerQueue = createMatViewTimerQueue();
-            this.matViewGraph = createMatViewGraph();
+            this.dependentViewGraph = createDependentViewGraph();
             this.viewGraph = createViewGraph();
             this.frameFactory = new FrameFactory(configuration);
             this.dataID = DataID.open(configuration);
@@ -384,6 +414,7 @@ public class CairoEngine implements Closeable, WriterSource {
             case CREATE_TABLE_AS_SELECT:
             case CREATE_MAT_VIEW:
             case CREATE_VIEW:
+            case CREATE_LIVE_VIEW:
             case DROP:
                 assert sqlExecutionContext.getCairoEngine() == compiler.getEngine();
                 try (Operation op = cq.getOperation()) {
@@ -412,6 +443,41 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     /**
+     * Per-function half of {@link #validateLiveViewFactory}: rejects a window function
+     * the incremental refresh path cannot drive. Extracted so the reject contract can be
+     * unit-tested directly.
+     * <p>
+     * The {@code !supportsSnapshot()} reject fires for real functions: an un-partitioned
+     * aggregate window (e.g. {@code avg(x) OVER (ORDER BY ts ROWS ...)} with no
+     * {@code PARTITION BY}) is {@link WindowFunction#ZERO_PASS} but has no partition Map to
+     * snapshot, so it clears the pass-count check and is rejected here - and, lacking a
+     * partition Map, it is never live-view-eligible, so this reject is permanent. The
+     * partitioned ZERO_PASS aggregate frame shapes - including the full DECIMAL aggregate
+     * window family - are migrated to the snapshot contract and accepted; only these
+     * un-partitioned shapes still reach this reject. The pass-count reject, by contrast, is
+     * defensive - multi-pass / lead / percent_rank shapes compile to a cached factory and
+     * are caught upstream by {@link #validateLiveViewFactory}, so no GA function reaches
+     * it; a ZERO_PASS stub lacking snapshot support is the only way to exercise its wording.
+     * <p>
+     * A non-{@link WindowFunction#ZERO_PASS} function needs caching or a lookahead pass
+     * that incremental refresh has no way to supply. A function without snapshot support
+     * would make the refresh worker silently skip checkpoint writes for the whole view,
+     * routing every restart and every O3 through full head-miss replay from
+     * viewLowerBoundTimestamp; surfacing the gap at CREATE keeps that surprise off the
+     * steady-state hot path.
+     */
+    public static void validateLiveViewWindowFunction(WindowFunction f, int position) throws SqlException {
+        if (f.getPassCount() != WindowFunction.ZERO_PASS) {
+            throw SqlException.$(position, "live view select may only use window functions that support incremental refresh");
+        }
+        if (!f.supportsSnapshot()) {
+            throw SqlException.$(position, "live view select cannot use window function ")
+                    .put(f.getName())
+                    .put("(); incremental snapshot is not supported for this function yet");
+        }
+    }
+
+    /**
      * Adds a table to the runtime hard-suspend set, excluding it from WAL apply until removed.
      * Called by {@code ALTER TABLE ... SUSPEND WAL}.
      */
@@ -419,8 +485,141 @@ public class CairoEngine implements Closeable, WriterSource {
         tableSequencerAPI.setHardSuspended(tableToken, true);
     }
 
+    /**
+     * Advances the live view's {@code lvConsumedSeqTxn} to {@code maxBaseSeqTxn} after
+     * the LV's own WAL block has been applied to its on-disk table. The advance is
+     * monotonic and persisted to {@code _lv.s} so WAL purge sees the latest floor across
+     * restarts. Called by {@link io.questdb.cairo.lv.LiveViewRefreshJob} after each
+     * inline apply, and again on the no-row branch when the refresh cycle walks past
+     * non-DATA / all-filtered seqTxns and emits no LV WAL block. Synchronizes on the
+     * instance to coordinate with the refresh worker's own {@code _lv.s} rewrites for
+     * {@code lastProcessedSeqTxn} bookkeeping.
+     * <p>
+     * Persists the new value to {@code _lv.s} before mutating in-memory state — disk is
+     * the contract with {@code WalPurgeJob}. On persist failure, throws
+     * {@link CairoException}; the in-memory floor stays at the prior durable value so the
+     * next apply re-attempts the advance from the same point.
+     * <p>
+     * The {@code blockFileWriter} and {@code path} are caller-supplied so the per-FLUSH-
+     * cycle hot path can reuse a single instance instead of allocating both per call.
+     * The caller retains ownership and may use them again after this method returns; the
+     * method does not call {@code close()} on either.
+     */
+    public void advanceLiveViewConsumedSeqTxn(
+            TableToken liveViewToken,
+            long maxBaseSeqTxn,
+            BlockFileWriter blockFileWriter,
+            Path path
+    ) {
+        if (maxBaseSeqTxn < 0) {
+            return;
+        }
+        LiveViewInstance instance = liveViewRegistry.getViewInstance(liveViewToken.getTableName());
+        if (instance == null) {
+            return;
+        }
+        synchronized (instance) {
+            LiveViewStateReader reader = instance.getStateReader();
+            if (maxBaseSeqTxn <= reader.getLvConsumedSeqTxn()) {
+                return;
+            }
+            // Durability rule: _lv.s is the contract with
+            // WalPurgeJob; the in-memory floor must trail disk. Persist the new value first,
+            // then publish in-memory. If persist fails, the in-memory value stays at the old
+            // durable floor, so the next apply re-attempts the advance from the same point.
+            try {
+                path.of(configuration.getDbRoot()).concat(liveViewToken).concat(LiveViewState.LIVE_VIEW_STATE_FILE_NAME);
+                blockFileWriter.of(path.$());
+                LiveViewState.append(
+                        reader.isInvalid(),
+                        reader.getInvalidationReason(),
+                        reader.getInvalidationTimestampUs(),
+                        reader.getSubscribeFromSeqTxn(),
+                        reader.getLastProcessedSeqTxn(),
+                        reader.getAppliedWatermark(),
+                        maxBaseSeqTxn,
+                        reader.getBackfillState(),
+                        reader.getBackfillTargetSeqTxn(),
+                        blockFileWriter
+                );
+            } catch (Throwable t) {
+                LOG.error().$("could not persist live view consumed seqTxn [view=").$(liveViewToken)
+                        .$(", maxBaseSeqTxn=").$(maxBaseSeqTxn)
+                        .$(", error=").$(t).I$();
+                throw CairoException.critical(0).put("could not persist live view consumed seqTxn [view=")
+                        .put(liveViewToken.getTableName()).put(", maxBaseSeqTxn=").put(maxBaseSeqTxn).put(']');
+            }
+            instance.setLvConsumedSeqTxn(maxBaseSeqTxn);
+        }
+    }
+
+    /**
+     * Advances a live view's {@code _lv.s} and in-memory instance to {@code maxBaseSeqTxn}
+     * after the global {@link io.questdb.cairo.wal.ApplyWal2TableJob} applied a
+     * {@code LIVE_VIEW_DATA} block on a read-only replica. On a primary the refresh worker
+     * owns the inline apply and advances state via {@link #advanceLiveViewConsumedSeqTxn};
+     * on a replica that worker is quiesced (the live-view state store is NoOp,
+     * {@code isRefreshEnabled()} is false), so the apply job is the only thing touching the
+     * view and must mirror that state advance itself. Keeping {@code lastProcessedSeqTxn}
+     * consistent with the replicated rows lets a later promote resume refresh from the right
+     * base seqTxn without re-deriving already-applied output.
+     * <p>
+     * {@code maxBaseSeqTxn} is the single in-band watermark the primary fed to
+     * {@code WalWriter.commitLiveView} and to {@code lastProcessedSeqTxn} /
+     * {@code appliedWatermark} / {@code lvConsumedSeqTxn} in one refresh cycle, so all three
+     * coincide here. Persists {@code _lv.s} before publishing in-memory, matching the
+     * durability rule in {@link #advanceLiveViewConsumedSeqTxn}: the durable state never
+     * sits ahead of the applied LV WAL, so a crash between apply and persist leaves a
+     * trailing (never a leading) {@code _lv.s}, which a later cycle re-advances.
+     */
+    public void applyLiveViewData(
+            TableToken liveViewToken,
+            long maxBaseSeqTxn,
+            BlockFileWriter blockFileWriter,
+            Path path
+    ) {
+        if (maxBaseSeqTxn < 0) {
+            return;
+        }
+        LiveViewInstance instance = liveViewRegistry.getViewInstance(liveViewToken.getTableName());
+        if (instance == null) {
+            return;
+        }
+        synchronized (instance) {
+            LiveViewStateReader reader = instance.getStateReader();
+            if (maxBaseSeqTxn <= reader.getLastProcessedSeqTxn()) {
+                return;
+            }
+            try {
+                path.of(configuration.getDbRoot()).concat(liveViewToken).concat(LiveViewState.LIVE_VIEW_STATE_FILE_NAME);
+                blockFileWriter.of(path.$());
+                LiveViewState.append(
+                        reader.isInvalid(),
+                        reader.getInvalidationReason(),
+                        reader.getInvalidationTimestampUs(),
+                        reader.getSubscribeFromSeqTxn(),
+                        maxBaseSeqTxn, // lastProcessedSeqTxn
+                        maxBaseSeqTxn, // appliedWatermark
+                        maxBaseSeqTxn, // lvConsumedSeqTxn
+                        reader.getBackfillState(),
+                        reader.getBackfillTargetSeqTxn(),
+                        blockFileWriter
+                );
+            } catch (Throwable t) {
+                LOG.error().$("could not persist live view state on replica apply [view=").$(liveViewToken)
+                        .$(", maxBaseSeqTxn=").$(maxBaseSeqTxn)
+                        .$(", error=").$(t).I$();
+                throw CairoException.critical(0).put("could not persist live view state on replica apply [view=")
+                        .put(liveViewToken.getTableName()).put(", maxBaseSeqTxn=").put(maxBaseSeqTxn).put(']');
+            }
+            instance.setLastProcessedSeqTxn(maxBaseSeqTxn);
+            instance.setAppliedWatermark(maxBaseSeqTxn);
+            instance.setLvConsumedSeqTxn(maxBaseSeqTxn);
+        }
+    }
+
     public void applyTableRename(TableToken token, TableToken updatedTableToken) {
-        if (updatedTableToken.isMatView() && matViewGraph.getViewDefinition(updatedTableToken) == null) {
+        if (updatedTableToken.isMatView() && dependentViewGraph.getViewDefinition(updatedTableToken) == null) {
             throw CairoException.nonCritical().put("materialized view has not been registered yet [name=").put(updatedTableToken.getTableName()).put(']');
         }
         tableNameRegistry.rename(token.getTableName(), updatedTableToken.getTableName(), token);
@@ -428,7 +627,7 @@ public class CairoEngine implements Closeable, WriterSource {
             tableSequencerAPI.applyRename(updatedTableToken);
         }
         if (updatedTableToken.isMatView()) {
-            matViewGraph.updateToken(updatedTableToken);
+            dependentViewGraph.updateToken(updatedTableToken);
         }
         enqueueCompileView(token);
         enqueueCompileView(updatedTableToken);
@@ -490,6 +689,8 @@ public class CairoEngine implements Closeable, WriterSource {
 
         try (
                 Path path = new Path();
+                Path sweepPath = new Path();
+                Path liveViewDirPath = new Path();
                 BlockFileReader reader = new BlockFileReader(configuration);
                 WalEventReader walEventReader = new WalEventReader(configuration);
                 MemoryCMR txnMem = Vm.getCMRInstance(configuration.getBypassWalFdCache())
@@ -497,6 +698,9 @@ public class CairoEngine implements Closeable, WriterSource {
             path.of(configuration.getDbRoot());
             final int pathLen = path.size();
             final MatViewStateReader matViewStateReader = new MatViewStateReader();
+            // Reusable scratch for the per-LV checkpoint sweep (see the LV
+            // branch below). Allocated once per buildViewGraphs() call.
+            final StringSink sweepNameSink = new StringSink();
             for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
                 final TableToken tableToken = tableTokenBucket.get(i);
                 if (tableToken.isView() && TableUtils.isViewDefinitionFileExists(configuration, path, tableToken.getDirName())) {
@@ -548,13 +752,167 @@ public class CairoEngine implements Closeable, WriterSource {
                             false
                     );
                 }
+                if (tableToken.isLiveView()) {
+                    if (TableUtils.isLiveViewDropSentinelFileExists(configuration, path, tableToken.getDirName())) {
+                        // dropLiveView wrote the durable _lv.drop sentinel before
+                        // any in-memory or on-disk teardown, then crashed.
+                        // Finish the drop now so the directory does not survive
+                        // and re-register as a healthy LV. Best-effort: a
+                        // failure here only delays cleanup; the sentinel stays
+                        // and the next start retries.
+                        LOG.info().$("reaping live view with _lv.drop sentinel [view=").$(tableToken).I$();
+                        try {
+                            dropTableOrViewOrMatView(path, tableToken);
+                        } catch (Throwable th) {
+                            LOG.error().$("could not reap dropped live view [view=").$(tableToken)
+                                    .$(", msg=").$safe(th.getMessage()).I$();
+                        }
+                        continue;
+                    }
+                    if (!TableUtils.isLiveViewDefinitionFileExists(configuration, path, tableToken.getDirName())) {
+                        // Orphan LV directory: createLiveView writes _lv last as the
+                        // atomic commit marker, so a missing _lv means CREATE crashed
+                        // before finishing. Reap the directory so it does not pile up.
+                        // Best-effort: a failure here only delays cleanup, never loses
+                        // committed data (the LV never reached the visible state).
+                        LOG.info().$("reaping half-created live view [view=").$(tableToken).I$();
+                        try {
+                            dropTableOrViewOrMatView(path, tableToken);
+                        } catch (Throwable th) {
+                            LOG.error().$("could not reap half-created live view [view=").$(tableToken)
+                                    .$(", msg=").$safe(th.getMessage()).I$();
+                        }
+                        continue;
+                    }
+                    try {
+                        if (liveViewRegistry.getViewInstance(tableToken.getTableName()) == null) {
+                            final GenericRecordMetadata metadata;
+                            try (TableReaderMetadata readerMetadata = new TableReaderMetadata(configuration, tableToken)) {
+                                readerMetadata.loadMetadata();
+                                metadata = GenericRecordMetadata.copyOfNew(readerMetadata);
+                            }
+                            final TableToken baseTableToken = tableNameRegistry.getTableToken(
+                                    LiveViewDefinition.readBaseTableName(reader, path, pathLen, tableToken)
+                            );
+                            final boolean baseTableExists = baseTableToken != null && !tableNameRegistry.isTableDropped(baseTableToken);
+                            LiveViewDefinition definition = LiveViewDefinition.readFrom(
+                                    reader,
+                                    path,
+                                    pathLen,
+                                    tableToken,
+                                    baseTableToken,
+                                    metadata
+                            );
+                            LiveViewInstance instance = new LiveViewInstance(definition, tableToken);
+                            // _lv exists, so CREATE committed atomically (the engine writes
+                            // _lv.s first and _lv last). If _lv.s is somehow missing here,
+                            // the on-disk state is corrupt: refusing the load avoids re-
+                            // replaying the entire base table from seqTxn 0.
+                            if (!TableUtils.isLiveViewStateFileExists(configuration, path, tableToken.getDirName())) {
+                                throw CairoException.critical(0)
+                                        .put("live view state file missing alongside committed definition [view=")
+                                        .put(tableToken.getTableName()).put(']');
+                            }
+                            path.of(configuration.getDbRoot()).concat(tableToken).concat(LiveViewState.LIVE_VIEW_STATE_FILE_NAME);
+                            reader.of(path.$());
+                            LiveViewStateReader stateReader = new LiveViewStateReader();
+                            stateReader.of(reader, tableToken);
+                            instance.initFromState(stateReader);
+                            // A persisted invalidation always wins — the original reason is more
+                            // specific (base drop vs base rename vs schema change), so we only
+                            // synthesize "base table does not exist" when nothing was persisted.
+                            if (!instance.isInvalid()) {
+                                long nowUs = configuration.getMicrosecondClock().getTicks();
+                                if (!baseTableExists) {
+                                    LOG.info().$("base table for live view does not exist [table=").$safe(definition.getBaseTableName())
+                                            .$(", view=").$(tableToken)
+                                            .I$();
+                                    instance.markInvalid("base table does not exist", nowUs);
+                                } else if (!baseTableToken.isWal()) {
+                                    LOG.info().$("base table for live view is not WAL table [table=").$safe(definition.getBaseTableName())
+                                            .$(", view=").$(tableToken)
+                                            .I$();
+                                    instance.markInvalid("base table is not WAL table", nowUs);
+                                }
+                            }
+                            liveViewRegistry.registerView(instance);
+                            // Register the LV with the shared dependents graph so
+                            // orderByDependentViews honors LV-after-base ordering
+                            // during DatabaseCheckpointAgent snapshots. Skipping this
+                            // would deadlock the snapshot agent on multi-LV chains
+                            // over the same base.
+                            dependentViewGraph.addLiveView(tableToken, definition.getBaseTableName());
+                            liveViewStateStore.registerBaseTable(definition.getBaseTableName());
+                            // Startup sweep: clean .cp.tmp orphans
+                            // and any .cp whose lvSeqTxn outran the applied
+                            // watermark, then retain only the highest survivor.
+                            // Stamp the survivor's lvSeqTxn on the instance so
+                            // the first refresh cycle knows to attempt restore;
+                            // maxTs / stateBytes stay LONG_NULL / 0 until that
+                            // cycle reads the manifest.
+                            liveViewDirPath.of(configuration.getDbRoot()).concat(tableToken);
+                            final long headSeqTxn = LiveViewRecovery.sweepCheckpoints(
+                                    configuration.getFilesFacade(),
+                                    sweepPath,
+                                    liveViewDirPath,
+                                    stateReader.getAppliedWatermark(),
+                                    sweepNameSink
+                            );
+                            if (headSeqTxn != Numbers.LONG_NULL) {
+                                instance.setHeadCheckpoint(headSeqTxn, Numbers.LONG_NULL, 0L, Numbers.LONG_NULL);
+                            }
+                            // Backfill checkpoints live in a disjoint .bcp
+                            // namespace. For a view loaded mid-sweep, retain the
+                            // highest .bcp and stamp its key so the first
+                            // backfill turn resumes from it; otherwise retire
+                            // any .bcp leftovers from a pre-completion crash.
+                            liveViewDirPath.of(configuration.getDbRoot()).concat(tableToken);
+                            final boolean isBackfilling = stateReader.getBackfillState()
+                                    == LiveViewState.BACKFILL_STATE_BACKFILLING;
+                            final long headBackfillKey = LiveViewRecovery.sweepBackfillCheckpoints(
+                                    configuration.getFilesFacade(),
+                                    sweepPath,
+                                    liveViewDirPath,
+                                    isBackfilling,
+                                    sweepNameSink
+                            );
+                            if (headBackfillKey != Numbers.LONG_NULL) {
+                                instance.setHeadBackfillCpKey(headBackfillKey);
+                            }
+                        }
+                    } catch (CairoException ce) {
+                        if (ce.getErrno() == CairoException.LV_FILE_VERSION_UNSUPPORTED) {
+                            // The on-disk _lv / _lv.s carry a newer schema this
+                            // build cannot read. Surface the view in live_views()
+                            // as version_unsupported instead of hiding it, so
+                            // operators see it exists and why it will not load. The
+                            // refresh worker never starts for the stub; the row
+                            // data stays intact and DROP LIVE VIEW still works.
+                            LOG.error().$("live view on-disk format not supported, surfacing as version_unsupported [view=")
+                                    .$(tableToken)
+                                    .$(", errno=").$(ce.getErrno())
+                                    .$(", msg=").$safe(ce.getFlyweightMessage())
+                                    .I$();
+                            liveViewRegistry.registerVersionUnsupportedView(new LiveViewInstance(tableToken));
+                        } else {
+                            LOG.error().$("could not load live view [view=").$(tableToken)
+                                    .$(", msg=").$safe(ce.getFlyweightMessage())
+                                    .$(", errno=").$(ce.getErrno())
+                                    .I$();
+                        }
+                    } catch (Throwable th) {
+                        LOG.error().$("could not load live view [view=").$(tableToken)
+                                .$(", msg=").$safe(th.getMessage())
+                                .I$();
+                    }
+                }
             }
         }
     }
 
     /**
      * Repopulates the live mat-view state store from the view graph and the on-disk {@code _mv}
-     * state, for every mat-view already present in {@code matViewGraph}. Unlike
+     * state, for every mat-view already present in {@code dependentViewGraph}. Unlike
      * {@link #buildViewGraphs()} (which only creates state for views not yet in the graph), this
      * forces {@code createViewState} for each graph view that has no state yet, so a freshly built
      * store on a role promote ends up populated rather than empty. Idempotent: a view that already
@@ -617,9 +975,11 @@ public class CairoEngine implements Closeable, WriterSource {
             w.clearCache();
         }
         viewGraph.clear();
-        matViewGraph.clear();
+        dependentViewGraph.clear();
         matViewStateStore.clear();
         matViewTimerQueue.clear();
+        liveViewRegistry.clear();
+        liveViewStateStore.clear();
         boolean b1 = readerPool.releaseAll();
         boolean b2 = writerPool.releaseAll();
         boolean b3 = tableSequencerAPI.releaseAll();
@@ -662,6 +1022,8 @@ public class CairoEngine implements Closeable, WriterSource {
         Misc.free(checkpointAgent);
         Misc.free(metadataCache);
         Misc.free(scoreboardPool);
+        Misc.free(liveViewRegistry);
+        Misc.free(liveViewStateStore);
         Misc.free(matViewStateStore);
         Misc.free(settingsStore);
         Misc.free(frameFactory);
@@ -688,6 +1050,315 @@ public class CairoEngine implements Closeable, WriterSource {
     @TestOnly
     public void closeNameRegistry() {
         tableNameRegistry.close();
+    }
+
+    public void createLiveView(
+            CreateLiveViewOperation op,
+            TableToken baseTableToken,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        // A DEDUP base table is supported: the refresh worker routes such a view
+        // onto the coupled, applied-reader path (see LiveViewRefreshJob) so it reads
+        // the post-dedup base rather than the pre-dedup raw WAL. The steady-state
+        // classifier re-derives dedup state each cycle from live metadata, because
+        // base dedup config is mutable via ALTER ... DEDUP ENABLE/DISABLE.
+        final int basePartitionBy;
+        final int baseTimestampType;
+        final long viewLowerBoundTimestamp;
+        try (TableMetadata baseMetadata = getTableMetadata(baseTableToken)) {
+            basePartitionBy = baseMetadata.getPartitionBy();
+            int tsIndex = baseMetadata.getTimestampIndex();
+            if (tsIndex < 0) {
+                throw SqlException.$(op.getBaseTableNamePosition(),
+                        "live view base table must have a designated timestamp");
+            }
+            baseTimestampType = baseMetadata.getColumnType(tsIndex);
+        }
+        // viewLowerBoundTimestamp is the floor for O3 reachability and is compared
+        // against late_row.ts in base-table units. The non-BACKFILL path takes the
+        // wall-clock CREATE moment, scaled into base units via the base's driver
+        // so MICRO and NANO bases both produce a comparable value. The catalogue
+        // converts back to TIMESTAMP_MICRO at display time.
+        //
+        // BACKFILL views seed from the earliest visible base row, so the floor
+        // sits at that row's timestamp (already in base units): every historical
+        // row from there is admissible during the sweep, and any later O3 row
+        // below it is rejected. An empty base falls back to the CREATE moment.
+        final long createMomentLowerBound = ColumnType.getTimestampDriver(baseTimestampType)
+                .fromMicros(configuration.getMicrosecondClock().getTicks());
+        if (op.getBackfillRequested()) {
+            try (TableReader baseReader = getReader(baseTableToken)) {
+                viewLowerBoundTimestamp = baseReader.size() == 0
+                        ? createMomentLowerBound
+                        : baseReader.getMinTimestamp();
+            }
+        } else {
+            viewLowerBoundTimestamp = createMomentLowerBound;
+        }
+
+        // compile the SELECT to validate and get metadata. The live-view-compile flag
+        // suppresses indexed-symbol key extraction in WhereClauseParser so the planner
+        // emits a plain FilteredRecordCursorFactory shape that the incremental refresh
+        // path can handle.
+        GenericRecordMetadata metadata;
+        // Base-column names the SELECT's filter + window inputs + designated ts
+        // depend on. ApplyWal2TableJob's schema-change hook narrows invalidation
+        // using this set: only changes that touch one of these columns mark the
+        // view INVALID; unrelated ALTERs leave it ACTIVE.
+        final ObjList<String> dependencyColumnNames = new ObjList<>();
+        // Compile-time type of each dependency column, positionally parallel to
+        // dependencyColumnNames. Persisted in _lv so a later ALTER COLUMN TYPE on a
+        // referenced base column invalidates the view instead of re-reading the new
+        // bytes through the stale compile-time stride.
+        final IntList dependencyColumnTypes = new IntList();
+        try (SqlCompiler compiler = getSqlCompiler()) {
+            // Arm the shared non-determinism guard for the LV body, mirroring the
+            // mat-view compile (SqlCompilerImpl.compileCreateMatView). With it armed,
+            // FunctionParser rejects now()/sysdate()/systimestamp()/rnd_*/etc. anywhere
+            // in the SELECT - projection, WHERE filter, and window-function arguments -
+            // so the view can never produce non-reproducible results that diverge on a
+            // re-refresh, O3 replay, or checkpoint restore. The ANCHOR EXPRESSION is
+            // covered separately by validateAnchorPurity below.
+            final boolean ogAllowNonDeterministic = executionContext.allowNonDeterministicFunctions();
+            executionContext.setLiveViewCompile(true);
+            executionContext.setAllowNonDeterministicFunction(false);
+            CompiledQuery cq;
+            try {
+                cq = compiler.compile(op.getSelectSql(), executionContext);
+            } finally {
+                executionContext.setLiveViewCompile(false);
+                executionContext.setAllowNonDeterministicFunction(ogAllowNonDeterministic);
+            }
+            try (RecordCursorFactory factory = cq.getRecordCursorFactory()) {
+                final PageFrameRecordCursorFactory pfrcf = validateLiveViewFactory(factory, baseTableToken, op.getViewNamePosition());
+                metadata = GenericRecordMetadata.copyOfNew(factory.getMetadata());
+
+                // Capture each base-column name the SELECT projects. Resolving
+                // against the base table here also catches the rare case of an LV
+                // SELECT that names a column the base no longer has — better to fail
+                // CREATE early than to land an LV that's invalid on first refresh.
+                final RecordMetadata baseProjMeta = pfrcf.getMetadata();
+                try (MetadataCacheReader metaRO = getMetadataCache().readLock()) {
+                    final CairoTable baseTable = metaRO.getTable(baseTableToken);
+                    if (baseTable == null) {
+                        throw CairoException.tableDoesNotExist(baseTableToken.getTableName());
+                    }
+                    for (int i = 0, n = baseProjMeta.getColumnCount(); i < n; i++) {
+                        CharSequence colName = baseProjMeta.getColumnName(i);
+                        final CairoColumn baseColumn = baseTable.getColumnQuiet(colName);
+                        if (baseColumn == null) {
+                            throw CairoException.critical(0)
+                                    .put("live view base column not found [view=").put(op.getViewName())
+                                    .put(", column=").put(colName).put(']');
+                        }
+                        dependencyColumnNames.add(Chars.toString(colName));
+                        dependencyColumnTypes.add(baseColumn.getType());
+                    }
+                }
+
+                // Pass 2 of the ANCHOR EXPRESSION validator. Pass 1 (AST-level rejects of subqueries,
+                // bind variables, rnd_*/now()/etc.) ran in the parser; this is the
+                // function-property half that needs the compiled tree so it can see
+                // post-constant-fold flags and runtime-state predicates per-fn.
+                // Runs at CREATE only, never at restart.
+                final LiveViewDefinition.LvAnchorSpec anchor = op.getAnchorSpec();
+                if (anchor != null && anchor.anchorExpressionSql != null) {
+                    final ExpressionNode anchorNode = compiler.parseExpression(anchor.anchorExpressionSql);
+                    if (anchorNode != null) {
+                        Function anchorFn = null;
+                        try {
+                            FunctionParser fp = new FunctionParser(configuration, getFunctionFactoryCache());
+                            executionContext.setLiveViewCompile(true);
+                            try {
+                                anchorFn = fp.parseFunction(anchorNode, baseProjMeta, executionContext);
+                            } finally {
+                                executionContext.setLiveViewCompile(false);
+                            }
+                            // Anchor the reject position in the user's CREATE SQL (the
+                            // ANCHOR keyword) rather than in the re-parsed desugared
+                            // expression. anchorNode.position is an offset into the
+                            // synthesized timestamp_floor* text for DAILY, and into a
+                            // toSink-roundtripped expression for ANCHOR EXPRESSION; in
+                            // both cases it diverges from what the user typed.
+                            validateAnchorPurity(anchorFn, anchor.anchorPosition, true);
+                        } finally {
+                            Misc.free(anchorFn);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Resolve PARTITION BY: PartitionBy.NONE is the "inherit" sentinel.
+        final int partitionBy = LiveViewTableStructure.resolvePartitionBy(op.getPartitionBy(), basePartitionBy);
+
+        // Capture base sequencer head. Non-BACKFILL views start empty and consume
+        // commits with seqTxn >= subscribeFromSeqTxn. BACKFILL views capture the
+        // same head as backfillTargetSeqTxn (the upper bound the sweep covers)
+        // and start incremental consumption at head + 1 once the sweep completes.
+        final long baseHeadSeqTxn = tableSequencerAPI.getTxnTracker(baseTableToken).getWriterTxn();
+        final long subscribeFromSeqTxn = baseHeadSeqTxn + 1;
+        final boolean backfillRequested = op.getBackfillRequested();
+        final byte backfillState = backfillRequested
+                ? LiveViewState.BACKFILL_STATE_BACKFILLING
+                : LiveViewState.BACKFILL_STATE_ACTIVE;
+        final long backfillTargetSeqTxn = backfillRequested
+                ? baseHeadSeqTxn
+                : Numbers.LONG_NULL;
+        // Initial WAL purge floor this view publishes. BACKFILLING sits at
+        // backfillTargetSeqTxn - 1: the snapshot reader MVCC-pins everything
+        // <= the target, so base WAL up to the target is not load-bearing, while
+        // one extra segment stays retained for the deferred ring drain after the
+        // sweep. Non-BACKFILL views start at subscribeFromSeqTxn - 1 - everything
+        // from subscribeFromSeqTxn forward is the view's responsibility.
+        final long initialLvConsumedSeqTxn = backfillRequested
+                ? backfillTargetSeqTxn - 1
+                : subscribeFromSeqTxn - 1;
+
+        // Build the definition up front so it can ride into the sequencer
+        // directory as part of table creation (SequencerMetadata.create writes
+        // _lv next to _meta.0, mirroring _mv). That seq-dir copy is what
+        // replicates; the table-dir _lv below is the primary's own commit marker.
+        LiveViewDefinition definition = new LiveViewDefinition(
+                op.getViewName(),
+                op.getSelectSql(),
+                op.getBaseTableName(),
+                baseTableToken,
+                baseTimestampType,
+                op.getFlushEveryInterval(),
+                op.getFlushEveryIntervalUnit(),
+                op.getInMemoryInterval(),
+                op.getInMemoryIntervalUnit(),
+                partitionBy,
+                viewLowerBoundTimestamp,
+                backfillRequested,
+                op.getAnchorSpec(),
+                dependencyColumnNames,
+                dependencyColumnTypes,
+                metadata
+        );
+        LiveViewTableStructure struct = new LiveViewTableStructure(configuration, op.getViewName(), partitionBy, metadata, definition);
+        try (
+                MemoryMARW mem = Vm.getCMARWInstance();
+                BlockFileWriter blockFileWriter = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode());
+                Path path = new Path()
+        ) {
+            // Reserve the table name and create the WAL-backed FS skeleton, but
+            // hold the name lock + create lock until _lv.s and _lv land durably
+            // below. The registry commit is the LV's atomic CREATE point - a
+            // concurrent reader that resolves the name will get
+            // "table does not exist" until commitDeferredTableNameAndRelease
+            // runs, so it cannot see a half-built LV. A null return signals
+            // that no deferred handoff happened: IF NOT EXISTS hit the
+            // pre-existing token path, or lockAll lost the race to a concurrent
+            // CREATE. Either way the caller has nothing left to finalise.
+            final TableToken liveViewToken = createTableOrViewOrMatViewUnsecure(
+                    executionContext.getSecurityContext(),
+                    mem,
+                    blockFileWriter,
+                    path,
+                    op.isIgnoreIfExists(),
+                    struct,
+                    false,
+                    false,
+                    TableUtils.TABLE_KIND_REGULAR_TABLE,
+                    true
+            );
+            if (liveViewToken == null) {
+                return;
+            }
+
+            // From here on, any failure must roll back the table to avoid orphan
+            // LV-typed directories the startup loader skips and never reclaims.
+            try {
+                // _lv is the atomic CREATE commit marker for the table dir, so it
+                // must be written last. Order: _lv.s (state) first, then _lv
+                // (definition). A crash between the two leaves _lv missing and the
+                // partial CREATE looks like an orphan LV directory to the loader.
+                // Rolling that back is safe; loading a half-created LV is not
+                // (without _lv.s, lastProcessed would default to -1 and the next
+                // refresh would re-replay the entire base table). The seq-dir _lv
+                // (written above by SequencerMetadata.create) is a separate copy
+                // for replication and is rolled back with the table on failure.
+
+                // _checkpoints/ subdirectory holds the rolling head checkpoint.
+                // Created before _lv.s so the rollback
+                // path in dropTableOrViewOrMatView below covers it; _lv stays the
+                // atomic CREATE commit marker. mkdirs() is used (not mkdir()) so
+                // an IF NOT EXISTS CREATE against a pre-existing LV - whose
+                // directory and _checkpoints/ are already present - re-enters this
+                // path idempotently rather than failing with EEXIST.
+                path.of(configuration.getDbRoot()).concat(liveViewToken)
+                        .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME).slash();
+                if (configuration.getFilesFacade().mkdirs(path, configuration.getMkDirMode()) != 0) {
+                    throw CairoException.critical(configuration.getFilesFacade().errno())
+                            .put("could not create live view checkpoints directory [path=")
+                            .put(path).put(']');
+                }
+
+                // write _lv.s state file with subscribeFromSeqTxn captured above.
+                // BACKFILL views land BACKFILL_STATE_BACKFILLING plus the target
+                // seqTxn the sweep must cover.
+                path.of(configuration.getDbRoot()).concat(liveViewToken);
+                blockFileWriter.of(path.concat(LiveViewState.LIVE_VIEW_STATE_FILE_NAME).$());
+                LiveViewState.append(
+                        false,
+                        null,
+                        Numbers.LONG_NULL,
+                        subscribeFromSeqTxn,
+                        subscribeFromSeqTxn - 1,
+                        -1L,
+                        initialLvConsumedSeqTxn,
+                        backfillState,
+                        backfillTargetSeqTxn,
+                        blockFileWriter
+                );
+
+                // write _lv definition file (commit marker)
+                path.of(configuration.getDbRoot()).concat(liveViewToken);
+                blockFileWriter.of(path.concat(LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME).$());
+                LiveViewDefinition.append(definition, blockFileWriter);
+
+                LiveViewInstance instance = new LiveViewInstance(definition, liveViewToken);
+                instance.setSubscribeFromSeqTxn(subscribeFromSeqTxn);
+                instance.setLastProcessedSeqTxn(subscribeFromSeqTxn - 1);
+                instance.setAppliedWatermark(-1L);
+                instance.setLvConsumedSeqTxn(initialLvConsumedSeqTxn);
+                instance.setBackfillState(backfillState);
+                instance.setBackfillTargetSeqTxn(backfillTargetSeqTxn);
+                liveViewRegistry.registerView(instance);
+                dependentViewGraph.addLiveView(liveViewToken, definition.getBaseTableName());
+                liveViewStateStore.registerBaseTable(definition.getBaseTableName());
+
+                // _lv.s and _lv are now durable; in-memory registries are populated.
+                // Flip the registry name as the last step so concurrent readers
+                // either see a fully-built LV or no LV at all.
+                commitDeferredTableNameAndRelease(liveViewToken);
+            } catch (Throwable t) {
+                // Best-effort rollback. Failures here just leave the orphan in place;
+                // the original cause is what the operator needs to see.
+                try {
+                    // If we got past liveViewRegistry.registerView before failing,
+                    // remove the in-memory entry so the registry does not leak the
+                    // freed instance after the table-drop below succeeds. The
+                    // graph-side entry is removed in the same pass so a retried
+                    // CREATE does not see a stale dependent.
+                    LiveViewInstance partial = liveViewRegistry.removeView(op.getViewName());
+                    dependentViewGraph.removeLiveView(liveViewToken, op.getBaseTableName());
+                    Misc.free(partial);
+                } catch (Throwable rollbackErr) {
+                    LOG.error().$("could not unregister partially-created live view [view=").$(liveViewToken)
+                            .$(", error=").$(rollbackErr).I$();
+                }
+                try {
+                    rollbackDeferredLiveViewCreate(path, liveViewToken);
+                } catch (Throwable rollbackErr) {
+                    LOG.error().$("could not roll back partially-created live view [view=").$(liveViewToken)
+                            .$(", error=").$(rollbackErr).I$();
+                }
+                throw t;
+            }
+        }
     }
 
     /**
@@ -736,10 +1407,10 @@ public class CairoEngine implements Closeable, WriterSource {
             boolean inVolume
     ) {
         securityContext.authorizeMatViewCreate();
-        final TableToken matViewToken = createTableOrViewOrMatViewUnsecure(securityContext, mem, blockFileWriter, path, ifNotExists, operation, keepLock, inVolume, TableUtils.TABLE_KIND_REGULAR_TABLE);
+        final TableToken matViewToken = createTableOrViewOrMatViewUnsecure(securityContext, mem, blockFileWriter, path, ifNotExists, operation, keepLock, inVolume, TableUtils.TABLE_KIND_REGULAR_TABLE, false);
         final MatViewDefinition matViewDefinition = operation.getMatViewDefinition();
         try {
-            if (matViewGraph.addView(matViewDefinition)) {
+            if (dependentViewGraph.addView(matViewDefinition)) {
                 matViewStateStore.createViewState(matViewDefinition);
                 if (!matViewDefinition.isDeferred()) {
                     matViewStateStore.enqueueIncrementalRefresh(matViewToken);
@@ -791,7 +1462,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     .put(']');
         }
         securityContext.authorizeTableCreate(tableKind);
-        return createTableOrViewOrMatViewUnsecure(securityContext, mem, null, path, ifNotExists, struct, keepLock, inVolume, tableKind);
+        return createTableOrViewOrMatViewUnsecure(securityContext, mem, null, path, ifNotExists, struct, keepLock, inVolume, tableKind, false);
     }
 
     public @NotNull ViewDefinition createView(
@@ -804,7 +1475,7 @@ public class CairoEngine implements Closeable, WriterSource {
             @Nullable RecordMetadata metadata
     ) {
         securityContext.authorizeViewCreate();
-        final TableToken viewToken = createTableOrViewOrMatViewUnsecure(securityContext, mem, blockFileWriter, path, ifNotExists, operation, false, false, TableUtils.TABLE_KIND_REGULAR_TABLE);
+        final TableToken viewToken = createTableOrViewOrMatViewUnsecure(securityContext, mem, blockFileWriter, path, ifNotExists, operation, false, false, TableUtils.TABLE_KIND_REGULAR_TABLE, false);
         final ViewDefinition viewDefinition = operation.getViewDefinition();
         try {
             if (viewGraph.addView(viewDefinition)) {
@@ -826,6 +1497,40 @@ public class CairoEngine implements Closeable, WriterSource {
         readerPool.detach(reader);
     }
 
+    public void dropLiveView(CharSequence name) {
+        // Stamp the durable _lv.drop sentinel before tearing anything down.
+        // A crash between any of the steps below leaves a queryable-but-no-
+        // longer-registered LV directory; the sentinel lets the startup loader
+        // tell that case apart from a healthy LV and finish the drop on the
+        // next start (see buildViewGraphs LV branch). The sentinel write runs
+        // first so the signal is durable before any in-memory state or on-disk
+        // file mutates.
+        final TableToken token = tableNameRegistry.getTableToken(name);
+        if (token != null && token.isLiveView()) {
+            writeLiveViewDropSentinel(token);
+        }
+        LiveViewInstance instance = liveViewRegistry.removeView(name);
+        if (instance != null) {
+            // A version-unsupported stub was never added to the dependents graph
+            // (its base table could not be resolved), so skip that cleanup for it.
+            if (!instance.isVersionUnsupported()) {
+                // Drop the LV from the dependents graph too so a multi-LV chain's
+                // snapshot ordering does not still see the dropped view.
+                dependentViewGraph.removeLiveView(instance.getLiveViewToken(), instance.getDefinition().getBaseTableName());
+            }
+            // Mark the instance dropped and attempt an immediate free. If a refresh or
+            // reader is currently holding a lock, tryCloseIfDropped() bails and the
+            // winning party (refresh finally hook or cursor close) performs the free.
+            instance.markAsDropped();
+            instance.tryCloseIfDropped();
+        }
+        if (token != null) {
+            try (Path path = new Path()) {
+                dropTableOrViewOrMatView(path, token);
+            }
+        }
+    }
+
     public void dropTableOrViewOrMatView(@Transient Path path, TableToken tableToken) {
         verifyTableToken(tableToken);
         if (tableToken.isWal()) {
@@ -842,7 +1547,8 @@ public class CairoEngine implements Closeable, WriterSource {
                 tableSequencerAPI.dropTable(tableToken, false);
                 notifyViewStoresAboutDrop(tableToken);
                 matViewStateStore.removeViewState(tableToken);
-                matViewGraph.removeView(tableToken);
+                dependentViewGraph.removeView(tableToken);
+                invalidateLiveViewsForBaseTable(tableToken, "base table drop");
                 recentWriteTracker.removeTable(tableToken);
             } else {
                 LOG.info().$("table is already dropped [table=").$(tableToken).I$();
@@ -864,6 +1570,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     // Then it can push the scoreboard max txn value into incorrect state.
                     scoreboardPool.remove(tableToken);
                     notifyViewStoresAboutDrop(tableToken);
+                    invalidateLiveViewsForBaseTable(tableToken, "base table drop");
                     recentWriteTracker.removeTable(tableToken);
                 } finally {
                     unlockTableUnsafe(tableToken, null, false);
@@ -1019,8 +1726,16 @@ public class CairoEngine implements Closeable, WriterSource {
         return getSequencerMetadata(tableToken, desiredVersion);
     }
 
-    public @NotNull MatViewGraph getMatViewGraph() {
-        return matViewGraph;
+    public LiveViewRegistry getLiveViewRegistry() {
+        return liveViewRegistry;
+    }
+
+    public LiveViewStateStore getLiveViewStateStore() {
+        return liveViewStateStore;
+    }
+
+    public @NotNull DependentViewGraph getDependentViewGraph() {
+        return dependentViewGraph;
     }
 
     public @NotNull MatViewStateStore getMatViewStateStore() {
@@ -1568,6 +2283,106 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    /**
+     * Invalidates a single live view directly by instance reference, without going
+     * through the per-base-table iteration. Used by paths that already hold the
+     * instance — notably the refresh worker on flush retry budget exhaustion.
+     * Mirrors the lock + persist pattern
+     * of {@link #invalidateLiveViewsForBaseTable0}.
+     */
+    public void invalidateLiveView(LiveViewInstance instance, String reason) {
+        final long invalidationTimestampUs = configuration.getMicrosecondClock().getTicks();
+        synchronized (instance) {
+            // Queue invalidation behind any in-progress checkpoint freeze so
+            // the snapshot reflects the pre-invalidation state and the agent's
+            // _lv.s copy is not raced by this rewrite.
+            instance.waitForUnfrozen();
+            instance.markInvalid(reason, invalidationTimestampUs);
+            try (
+                    BlockFileWriter blockFileWriter = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode());
+                    Path path = new Path()
+            ) {
+                path.of(configuration.getDbRoot()).concat(instance.getLiveViewToken()).concat(LiveViewState.LIVE_VIEW_STATE_FILE_NAME);
+                blockFileWriter.of(path.$());
+                LiveViewState.append(instance.getStateReader(), blockFileWriter);
+            } catch (Throwable t) {
+                LOG.error().$("could not persist live view invalidation [view=").$(instance.getLiveViewToken())
+                        .$(", reason=").$safe(reason)
+                        .$(", error=").$(t).I$();
+            }
+        }
+        // Free refresh-worker-internal runtime state now that the view is
+        // INVALID. Best-effort: if a refresh cycle is in flight the latch CAS
+        // fails and the worker's finally hook frees it once the cycle ends.
+        instance.tryFreeRuntimeStateIfInvalid();
+    }
+
+    public void invalidateLiveViewsForBaseTable(TableToken baseTableToken, String reason) {
+        invalidateLiveViewsForBaseTable0(baseTableToken, reason, null);
+    }
+
+    /**
+     * Schema-change-aware invalidation. Iterates live views whose base is
+     * {@code baseTableToken} and only invalidates those that depend on a column
+     * missing from {@code postChangeMetadata}. This narrows the broad invalidation
+     * the {@link #invalidateLiveViewsForBaseTable} variant does on TRUNCATE / DROP
+     * (where every dependent view is invalidated regardless of dependency set).
+     */
+    public void invalidateLiveViewsForBaseSchemaChange(
+            TableToken baseTableToken,
+            io.questdb.cairo.sql.RecordMetadata postChangeMetadata,
+            String reason
+    ) {
+        invalidateLiveViewsForBaseTable0(baseTableToken, reason, postChangeMetadata);
+    }
+
+    private void invalidateLiveViewsForBaseTable0(
+            TableToken baseTableToken,
+            String reason,
+            @Nullable io.questdb.cairo.sql.RecordMetadata postChangeMetadata
+    ) {
+        final long invalidationTimestampUs = configuration.getMicrosecondClock().getTicks();
+        // Flip the in-memory bit then rewrite each affected view's _lv.s so the
+        // invalidation survives restart. The registry-only helper exists for tests
+        // that don't need durability.
+        ObjList<LiveViewInstance> sink = tlInvalidateSink.get();
+        sink.clear();
+        liveViewRegistry.getViewsForBaseTable(baseTableToken.getTableName(), sink);
+        try (
+                BlockFileWriter blockFileWriter = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode());
+                Path path = new Path()
+        ) {
+            for (int i = 0, n = sink.size(); i < n; i++) {
+                LiveViewInstance instance = sink.getQuick(i);
+                if (postChangeMetadata != null && !instance.dependsOnMissingOrRetypedColumn(postChangeMetadata)) {
+                    // Schema change touches columns the LV doesn't read — leave it valid.
+                    continue;
+                }
+                synchronized (instance) {
+                    // Queue invalidation behind any in-progress checkpoint
+                    // freeze so the snapshot reflects the pre-invalidation
+                    // state and the agent's _lv.s copy is not raced by this
+                    // rewrite.
+                    instance.waitForUnfrozen();
+                    instance.markInvalid(reason, invalidationTimestampUs);
+                    path.of(configuration.getDbRoot()).concat(instance.getLiveViewToken()).concat(LiveViewState.LIVE_VIEW_STATE_FILE_NAME);
+                    try {
+                        blockFileWriter.of(path.$());
+                        LiveViewState.append(instance.getStateReader(), blockFileWriter);
+                    } catch (Throwable t) {
+                        LOG.error().$("could not persist live view invalidation [view=").$(instance.getLiveViewToken())
+                                .$(", reason=").$safe(reason)
+                                .$(", error=").$(t).I$();
+                    }
+                }
+                // Free refresh-worker-internal runtime state now that the view
+                // is INVALID. Best-effort: a refresh cycle in flight defers the
+                // free to the worker's finally hook (latch CAS fails here).
+                instance.tryFreeRuntimeStateIfInvalid();
+            }
+        }
+    }
+
     public boolean isClosing() {
         return closing;
     }
@@ -1649,6 +2464,7 @@ public class CairoEngine implements Closeable, WriterSource {
         // Convert tables to WAL/non-WAL, if necessary.
         final ObjList<TableToken> convertedTables = TableConverter.convertTables(this, tableSequencerAPI, tableFlagResolver, tableNameRegistry);
         tableNameRegistry.reload(convertedTables);
+        liveViewStateStore = createLiveViewStateStore();
         matViewStateStore = createMatViewStateStore();
         viewStateStore = new ViewStateStoreImpl(this);
     }
@@ -1725,16 +2541,27 @@ public class CairoEngine implements Closeable, WriterSource {
 
     @Nullable
     public TableToken lockTableName(CharSequence tableName, int tableId, boolean isView, boolean isMatView, boolean isWal) {
+        return lockTableName(tableName, tableId, isView, isMatView, false, isWal);
+    }
+
+    @Nullable
+    public TableToken lockTableName(CharSequence tableName, int tableId, boolean isView, boolean isMatView, boolean isLiveView, boolean isWal) {
+        validNameOrThrow(tableName);
         final String tableNameStr = Chars.toString(tableName);
         final String dirName = TableUtils.getTableDir(configuration.mangleTableDirNames(), tableNameStr, tableId, isWal);
-        return lockTableName(tableNameStr, dirName, tableId, isView, isMatView, isWal);
+        return tableNameRegistry.lockTableName(tableNameStr, dirName, tableId, isView, isMatView, isLiveView, isWal);
     }
 
     @Nullable
     public TableToken lockTableName(CharSequence tableName, String dirName, int tableId, boolean isView, boolean isMatView, boolean isWal) {
+        return lockTableName(tableName, dirName, tableId, isView, isMatView, false, isWal);
+    }
+
+    @Nullable
+    public TableToken lockTableName(CharSequence tableName, String dirName, int tableId, boolean isView, boolean isMatView, boolean isLiveView, boolean isWal) {
         validNameOrThrow(tableName);
         final String tableNameStr = Chars.toString(tableName);
-        return tableNameRegistry.lockTableName(tableNameStr, dirName, tableId, isView, isMatView, isWal);
+        return tableNameRegistry.lockTableName(tableNameStr, dirName, tableId, isView, isMatView, isLiveView, isWal);
     }
 
     public boolean lockWalWriters(TableToken tableToken) {
@@ -1754,6 +2581,10 @@ public class CairoEngine implements Closeable, WriterSource {
             return true;
         }
         return false;
+    }
+
+    public void notifyLiveViewBaseTableCommit(TableToken baseTableToken, long seqTxn) {
+        liveViewStateStore.notifyBaseTableCommit(baseTableToken, seqTxn);
     }
 
     public void notifyMatViewBaseTableCommit(MatViewRefreshTask task, long seqTxn) {
@@ -1976,6 +2807,7 @@ public class CairoEngine implements Closeable, WriterSource {
                             if (fromTableToken.isWal()) {
                                 matViewStateStore.enqueueInvalidateDependentViews(fromTableToken, "table rename operation");
                             }
+                            invalidateLiveViewsForBaseTable(fromTableToken, "base table rename");
                         } else {
                             LOG.info()
                                     .$("failed to rename table [from=").$safe(fromTableName)
@@ -2336,6 +3168,197 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    /**
+     * Pass 2 of the ANCHOR EXPRESSION validator — the function-property half applied to
+     * the post-constant-fold
+     * Function tree. Rejects fold-to-constant top-level expressions, runtime-state
+     * functions ({@code now()}, {@code current_timestamp}, ...), random functions,
+     * non-deterministic functions, and aggregations. Pass 1 (AST-level rejects of
+     * subqueries, bind variables, and well-known runtime/random function names by
+     * token) lives in {@code SqlParser.walkAnchorExpressionForPurity}.
+     * <p>
+     * Walks the Function tree in pre-order: checks fire on the parent before
+     * recursing into args. {@code BinaryFunction} / {@code UnaryFunction} et al.
+     * propagate {@code isRandom} / {@code isNonDeterministic} from children, so the
+     * recursion descends to surface the offending leaf's name in the error message.
+     * <p>
+     * The {@code isConstant()} check is gated by {@code isTopLevel} since constant
+     * subexpressions are routine (e.g. the {@code '1d'} stride in
+     * {@code timestamp_floor('1d', ts)}). The semantic guarantee is "the top-level
+     * value depends on row data," which equals "the top-level expression is not
+     * constant" post-fold.
+     */
+    private static void validateAnchorPurity(Function fn, int rootPosition, boolean isTopLevel) throws SqlException {
+        if (fn == null) {
+            return;
+        }
+        if (isTopLevel) {
+            if (fn.isConstant()) {
+                throw SqlException.$(rootPosition, "ANCHOR EXPRESSION must not be a constant");
+            }
+            validateAnchorReturnType(fn, rootPosition);
+        }
+        if (fn.isRandom() || fn.isRuntimeConstant() || fn.isNonDeterministic()) {
+            throw SqlException.$(rootPosition, "ANCHOR EXPRESSION must be deterministic; ")
+                    .put(fn.getName()).put("() is not allowed");
+        }
+        if (fn instanceof GroupByFunction) {
+            throw SqlException.$(rootPosition, "ANCHOR EXPRESSION must not contain aggregation; ")
+                    .put(fn.getName()).put("() is not allowed");
+        }
+        if (fn instanceof UnaryFunction u) {
+            validateAnchorPurity(u.getArg(), rootPosition, false);
+        } else if (fn instanceof BinaryFunction b) {
+            validateAnchorPurity(b.getLeft(), rootPosition, false);
+            validateAnchorPurity(b.getRight(), rootPosition, false);
+        } else if (fn instanceof TernaryFunction t) {
+            validateAnchorPurity(t.getLeft(), rootPosition, false);
+            validateAnchorPurity(t.getCenter(), rootPosition, false);
+            validateAnchorPurity(t.getRight(), rootPosition, false);
+        } else if (fn instanceof MultiArgFunction m) {
+            ObjList<Function> args = m.args();
+            if (args != null) {
+                for (int i = 0, n = args.size(); i < n; i++) {
+                    validateAnchorPurity(args.getQuick(i), rootPosition, false);
+                }
+            }
+        }
+    }
+
+    /**
+     * Rejects anchor expressions whose top-level return type is not TIMESTAMP,
+     * LONG, or INT. Other scalar primitives (BOOLEAN, DOUBLE, STRING, SYMBOL)
+     * and composite types (ARRAY, GEOHASH, BINARY, INTERVAL, ...) cannot flow
+     * through the anchor map's LONG slot. Catching the type mismatch at
+     * CREATE keeps the failure visible to the operator instead of waiting for
+     * the first refresh cycle to surface it.
+     */
+    private static void validateAnchorReturnType(Function fn, int position) throws SqlException {
+        final int tag = ColumnType.tagOf(fn.getType());
+        if (tag != ColumnType.TIMESTAMP && tag != ColumnType.LONG && tag != ColumnType.INT) {
+            throw SqlException.$(position, "ANCHOR EXPRESSION must return TIMESTAMP, LONG, or INT; got ")
+                    .put(ColumnType.nameOf(fn.getType()));
+        }
+    }
+
+    /**
+     * Validates the compiled SELECT shape against the live-view contract and returns
+     * the leaf {@code PageFrameRecordCursorFactory} so the caller can resolve its
+     * column dependencies against the base table.
+     */
+    private static PageFrameRecordCursorFactory validateLiveViewFactory(
+            RecordCursorFactory factory,
+            TableToken baseTableToken,
+            int position
+    ) throws SqlException {
+        // SqlCompiler wraps every compiled query in a QueryProgress factory for registry tracking;
+        // unwrap it (and any other transparent wrappers that expose getBaseFactory()) so we can
+        // reason about the actual query shape.
+        RecordCursorFactory root = factory;
+        while (root instanceof QueryProgress) {
+            root = root.getBaseFactory();
+        }
+        // The planner picks a cached factory whenever any window function needs
+        // multi-pass evaluation (e.g. lead, percentile, etc.). The LIGHT variant is
+        // chosen for encoded-sort-eligible, fixed-width outputs; the regular one
+        // otherwise. Both mean caching/multi-pass the incremental refresh cannot drive.
+        final ObjList<WindowFunction> cachedWindowFunctions;
+        if (root instanceof CachedWindowRecordCursorFactory cwf) {
+            cachedWindowFunctions = cwf.getAllWindowFunctions();
+        } else if (root instanceof CachedWindowLightRecordCursorFactory cwlf) {
+            cachedWindowFunctions = cwlf.getAllWindowFunctions();
+        } else {
+            cachedWindowFunctions = null;
+        }
+        if (cachedWindowFunctions != null) {
+            // Surface the lead() case with a specific message before the generic
+            // reject -- lead() is the most common cause and the user benefit of
+            // "use lag()" is high.
+            rejectLeadIfPresent(cachedWindowFunctions, position);
+            throw SqlException.$(position, "live view select may only use window functions that support incremental refresh; " +
+                    "this query requires caching or multi-pass evaluation");
+        }
+        if (!(root instanceof WindowRecordCursorFactory wf)) {
+            throw SqlException.$(position, "live view select must contain at least one window function");
+        }
+        // incremental refresh only handles window functions that emit a value per input row
+        // without looking ahead or buffering state across multiple passes
+        ObjList<WindowFunction> fns = wf.getWindowFunctions();
+        rejectLeadIfPresent(fns, position);
+        for (int i = 0, n = fns.size(); i < n; i++) {
+            validateLiveViewWindowFunction(fns.getQuick(i), position);
+        }
+
+        // Incremental refresh drives window functions manually over rows read directly
+        // from WAL segments, so the factory tree must be exactly:
+        //     WindowRecordCursorFactory -> [FilteredRecordCursorFactory?] -> PageFrameRecordCursorFactory
+        // with no join, projection or grouping in between. See LiveViewRefreshJob.
+        //
+        // A single filter factory (FilteredRecordCursorFactory / AsyncFilteredRecordCursorFactory /
+        // AsyncJitFilteredRecordCursorFactory) may sit between the window and the page frame factory;
+        // the refresh job applies its Function filter row-by-row to WAL segment rows during
+        // incremental refresh. Indexed-symbol key extraction is suppressed during live view
+        // compilation (see SqlExecutionContext.isLiveViewCompile and WhereClauseParser), so the
+        // planner never pushes the filter into the row cursor factory.
+        RecordCursorFactory base = wf.getBaseFactory();
+        if (base.getFilter() != null) {
+            base = base.getBaseFactory();
+            if (base == null) {
+                throw SqlException.$(position, "live view select has a malformed filter factory");
+            }
+        }
+        for (RecordCursorFactory f = base.getBaseFactory(); f != null; f = f.getBaseFactory()) {
+            if (f.getFilter() != null) {
+                throw SqlException.$(position, "live view select cannot use nested filter factories yet");
+            }
+        }
+        if (!(base instanceof PageFrameRecordCursorFactory pfrcf) || base.getBaseFactory() != null) {
+            throw SqlException.$(position, "live view select must be a simple scan of a single WAL base table; " +
+                    "joins, subqueries, GROUP BY, ORDER BY and LIMIT are not supported yet");
+        }
+        if (pfrcf.hasFilter()) {
+            // Defensive: WhereClauseParser is supposed to have suppressed indexed-symbol key
+            // extraction for live view compiles, so the planner shouldn't produce an indexed
+            // row cursor factory here. If it ever does, the filter Function is invisible to
+            // the incremental refresh path and rows would slip through unfiltered.
+            throw SqlException.$(position, "live view select produced an indexed row cursor factory unexpectedly");
+        }
+        TableToken scannedToken = base.getTableToken();
+        if (scannedToken == null || !scannedToken.equals(baseTableToken)) {
+            throw SqlException.$(position, "live view select must read from the declared base table");
+        }
+        return pfrcf;
+    }
+
+    /**
+     * Throws an asserted-wording reject if any function in {@code fns} is {@code lead()}.
+     * lead() needs rows the streaming append-only path has not yet seen; live views
+     * reject it independently of the underlying factory shape.
+     */
+    private static void rejectLeadIfPresent(ObjList<WindowFunction> fns, int position) throws SqlException {
+        for (int i = 0, n = fns.size(); i < n; i++) {
+            if ("lead".equals(fns.getQuick(i).getName())) {
+                throw SqlException.$(position, "lead() is not supported in live views; use lag() for lookback");
+            }
+        }
+    }
+
+    // Commits the registry name for a table created via the deferred-register
+    // path (createTableOrViewOrMatViewUnsecure with deferRegisterName=true) and
+    // releases the per-token name and create locks the deferred helper handed
+    // off to the caller. The registry commit is the atomic visibility cut:
+    // before this returns, concurrent name lookups fail with
+    // "table does not exist"; after it returns the table is queryable.
+    private void commitDeferredTableNameAndRelease(TableToken tableToken) {
+        try {
+            tableNameRegistry.registerName(tableToken);
+        } finally {
+            tableNameRegistry.unlockTableName(tableToken);
+            unlockTableCreate(tableToken);
+        }
+        enqueueCompileView(tableToken);
+    }
+
     // caller has to acquire the lock before this method is called and release the lock after the call
     private void createTableOrMatViewInVolumeUnsafe(MemoryMARW mem, @Nullable BlockFileWriter blockFileWriter, Path path, TableStructure struct, TableToken tableToken) {
         if (TableUtils.TABLE_DOES_NOT_EXIST != TableUtils.existsInVolume(configuration.getFilesFacade(), path, tableToken.getDirName())) {
@@ -2380,7 +3403,22 @@ public class CairoEngine implements Closeable, WriterSource {
         );
     }
 
-    private @NotNull TableToken createTableOrViewOrMatViewUnsecure(
+    /**
+     * Creates the on-disk filesystem skeleton for a table / view / mat view /
+     * live view and reserves the registry name. When deferRegisterName is
+     * false (the default for CREATE TABLE / VIEW / MAT VIEW), the registry
+     * commit is the last step before return and the result is always non-null.
+     * <p>
+     * When deferRegisterName is true (CREATE LIVE VIEW), the registry commit
+     * is held back: the caller now owns the name + create locks and must
+     * invoke {@link #commitDeferredTableNameAndRelease} after fsyncing any
+     * follow-up artifacts (e.g. {@code _lv.s} / {@code _lv}), or
+     * {@link #rollbackDeferredLiveViewCreate} on failure. In deferred mode the
+     * result is null when no deferred handoff took place - the IF NOT EXISTS
+     * pre-existing path or the IF NOT EXISTS lock-race-lost path - so the
+     * caller has no follow-up work in that case.
+     */
+    private TableToken createTableOrViewOrMatViewUnsecure(
             SecurityContext securityContext,
             MemoryMARW mem,
             @Nullable BlockFileWriter blockFileWriter,
@@ -2389,7 +3427,8 @@ public class CairoEngine implements Closeable, WriterSource {
             TableStructure struct,
             boolean keepLock,
             boolean inVolume,
-            int tableKind
+            int tableKind,
+            boolean deferRegisterName
     ) {
         assert !struct.isWalEnabled() || PartitionBy.isPartitioned(struct.getPartitionBy()) : "WAL is only supported for partitioned tables";
         final CharSequence tableName = struct.getTableName();
@@ -2398,13 +3437,16 @@ public class CairoEngine implements Closeable, WriterSource {
         final int tableId = (int) tableIdGenerator.getNextId();
 
         while (true) {
-            TableToken tableToken = lockTableName(tableName, tableId, struct.isView(), struct.isMatView(), struct.isWalEnabled());
+            TableToken tableToken = lockTableName(tableName, tableId, struct.isView(), struct.isMatView(), struct.isLiveView(), struct.isWalEnabled());
             if (tableToken == null) {
                 if (ifNotExists) {
                     tableToken = getTableTokenIfExists(tableName);
                     if (tableToken != null) {
                         struct.init(tableToken);
-                        return tableToken;
+                        // Deferred mode: the LV already exists - no handoff,
+                        // no follow-up. Returning null tells the caller to
+                        // skip the FS writes and the commit step.
+                        return deferRegisterName ? null : tableToken;
                     }
                     Os.pause();
                     continue;
@@ -2416,6 +3458,13 @@ public class CairoEngine implements Closeable, WriterSource {
                 Os.pause();
             }
             boolean filesystemCreated = false;
+            // Tracks whether the deferred caller now owns the name lock and the
+            // per-token create lock. Stays false on every error path so the
+            // outer finally unwinds the locks the same way as a non-deferred
+            // create, and stays false on the lockedReason+ifNotExists fall-
+            // through path so deferred callers see a null return instead of a
+            // token whose name was never registered.
+            boolean deferredHandoff = false;
             try {
                 String lockedReason = lockAll(tableToken, "createTable", true);
                 boolean locked = true;
@@ -2441,7 +3490,11 @@ public class CairoEngine implements Closeable, WriterSource {
                             LOG.info().$("unlocked [table=").$(tableToken).$("]").$();
                         }
                         onTableOrViewOrMatViewCreated(securityContext, struct, tableToken, tableKind);
-                        tableNameRegistry.registerName(tableToken);
+                        if (deferRegisterName) {
+                            deferredHandoff = true;
+                        } else {
+                            tableNameRegistry.registerName(tableToken);
+                        }
                     } catch (Throwable e) {
                         keepLock = false;
                         throw e;
@@ -2486,11 +3539,20 @@ public class CairoEngine implements Closeable, WriterSource {
                 }
                 throw th;
             } finally {
-                tableNameRegistry.unlockTableName(tableToken);
-                unlockTableCreate(tableToken);
+                if (!deferredHandoff) {
+                    tableNameRegistry.unlockTableName(tableToken);
+                    unlockTableCreate(tableToken);
+                }
             }
 
-            enqueueCompileView(tableToken);
+            if (!deferredHandoff) {
+                if (deferRegisterName) {
+                    // IF NOT EXISTS lost the lockAll race - the helper did no
+                    // work the deferred caller can finalise.
+                    return null;
+                }
+                enqueueCompileView(tableToken);
+            }
             return tableToken;
         }
     }
@@ -2560,7 +3622,7 @@ public class CairoEngine implements Closeable, WriterSource {
             boolean forceCreateState
     ) {
         try {
-            MatViewDefinition viewDefinition = matViewGraph.getViewDefinition(tableToken);
+            MatViewDefinition viewDefinition = dependentViewGraph.getViewDefinition(tableToken);
             if (viewDefinition == null) {
                 viewDefinition = new MatViewDefinition();
                 MatViewDefinition.readFrom(
@@ -2571,7 +3633,7 @@ public class CairoEngine implements Closeable, WriterSource {
                         pathLen,
                         tableToken
                 );
-                if (matViewGraph.addView(viewDefinition)) {
+                if (dependentViewGraph.addView(viewDefinition)) {
                     matViewStateStore.createViewState(viewDefinition);
                 }
             } else if (forceCreateState && matViewStateStore.getViewState(tableToken) == null) {
@@ -2879,7 +3941,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     final int mvRootLen = p.of(root).size();
                     final MatViewDefinition def = new MatViewDefinition();
                     MatViewDefinition.readFrom(this, def, blockReader, p, mvRootLen, newToken);
-                    if (matViewGraph.addView(def)) {
+                    if (dependentViewGraph.addView(def)) {
                         matViewStateStore.createViewState(def);
                     }
                 } catch (Throwable mvEx) {
@@ -2922,7 +3984,7 @@ public class CairoEngine implements Closeable, WriterSource {
             if (oldToken.isMatView()) {
                 // Drop the old mat view's graph/state entries (keyed by the old dir name).
                 matViewStateStore.removeViewState(oldToken);
-                matViewGraph.removeView(oldToken);
+                dependentViewGraph.removeView(oldToken);
             }
         } finally {
             if (oldWriter != null) {
@@ -2976,6 +4038,47 @@ public class CairoEngine implements Closeable, WriterSource {
         } finally {
             tableNameRegistry.unlockTableName(toTableToken);
             unlockTableCreate(toTableToken);
+        }
+    }
+
+    // Best-effort cleanup for a live view CREATE that failed between
+    // createTableOrViewOrMatViewUnsecure(deferRegisterName=true) and
+    // commitDeferredTableNameAndRelease. dropTableOrViewOrMatView cannot run
+    // yet because the token is not committed to the registry, so this method
+    // drops the sequencer entry, removes the on-disk directory, and releases
+    // the per-token name and create locks. All steps swallow failures and log,
+    // because the caller's outer throw carries the original cause.
+    private void rollbackDeferredLiveViewCreate(Path path, TableToken tableToken) {
+        try {
+            try {
+                tableSequencerAPI.dropTable(tableToken, true);
+            } catch (Throwable th) {
+                LOG.error().$("could not drop sequencer entry for partial live view [view=").$(tableToken)
+                        .$(", err=").$(th).I$();
+            }
+            try {
+                final FilesFacade ff = configuration.getFilesFacade();
+                path.of(configuration.getDbRoot()).concat(tableToken).$();
+                if (ff.exists(path.$()) && !ff.unlinkOrRemove(path, LOG)) {
+                    LOG.error().$("could not clean up partial live view fs [view=").$(tableToken)
+                            .$(", errno=").$(ff.errno()).I$();
+                }
+            } catch (Throwable th) {
+                LOG.error().$("could not clean up partial live view fs [view=").$(tableToken)
+                        .$(", err=").$(th).I$();
+            }
+        } finally {
+            // Both unlocks are safe to call after commitDeferredTableNameAndRelease
+            // already released them: unlockTableName is remove(name, LOCKED_TOKEN),
+            // unlockTableCreate is remove(name, token) - both no-op when absent.
+            try {
+                tableNameRegistry.unlockTableName(tableToken);
+            } catch (Throwable ignored) {
+            }
+            try {
+                unlockTableCreate(tableToken);
+            } catch (Throwable ignored) {
+            }
         }
     }
 
@@ -3045,6 +4148,31 @@ public class CairoEngine implements Closeable, WriterSource {
         return token;
     }
 
+    // Writes the durable _lv.drop sentinel into the live view's directory and
+    // fsyncs it before returning. Idempotent: a repeated DROP that finds an
+    // existing sentinel re-opens, fsyncs and closes - the file's existence is
+    // the signal, not its contents. Failure throws CairoException with the
+    // path; the caller's DROP aborts before any teardown so the LV remains
+    // queryable.
+    //
+    // Unlike the .cp writer, this deliberately does NOT tmp+rename. Recovery
+    // keys off existence alone, so a zero-byte or partially written _lv.drop
+    // still correctly triggers the reap branch; a tmp+rename scheme would
+    // instead lose a crash-before-rename drop intent. Existence-only is the
+    // stronger durability contract here, not an oversight.
+    private void writeLiveViewDropSentinel(TableToken token) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        try (Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(token).concat(LiveViewDefinition.LIVE_VIEW_DROP_SENTINEL_FILE_NAME).$();
+            long fd = TableUtils.openFileRWOrFail(ff, path.$(), configuration.getWriterFileOpenOpts());
+            try {
+                ff.fsync(fd);
+            } finally {
+                ff.close(fd);
+            }
+        }
+    }
+
     /**
      * Role gate for REBASE WAL. OSS has no replica concept, so the {@code INTO} (replica) variant is
      * rejected here; the enterprise engine overrides this to require a read-only replica for the
@@ -3060,8 +4188,13 @@ public class CairoEngine implements Closeable, WriterSource {
         ddlListener.clear();
     }
 
-    protected @NotNull MatViewGraph createMatViewGraph() {
-        return new MatViewGraph();
+    protected @NotNull DependentViewGraph createDependentViewGraph() {
+        return new DependentViewGraph();
+    }
+
+    // used in ent
+    protected LiveViewStateStore createLiveViewStateStore() {
+        return configuration.isLiveViewEnabled() ? new LiveViewStateStoreImpl() : NoOpLiveViewStateStore.INSTANCE;
     }
 
     // used in ent

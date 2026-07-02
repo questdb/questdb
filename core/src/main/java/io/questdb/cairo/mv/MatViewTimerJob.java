@@ -61,7 +61,7 @@ public class MatViewTimerJob extends SynchronizedJob {
     private final CairoConfiguration configuration;
     private final ObjList<Timer> expired = new ObjList<>();
     private final Predicate<Timer> filterByDirName;
-    private final MatViewGraph matViewGraph;
+    private final DependentViewGraph dependentViewGraph;
     private final MatViewStateStore matViewStateStore;
     // Pool of reusable retry heap entries, to avoid per-retry allocation during a retry storm.
     private final ObjList<RetryEntry> retryEntryPool = new ObjList<>();
@@ -78,7 +78,7 @@ public class MatViewTimerJob extends SynchronizedJob {
         this.configuration = engine.getConfiguration();
         this.clock = configuration.getMicrosecondClock();
         this.timerTaskQueue = engine.getMatViewTimerQueue();
-        this.matViewGraph = engine.getMatViewGraph();
+        this.dependentViewGraph = engine.getDependentViewGraph();
         this.matViewStateStore = engine.getMatViewStateStore();
         this.filterByDirName = this::filterByDirName;
     }
@@ -98,7 +98,7 @@ public class MatViewTimerJob extends SynchronizedJob {
     }
 
     private void addTimers(TableToken viewToken, long nowUs) {
-        final MatViewDefinition viewDefinition = matViewGraph.getViewDefinition(viewToken);
+        final MatViewDefinition viewDefinition = dependentViewGraph.getViewDefinition(viewToken);
         if (viewDefinition == null) {
             LOG.info().$("materialized view definition not found [view=").$(viewToken).I$();
             return;

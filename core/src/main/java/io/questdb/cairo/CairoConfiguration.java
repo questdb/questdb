@@ -342,6 +342,55 @@ public interface CairoConfiguration {
     @NotNull
     CharSequence getLegacyCheckpointRoot(); // same as root/../snapshot
 
+    /**
+     * Wall-clock ceiling between consecutive head-checkpoint writes for a
+     * live view. The refresh worker writes a fresh head once this duration
+     * has elapsed since the prior write, even when
+     * {@link #getLiveViewCheckpointRows()} has not been reached. Caps the
+     * worst-case O3 / restart replay window for low-rate views.
+     */
+    long getLiveViewCheckpointMaxDurationMicros();
+
+    /**
+     * Row-count cadence trigger for head-checkpoint writes. The refresh
+     * worker writes a fresh head once this many live-view rows have been
+     * applied since the prior head. The natural sizing knob for high-rate
+     * views: raising it spaces checkpoints further apart at the cost of a
+     * larger O3 / restart replay window.
+     */
+    long getLiveViewCheckpointRows();
+
+    int getLiveViewFlushRetryMax();
+
+    long getLiveViewFlushRetryMaxDurationMicros();
+
+    /**
+     * Fast-path growth budget. When the published in-memory slot's footprint
+     * already meets or exceeds this size, the refresh worker falls
+     * back to a slow-path swap (which evicts rows older than {@code IN MEMORY}
+     * and may shrink the slot) instead of appending in place. Acts as a
+     * safety backstop against unbounded slot growth between slow-path edges.
+     * Operators with an {@code IN MEMORY} window large enough to exceed the
+     * default should raise this proportionally to keep the fast-path engaged.
+     */
+    long getLiveViewInMemoryBufferGrowthBytes();
+
+    long getLiveViewInMemoryBufferInitialBytes();
+
+    long getLiveViewInMemoryMaxMicros();
+
+    /**
+     * Anchor-map tombstone count threshold above which {@code LiveViewWindow}
+     * fires compaction. The compaction also fires when
+     * {@code tombstoneCount > 0.5 * anchorMap.size()}, regardless of this
+     * absolute threshold.
+     */
+    int getLiveViewPartitionCompactThreshold();
+
+    int getLiveViewRefreshTurnMaxCommits();
+
+    long getLiveViewRefreshTurnMaxDurationMicros();
+
     boolean getLogLevelVerbose();
 
     boolean getLogSqlQueryProgressExe();
@@ -1042,6 +1091,8 @@ public interface CairoConfiguration {
     boolean isGroupByPresizeEnabled();
 
     boolean isIOURingEnabled();
+
+    boolean isLiveViewEnabled();
 
     boolean isMatViewCoveringIndexEnabled();
 

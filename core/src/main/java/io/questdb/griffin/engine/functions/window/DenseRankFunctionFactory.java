@@ -67,8 +67,10 @@ public class DenseRankFunctionFactory extends AbstractWindowFunctionFactory {
                         windowContext.getPartitionByKeyTypes(),
                         windowContext.getPartitionByRecord(),
                         windowContext.getPartitionBySink(),
+                        windowContext.getTimestampIndex(),
                         configuration,
                         true,
+                        windowContext.isLiveView(),
                         NAME);
             } else {
                 // Rank() over (order by xxx)

@@ -258,7 +258,7 @@ public class MatViewTest extends AbstractCairoTest {
             Assert.assertTrue(newView.isMatView());
             Assert.assertNotEquals(oldView.getDirName(), newView.getDirName());
             Assert.assertNotEquals(oldId, newView.getTableId());
-            Assert.assertNotNull(engine.getMatViewGraph().getViewDefinition(newView));
+            Assert.assertNotNull(engine.getDependentViewGraph().getViewDefinition(newView));
             assertQuery("select price from price_1h").noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns("price\n1.323\n");
 
             // The rebased view still refreshes from the base (a full refresh, watermark not preserved).
@@ -6719,7 +6719,7 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
             // Sanity check the view is reachable via the graph before driving
             // the parser-error scenarios.
-            Assert.assertNotNull(engine.getMatViewGraph().getViewDefinition(
+            Assert.assertNotNull(engine.getDependentViewGraph().getViewDefinition(
                     engine.getTableTokenIfExists("price_1h")
             ));
 
@@ -9204,7 +9204,7 @@ public class MatViewTest extends AbstractCairoTest {
 
             final TableToken viewToken = engine.getTableTokenIfExists("price_1h");
             Assert.assertNotNull(viewToken);
-            final MatViewDefinition viewDefinition = engine.getMatViewGraph().getViewDefinition(viewToken);
+            final MatViewDefinition viewDefinition = engine.getDependentViewGraph().getViewDefinition(viewToken);
             Assert.assertNotNull(viewDefinition);
             final MatViewState viewState = engine.getMatViewStateStore().getViewState(viewToken);
             Assert.assertNotNull(viewState);

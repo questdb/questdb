@@ -484,6 +484,56 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getLiveViewCheckpointMaxDurationMicros() {
+        return getDelegate().getLiveViewCheckpointMaxDurationMicros();
+    }
+
+    @Override
+    public long getLiveViewCheckpointRows() {
+        return getDelegate().getLiveViewCheckpointRows();
+    }
+
+    @Override
+    public int getLiveViewFlushRetryMax() {
+        return getDelegate().getLiveViewFlushRetryMax();
+    }
+
+    @Override
+    public long getLiveViewFlushRetryMaxDurationMicros() {
+        return getDelegate().getLiveViewFlushRetryMaxDurationMicros();
+    }
+
+    @Override
+    public long getLiveViewInMemoryBufferGrowthBytes() {
+        return getDelegate().getLiveViewInMemoryBufferGrowthBytes();
+    }
+
+    @Override
+    public long getLiveViewInMemoryBufferInitialBytes() {
+        return getDelegate().getLiveViewInMemoryBufferInitialBytes();
+    }
+
+    @Override
+    public long getLiveViewInMemoryMaxMicros() {
+        return getDelegate().getLiveViewInMemoryMaxMicros();
+    }
+
+    @Override
+    public int getLiveViewPartitionCompactThreshold() {
+        return getDelegate().getLiveViewPartitionCompactThreshold();
+    }
+
+    @Override
+    public int getLiveViewRefreshTurnMaxCommits() {
+        return getDelegate().getLiveViewRefreshTurnMaxCommits();
+    }
+
+    @Override
+    public long getLiveViewRefreshTurnMaxDurationMicros() {
+        return getDelegate().getLiveViewRefreshTurnMaxDurationMicros();
+    }
+
+    @Override
     public boolean getLogLevelVerbose() {
         return getDelegate().getLogLevelVerbose();
     }
@@ -1611,6 +1661,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isIOURingEnabled() {
         return getDelegate().isIOURingEnabled();
+    }
+
+    @Override
+    public boolean isLiveViewEnabled() {
+        return getDelegate().isLiveViewEnabled();
     }
 
     @Override

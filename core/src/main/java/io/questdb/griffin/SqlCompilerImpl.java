@@ -82,6 +82,8 @@ import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.engine.ops.CopyCancelFactory;
 import io.questdb.griffin.engine.ops.CopyExportFactory;
 import io.questdb.griffin.engine.ops.CopyImportFactory;
+import io.questdb.griffin.engine.ops.CreateLiveViewOperation;
+import io.questdb.griffin.engine.ops.CreateLiveViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateMatViewOperation;
 import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
@@ -517,6 +519,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             case OperationCodes.DROP_TABLE -> executeDropTable((GenericDropOperation) op, executionContext);
             case OperationCodes.DROP_VIEW -> executeDropView((GenericDropOperation) op, executionContext);
             case OperationCodes.DROP_MAT_VIEW -> executeDropMatView((GenericDropOperation) op, executionContext);
+            case OperationCodes.CREATE_LIVE_VIEW ->
+                    executeCreateLiveView((CreateLiveViewOperation) op, executionContext);
+            case OperationCodes.DROP_LIVE_VIEW -> executeDropLiveView((GenericDropOperation) op, executionContext);
             case OperationCodes.DROP_ALL -> executeDropAllTables((DropAllOperation) op, executionContext);
             default ->
                     throw SqlException.position(0).put("Unsupported operation [code=").put(op.getOperationCode()).put(']');
@@ -589,6 +594,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     @Override
     public void setFullFatJoins(boolean value) {
         codeGenerator.setFullFatJoins(value);
+    }
+
+    @Override
+    public ExpressionNode parseExpression(CharSequence expression) throws SqlException {
+        clear();
+        lexer.of(expression);
+        return parser.expr(lexer, (IQueryModel) null, this);
     }
 
     @TestOnly
@@ -1915,32 +1927,21 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    private void checkMatViewModification(ExecutionModel executionModel) throws SqlException {
-        final CharSequence name = executionModel.getTableName();
-        final TableToken tableToken = engine.getTableTokenIfExists(name);
-        if (tableToken != null && tableToken.isMatView()) {
-            throw SqlException.position(executionModel.getTableNameExpr().position).put("cannot modify materialized view [view=").put(name).put(']');
-        }
-    }
-
-    private void checkMatViewModification(TableToken tableToken) throws SqlException {
-        if (tableToken != null && tableToken.isMatView()) {
-            throw SqlException.position(lexer.lastTokenPosition()).put("cannot modify materialized view [view=").put(tableToken.getTableName()).put(']');
-        }
-    }
-
     private void checkViewModification(ExecutionModel executionModel) throws SqlException {
         final CharSequence name = executionModel.getTableName();
         final TableToken tableToken = engine.getTableTokenIfExists(name);
-        if (tableToken != null && tableToken.isView()) {
-            throw SqlException.position(executionModel.getTableNameExpr().position).put("cannot modify view [view=").put(name).put(']');
-        }
+        checkViewModification(tableToken, executionModel.getTableNameExpr().position);
     }
 
     private void checkViewModification(TableToken tableToken) throws SqlException {
-        if (tableToken != null && tableToken.isView()) {
-            throw SqlException.position(lexer.lastTokenPosition()).put("cannot modify view [view=").put(tableToken.getTableName()).put(']');
+        checkViewModification(tableToken, lexer.lastTokenPosition());
+    }
+
+    private void checkViewModification(TableToken tableToken, int position) throws SqlException {
+        if (tableToken == null || tableToken.getType() == TableToken.Type.TABLE) {
+            return;
         }
+        throw SqlException.position(position).put("cannot modify ").put(tableToken.getType().keyword()).put(" [view=").put(tableToken.getTableName()).put(']');
     }
 
     private void clearExceptSqlText() {
@@ -1984,7 +1985,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         if (!matViewToken.isMatView()) {
             throw SqlException.$(lexer.lastTokenPosition(), "materialized view name expected");
         }
-        final MatViewDefinition viewDefinition = engine.getMatViewGraph().getViewDefinition(matViewToken);
+        final MatViewDefinition viewDefinition = engine.getDependentViewGraph().getViewDefinition(matViewToken);
         if (viewDefinition == null) {
             throw SqlException.$(lexer.lastTokenPosition(), "materialized view does not exist");
         }
@@ -2329,7 +2330,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         assertNameIsQuotedOrNotAKeyword(tok, tableNamePosition);
         final TableToken tableToken = tableExistsOrFail(tableNamePosition, unquote(tok), executionContext);
         checkViewModification(tableToken);
-        checkMatViewModification(tableToken);
+        final SecurityContext securityContext = executionContext.getSecurityContext();
 
         try (TableRecordMetadata tableMetadata = executionContext.getMetadataForWrite(tableToken)) {
             tok = expectToken(lexer, ALTER_TABLE_EXPECTED_TOKEN_DESCR);
@@ -2972,6 +2973,44 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
                 dropOperationBuilder.setSqlText(sqlText);
                 compiledQuery.ofDrop(dropOperationBuilder.build());
+                // DROP LIVE VIEW [ IF EXISTS ] name [;]
+            } else if (isLiveKeyword(tok)) {
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok == null || !isViewKeyword(tok)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "expected VIEW");
+                }
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok == null) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "expected ").put("[IF EXISTS] live-view-name");
+                }
+                boolean hasIfExists = false;
+                int liveViewNamePosition = lexer.lastTokenPosition();
+                if (isIfKeyword(tok)) {
+                    tok = SqlUtil.fetchNext(lexer);
+                    if (tok == null || !isExistsKeyword(tok)) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "expected ").put("EXISTS live-view-name");
+                    }
+                    hasIfExists = true;
+                    liveViewNamePosition = lexer.getPosition();
+                } else {
+                    lexer.unparseLast();
+                }
+
+                tok = expectToken(lexer, "live view name");
+                assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+
+                final CharSequence liveViewName = GenericLexer.unquote(tok);
+                dropOperationBuilder.clear();
+                dropOperationBuilder.setOperationCode(OperationCodes.DROP_LIVE_VIEW);
+                dropOperationBuilder.setEntityName(liveViewName);
+                dropOperationBuilder.setEntityNamePosition(liveViewNamePosition);
+                dropOperationBuilder.setIfExists(hasIfExists);
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok != null && !Chars.equals(tok, ';')) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put(']');
+                }
+                dropOperationBuilder.setSqlText(sqlText);
+                compiledQuery.ofDrop(dropOperationBuilder.build());
                 // DROP MATERIALIZED VIEW [ IF EXISTS ] name [;]
             } else if (isMaterializedKeyword(tok)) {
                 tok = SqlUtil.fetchNext(lexer);
@@ -3528,7 +3567,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.$(lexer.lastTokenPosition(), "materialized view name expected, got table name");
         }
 
-        final MatViewDefinition matViewDefinition = engine.getMatViewGraph().getViewDefinition(matViewToken);
+        final MatViewDefinition matViewDefinition = engine.getDependentViewGraph().getViewDefinition(matViewToken);
         if (matViewDefinition == null) {
             throw SqlException.$(lexer.lastTokenPosition(), "materialized view does not exist or is not ready for refresh");
         }
@@ -3621,7 +3660,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final TableToken tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tok, executionContext);
 
         checkViewModification(tableToken);
-        checkMatViewModification(tableToken);
 
         try (IndexBuilder indexBuilder = new IndexBuilder(configuration)) {
             indexBuilder.of(path.of(configuration.getDbRoot()).concat(tableToken.getDirName()));
@@ -3763,7 +3801,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
                 if (tableToken != null) {
                     checkViewModification(tableToken);
-                    checkMatViewModification(tableToken);
                     executionContext.getSecurityContext().authorizeTableTruncate(tableToken);
                     // Validation parses and resolves the table but must not acquire the writer
                     // (which locks the table) or truncate any data.
@@ -3912,13 +3949,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     compiledQuery.ofCreateMatView(((CreateMatViewOperationBuilder) executionModel)
                             .build(this, executionContext, sqlText));
                     break;
+                case ExecutionModel.CREATE_LIVE_VIEW:
+                    compiledQuery.ofCreateLiveView(((CreateLiveViewOperationBuilder) executionModel)
+                            .build(sqlText));
+                    break;
                 case ExecutionModel.COPY:
                     QueryProgress.logStart(sqlId, sqlText, executionContext, false);
                     if (executionModel.getTableName() != null) {
                         assert executionModel.getModelType() == ExecutionModel.COPY;
                         if (((ExportModel) executionModel).getType() == COPY_TYPE_FROM) {
                             checkViewModification(executionModel);
-                            checkMatViewModification(executionModel);
                         }
                     }
                     copy(executionContext, (ExportModel) executionModel);
@@ -3929,7 +3969,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         sqlId = queryRegistry.register(sqlText, executionContext);
                         QueryProgress.logStart(sqlId, sqlText, executionContext, false);
                         checkViewModification(executionModel);
-                        checkMatViewModification(executionModel);
                         final RenameTableModel rtm = (RenameTableModel) executionModel;
                         engine.rename(
                                 executionContext.getSecurityContext(),
@@ -3946,7 +3985,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 case ExecutionModel.UPDATE:
                     QueryProgress.logStart(sqlId, sqlText, executionContext, false);
                     checkViewModification(executionModel);
-                    checkMatViewModification(executionModel);
                     final IQueryModel updateQueryModel = (IQueryModel) executionModel;
                     TableToken tableToken = executionContext.getTableToken(updateQueryModel.getTableName());
                     try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(tableToken)) {
@@ -3968,7 +4006,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     break;
                 default:
                     checkViewModification(executionModel);
-                    checkMatViewModification(executionModel);
                     final InsertModel insertModel = (InsertModel) executionModel;
                     // we use SQL Compiler state (reusing objects) to generate InsertOperation
                     if (insertModel.getQueryModel() != null) {
@@ -4013,7 +4050,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             if (eol == null || Chars.equals(eol, ';')) {
                 final TableToken tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tableName, executionContext);
                 checkViewModification(tableToken);
-                checkMatViewModification(tableToken);
                 try (TableReader rdr = executionContext.getReader(tableToken)) {
                     int partitionBy = rdr.getMetadata().getPartitionBy();
                     if (PartitionBy.isPartitioned(partitionBy)) {
@@ -4249,6 +4285,28 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 engine.getViewStateStore().enqueueCompile(viewDefinition.getViewToken());
             }
         }
+    }
+
+    private boolean executeCreateLiveView(CreateLiveViewOperation op, SqlExecutionContext executionContext) throws SqlException {
+        executionContext.getSecurityContext().authorizeLiveViewCreate();
+        // validate base table exists and is WAL
+        final TableToken baseTableToken = executionContext.getTableTokenIfExists(op.getBaseTableName());
+        if (baseTableToken == null) {
+            throw SqlException.$(op.getBaseTableNamePosition(), "base table does not exist [name=").put(op.getBaseTableName()).put(']');
+        }
+        if (!engine.isWalTable(baseTableToken)) {
+            throw SqlException.$(op.getBaseTableNamePosition(), "base table must be a WAL table [name=").put(op.getBaseTableName()).put(']');
+        }
+        if (baseTableToken.isLiveView()) {
+            // Live-on-live composition is not supported; live views may
+            // become composable once the apply pipeline supports LV-as-base.
+            // Position at the base table name.
+            throw SqlException.$(op.getBaseTableNamePosition(),
+                    "live views are not allowed as base tables in V1 [name=").put(op.getBaseTableName()).put(']');
+        }
+
+        engine.createLiveView(op, baseTableToken, executionContext);
+        return true;
     }
 
     private boolean executeCreateMatView(CreateMatViewOperation createMatViewOp, SqlExecutionContext executionContext) throws SqlException {
@@ -4654,7 +4712,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             if (!tableToken.isSystem()) {
                 final String tableName = tableToken.getTableName();
                 try {
-                    if (tableToken.isView()) {
+                    if (tableToken.isLiveView()) {
+                        securityContext.authorizeLiveViewDrop(tableToken);
+                    } else if (tableToken.isView()) {
                         securityContext.authorizeViewDrop(tableToken);
                     } else if (tableToken.isMatView()) {
                         securityContext.authorizeMatViewDrop(tableToken);
@@ -4686,6 +4746,23 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw ex.put(']');
         }
         return hasDroppedAny;
+    }
+
+    private boolean executeDropLiveView(GenericDropOperation op, SqlExecutionContext executionContext) throws SqlException {
+        final String name = op.getEntityName();
+        final TableToken tableToken = executionContext.getTableTokenIfExists(name);
+        if (tableToken != null && !tableToken.isLiveView()) {
+            throw SqlException.$(op.getEntityNamePosition(), "live view name expected [name=").put(name).put(']');
+        }
+        if (!engine.getLiveViewRegistry().hasView(name)) {
+            if (op.ifExists()) {
+                return false;
+            }
+            throw SqlException.$(op.getEntityNamePosition(), "live view does not exist [name=").put(name).put(']');
+        }
+        executionContext.getSecurityContext().authorizeLiveViewDrop(tableToken);
+        engine.dropLiveView(name);
+        return true;
     }
 
     private boolean executeDropMatView(
@@ -4734,8 +4811,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
             throw SqlException.tableDoesNotExist(op.getEntityNamePosition(), op.getEntityName());
         }
-        if (tableToken.isMatView()) {
-            throw SqlException.$(op.getEntityNamePosition(), "table name expected, got materialized view name: ").put(op.getEntityName());
+        if (tableToken.getType() != TableToken.Type.TABLE) {
+            throw SqlException.$(op.getEntityNamePosition(), "table name expected, got ").put(tableToken.getType().keyword()).put(" name: ").put(op.getEntityName());
         }
         sqlExecutionContext.getSecurityContext().authorizeTableDrop(tableToken);
 

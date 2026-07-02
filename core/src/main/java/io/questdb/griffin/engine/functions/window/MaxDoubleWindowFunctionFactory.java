@@ -30,6 +30,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
+import io.questdb.cairo.lv.LiveViewSnapshotKeyCodec;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
@@ -39,7 +40,9 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryARW;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -61,10 +64,15 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
     public static final DoubleComparator GREATER_THAN = (a, b) -> Double.compare(a, b) > 0;
     public static final ArrayColumnTypes MAX_COLUMN_TYPES;
+    public static final ArrayColumnTypes MAX_COLUMN_TYPES_LV;
     public static final ArrayColumnTypes MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES;
+    public static final ArrayColumnTypes MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES_LV;
     public static final ArrayColumnTypes MAX_OVER_PARTITION_RANGE_COLUMN_TYPES;
+    public static final ArrayColumnTypes MAX_OVER_PARTITION_RANGE_COLUMN_TYPES_LV;
     public static final ArrayColumnTypes MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES;
+    public static final ArrayColumnTypes MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES_LV;
     public static final ArrayColumnTypes MAX_OVER_PARTITION_ROWS_COLUMN_TYPES;
+    public static final ArrayColumnTypes MAX_OVER_PARTITION_ROWS_COLUMN_TYPES_LV;
     public static final String NAME = "max";
     private static final String SIGNATURE = NAME + "(D)";
 
@@ -118,10 +126,11 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     );
                 } // between unbounded preceding and current row
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
-                            MAX_COLUMN_TYPES
+                            liveView ? MAX_COLUMN_TYPES_LV : MAX_COLUMN_TYPES
                     );
 
                     return new MaxMinOverUnboundedPartitionRowsFrameFunction(
@@ -130,7 +139,10 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                             partitionBySink,
                             args.get(0),
                             GREATER_THAN,
-                            NAME
+                            NAME,
+                            partitionByKeyTypes,
+                            liveView,
+                            configuration
                     );
                 } // range between {unbounded | x} preceding and {x preceding | current row}, except unbounded preceding to current row
                 else {
@@ -140,14 +152,21 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
                     int timestampIndex = windowContext.getTimestampIndex();
 
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = null;
                     MemoryARW mem = null;
                     MemoryARW dequeMem = null;
                     try {
+                        final ArrayColumnTypes valueTypes;
+                        if (rowsLo == Long.MIN_VALUE) {
+                            valueTypes = liveView ? MAX_OVER_PARTITION_RANGE_COLUMN_TYPES_LV : MAX_OVER_PARTITION_RANGE_COLUMN_TYPES;
+                        } else {
+                            valueTypes = liveView ? MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES_LV : MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES;
+                        }
                         map = MapFactory.createUnorderedMap(
                                 configuration,
                                 partitionByKeyTypes,
-                                rowsLo == Long.MIN_VALUE ? MAX_OVER_PARTITION_RANGE_COLUMN_TYPES : MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES
+                                valueTypes
                         );
                         mem = Vm.getCARWInstance(
                                 configuration.getSqlWindowStorePageSize(),
@@ -175,7 +194,9 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                                 configuration.getSqlWindowInitialRangeBufferSize(),
                                 timestampIndex,
                                 GREATER_THAN,
-                                NAME
+                                NAME,
+                                partitionByKeyTypes,
+                                liveView
                         );
                     } catch (Throwable th) {
                         Misc.free(map);
@@ -187,10 +208,11 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 // between unbounded preceding and current row
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
-                            MAX_COLUMN_TYPES
+                            liveView ? MAX_COLUMN_TYPES_LV : MAX_COLUMN_TYPES
                     );
 
                     return new MaxMinOverUnboundedPartitionRowsFrameFunction(
@@ -199,7 +221,10 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                             partitionBySink,
                             args.get(0),
                             GREATER_THAN,
-                            NAME
+                            NAME,
+                            partitionByKeyTypes,
+                            liveView,
+                            configuration
                     );
                 } // between current row and current row
                 else if (rowsLo == 0 && rowsHi == 0) {
@@ -223,15 +248,18 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 }
                 //between [unbounded | x] preceding and [x preceding | current row]
                 else {
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = null;
                     MemoryARW mem = null;
                     MemoryARW dequeMem = null;
                     try {
-                        map = MapFactory.createUnorderedMap(
-                                configuration,
-                                partitionByKeyTypes,
-                                rowsLo == Long.MIN_VALUE ? MAX_OVER_PARTITION_ROWS_COLUMN_TYPES : MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES
-                        );
+                        final ArrayColumnTypes valueTypes;
+                        if (rowsLo == Long.MIN_VALUE) {
+                            valueTypes = liveView ? MAX_OVER_PARTITION_ROWS_COLUMN_TYPES_LV : MAX_OVER_PARTITION_ROWS_COLUMN_TYPES;
+                        } else {
+                            valueTypes = liveView ? MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES_LV : MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES;
+                        }
+                        map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, valueTypes);
                         mem = Vm.getCARWInstance(
                                 configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(),
@@ -256,7 +284,9 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                                 mem,
                                 dequeMem,
                                 GREATER_THAN,
-                                NAME
+                                NAME,
+                                partitionByKeyTypes,
+                                liveView
                         );
                     } catch (Throwable th) {
                         Misc.free(map);
@@ -439,12 +469,13 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 key.put(partitionByRecord, partitionBySink);
                 MapValue value = key.createValue();
 
-                if (!value.isNew()) {
+                if (!value.isNew() && value.getByte(1) == 1) {
                     if (comparator.compare(d, value.getDouble(0))) {
                         value.putDouble(0, d);
                     }
                 } else {
                     value.putDouble(0, d);
+                    value.putByte(1, (byte) 1);
                 }
             }
         }
@@ -456,9 +487,18 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             key.put(partitionByRecord, partitionBySink);
             MapValue value = key.findValue();
 
-            double val = value != null ? value.getDouble(0) : Double.NaN;
+            double val = value != null && value.getByte(1) == 1 ? value.getDouble(0) : Double.NaN;
 
             Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), val);
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.createValue();
+            value.putByte(1, (byte) 0);
         }
     }
 
@@ -480,6 +520,9 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         // list of {size, startOffset} pairs marking free space within mem
         private final LongList freeList = new LongList();
         private final int initialBufferSize;
+        private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
+        private final ArrayColumnTypes mapValueTypes;
         private final long maxDiff;
         // holds resizable ring buffers
         private final MemoryARW memory;
@@ -502,7 +545,9 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 int initialBufferSize,
                 int timestampIdx,
                 DoubleComparator comparator,
-                String name
+                String name,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             frameLoBounded = rangeLo != Long.MIN_VALUE;
@@ -517,6 +562,27 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             this.dequeInitialBufferSize = initialBufferSize;
             this.comparator = comparator;
             this.name = name;
+            this.liveView = liveView;
+            if (liveView) {
+                ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                    keyTypesCopy.add(partitionByKeyTypes.getColumnType(i));
+                }
+                this.keyColumnTypes = keyTypesCopy;
+                final ArrayColumnTypes srcValueTypes = frameLoBounded
+                        ? MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES_LV
+                        : MAX_OVER_PARTITION_RANGE_COLUMN_TYPES_LV;
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = srcValueTypes.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(srcValueTypes.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = frameLoBounded ? 9 : 6;
+            } else {
+                this.keyColumnTypes = null;
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
         }
 
         @Override
@@ -550,6 +616,9 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             double d = arg.getDouble(record);
 
             if (mapValue.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    mapValue.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 capacity = initialBufferSize;
                 startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
                 firstIdx = 0;
@@ -724,6 +793,35 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             return WindowFunction.ZERO_PASS;
         }
 
+        @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
+        public ColumnTypes getSnapshotKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getSnapshotKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : (frameLoBounded
+                       ? MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES
+                       : MAX_OVER_PARTITION_RANGE_COLUMN_TYPES).getColumnCount();
+        }
+
+        @Override
+        public void onSnapshotRestoreBegin() {
+            super.onSnapshotRestoreBegin();
+            memory.truncate();
+            freeList.clear();
+            if (dequeMemory != null) {
+                dequeMemory.truncate();
+            }
+            dequeFreeList.clear();
+        }
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
@@ -736,6 +834,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             super.reopen();
             // memory will allocate on first use
             maxMin = Double.NaN;
+            tombstoneCount = 0;
         }
 
         @Override
@@ -747,6 +846,141 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             if (dequeMemory != null) {
                 dequeMemory.close();
             }
+            tombstoneCount = 0;
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset. Drop the partition's frame and the deque
+            // (when bounded). Ring slabs stay allocated; the next post-reset
+            // row writes from index 0.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.findValue();
+            if (value != null) {
+                value.putLong(0, 0L);
+                // slot 1 (startOffset) stays.
+                value.putLong(2, 0L);
+                // slot 3 (capacity) stays.
+                value.putLong(4, 0L);
+                if (frameLoBounded) {
+                    // slots 5 (dequeStartOffset) and 6 (dequeCapacity) stay.
+                    value.putLong(7, 0L);
+                    value.putLong(8, 0L);
+                } else {
+                    value.putDouble(5, Double.NaN);
+                }
+                if (!value.isNew() && tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 1) {
+                    value.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
+            final long frameSize = source.getLong(offset);
+            offset += Long.BYTES;
+            final long size = source.getLong(offset);
+            offset += Long.BYTES;
+            final long capacity = Math.max(size, initialBufferSize);
+            final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            if (frameLoBounded) {
+                final long dequeSize = source.getLong(offset);
+                offset += Long.BYTES;
+                for (long i = 0; i < size; i++) {
+                    memory.putLong(newStartOffset + i * RECORD_SIZE, source.getLong(offset));
+                    offset += Long.BYTES;
+                    memory.putDouble(newStartOffset + i * RECORD_SIZE + Long.BYTES, source.getDouble(offset));
+                    offset += Double.BYTES;
+                }
+                final long dequeCapacity = Math.max(dequeSize, dequeInitialBufferSize);
+                final long newDequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * DEQUE_RECORD_SIZE) - dequeMemory.getPageAddress(0);
+                for (long i = 0; i < dequeSize; i++) {
+                    dequeMemory.putDouble(newDequeStartOffset + i * DEQUE_RECORD_SIZE, source.getDouble(offset));
+                    offset += Double.BYTES;
+                }
+                value.putLong(0, frameSize);
+                value.putLong(1, newStartOffset);
+                value.putLong(2, size);
+                value.putLong(3, capacity);
+                value.putLong(4, 0L);
+                value.putLong(5, newDequeStartOffset);
+                value.putLong(6, dequeCapacity);
+                value.putLong(7, 0L);
+                value.putLong(8, dequeSize);
+            } else {
+                final double maxMinVal = source.getDouble(offset);
+                offset += Double.BYTES;
+                for (long i = 0; i < size; i++) {
+                    memory.putLong(newStartOffset + i * RECORD_SIZE, source.getLong(offset));
+                    offset += Long.BYTES;
+                    memory.putDouble(newStartOffset + i * RECORD_SIZE + Long.BYTES, source.getDouble(offset));
+                    offset += Double.BYTES;
+                }
+                value.putLong(0, frameSize);
+                value.putLong(1, newStartOffset);
+                value.putLong(2, size);
+                value.putLong(3, capacity);
+                value.putLong(4, 0L);
+                value.putDouble(5, maxMinVal);
+            }
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public int snapshotFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public int snapshotMinSupportedVersion() {
+            return 1;
+        }
+
+        @Override
+        public void snapshotPartitionState(MemoryA sink, MapValue value) {
+            sink.putLong(value.getLong(0));
+            final long startOffset = value.getLong(1);
+            final long size = value.getLong(2);
+            final long capacity = value.getLong(3);
+            final long firstIdx = value.getLong(4);
+            sink.putLong(size);
+            if (frameLoBounded) {
+                final long dequeStartOffset = value.getLong(5);
+                final long dequeCapacity = value.getLong(6);
+                final long dequeStartIndex = value.getLong(7);
+                final long dequeEndIndex = value.getLong(8);
+                final long dequeSize = dequeEndIndex - dequeStartIndex;
+                sink.putLong(dequeSize);
+                for (long i = 0; i < size; i++) {
+                    final long idx = (firstIdx + i) % capacity;
+                    sink.putLong(memory.getLong(startOffset + idx * RECORD_SIZE));
+                    sink.putDouble(memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES));
+                }
+                for (long i = 0; i < dequeSize; i++) {
+                    final long idx = (dequeStartIndex + i) % dequeCapacity;
+                    sink.putDouble(dequeMemory.getDouble(dequeStartOffset + idx * DEQUE_RECORD_SIZE));
+                }
+            } else {
+                sink.putDouble(value.getDouble(5));
+                for (long i = 0; i < size; i++) {
+                    final long idx = (firstIdx + i) % capacity;
+                    sink.putLong(memory.getLong(startOffset + idx * RECORD_SIZE));
+                    sink.putDouble(memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES));
+                }
+            }
+        }
+
+        @Override
+        public boolean supportsSnapshot() {
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -789,6 +1023,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             if (dequeMemory != null) {
                 dequeMemory.truncate();
             }
+            tombstoneCount = 0;
         }
     }
 
@@ -801,11 +1036,25 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         private final int bufferSize;
         private final DoubleComparator comparator;
         private final int dequeBufferSize;
+        // (capacity, startOffset) pairs marking free space within dequeMemory.
+        // Mirrors freeList for the monotonic deque slab; only populated when
+        // frameLoBounded is true.
+        private final LongList dequeFreeList = new LongList();
         // holds another resizable ring buffers as monotonically decreasing deque
         private final MemoryARW dequeMemory;
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
         private final int frameSize;
+        // (capacity, startOffset) pairs marking free space within memory. Each
+        // entry is a primary-ring slab released by a dropped partition.
+        // computeNext's isNew branch pops the last pair before falling back to
+        // memory.appendAddressFor. The capacity slot mirrors the bounded-RANGE
+        // freeList convention; bounded ROWS slabs are always bufferSize doubles
+        // long.
+        private final LongList freeList = new LongList();
+        private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
+        private final ArrayColumnTypes mapValueTypes;
         // holds fixed-size ring buffers of double values
         private final MemoryARW memory;
         private final String name;
@@ -821,7 +1070,9 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 MemoryARW memory,
                 MemoryARW dequeMemory,
                 DoubleComparator comparator,
-                String name
+                String name,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
 
@@ -842,12 +1093,38 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             this.dequeMemory = dequeMemory;
             this.comparator = comparator;
             this.name = name;
+            this.liveView = liveView;
+            if (liveView) {
+                ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                    keyTypesCopy.add(partitionByKeyTypes.getColumnType(i));
+                }
+                this.keyColumnTypes = keyTypesCopy;
+                final ArrayColumnTypes srcValueTypes = frameLoBounded
+                        ? MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES_LV
+                        : MAX_OVER_PARTITION_ROWS_COLUMN_TYPES_LV;
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = srcValueTypes.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(srcValueTypes.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = frameLoBounded ? 5 : 3;
+            } else {
+                this.keyColumnTypes = null;
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
         }
 
         @Override
         public void close() {
             super.close();
             memory.close();
+            if (dequeMemory != null) {
+                dequeMemory.close();
+            }
+            freeList.clear();
+            dequeFreeList.clear();
         }
 
         @Override
@@ -875,8 +1152,20 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             long dequeEndIndex = 0;
 
             if (value.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    value.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 loIdx = 0;
-                startOffset = memory.appendAddressFor((long) bufferSize * Double.BYTES) - memory.getPageAddress(0);
+                final int freeN = freeList.size();
+                if (freeN > 0) {
+                    // Reuse a primary slab reclaimed from a tombstoned
+                    // partition. Capacity is always bufferSize; only the
+                    // startOffset matters.
+                    startOffset = freeList.getQuick(freeN - 1);
+                    freeList.setPos(freeN - 2);
+                } else {
+                    startOffset = memory.appendAddressFor((long) bufferSize * Double.BYTES) - memory.getPageAddress(0);
+                }
                 if (frameIncludesCurrentValue && Numbers.isFinite(d)) {
                     this.maxMin = d;
                 } else {
@@ -887,7 +1176,15 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     memory.putDouble(startOffset + (long) i * Double.BYTES, Double.NaN);
                 }
                 if (frameLoBounded) {
-                    dequeStartOffset = dequeMemory.appendAddressFor((long) dequeBufferSize * Double.BYTES) - dequeMemory.getPageAddress(0);
+                    final int dequeFreeN = dequeFreeList.size();
+                    if (dequeFreeN > 0) {
+                        // Reuse a deque slab reclaimed from a tombstoned
+                        // partition. Capacity is always dequeBufferSize.
+                        dequeStartOffset = dequeFreeList.getQuick(dequeFreeN - 1);
+                        dequeFreeList.setPos(dequeFreeN - 2);
+                    } else {
+                        dequeStartOffset = dequeMemory.appendAddressFor((long) dequeBufferSize * Double.BYTES) - dequeMemory.getPageAddress(0);
+                    }
                     if (Numbers.isFinite(d) && frameIncludesCurrentValue) {
                         dequeMemory.putDouble(dequeStartOffset, d);
                         dequeEndIndex++;
@@ -965,6 +1262,35 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             return WindowFunction.ZERO_PASS;
         }
 
+        @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
+        public ColumnTypes getSnapshotKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getSnapshotKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : (frameLoBounded
+                       ? MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES
+                       : MAX_OVER_PARTITION_ROWS_COLUMN_TYPES).getColumnCount();
+        }
+
+        @Override
+        public void onSnapshotRestoreBegin() {
+            super.onSnapshotRestoreBegin();
+            memory.truncate();
+            if (dequeMemory != null) {
+                dequeMemory.truncate();
+            }
+            freeList.clear();
+            dequeFreeList.clear();
+        }
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
@@ -975,6 +1301,9 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public void reopen() {
             super.reopen();
+            freeList.clear();
+            dequeFreeList.clear();
+            tombstoneCount = 0;
         }
 
         @Override
@@ -984,6 +1313,117 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             if (dequeMemory != null) {
                 dequeMemory.close();
             }
+            freeList.clear();
+            dequeFreeList.clear();
+            tombstoneCount = 0;
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.findValue();
+            if (value != null) {
+                final long startOffset = value.getLong(1);
+                value.putLong(0, 0L);
+                for (int i = 0; i < bufferSize; i++) {
+                    memory.putDouble(startOffset + (long) i * Double.BYTES, Double.NaN);
+                }
+                if (frameLoBounded) {
+                    // slot 2 = dequeStartOffset stays allocated; reset indices.
+                    value.putLong(3, 0L);
+                    value.putLong(4, 0L);
+                } else {
+                    value.putDouble(2, Double.NaN);
+                }
+                if (!value.isNew() && tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 1) {
+                    value.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
+            final long ringBytes = (long) bufferSize * Double.BYTES;
+            final long dequeBytes = (long) dequeBufferSize * Double.BYTES;
+            final long loIdx = source.getLong(offset);
+            offset += Long.BYTES;
+            final long newStartOffset = memory.appendAddressFor(ringBytes) - memory.getPageAddress(0);
+            if (frameLoBounded) {
+                final long dequeStartIndex = source.getLong(offset);
+                offset += Long.BYTES;
+                final long dequeEndIndex = source.getLong(offset);
+                offset += Long.BYTES;
+                for (int i = 0; i < bufferSize; i++) {
+                    memory.putDouble(newStartOffset + (long) i * Double.BYTES, source.getDouble(offset));
+                    offset += Double.BYTES;
+                }
+                final long newDequeStartOffset = dequeMemory.appendAddressFor(dequeBytes) - dequeMemory.getPageAddress(0);
+                for (int i = 0; i < dequeBufferSize; i++) {
+                    dequeMemory.putDouble(newDequeStartOffset + (long) i * Double.BYTES, source.getDouble(offset));
+                    offset += Double.BYTES;
+                }
+                value.putLong(0, loIdx);
+                value.putLong(1, newStartOffset);
+                value.putLong(2, newDequeStartOffset);
+                value.putLong(3, dequeStartIndex);
+                value.putLong(4, dequeEndIndex);
+            } else {
+                final double maxMinVal = source.getDouble(offset);
+                offset += Double.BYTES;
+                for (int i = 0; i < bufferSize; i++) {
+                    memory.putDouble(newStartOffset + (long) i * Double.BYTES, source.getDouble(offset));
+                    offset += Double.BYTES;
+                }
+                value.putLong(0, loIdx);
+                value.putLong(1, newStartOffset);
+                value.putDouble(2, maxMinVal);
+            }
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public int snapshotFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public int snapshotMinSupportedVersion() {
+            return 1;
+        }
+
+        @Override
+        public void snapshotPartitionState(MemoryA sink, MapValue value) {
+            sink.putLong(value.getLong(0));
+            final long startOffset = value.getLong(1);
+            if (frameLoBounded) {
+                sink.putLong(value.getLong(3));
+                sink.putLong(value.getLong(4));
+                for (int i = 0; i < bufferSize; i++) {
+                    sink.putDouble(memory.getDouble(startOffset + (long) i * Double.BYTES));
+                }
+                final long dequeStartOffset = value.getLong(2);
+                for (int i = 0; i < dequeBufferSize; i++) {
+                    sink.putDouble(dequeMemory.getDouble(dequeStartOffset + (long) i * Double.BYTES));
+                }
+            } else {
+                sink.putDouble(value.getDouble(2));
+                for (int i = 0; i < bufferSize; i++) {
+                    sink.putDouble(memory.getDouble(startOffset + (long) i * Double.BYTES));
+                }
+            }
+        }
+
+        @Override
+        public boolean supportsSnapshot() {
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -1016,6 +1456,9 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             if (dequeMemory != null) {
                 dequeMemory.truncate();
             }
+            freeList.clear();
+            dequeFreeList.clear();
+            tombstoneCount = 0;
         }
     }
 
@@ -1511,21 +1954,54 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
     // - max(a) over (partition by x rows between unbounded preceding and current row)
     // - max(a) over (partition by x order by ts range between unbounded preceding and current row)
     // Doesn't require value buffering.
-    static class MaxMinOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
+    public static class MaxMinOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
 
         private final DoubleComparator comparator;
+        private final CairoConfiguration configuration;
+        private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
+        // Full value layout (including tombstone slot) for the
+        // newCompactionScratch Map. Null outside live-view mode.
+        private final ArrayColumnTypes mapValueTypes;
         private final String name;
+        // Value-slot index of the per-partition tombstone byte; -1 outside LV.
         private double maxMin;
+        // Single-writer (refresh worker), not volatile.
 
         public MaxMinOverUnboundedPartitionRowsFrameFunction(Map map,
                                                              VirtualRecord partitionByRecord,
                                                              RecordSink partitionBySink,
                                                              Function arg,
                                                              DoubleComparator comparator,
-                                                             String name) {
+                                                             String name,
+                                                             ColumnTypes partitionByKeyTypes,
+                                                             boolean liveView,
+                                                             CairoConfiguration configuration) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.comparator = comparator;
             this.name = name;
+            this.liveView = liveView;
+            this.configuration = configuration;
+            this.keyColumnTypes = new ArrayColumnTypes();
+            for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                this.keyColumnTypes.add(partitionByKeyTypes.getColumnType(i));
+            }
+            if (liveView) {
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = MAX_COLUMN_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(MAX_COLUMN_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 2;
+            } else {
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            return MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
         }
 
         @Override
@@ -1537,8 +2013,12 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
             if (Numbers.isFinite(d)) {
                 MapValue value = key.createValue();
-                if (value.isNew()) {
+                if (value.isNew() && tombstoneValueIndex >= 0) {
+                    value.putByte(tombstoneValueIndex, (byte) 0);
+                }
+                if (value.isNew() || value.getByte(1) == 0) {
                     value.putDouble(0, d);
+                    value.putByte(1, (byte) 1);
                     this.maxMin = d;
                 } else {
                     double max = value.getDouble(0);
@@ -1550,7 +2030,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 }
             } else {
                 MapValue value = key.findValue();
-                this.maxMin = value != null ? value.getDouble(0) : Double.NaN;
+                this.maxMin = value != null && value.getByte(1) == 1 ? value.getDouble(0) : Double.NaN;
             }
         }
 
@@ -1569,11 +2049,89 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             return WindowFunction.ZERO_PASS;
         }
 
+        @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
+        public ColumnTypes getSnapshotKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getSnapshotKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : MAX_COLUMN_TYPES.getColumnCount();
+        }
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), maxMin);
+        }
+
+        @Override
+        public void reopen() {
+            super.reopen();
+            tombstoneCount = 0;
+        }
+
+        @Override
+        public void reset() {
+            super.reset();
+            tombstoneCount = 0;
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.createValue();
+            value.putByte(1, (byte) 0);
+            if (value.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    value.putByte(tombstoneValueIndex, (byte) 0);
+                }
+            } else if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 1) {
+                value.putByte(tombstoneValueIndex, (byte) 1);
+                tombstoneCount++;
+            }
+        }
+
+        @Override
+        public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
+            value.putDouble(0, source.getDouble(offset));
+            offset += Double.BYTES;
+            value.putByte(1, source.getByte(offset));
+            offset += Byte.BYTES;
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public int snapshotFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public int snapshotMinSupportedVersion() {
+            return 1;
+        }
+
+        @Override
+        public void snapshotPartitionState(MemoryA sink, MapValue value) {
+            sink.putDouble(value.getDouble(0));
+            sink.putByte(value.getByte(1));
+        }
+
+        @Override
+        public boolean supportsSnapshot() {
+            return LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -1584,6 +2142,12 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             sink.val("partition by ");
             sink.val(partitionByRecord.getFunctions());
             sink.val(" rows between unbounded preceding and current row)");
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            tombstoneCount = 0;
         }
     }
 
@@ -1702,6 +2266,16 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
     static {
         MAX_COLUMN_TYPES = new ArrayColumnTypes();
         MAX_COLUMN_TYPES.add(ColumnType.DOUBLE); // max value
+        // Live-view ANCHOR contract: an explicit "initialized" byte lets resetPartition
+        // signal "no value yet for this partition" without deleting the map entry. The
+        // MapValue's intrinsic isNew() flips to false on first access, which is too
+        // coarse for repeated resets within the same partition.
+        MAX_COLUMN_TYPES.add(ColumnType.BYTE); // initialized flag
+
+        MAX_COLUMN_TYPES_LV = new ArrayColumnTypes();
+        MAX_COLUMN_TYPES_LV.add(ColumnType.DOUBLE); // max value
+        MAX_COLUMN_TYPES_LV.add(ColumnType.BYTE);   // initialized flag
+        MAX_COLUMN_TYPES_LV.add(ColumnType.BYTE);   // tombstone (anchor-driven compaction)
 
         MAX_OVER_PARTITION_RANGE_COLUMN_TYPES = new ArrayColumnTypes();
         MAX_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.LONG); // frame size
@@ -1710,6 +2284,15 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         MAX_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.LONG); // memory capacity
         MAX_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.LONG); // memory firstIdx
         MAX_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.DOUBLE); // max value case when unbounded preceding
+
+        MAX_OVER_PARTITION_RANGE_COLUMN_TYPES_LV = new ArrayColumnTypes();
+        MAX_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.add(ColumnType.LONG); // frame size
+        MAX_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.add(ColumnType.LONG); // memory startOffset
+        MAX_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.add(ColumnType.LONG); // memory size
+        MAX_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.add(ColumnType.LONG); // memory capacity
+        MAX_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.add(ColumnType.LONG); // memory firstIdx
+        MAX_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.add(ColumnType.DOUBLE); // max value case when unbounded preceding
+        MAX_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.add(ColumnType.BYTE); // tombstone (anchor-driven compaction)
 
         MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES = new ArrayColumnTypes();
         MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES.add(ColumnType.LONG); // frame size
@@ -1722,10 +2305,28 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES.add(ColumnType.LONG); // deque memory startIndex
         MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES.add(ColumnType.LONG); // deque memory endIndex
 
+        MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES_LV = new ArrayColumnTypes();
+        MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES_LV.add(ColumnType.LONG); // frame size
+        MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES_LV.add(ColumnType.LONG); // memory startOffset
+        MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES_LV.add(ColumnType.LONG); // memory size
+        MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES_LV.add(ColumnType.LONG); // memory capacity
+        MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES_LV.add(ColumnType.LONG); // memory firstIdx
+        MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES_LV.add(ColumnType.LONG); // deque memory startOffset
+        MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES_LV.add(ColumnType.LONG); // deque memory capacity
+        MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES_LV.add(ColumnType.LONG); // deque memory startIndex
+        MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES_LV.add(ColumnType.LONG); // deque memory endIndex
+        MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES_LV.add(ColumnType.BYTE); // tombstone (anchor-driven compaction)
+
         MAX_OVER_PARTITION_ROWS_COLUMN_TYPES = new ArrayColumnTypes();
         MAX_OVER_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.LONG); // memory startIndex
         MAX_OVER_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.LONG); // memory startOffset
         MAX_OVER_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.DOUBLE); // max value case when unbounded preceding
+
+        MAX_OVER_PARTITION_ROWS_COLUMN_TYPES_LV = new ArrayColumnTypes();
+        MAX_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.LONG); // memory startIndex
+        MAX_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.LONG); // memory startOffset
+        MAX_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.DOUBLE); // max value case when unbounded preceding
+        MAX_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.BYTE); // tombstone (anchor-driven compaction)
 
         MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES = new ArrayColumnTypes();
         MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES.add(ColumnType.LONG); // memory startIndex
@@ -1733,5 +2334,13 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES.add(ColumnType.LONG); // deque memory startOffset
         MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES.add(ColumnType.LONG); // deque memory startIndex
         MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES.add(ColumnType.LONG); // deque memory endIndex
+
+        MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES_LV = new ArrayColumnTypes();
+        MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES_LV.add(ColumnType.LONG); // memory startIndex
+        MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES_LV.add(ColumnType.LONG); // memory startOffset
+        MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES_LV.add(ColumnType.LONG); // deque memory startOffset
+        MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES_LV.add(ColumnType.LONG); // deque memory startIndex
+        MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES_LV.add(ColumnType.LONG); // deque memory endIndex
+        MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES_LV.add(ColumnType.BYTE); // tombstone (anchor-driven compaction)
     }
 }

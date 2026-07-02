@@ -29,7 +29,9 @@ import io.questdb.Telemetry;
 import io.questdb.TelemetryEvent;
 import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.file.BlockFileWriter;
+import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.mv.MatViewDefinition;
+import io.questdb.cairo.lv.LiveViewState;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -158,6 +160,7 @@ public final class TableUtils {
     public static final int TABLE_KIND_TEMP_PARQUET_EXPORT = 2;
     public static final String TABLE_NAME_FILE = "_name";
     public static final int TABLE_RESERVED = 2;
+    public static final int TABLE_TYPE_LIVE_VIEW = 4;
     public static final int TABLE_TYPE_MAT = 2;
     public static final int TABLE_TYPE_NON_WAL = 0;
     public static final int TABLE_TYPE_VIEW = 3;
@@ -683,6 +686,9 @@ public final class TableUtils {
 
             // create symbol maps
             int symbolMapCount = 0;
+            // Plain VIEWs read from their base table, so they don't own their own
+            // symbol maps or _cv. Live views are physical WAL-backed tables that
+            // own their data and DO need both, even though isLiveView() is true.
             if (!structure.isView()) {
                 for (int i = 0, n = structure.getColumnCount(); i < n; i++) {
                     int columnType = structure.getColumnType(i);
@@ -1160,6 +1166,24 @@ public final class TableUtils {
      */
     public static boolean isFinalTableName(String tableName, CharSequence tempTablePrefix) {
         return !Chars.startsWith(tableName, tempTablePrefix);
+    }
+
+    public static boolean isLiveViewDefinitionFileExists(CairoConfiguration configuration, Path path, CharSequence dirName) {
+        FilesFacade ff = configuration.getFilesFacade();
+        path.of(configuration.getDbRoot()).concat(dirName).concat(LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME);
+        return ff.exists(path.$());
+    }
+
+    public static boolean isLiveViewDropSentinelFileExists(CairoConfiguration configuration, Path path, CharSequence dirName) {
+        FilesFacade ff = configuration.getFilesFacade();
+        path.of(configuration.getDbRoot()).concat(dirName).concat(LiveViewDefinition.LIVE_VIEW_DROP_SENTINEL_FILE_NAME);
+        return ff.exists(path.$());
+    }
+
+    public static boolean isLiveViewStateFileExists(CairoConfiguration configuration, Path path, CharSequence dirName) {
+        FilesFacade ff = configuration.getFilesFacade();
+        path.of(configuration.getDbRoot()).concat(dirName).concat(LiveViewState.LIVE_VIEW_STATE_FILE_NAME);
+        return ff.exists(path.$());
     }
 
     public static boolean isMatViewDefinitionFileExists(CairoConfiguration configuration, Path path, CharSequence dirName) {
@@ -2421,6 +2445,15 @@ public final class TableUtils {
 
     public static void setTxReaderPath(@NotNull TxReader reader, @NotNull Path path, int timestampType, int partitionBy) {
         reader.ofRO(path.concat(TXN_FILE_NAME).$(), timestampType, partitionBy);
+    }
+
+    public static TableToken.Type tableTypeOf(int tableType) {
+        return switch (tableType) {
+            case TABLE_TYPE_LIVE_VIEW -> TableToken.Type.LIVE_VIEW;
+            case TABLE_TYPE_MAT -> TableToken.Type.MAT_VIEW;
+            case TABLE_TYPE_VIEW -> TableToken.Type.VIEW;
+            default -> TableToken.Type.TABLE;
+        };
     }
 
     public static int toIndexKey(int symbolKey) {

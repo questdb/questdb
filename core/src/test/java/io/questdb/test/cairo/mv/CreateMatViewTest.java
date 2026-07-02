@@ -1660,7 +1660,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 execute("create materialized view test as (" + query + ") partition by day");
 
                 final TableToken matViewToken = engine.getTableTokenIfExists("test");
-                final MatViewDefinition matViewDefinition = engine.getMatViewGraph().getViewDefinition(matViewToken);
+                final MatViewDefinition matViewDefinition = engine.getDependentViewGraph().getViewDefinition(matViewToken);
                 assertNotNull(matViewDefinition);
 
                 try (BlockFileWriter writer = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode())) {
@@ -1740,7 +1740,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 execute("create materialized view test as (" + query + ") partition by day");
 
                 final TableToken matViewToken = engine.getTableTokenIfExists("test");
-                final MatViewDefinition matViewDefinition = engine.getMatViewGraph().getViewDefinition(matViewToken);
+                final MatViewDefinition matViewDefinition = engine.getDependentViewGraph().getViewDefinition(matViewToken);
                 assertNotNull(matViewDefinition);
 
                 try (BlockFileWriter writer = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode())) {
@@ -1791,7 +1791,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 execute("create materialized view test as (" + query + ") partition by day");
 
                 final TableToken matViewToken = engine.getTableTokenIfExists("test");
-                final MatViewDefinition matViewDefinition = engine.getMatViewGraph().getViewDefinition(matViewToken);
+                final MatViewDefinition matViewDefinition = engine.getDependentViewGraph().getViewDefinition(matViewToken);
                 assertNotNull(matViewDefinition);
                 final MatViewState matViewState = engine.getMatViewStateStore().getViewState(matViewToken);
                 assertNotNull(matViewState);
@@ -1935,7 +1935,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 drainQueues();
 
                 final TableToken matViewToken = engine.getTableTokenIfExists("test");
-                final MatViewDefinition matViewDefinition = engine.getMatViewGraph().getViewDefinition(matViewToken);
+                final MatViewDefinition matViewDefinition = engine.getDependentViewGraph().getViewDefinition(matViewToken);
                 assertNotNull(matViewDefinition);
                 final MatViewState matViewState = engine.getMatViewStateStore().getViewState(matViewToken);
                 assertNotNull(matViewState);
@@ -2027,7 +2027,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 execute("create materialized view test as (" + query + ") partition by day");
 
                 final TableToken matViewToken = engine.getTableTokenIfExists("test");
-                final MatViewDefinition matViewDefinition = engine.getMatViewGraph().getViewDefinition(matViewToken);
+                final MatViewDefinition matViewDefinition = engine.getDependentViewGraph().getViewDefinition(matViewToken);
                 assertNotNull(matViewDefinition);
 
                 try (BlockFileWriter writer = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode())) {
@@ -2344,7 +2344,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 execute("create materialized view test as (" + query + ") partition by day");
 
                 final TableToken matViewToken = engine.getTableTokenIfExists("test");
-                final MatViewDefinition matViewDefinition = engine.getMatViewGraph().getViewDefinition(matViewToken);
+                final MatViewDefinition matViewDefinition = engine.getDependentViewGraph().getViewDefinition(matViewToken);
                 assertNotNull(matViewDefinition);
 
                 try (BlockFileWriter writer = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode())) {
@@ -2387,7 +2387,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 execute("create materialized view test as (" + query + ") partition by day");
 
                 final TableToken matViewToken = engine.getTableTokenIfExists("test");
-                final MatViewDefinition matViewDefinition = engine.getMatViewGraph().getViewDefinition(matViewToken);
+                final MatViewDefinition matViewDefinition = engine.getDependentViewGraph().getViewDefinition(matViewToken);
                 assertNotNull(matViewDefinition);
                 final MatViewState matViewState = engine.getMatViewStateStore().getViewState(matViewToken);
                 assertNotNull(matViewState);
@@ -2522,7 +2522,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
         if (matViewToken == null) {
             return null;
         }
-        return engine.getMatViewGraph().getViewDefinition(matViewToken);
+        return engine.getDependentViewGraph().getViewDefinition(matViewToken);
     }
 
     private void assertQuery0(String expected, String query, String expectedTimestamp) throws Exception {

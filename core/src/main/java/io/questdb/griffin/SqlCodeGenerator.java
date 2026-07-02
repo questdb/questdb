@@ -263,6 +263,7 @@ import io.questdb.griffin.engine.join.UnnestSource;
 import io.questdb.griffin.engine.join.VarcharToSymbolJoinKeyMapping;
 import io.questdb.griffin.engine.join.WindowJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.WindowJoinRecordCursorFactory;
+import io.questdb.griffin.engine.lv.LiveViewRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.EncodedSortLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.EncodedSortLimitedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.EncodedSortRecordCursorFactory;
@@ -9455,12 +9456,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         partitionByRecord = new VirtualRecord(partitionByFunctions);
                         keyTypes.clear();
                         final int partitionByCount = partitionByFunctions.size();
-
+                        // SYMBOL partition columns under a live-view refresh must
+                        // route through the resolved STRING because the source
+                        // record yields WAL-segment-local symbol indices that
+                        // differ across cycles for the same string value.
+                        final boolean lvCompile = executionContext.isLiveViewCompile();
+                        BitSet lvWriteSymbolAsString = null;
                         for (int j = 0; j < partitionByCount; j++) {
-                            keyTypes.add(partitionByFunctions.getQuick(j).getType());
+                            int type = partitionByFunctions.getQuick(j).getType();
+                            if (lvCompile && ColumnType.isSymbol(type)) {
+                                if (lvWriteSymbolAsString == null) {
+                                    lvWriteSymbolAsString = new BitSet();
+                                }
+                                lvWriteSymbolAsString.set(j);
+                                keyTypes.add(ColumnType.STRING);
+                            } else {
+                                keyTypes.add(type);
+                            }
                         }
                         entityColumnFilter.of(partitionByCount);
-                        partitionBySink = RecordSinkFactory.getInstance(configuration, asm, keyTypes, entityColumnFilter);
+                        partitionBySink = RecordSinkFactory.getInstance(configuration, asm, keyTypes, entityColumnFilter, lvWriteSymbolAsString);
                     } else {
                         partitionByRecord = null;
                         partitionBySink = null;
@@ -9582,6 +9597,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             if (isFastPath) {
+                // For live-view compiles, collect the window functions whose frame is
+                // UNBOUNDED PRECEDING ... CURRENT ROW. These are exactly the functions an
+                // anchored named WINDOW owns (a bare unbounded window is rejected at CREATE),
+                // so the live-view ANCHOR runtime resets only these and leaves any bounded
+                // ROWS/RANGE window declared in the same view untouched at anchor crossings.
+                final boolean lvCompile = executionContext.isLiveViewCompile();
+                ObjList<WindowFunction> anchorableWindowFunctions = null;
                 for (int i = 0, size = functions.size(); i < size; i++) {
                     Function func = functions.getQuick(i);
                     if (func instanceof WindowFunction) {
@@ -9591,9 +9613,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             ((WindowFunction) func).initRecordComparator(this, baseMetadata, chainTypes, null,
                                     qc.getOrderBy(), qc.getOrderByDirection());
                         }
+                        if (lvCompile
+                                && qc.getRowsLoKind() == WindowExpression.PRECEDING && qc.getRowsLoExpr() == null
+                                && qc.getRowsHiKind() == WindowExpression.CURRENT && qc.getRowsHiExpr() == null) {
+                            if (anchorableWindowFunctions == null) {
+                                anchorableWindowFunctions = new ObjList<>();
+                            }
+                            anchorableWindowFunctions.add((WindowFunction) func);
+                        }
                     }
                 }
-                return new WindowRecordCursorFactory(base, factoryMetadata, functions);
+                return new WindowRecordCursorFactory(base, factoryMetadata, functions, anchorableWindowFunctions);
             } else {
                 factoryMetadata.clear();
                 Misc.freeObjListAndClear(functions);
@@ -9701,13 +9731,27 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         partitionByRecord = new VirtualRecord(partitionByFunctions);
                         keyTypes.clear();
                         final int partitionByCount = partitionByFunctions.size();
-
+                        // SYMBOL partition columns under a live-view refresh must
+                        // route through the resolved STRING because the source
+                        // record yields WAL-segment-local symbol indices that
+                        // differ across cycles for the same string value.
+                        final boolean lvCompile = executionContext.isLiveViewCompile();
+                        BitSet lvWriteSymbolAsString = null;
                         for (int j = 0; j < partitionByCount; j++) {
-                            keyTypes.add(partitionByFunctions.getQuick(j).getType());
+                            int type = partitionByFunctions.getQuick(j).getType();
+                            if (lvCompile && ColumnType.isSymbol(type)) {
+                                if (lvWriteSymbolAsString == null) {
+                                    lvWriteSymbolAsString = new BitSet();
+                                }
+                                lvWriteSymbolAsString.set(j);
+                                keyTypes.add(ColumnType.STRING);
+                            } else {
+                                keyTypes.add(type);
+                            }
                         }
                         entityColumnFilter.of(partitionByCount);
                         // create sink
-                        partitionBySink = RecordSinkFactory.getInstance(configuration, asm, keyTypes, entityColumnFilter);
+                        partitionBySink = RecordSinkFactory.getInstance(configuration, asm, keyTypes, entityColumnFilter, lvWriteSymbolAsString);
                     } else {
                         partitionByRecord = null;
                         partitionBySink = null;
@@ -10118,22 +10162,37 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             supportsRandomAccess = true;
         }
 
+        // Live views are WAL-backed tables: the base factory is a standard
+        // PageFrameRecordCursorFactory over the LV's _meta + _txn + applied WAL.
+        // The live-view layer wraps it in a LiveViewRecordCursorFactory that
+        // pins the in-memory tier at cursor-open and routes by seam_ts.
         final TableToken tableToken = executionContext.getTableToken(tableName);
+        RecordCursorFactory result;
         if (model.isUpdate() && !executionContext.isWalApplication() && executionContext.getCairoEngine().isWalTable(tableToken)) {
             // two phase update execution, this is client-side branch. It has to execute against the sequencer metadata
             // to allow the client to succeed even if WAL apply does not run.
             try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(tableToken, model.getMetadataVersion())) {
                 // it is not enough to rely on execution context to be different for WAL APPLY;
                 // in WAL APPLY we also must supply reader, outside of WAL APPLY reader is null
-                return generateTableQuery0(model, executionContext, latestBy, supportsRandomAccess, null, metadata);
+                result = generateTableQuery0(model, executionContext, latestBy, supportsRandomAccess, null, metadata);
             }
         } else {
             // this is server side execution of the update. It executes against the reader metadata, which by now
             // has to be fully up-to-date due to WAL apply execution order.
             try (TableReader reader = executionContext.getReader(tableToken, model.getMetadataVersion())) {
-                return generateTableQuery0(model, executionContext, latestBy, supportsRandomAccess, reader, reader.getMetadata());
+                result = generateTableQuery0(model, executionContext, latestBy, supportsRandomAccess, reader, reader.getMetadata());
             }
         }
+        if (tableToken.isLiveView() && !model.isUpdate()) {
+            // Wrap for read queries only; UPDATE goes through a different
+            // execution path that doesn't open the LV cursor.
+            return new LiveViewRecordCursorFactory(
+                    executionContext.getCairoEngine(),
+                    tableToken,
+                    result
+            );
+        }
+        return result;
     }
 
     private RecordCursorFactory generateTableQuery0(

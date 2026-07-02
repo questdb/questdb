@@ -30,6 +30,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
+import io.questdb.cairo.lv.LiveViewSnapshotKeyCodec;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
@@ -41,7 +42,9 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryARW;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -61,7 +64,8 @@ import org.jetbrains.annotations.Nullable;
 
 public abstract class AbstractStdDevDoubleWindowFunctionFactory extends AbstractWindowFunctionFactory {
 
-    private static final ArrayColumnTypes STDDEV_COLUMN_TYPES;
+    static final ArrayColumnTypes STDDEV_COLUMN_TYPES;
+    static final ArrayColumnTypes STDDEV_COLUMN_TYPES_LV;
     private static final ArrayColumnTypes STDDEV_OVER_PARTITION_RANGE_COLUMN_TYPES;
     private static final ArrayColumnTypes STDDEV_OVER_PARTITION_ROWS_COLUMN_TYPES;
 
@@ -151,10 +155,11 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                     );
                 } // between unbounded preceding and current row
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
-                            STDDEV_COLUMN_TYPES
+                            liveView ? STDDEV_COLUMN_TYPES_LV : STDDEV_COLUMN_TYPES
                     );
 
                     return new StdDevOverUnboundedPartitionRowsFrameFunction(
@@ -164,7 +169,10 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                             args.get(0),
                             isSample,
                             isSqrt,
-                            name
+                            name,
+                            partitionByKeyTypes,
+                            liveView,
+                            configuration
                     );
                 } // range between [unbounded | x] preceding and [x preceding | current row]
                 else {
@@ -211,10 +219,11 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 // between unbounded preceding and current row
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
-                            STDDEV_COLUMN_TYPES
+                            liveView ? STDDEV_COLUMN_TYPES_LV : STDDEV_COLUMN_TYPES
                     );
 
                     return new StdDevOverUnboundedPartitionRowsFrameFunction(
@@ -224,7 +233,10 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                             args.get(0),
                             isSample,
                             isSqrt,
-                            name
+                            name,
+                            partitionByKeyTypes,
+                            liveView,
+                            configuration
                     );
                 } // between current row and current row
                 else if (rowsLo == 0 && rowsHi == 0) {
@@ -1350,16 +1362,55 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
     // - stddev(a) over (partition by x order by ts range between unbounded preceding and current row)
     // Doesn't require value buffering.
     static class StdDevOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
+        private final CairoConfiguration configuration;
         private final boolean isSample;
         private final boolean isSqrt;
+        private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
+        private final ArrayColumnTypes mapValueTypes;
         private final String name;
         private double stddev = Double.NaN;
 
-        StdDevOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, boolean isSample, boolean isSqrt, String name) {
+        StdDevOverUnboundedPartitionRowsFrameFunction(
+                Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                Function arg,
+                boolean isSample,
+                boolean isSqrt,
+                String name,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView,
+                CairoConfiguration configuration
+        ) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.isSample = isSample;
             this.isSqrt = isSqrt;
             this.name = name;
+            this.liveView = liveView;
+            this.configuration = configuration;
+            if (liveView) {
+                ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                    keyTypesCopy.add(partitionByKeyTypes.getColumnType(i));
+                }
+                this.keyColumnTypes = keyTypesCopy;
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = STDDEV_COLUMN_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(STDDEV_COLUMN_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 3;
+            } else {
+                this.keyColumnTypes = null;
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            return MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
         }
 
         @Override
@@ -1375,6 +1426,9 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
             long count;
 
             if (value.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    value.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 mean = 0.0;
                 m2 = 0.0;
                 count = 0;
@@ -1414,9 +1468,96 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
+        public ColumnTypes getSnapshotKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getSnapshotKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : STDDEV_COLUMN_TYPES.getColumnCount();
+        }
+
+        @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), stddev);
+        }
+
+        @Override
+        public void reopen() {
+            super.reopen();
+            tombstoneCount = 0;
+        }
+
+        @Override
+        public void reset() {
+            super.reset();
+            tombstoneCount = 0;
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset. Welford's [mean, m2, count] all return to
+            // zero. The next finite value re-runs Welford with mean=0, m2=0, count=0
+            // and produces (mean=d, m2=0, count=1) — identical to the isNew init.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.findValue();
+            if (value != null) {
+                value.putDouble(0, 0.0);
+                value.putDouble(1, 0.0);
+                value.putLong(2, 0L);
+                if (!value.isNew() && tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 1) {
+                    value.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
+            value.putDouble(0, source.getDouble(offset));
+            offset += Double.BYTES;
+            value.putDouble(1, source.getDouble(offset));
+            offset += Double.BYTES;
+            value.putLong(2, source.getLong(offset));
+            offset += Long.BYTES;
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public int snapshotFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public int snapshotMinSupportedVersion() {
+            return 1;
+        }
+
+        @Override
+        public void snapshotPartitionState(MemoryA sink, MapValue value) {
+            sink.putDouble(value.getDouble(0));
+            sink.putDouble(value.getDouble(1));
+            sink.putLong(value.getLong(2));
+        }
+
+        @Override
+        public boolean supportsSnapshot() {
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -1427,6 +1568,12 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
             sink.val("partition by ");
             sink.val(partitionByRecord.getFunctions());
             sink.val(" rows between unbounded preceding and current row)");
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            tombstoneCount = 0;
         }
     }
 
@@ -1585,6 +1732,12 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
         STDDEV_COLUMN_TYPES.add(ColumnType.DOUBLE);
         STDDEV_COLUMN_TYPES.add(ColumnType.DOUBLE);
         STDDEV_COLUMN_TYPES.add(ColumnType.LONG);
+
+        STDDEV_COLUMN_TYPES_LV = new ArrayColumnTypes();
+        STDDEV_COLUMN_TYPES_LV.add(ColumnType.DOUBLE); // mean (Welford) / sum (naive)
+        STDDEV_COLUMN_TYPES_LV.add(ColumnType.DOUBLE); // m2 (Welford) / sumSq (naive)
+        STDDEV_COLUMN_TYPES_LV.add(ColumnType.LONG);   // count
+        STDDEV_COLUMN_TYPES_LV.add(ColumnType.BYTE);   // tombstone (anchor-driven compaction)
 
         STDDEV_OVER_PARTITION_ROWS_COLUMN_TYPES = new ArrayColumnTypes();
         STDDEV_OVER_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.DOUBLE); // sum

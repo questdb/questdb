@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.window;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.map.Map;
@@ -77,7 +78,7 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
                     },
                     (arg, defaultValueFunc, offset, memory, ignoreNulls) -> new Decimal8LeadFunction(arg, defaultValueFunc, offset, memory, ignoreNulls, argType),
                     (partitionByRecord, arg, name, ignoreNulls) -> new LagDecimalFunctionFactory.Decimal8LeadLagValueCurrentRow(partitionByRecord, arg, name, ignoreNulls, argType),
-                    (map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset) -> new Decimal8LeadOverPartitionFunction(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, argType)
+                    (map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, partitionByKeyTypes, liveView) -> new Decimal8LeadOverPartitionFunction(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, argType, partitionByKeyTypes, liveView)
             );
             case ColumnType.DECIMAL16 -> LeadLagWindowFunctionFactoryHelper.newInstance(
                     position, args, argPositions, configuration, sqlExecutionContext,
@@ -88,7 +89,7 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
                     },
                     (arg, defaultValueFunc, offset, memory, ignoreNulls) -> new Decimal16LeadFunction(arg, defaultValueFunc, offset, memory, ignoreNulls, argType),
                     (partitionByRecord, arg, name, ignoreNulls) -> new LagDecimalFunctionFactory.Decimal16LeadLagValueCurrentRow(partitionByRecord, arg, name, ignoreNulls, argType),
-                    (map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset) -> new Decimal16LeadOverPartitionFunction(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, argType)
+                    (map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, partitionByKeyTypes, liveView) -> new Decimal16LeadOverPartitionFunction(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, argType, partitionByKeyTypes, liveView)
             );
             case ColumnType.DECIMAL32 -> LeadLagWindowFunctionFactoryHelper.newInstance(
                     position, args, argPositions, configuration, sqlExecutionContext,
@@ -99,7 +100,7 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
                     },
                     (arg, defaultValueFunc, offset, memory, ignoreNulls) -> new Decimal32LeadFunction(arg, defaultValueFunc, offset, memory, ignoreNulls, argType),
                     (partitionByRecord, arg, name, ignoreNulls) -> new LagDecimalFunctionFactory.Decimal32LeadLagValueCurrentRow(partitionByRecord, arg, name, ignoreNulls, argType),
-                    (map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset) -> new Decimal32LeadOverPartitionFunction(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, argType)
+                    (map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, partitionByKeyTypes, liveView) -> new Decimal32LeadOverPartitionFunction(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, argType, partitionByKeyTypes, liveView)
             );
             case ColumnType.DECIMAL64 -> LeadLagWindowFunctionFactoryHelper.newInstance(
                     position, args, argPositions, configuration, sqlExecutionContext,
@@ -110,7 +111,7 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
                     },
                     (arg, defaultValueFunc, offset, memory, ignoreNulls) -> new Decimal64LeadFunction(arg, defaultValueFunc, offset, memory, ignoreNulls, argType),
                     (partitionByRecord, arg, name, ignoreNulls) -> new LagDecimalFunctionFactory.Decimal64LeadLagValueCurrentRow(partitionByRecord, arg, name, ignoreNulls, argType),
-                    (map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset) -> new Decimal64LeadOverPartitionFunction(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, argType)
+                    (map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, partitionByKeyTypes, liveView) -> new Decimal64LeadOverPartitionFunction(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, argType, partitionByKeyTypes, liveView)
             );
             case ColumnType.DECIMAL128 -> LeadLagWindowFunctionFactoryHelper.newInstance(
                     position, args, argPositions, configuration, sqlExecutionContext,
@@ -121,7 +122,7 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
                     },
                     (arg, defaultValueFunc, offset, memory, ignoreNulls) -> new Decimal128LeadFunction(arg, defaultValueFunc, offset, memory, ignoreNulls, argType),
                     (partitionByRecord, arg, name, ignoreNulls) -> new LagDecimalFunctionFactory.Decimal128LeadLagValueCurrentRow(partitionByRecord, arg, name, ignoreNulls, argType),
-                    (map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset) -> new Decimal128LeadOverPartitionFunction(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, argType)
+                    (map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, partitionByKeyTypes, liveView) -> new Decimal128LeadOverPartitionFunction(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, argType, partitionByKeyTypes, liveView)
             );
             case ColumnType.DECIMAL256 -> LeadLagWindowFunctionFactoryHelper.newInstance(
                     position, args, argPositions, configuration, sqlExecutionContext,
@@ -132,7 +133,7 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
                     },
                     (arg, defaultValueFunc, offset, memory, ignoreNulls) -> new Decimal256LeadFunction(arg, defaultValueFunc, offset, memory, ignoreNulls, argType),
                     (partitionByRecord, arg, name, ignoreNulls) -> new LagDecimalFunctionFactory.Decimal256LeadLagValueCurrentRow(partitionByRecord, arg, name, ignoreNulls, argType),
-                    (map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset) -> new Decimal256LeadOverPartitionFunction(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, argType)
+                    (map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, partitionByKeyTypes, liveView) -> new Decimal256LeadOverPartitionFunction(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, argType, partitionByKeyTypes, liveView)
             );
             default ->
                     throw SqlException.$(argPositions.getQuick(0), "lead is not yet implemented for ").put(ColumnType.nameOf(tag));
@@ -203,7 +204,9 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
                                                    boolean ignoreNulls,
                                                    Function defaultValue,
                                                    long offset,
-                                                   int type) {
+                                                   int type,
+                                                   @SuppressWarnings("unused") ColumnTypes partitionByKeyTypes,
+                                                   @SuppressWarnings("unused") boolean liveView) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.memory = memory;
             this.ignoreNulls = ignoreNulls;
@@ -371,7 +374,9 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
                                                   boolean ignoreNulls,
                                                   Function defaultValue,
                                                   long offset,
-                                                  int type) {
+                                                  int type,
+                                                  @SuppressWarnings("unused") ColumnTypes partitionByKeyTypes,
+                                                  @SuppressWarnings("unused") boolean liveView) {
             super(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset);
             this.type = type;
         }
@@ -466,7 +471,9 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
                                                    boolean ignoreNulls,
                                                    Function defaultValue,
                                                    long offset,
-                                                   int type) {
+                                                   int type,
+                                                   @SuppressWarnings("unused") ColumnTypes partitionByKeyTypes,
+                                                   @SuppressWarnings("unused") boolean liveView) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.memory = memory;
             this.ignoreNulls = ignoreNulls;
@@ -636,7 +643,9 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
                                                   boolean ignoreNulls,
                                                   Function defaultValue,
                                                   long offset,
-                                                  int type) {
+                                                  int type,
+                                                  @SuppressWarnings("unused") ColumnTypes partitionByKeyTypes,
+                                                  @SuppressWarnings("unused") boolean liveView) {
             super(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset);
             this.type = type;
         }
@@ -714,7 +723,9 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
                                                   boolean ignoreNulls,
                                                   Function defaultValue,
                                                   long offset,
-                                                  int type) {
+                                                  int type,
+                                                  @SuppressWarnings("unused") ColumnTypes partitionByKeyTypes,
+                                                  @SuppressWarnings("unused") boolean liveView) {
             super(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset);
             this.type = type;
         }
@@ -792,7 +803,9 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
                                                  boolean ignoreNulls,
                                                  Function defaultValue,
                                                  long offset,
-                                                 int type) {
+                                                 int type,
+                                                 @SuppressWarnings("unused") ColumnTypes partitionByKeyTypes,
+                                                 @SuppressWarnings("unused") boolean liveView) {
             super(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset);
             this.type = type;
         }

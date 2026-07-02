@@ -259,6 +259,10 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         return size(header);
     }
 
+    public static int getSingleMemValueByteCount(@Nullable Utf8Sequence value) {
+        return value != null ? Integer.BYTES + value.size() : Integer.BYTES;
+    }
+
     /**
      * Address of a non-null {@code VARCHAR_SLICE} (Parquet) value's UTF-8 bytes: a
      * direct pointer into the decompressed page/dict buffer. {@code auxEntry} is
@@ -305,10 +309,6 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
             return TableUtils.NULL_LEN;
         }
         return header >>> 4;
-    }
-
-    public static int getSingleMemValueByteCount(@Nullable Utf8Sequence value) {
-        return value != null ? Integer.BYTES + value.size() : Integer.BYTES;
     }
 
     /**
@@ -535,6 +535,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         return 0;
     }
 
+    @Override
     public long getDataVectorOffset(long auxMemAddr, long row) {
         long auxEntry = auxMemAddr + VARCHAR_AUX_WIDTH_BYTES * row;
         assert Unsafe.getInt(auxEntry) != 0;

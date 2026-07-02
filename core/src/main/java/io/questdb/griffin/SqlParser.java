@@ -27,18 +27,22 @@ package io.questdb.griffin;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.IndexType;
+import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.griffin.engine.functions.json.JsonExtractTypedFunctionFactory;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
+import io.questdb.griffin.engine.ops.CreateLiveViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilderImpl;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
@@ -73,6 +77,7 @@ import io.questdb.std.LowerCaseAsciiCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
@@ -80,7 +85,9 @@ import io.questdb.std.ObjectPool;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateLocaleFactory;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.TimeZoneRules;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -114,6 +121,7 @@ public class SqlParser {
     private final ObjectPool<CompileViewModel> compileViewModelPool;
     private final CairoConfiguration configuration;
     private final ObjectPool<ExportModel> copyModelPool;
+    private final CreateLiveViewOperationBuilder createLiveViewOperationBuilder = new CreateLiveViewOperationBuilder();
     private final CreateMatViewOperationBuilderImpl createMatViewOperationBuilder = new CreateMatViewOperationBuilderImpl();
     private final ObjectPool<CreateTableColumnModel> createTableColumnModelPool;
     private final CreateTableOperationBuilderImpl createTableOperationBuilder = createMatViewOperationBuilder.getCreateTableOperationBuilder();
@@ -1259,6 +1267,9 @@ public class SqlParser {
         if (isViewKeyword(tok)) {
             return parseCreateView(lexer, executionContext, sqlParserCallback);
         }
+        if (isLiveKeyword(tok)) {
+            return parseCreateLiveView(lexer, sqlParserCallback);
+        }
         if (isMaterializedKeyword(tok)) {
             if (!configuration.isMatViewEnabled()) {
                 throw SqlException.$(0, "materialized views are disabled");
@@ -1266,6 +1277,657 @@ public class SqlParser {
             return parseCreateMatView(lexer, executionContext, sqlParserCallback);
         }
         return parseCreateTable(lexer, tok, executionContext, sqlParserCallback);
+    }
+
+    private ExecutionModel parseCreateLiveView(
+            GenericLexer lexer,
+            SqlParserCallback sqlParserCallback
+    ) throws SqlException {
+        final CreateLiveViewOperationBuilder builder = createLiveViewOperationBuilder;
+        builder.clear();
+
+        expectTok(lexer, "view");
+
+        // optional IF NOT EXISTS
+        CharSequence tok = tok(lexer, "live view name");
+        if (isIfKeyword(tok)) {
+            expectTok(lexer, "not");
+            expectTok(lexer, "exists");
+            builder.setIgnoreIfExists(true);
+            tok = tok(lexer, "live view name");
+        }
+
+        // view name
+        builder.setViewName(Chars.toString(GenericLexer.unquote(tok)));
+        builder.setViewNamePosition(lexer.lastTokenPosition());
+
+        // FLUSH EVERY <duration> -- required
+        tok = tok(lexer, "'flush'");
+        if (!isFlushKeyword(tok)) {
+            throw SqlException.position(lexer.lastTokenPosition()).put("'flush every <duration>' expected");
+        }
+        expectTok(lexer, "every");
+        CharSequence flushTok = tok(lexer, "flush every duration");
+        int flushPos = lexer.lastTokenPosition();
+        long flushValue = LiveViewDefinition.parseDurationValue(flushTok, flushPos);
+        char flushUnit = LiveViewDefinition.parseDurationUnit(flushTok, flushPos);
+        long flushMicros = LiveViewDefinition.toMicros(flushValue, flushUnit);
+        if (flushValue == 0 || flushMicros < 100_000) {
+            throw SqlException.$(flushPos, "live view FLUSH EVERY must be at least 100ms");
+        }
+        builder.setFlushEveryInterval(flushValue);
+        builder.setFlushEveryIntervalUnit(flushUnit);
+
+        // Defaults: IN MEMORY = FLUSH EVERY; PARTITION BY = base table's scheme.
+        // IN MEMORY is the user-facing knob for the in-memory tier's retention
+        // window. Parsed, bounded by cairo.live.view.in.memory.max, and persisted
+        // into _lv.
+        long inMemoryValue = flushValue;
+        char inMemoryUnit = flushUnit;
+        long inMemoryMicros = flushMicros;
+        boolean inMemorySpecified = false;
+        boolean partitionBySpecified = false;
+        boolean backfillSpecified = false;
+
+        // Optional clauses: IN MEMORY <duration>, PARTITION BY <unit>, BACKFILL.
+        // Any of the three may appear, in any order, before AS, but each at most
+        // once - a repeat is rejected so a typo'd second clause does not silently
+        // overwrite the first.
+        tok = tok(lexer, "'in', 'partition', 'backfill', or 'as'");
+        while (true) {
+            if (isInKeyword(tok)) {
+                if (inMemorySpecified) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "live view IN MEMORY clause specified more than once");
+                }
+                expectTok(lexer, "memory");
+                CharSequence memTok = tok(lexer, "in memory duration");
+                int memPos = lexer.lastTokenPosition();
+                inMemoryValue = LiveViewDefinition.parseDurationValue(memTok, memPos);
+                inMemoryUnit = LiveViewDefinition.parseDurationUnit(memTok, memPos);
+                inMemoryMicros = LiveViewDefinition.toMicros(inMemoryValue, inMemoryUnit);
+                if (inMemoryMicros < flushMicros) {
+                    SqlException ex = SqlException.position(memPos)
+                            .put("live view IN MEMORY must be at least FLUSH EVERY (")
+                            .put(flushValue)
+                            .put(displayDurationUnit(flushUnit))
+                            .put(')');
+                    throw ex;
+                }
+                if (inMemoryMicros > configuration.getLiveViewInMemoryMaxMicros()) {
+                    SqlException ex = SqlException.position(memPos)
+                            .put("live view IN MEMORY must be at most cairo.live.view.in.memory.max (");
+                    appendDurationFromMicros(ex, configuration.getLiveViewInMemoryMaxMicros());
+                    ex.put(')');
+                    throw ex;
+                }
+                inMemorySpecified = true;
+                builder.setInMemoryInterval(inMemoryValue);
+                builder.setInMemoryIntervalUnit(inMemoryUnit);
+                tok = tok(lexer, "next clause or 'as'");
+            } else if (isPartitionKeyword(tok)) {
+                if (partitionBySpecified) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "live view PARTITION BY clause specified more than once");
+                }
+                expectTok(lexer, "by");
+                tok = tok(lexer, "year month week day hour");
+                int partPos = lexer.lastTokenPosition();
+                int partitionBy = PartitionBy.fromString(tok);
+                if (partitionBy < 0) {
+                    throw SqlException.$(partPos, "'HOUR', 'DAY', 'WEEK', 'MONTH' or 'YEAR' expected");
+                }
+                // The LV's on-disk tier is a WAL-backed table, and WAL tables
+                // require a partition scheme. Explicit PARTITION BY NONE would
+                // fail downstream with a confusing "WAL is only supported for
+                // partitioned tables" error; reject up front with an LV-specific
+                // message instead.
+                if (partitionBy == PartitionBy.NONE) {
+                    throw SqlException.$(partPos,
+                            "live view PARTITION BY NONE is not supported; live views must be partitioned");
+                }
+                builder.setPartitionBy(partitionBy);
+                partitionBySpecified = true;
+                tok = tok(lexer, "next clause or 'as'");
+            } else if (isBackfillKeyword(tok)) {
+                if (backfillSpecified) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "live view BACKFILL clause specified more than once");
+                }
+                builder.setBackfillRequested(true);
+                backfillSpecified = true;
+                tok = tok(lexer, "next clause or 'as'");
+            } else {
+                break;
+            }
+        }
+
+        if (!inMemorySpecified) {
+            builder.setInMemoryInterval(inMemoryValue);
+            builder.setInMemoryIntervalUnit(inMemoryUnit);
+        }
+
+        // expect AS
+        if (!isAsKeyword(tok)) {
+            throw SqlException.position(lexer.lastTokenPosition()).put("'as' expected");
+        }
+
+        // parse SELECT
+        int selectStart = lexer.getPosition();
+        tok = tok(lexer, "'(' or 'select'");
+        boolean hasParens = Chars.equals(tok, '(');
+        if (hasParens) {
+            // Skip past the opening parenthesis so the captured SELECT text stays
+            // balanced; otherwise the stored SQL keeps the leading '(' but drops
+            // the trailing ')', and recompiling it later fails with "')' expected".
+            selectStart = lexer.getPosition();
+        } else {
+            lexer.unparseLast();
+        }
+        IQueryModel queryModel = parseDml(lexer, lexer.getPosition(), sqlParserCallback);
+        if (hasParens) {
+            expectTok(lexer, ")");
+        }
+        int selectEnd = lexer.getPosition() - (hasParens ? 1 : 0);
+        builder.setSelectSql(Chars.toString(lexer.getContent(), selectStart, selectEnd));
+        builder.setSelectModel(queryModel);
+
+        // extract base table name from query model
+        IQueryModel from = queryModel.getNestedModel() != null ? queryModel.getNestedModel() : queryModel;
+        if (from.getTableName() == null) {
+            throw SqlException.$(selectStart, "live view requires a single base table in FROM clause");
+        }
+        builder.setBaseTableName(Chars.toString(from.getTableName()));
+        // Position of the base table name in the source SQL; engine-side
+        // validation rules that reject based on the base table (DEDUP keys,
+        // missing designated timestamp, live-on-live) point at this offset.
+        final ExpressionNode baseNameExpr = from.getTableNameExpr();
+        builder.setBaseTableNamePosition(baseNameExpr != null ? baseNameExpr.position : selectStart);
+
+        // Validate ORDER BY on each named window: CREATE-time validation requires
+        // the ORDER BY column to be the base table's designated timestamp,
+        // ascending. Caught at parse time so the LV never reaches the engine with a
+        // shape its WAL-row-order processing can't honor.
+        validateLiveViewWindowOrderBy(queryModel, from.getTableName());
+
+        // Validate ANCHOR usage on each named window. Inline anchor expressions
+        // attached to anonymous OVER (...) clauses inside SELECT columns are also
+        // captured by the parser but live in the SELECT-column WindowExpressions;
+        // we walk the named-window map here.
+        validateLiveViewAnchors(queryModel);
+
+        // Defense-in-depth lead() reject. The factory-side check inside
+        // CairoEngine only fires when the planner picks a window factory
+        // that exposes lead - a future planner path that bypasses both
+        // CachedWindowRecordCursorFactory and WindowRecordCursorFactory
+        // would silently accept lead-only LVs. Surface it at the parser
+        // level too.
+        rejectLeadInSelect(queryModel);
+
+        // Capture the (at most one) anchored named WINDOW for persistence in _lv.
+        // The runtime side reads this back to compile the anchor expression and
+        // build the LiveViewWindow without re-parsing the SELECT.
+        builder.setAnchorSpec(captureAnchoredWindow(queryModel));
+
+        return builder;
+    }
+
+    private LiveViewDefinition.LvAnchorSpec captureAnchoredWindow(IQueryModel queryModel) throws SqlException {
+        LowerCaseCharSequenceObjHashMap<WindowExpression> named = queryModel.getNamedWindows();
+        ObjList<CharSequence> keys = named.keys();
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            CharSequence keyCs = keys.getQuick(i);
+            WindowExpression w = named.get(keyCs);
+            if (w == null || w.getAnchorKind() == WindowExpression.ANCHOR_KIND_NONE) {
+                continue;
+            }
+            // Per validateLiveViewAnchors, at most one anchored window survives.
+            String windowName = Chars.toString(keyCs);
+            byte anchorKind = w.getAnchorKind();
+            String anchorExpressionSql = null;
+            if (anchorKind == WindowExpression.ANCHOR_KIND_EXPRESSION) {
+                ExpressionNode expr = w.getAnchorExpression();
+                if (expr != null) {
+                    StringSink anchorSink = Misc.getThreadLocalSink();
+                    expr.toSink(anchorSink);
+                    anchorExpressionSql = anchorSink.toString();
+                }
+            } else if (anchorKind == WindowExpression.ANCHOR_KIND_DAILY) {
+                // Desugar ANCHOR DAILY 'HH:MM' [tz] into the equivalent
+                // timestamp_floor / timestamp_floor_utc expression so the runtime
+                // path that compiles ANCHOR EXPRESSION can drive resetPartition
+                // dispatch identically. The original DAILY fields stay persisted
+                // for round-tripping in SHOW CREATE LIVE VIEW.
+                anchorExpressionSql = desugarDailyAnchor(w);
+            }
+            ObjList<String> partitionColumnNames = new ObjList<>(w.getPartitionBy().size());
+            for (int j = 0, k = w.getPartitionBy().size(); j < k; j++) {
+                ExpressionNode pNode = w.getPartitionBy().getQuick(j);
+                if (pNode.type != ExpressionNode.LITERAL) {
+                    throw SqlException.$(pNode.position,
+                            "live view ANCHOR currently requires PARTITION BY to reference base columns directly");
+                }
+                partitionColumnNames.add(Chars.toString(pNode.token));
+            }
+            return new LiveViewDefinition.LvAnchorSpec(
+                    windowName,
+                    anchorKind,
+                    anchorExpressionSql,
+                    w.getAnchorDailyTimeUs(),
+                    w.getAnchorDailyTimeZone() == null ? null : Chars.toString(w.getAnchorDailyTimeZone()),
+                    w.getAnchorPosition(),
+                    partitionColumnNames
+            );
+        }
+        return null;
+    }
+
+    /**
+     * Builds the desugared {@code timestamp_floor} / {@code timestamp_floor_utc}
+     * expression text equivalent to {@code ANCHOR DAILY 'HH:MM' [tz]}. The runtime
+     * side feeds this through the same {@code ensureAnchorFunction} path that
+     * {@code ANCHOR EXPRESSION} uses, so the actual reset dispatch is identical.
+     * <ul>
+     *     <li>UTC midnight (no tz or {@code 'UTC'}): {@code timestamp_floor('1d', <ts>)} — a UTC tz at zero offset adds no information, so the two forms collapse into the same desugared expression.</li>
+     *     <li>No-tz non-midnight: {@code timestamp_floor('1d', <ts>, '1970-01-01THH:MM:00.000000Z'::timestamp)}.</li>
+     *     <li>Tz-aware: {@code timestamp_floor_utc('1d', <ts>, '1970-01-01THH:MM:00.000000Z'::timestamp, '+00:00', '<tz>')}
+     *     using the UTC-encoded variant so DST fall-back keeps bucket distinctness.</li>
+     * </ul>
+     */
+    private static String desugarDailyAnchor(WindowExpression w) throws SqlException {
+        ObjList<ExpressionNode> orderBy = w.getOrderBy();
+        if (orderBy.size() == 0) {
+            throw SqlException.$(w.getAnchorPosition(), "ANCHOR DAILY requires ORDER BY <timestamp column>");
+        }
+        ExpressionNode tsNode = orderBy.getQuick(0);
+        if (tsNode.type != ExpressionNode.LITERAL) {
+            throw SqlException.$(tsNode.position, "ANCHOR DAILY requires ORDER BY a base timestamp column");
+        }
+        long timeUs = w.getAnchorDailyTimeUs();
+        CharSequence tz = w.getAnchorDailyTimeZone();
+        // A 'UTC' tz at zero offset is a no-op: tz='UTC' and tz=null produce
+        // the same buckets and the same desugared form. Collapse the UTC
+        // case into the no-tz branch so the persisted anchor expression
+        // skips the unnecessary timestamp_floor_utc call on the hot path.
+        final boolean tzIsUtc = tz != null && Chars.equalsIgnoreCase("UTC", tz);
+        StringSink sink = Misc.getThreadLocalSink();
+        if ((tz == null || tzIsUtc) && timeUs == 0) {
+            sink.put("timestamp_floor('1d', ").put(tsNode.token).put(')');
+        } else if (tz == null) {
+            sink.put("timestamp_floor('1d', ").put(tsNode.token).put(", '1970-01-01T");
+            putHHMM(sink, timeUs);
+            sink.put(":00.000000Z'::timestamp)");
+        } else {
+            sink.put("timestamp_floor_utc('1d', ").put(tsNode.token).put(", '1970-01-01T");
+            putHHMM(sink, timeUs);
+            sink.put(":00.000000Z'::timestamp, '+00:00', '").put(tz).put("')");
+        }
+        return sink.toString();
+    }
+
+    /**
+     * Renders a duration in microseconds onto an asserted-wording error message,
+     * picking the largest unit that divides cleanly. Mirrors the user-facing
+     * grammar units accepted by {@link LiveViewDefinition#parseDurationUnit} so
+     * the rendered string can be copy-pasted back into a CREATE.
+     */
+    private static void appendDurationFromMicros(SqlException ex, long micros) {
+        if (micros > 0 && micros % Micros.HOUR_MICROS == 0) {
+            ex.put(micros / Micros.HOUR_MICROS).put('h');
+        } else if (micros > 0 && micros % Micros.MINUTE_MICROS == 0) {
+            ex.put(micros / Micros.MINUTE_MICROS).put('m');
+        } else if (micros > 0 && micros % Micros.SECOND_MICROS == 0) {
+            ex.put(micros / Micros.SECOND_MICROS).put('s');
+        } else if (micros > 0 && micros % Micros.MILLI_MICROS == 0) {
+            ex.put(micros / Micros.MILLI_MICROS).put("ms");
+        } else {
+            ex.put(micros).put("us");
+        }
+    }
+
+    /**
+     * Maps the internal duration-unit char ({@code 's'}, {@code 'm'}, {@code 'h'},
+     * {@code 'd'}, {@code 'T'} for milliseconds) back to the grammar string a user
+     * would type. Used to render values in CREATE-time error messages.
+     */
+    private static String displayDurationUnit(char unit) {
+        return switch (unit) {
+            case 's' -> "s";
+            case 'm' -> "m";
+            case 'h' -> "h";
+            case 'd' -> "d";
+            case 'T' -> "ms";
+            default -> String.valueOf(unit);
+        };
+    }
+
+    private static int positionOfWindow(WindowExpression w, ExpressionNode fallback) {
+        if (w.getAnchorPosition() > 0) {
+            return w.getAnchorPosition();
+        }
+        if (w.getPartitionBy().size() > 0) {
+            return w.getPartitionBy().getQuick(0).position;
+        }
+        if (w.getOrderBy().size() > 0) {
+            return w.getOrderBy().getQuick(0).position;
+        }
+        return fallback != null ? fallback.position : 0;
+    }
+
+    private static void putHHMM(StringSink sink, long timeUs) {
+        long totalSeconds = timeUs / 1_000_000;
+        long hours = totalSeconds / 3600;
+        long minutes = (totalSeconds % 3600) / 60;
+        if (hours < 10) {
+            sink.put('0');
+        }
+        sink.put(hours);
+        sink.put(':');
+        if (minutes < 10) {
+            sink.put('0');
+        }
+        sink.put(minutes);
+    }
+
+    /**
+     * Validates the ORDER BY clause of every named WINDOW in a live-view SELECT
+     * against the requirement that windows order rows by the base table's
+     * designated timestamp ascending. The base table is resolved via
+     * {@link CairoEngine#getTableTokenIfExists(CharSequence)}; if the base can't
+     * be resolved (e.g. concurrent DROP, mistyped name) this validator skips the
+     * column-name match so the engine surfaces the primary "base does not exist"
+     * error rather than a misleading ORDER-BY message.
+     */
+    private void validateLiveViewWindowOrderBy(IQueryModel queryModel, CharSequence baseTableName) throws SqlException {
+        LowerCaseCharSequenceObjHashMap<WindowExpression> named = queryModel.getNamedWindows();
+        if (named.size() == 0) {
+            return;
+        }
+        String designatedTsName = null;
+        if (baseTableName != null) {
+            final TableToken baseToken = cairoEngine.getTableTokenIfExists(baseTableName);
+            if (baseToken != null) {
+                try (MetadataCacheReader metaRO = cairoEngine.getMetadataCache().readLock()) {
+                    final CairoTable baseTable = metaRO.getTable(baseToken);
+                    if (baseTable != null) {
+                        CharSequence n = baseTable.getTimestampName();
+                        if (n != null) {
+                            designatedTsName = Chars.toString(n);
+                        }
+                    }
+                }
+            }
+        }
+        if (designatedTsName == null) {
+            return;
+        }
+
+        ObjList<CharSequence> keys = named.keys();
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            WindowExpression w = named.get(keys.getQuick(i));
+            if (w == null) {
+                continue;
+            }
+            ObjList<ExpressionNode> orderBy = w.getOrderBy();
+            IntList orderDir = w.getOrderByDirection();
+            int fallbackPos = w.getAnchorPosition();
+            if (fallbackPos <= 0 && w.getPartitionBy().size() > 0) {
+                fallbackPos = w.getPartitionBy().getQuick(0).position;
+            }
+            if (orderBy.size() == 0) {
+                throw SqlException.$(fallbackPos,
+                        "live view named WINDOW must ORDER BY ").put(designatedTsName);
+            }
+            if (orderBy.size() > 1) {
+                throw SqlException.$(orderBy.getQuick(1).position,
+                                "live view named WINDOW must ORDER BY a single column (")
+                        .put(designatedTsName).put(')');
+            }
+            ExpressionNode tsNode = orderBy.getQuick(0);
+            if (tsNode.type != ExpressionNode.LITERAL
+                    || !Chars.equalsIgnoreCase(tsNode.token, designatedTsName)) {
+                throw SqlException.$(tsNode.position,
+                        "live view named WINDOW must ORDER BY ").put(designatedTsName);
+            }
+            if (orderDir.size() > 0
+                    && orderDir.getQuick(0) == IQueryModel.ORDER_DIRECTION_DESCENDING) {
+                throw SqlException.$(tsNode.position,
+                        "live view named WINDOW must ORDER BY ").put(designatedTsName).put(" ASC");
+            }
+        }
+    }
+
+    private static void validateLiveViewAnchors(IQueryModel queryModel) throws SqlException {
+        LowerCaseCharSequenceObjHashMap<WindowExpression> named = queryModel.getNamedWindows();
+        ObjList<CharSequence> keys = named.keys();
+        int anchoredCount = 0;
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            WindowExpression w = named.get(keys.getQuick(i));
+            if (w == null) {
+                continue;
+            }
+            if (w.getAnchorKind() == WindowExpression.ANCHOR_KIND_NONE) {
+                // A bare unbounded window (default RANGE UNBOUNDED PRECEDING
+                // ... CURRENT ROW frame with PARTITION BY) without ANCHOR
+                // grows the partition count without bound. Bounded frames
+                // remain allowed without ANCHOR; so does a single-partition
+                // window (OVER ()).
+                if (!w.isNonDefaultFrame() && w.getPartitionBy().size() > 0) {
+                    throw SqlException.$(positionOfWindow(w, null),
+                            "live view unbounded window must have an ANCHOR clause; bare unbounded windows are not supported");
+                }
+                continue;
+            }
+            anchoredCount++;
+            if (anchoredCount > 1) {
+                // The LiveViewWindow runtime supports a single anchored WINDOW per
+                // LV. Multi-window LVs with different anchors would need per-WINDOW
+                // dispatch of resetPartition, which is not implemented yet.
+                throw SqlException.$(w.getAnchorPosition(),
+                        "live view supports at most one anchored WINDOW in V1");
+            }
+            if (w.getPartitionBy().size() == 0) {
+                // resetPartition is keyed on the partition; the LiveViewWindow
+                // anchor map cannot be built without at least one partition
+                // column, so the per-partition reset would never dispatch and
+                // window state would silently never reset at anchor boundaries.
+                throw SqlException.$(w.getAnchorPosition(),
+                        "live view anchored WINDOW requires PARTITION BY");
+            }
+            if (w.isNonDefaultFrame()) {
+                throw SqlException.$(w.getAnchorPosition(),
+                        "ANCHOR is incompatible with bounded frames; use a separate WINDOW without ANCHOR for ROWS / RANGE windows");
+            }
+            if (w.getAnchorKind() == WindowExpression.ANCHOR_KIND_EXPRESSION) {
+                ExpressionNode expr = w.getAnchorExpression();
+                if (expr != null && expr.type == ExpressionNode.CONSTANT) {
+                    throw SqlException.$(expr.position,
+                            "ANCHOR EXPRESSION must not be a constant");
+                }
+                walkAnchorExpressionForPurity(expr);
+            }
+        }
+
+        // Inline OVER (...) clauses attached to SELECT-column function calls.
+        // A column may either be an inline WindowExpression itself (e.g. SELECT
+        // sum(price) OVER (...) FROM t) or carry a nested inline OVER inside an
+        // arithmetic / function tree (e.g. sum(price) OVER (...) + 1). Walk both.
+        // Two checks fire here: bare-unbounded reject (PARTITION-BY-keyed window
+        // without ANCHOR), and inline-ANCHOR reject. The runtime AnchorSpec is
+        // captured only from named WINDOW clauses, so an inline anchor parses
+        // but never wires through to the reset path - reject up front and
+        // point the user at the named-window form.
+        ObjList<QueryColumn> columns = queryModel.getBottomUpColumns();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            QueryColumn qc = columns.getQuick(i);
+            if (qc.isWindowExpression()) {
+                validateInlineWindow((WindowExpression) qc, qc.getAst());
+            }
+            walkInlineWindows(qc.getAst());
+        }
+    }
+
+    /**
+     * Walks the SELECT columns and inline OVER trees looking for any
+     * {@code lead(...)} function call. The factory-side reject inside
+     * {@code CairoEngine} only fires when the planner picks a window factory
+     * exposing lead; a future planner change could bypass both factories for
+     * a lead-only query. This walk is the parser-level safety net.
+     */
+    private static void rejectLeadInSelect(IQueryModel queryModel) throws SqlException {
+        ObjList<QueryColumn> columns = queryModel.getBottomUpColumns();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            walkForLeadCall(columns.getQuick(i).getAst());
+        }
+    }
+
+    private static void validateInlineWindow(WindowExpression w, ExpressionNode fallback) throws SqlException {
+        // An OVER <named-window> reference inherits all checks from the named
+        // definition (already validated upstream in this method).
+        if (w.isNamedWindowReference()) {
+            return;
+        }
+        // Inline OVER (... ANCHOR ...) parses but the runtime AnchorSpec is
+        // captured only from named WINDOW clauses, so an inline anchor would
+        // silently never reset. Reject up front and direct the user at the
+        // named-window form.
+        if (w.getAnchorKind() != WindowExpression.ANCHOR_KIND_NONE) {
+            throw SqlException.$(positionOfWindow(w, fallback),
+                    "ANCHOR is only supported on named WINDOW clauses; declare the window with WINDOW <name> AS (...) and reference it from the SELECT");
+        }
+        if (w.isNonDefaultFrame()) {
+            return;
+        }
+        // OVER () with no PARTITION BY has a single partition with O(1) state.
+        // Only PARTITION-BY-keyed bare unbounded windows have unbounded partition
+        // count growth and require an ANCHOR clause.
+        if (w.getPartitionBy().size() == 0) {
+            return;
+        }
+        throw SqlException.$(positionOfWindow(w, fallback),
+                "live view unbounded window must have an ANCHOR clause; bare unbounded windows are not supported");
+    }
+
+    /**
+     * Recursive AST walk implementing the parser-side half of the anchor-expression
+     * validator. Rejects subqueries, bind variables, and function calls that the planner
+     * would later resolve to runtime-state ({@code now}, {@code current_timestamp},
+     * {@code systimestamp}) or random ({@code rnd_*}) functions. The function-property
+     * checks (constant-fold, isGroupBy, isRandom, isRuntimeConstant, isNonDeterministic)
+     * are Pass 2; they need the compiled {@code io.questdb.cairo.sql.Function} tree
+     * and live in {@code CairoEngine.validateAnchorPurity} (called at CREATE time
+     * after the SELECT factory has been compiled).
+     */
+    private static void walkAnchorExpressionForPurity(ExpressionNode node) throws SqlException {
+        if (node == null) {
+            return;
+        }
+        if (node.type == ExpressionNode.QUERY) {
+            throw SqlException.$(node.position, "ANCHOR EXPRESSION must not contain subqueries");
+        }
+        if (node.type == ExpressionNode.BIND_VARIABLE) {
+            throw SqlException.$(node.position, "ANCHOR EXPRESSION must not reference bind variables");
+        }
+        if (node.type == ExpressionNode.FUNCTION) {
+            CharSequence token = node.token;
+            if (token != null) {
+                if (Chars.startsWithLowerCase(token, "rnd_")) {
+                    throw SqlException.$(node.position,
+                            "ANCHOR EXPRESSION must be deterministic; ").put(token).put("() is not allowed");
+                }
+                if (SqlKeywords.isNowKeyword(token)
+                        || isCurrentTimestampToken(token)
+                        || isSystimestampToken(token)) {
+                    throw SqlException.$(node.position,
+                            "ANCHOR EXPRESSION must be deterministic; ").put(token).put("() is not allowed");
+                }
+            }
+        }
+        if (node.lhs != null) {
+            walkAnchorExpressionForPurity(node.lhs);
+        }
+        if (node.rhs != null) {
+            walkAnchorExpressionForPurity(node.rhs);
+        }
+        if (node.args != null) {
+            for (int i = 0, n = node.args.size(); i < n; i++) {
+                walkAnchorExpressionForPurity(node.args.getQuick(i));
+            }
+        }
+    }
+
+    /**
+     * Recursive AST walk for the parser-side lead() reject. Any function
+     * node whose token equals "lead" is rejected at its position with the
+     * same wording the factory-side reject in CairoEngine uses.
+     */
+    private static void walkForLeadCall(ExpressionNode node) throws SqlException {
+        if (node == null) {
+            return;
+        }
+        if (node.type == ExpressionNode.FUNCTION && node.token != null
+                && Chars.equalsLowerCaseAscii(node.token, "lead")) {
+            throw SqlException.$(node.position, "lead() is not supported in live views; use lag() for lookback");
+        }
+        if (node.paramCount < 3) {
+            walkForLeadCall(node.lhs);
+            walkForLeadCall(node.rhs);
+        } else if (node.args != null) {
+            for (int i = 0, n = node.paramCount; i < n; i++) {
+                walkForLeadCall(node.args.getQuick(i));
+            }
+        }
+    }
+
+    private static void walkInlineWindows(ExpressionNode node) throws SqlException {
+        if (node == null) {
+            return;
+        }
+        if (node.windowExpression != null) {
+            validateInlineWindow(node.windowExpression, node);
+        }
+        if (node.paramCount < 3) {
+            walkInlineWindows(node.lhs);
+            walkInlineWindows(node.rhs);
+        } else if (node.args != null) {
+            for (int i = 0, n = node.paramCount; i < n; i++) {
+                walkInlineWindows(node.args.getQuick(i));
+            }
+        }
+    }
+
+    private static boolean isCurrentTimestampToken(CharSequence token) {
+        return token.length() == 17
+                && (token.charAt(0) | 32) == 'c'
+                && (token.charAt(1) | 32) == 'u'
+                && (token.charAt(2) | 32) == 'r'
+                && (token.charAt(3) | 32) == 'r'
+                && (token.charAt(4) | 32) == 'e'
+                && (token.charAt(5) | 32) == 'n'
+                && (token.charAt(6) | 32) == 't'
+                && token.charAt(7) == '_'
+                && (token.charAt(8) | 32) == 't'
+                && (token.charAt(9) | 32) == 'i'
+                && (token.charAt(10) | 32) == 'm'
+                && (token.charAt(11) | 32) == 'e'
+                && (token.charAt(12) | 32) == 's'
+                && (token.charAt(13) | 32) == 't'
+                && (token.charAt(14) | 32) == 'a'
+                && (token.charAt(15) | 32) == 'm'
+                && (token.charAt(16) | 32) == 'p';
+    }
+
+    private static boolean isSystimestampToken(CharSequence token) {
+        return token.length() == 12
+                && (token.charAt(0) | 32) == 's'
+                && (token.charAt(1) | 32) == 'y'
+                && (token.charAt(2) | 32) == 's'
+                && (token.charAt(3) | 32) == 't'
+                && (token.charAt(4) | 32) == 'i'
+                && (token.charAt(5) | 32) == 'm'
+                && (token.charAt(6) | 32) == 'e'
+                && (token.charAt(7) | 32) == 's'
+                && (token.charAt(8) | 32) == 't'
+                && (token.charAt(9) | 32) == 'a'
+                && (token.charAt(10) | 32) == 'm'
+                && (token.charAt(11) | 32) == 'p';
     }
 
     private ExecutionModel parseCreateMatView(
@@ -2595,11 +3257,15 @@ public class SqlParser {
                         expectTok(lexer, "view");
                         parseTableName(lexer, model);
                         showKind = IQueryModel.SHOW_CREATE_MAT_VIEW;
+                    } else if (tok != null && isLiveKeyword(tok)) {
+                        expectTok(lexer, "view");
+                        parseTableName(lexer, model);
+                        showKind = IQueryModel.SHOW_CREATE_LIVE_VIEW;
                     } else if (tok != null && isViewKeyword(tok)) {
                         parseTableName(lexer, model);
                         showKind = IQueryModel.SHOW_CREATE_VIEW;
                     } else {
-                        throw SqlException.position(lexer.lastTokenPosition()).put("expected 'TABLE' or 'VIEW' or 'MATERIALIZED VIEW'");
+                        throw SqlException.position(lexer.lastTokenPosition()).put("expected 'TABLE' or 'VIEW' or 'MATERIALIZED VIEW' or 'LIVE VIEW'");
                     }
                 } else {
                     showKind = sqlParserCallback.parseShowSql(lexer, model, tok, expressionNodePool);

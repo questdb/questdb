@@ -110,6 +110,7 @@ public class WalUtils {
     public static final int WAL_FORMAT_OFFSET_32 = Integer.BYTES;
     public static final short WAL_FORMAT_VERSION = 0;
     public static final short WALE_FORMAT_VERSION = WAL_FORMAT_VERSION;
+    public static final short WALE_LIVE_VIEW_FORMAT_VERSION = WALE_FORMAT_VERSION + 3;
     public static final short WALE_MAT_VIEW_FORMAT_VERSION = WALE_FORMAT_VERSION + 1;
     public static final short WALE_VIEW_FORMAT_VERSION = WALE_MAT_VIEW_FORMAT_VERSION + 1;
     public static final String WAL_INDEX_FILE_NAME = "_wal_index.d";
