@@ -6318,6 +6318,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 return -1L;
             }
             long keyFileSize = ff.length(keyFile);
+            if (keyFileSize < 0) {
+                // stat failed on a file that exists() just confirmed -- a transient
+                // IO error, not an absent chain. Treating this as "no chain" would
+                // hard-link the raw .pk (chain head intact) while skipping the live
+                // .pv link below; the purge that follows the rename then removes the
+                // old-name .pv -- the only copy of the sealed values -- and every
+                // later read of the chain head fails with "file does not exist".
+                // Fail the operation instead so the writer distresses and the
+                // caller can retry against consistent on-disk state.
+                throw CairoException.critical(ff.errno())
+                        .put("could not read posting index key file size [file=").put(keyFile).put(']');
+            }
             if (keyFileSize < PostingIndexUtils.KEY_FILE_RESERVED) {
                 return -1L;
             }
