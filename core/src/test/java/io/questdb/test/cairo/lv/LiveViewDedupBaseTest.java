@@ -283,11 +283,10 @@ public class LiveViewDedupBaseTest extends AbstractCairoTest {
         // window state from a checkpoint whose anchor map is keyed by the PARTITION BY
         // columns. A key type the snapshot codec cannot persist (here UUID) must be
         // rejected at CREATE rather than pass and then serve wrong results at the first
-        // replay. The reject is enforced by the per-function supportsSnapshot() check
-        // (which folds in LiveViewSnapshotKeyCodec.isAllTypesSupported over the same
-        // partition keys and runs for every view); the createLiveView anchor-codec guard
-        // is a dedup-scoped backstop currently shadowed by that check. This test pins the
-        // observable contract: such a view does not silently create over a dedup base.
+        // replay. The reject is enforced by the per-function supportsSnapshot() check,
+        // which folds in LiveViewSnapshotKeyCodec.isAllTypesSupported over the same
+        // partition keys and runs for every view. This test pins the observable contract:
+        // such a view does not silently create over a dedup base.
         assertMemoryLeak(() -> {
             // sym drives the dedup keys; u (UUID) is the unsupported anchor partition key.
             execute("CREATE TABLE base (sym SYMBOL, u UUID, val DOUBLE, ts TIMESTAMP) " +
