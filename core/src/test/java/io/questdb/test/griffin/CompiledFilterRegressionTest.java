@@ -1168,6 +1168,38 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInOperatorOverflowNullElementForcesScalar() throws Exception {
+        // C3: a value-correct SX_I64 escaping to the vectorized (AVX2) path. A NULL (or overflow-INT
+        // constant) IN element widens a narrow-int arithmetic key via inKeyWidthOverride == I8, which
+        // emits SX_I64 -- but NULL does not flip needsNarrowI64Widening, so the predicate-exit
+        // forceScalarMode stayed false and the filter ran AVX2, which has no SX_I64 opcode (it bails
+        // with a bare return), leaving a partial value stack and wrong rows. forceScalarMode is now a
+        // hard consequence of any SX_I64 emission, so such a filter always runs the scalar backend.
+        //
+        // The table has >= 64 rows so the vectorized loop is genuinely exercised (a 1-row table runs
+        // entirely in the scalar tail and hides the bug). Row 1 overflows: a*b = 1000000*1000000
+        // wraps to INT -727379968 and widens to LONG 10^12; all other rows compute 3*3 = 9.
+        assertMemoryLeak(() -> {
+            execute("create table y as (select" +
+                    " cast(case when x = 1 then 1000000 else 3 end as int) a," +
+                    " cast(case when x = 1 then 1000000 else 3 end as int) b," +
+                    " timestamp_sequence(0, 1000000) k" +
+                    " from long_sequence(64)) timestamp(k)");
+
+            // NULL element paired with an INT constant: the key widens against NULL (matches nothing)
+            // and wraps against -727379968 (matches row 1). RED on HEAD -- AVX2 dropped the SX_I64.
+            assertJitMatchesJava("select a from y where (a*b) in (null, -727379968)", true);
+            assertJitMatchesJava("select a from y where (a*b) in (-727379968, null)", true);
+            assertJitMatchesJava("select a from y where (a*b) not in (null, -727379968)", true);
+            Assert.assertEquals(1, runQuery("select a from y where (a*b) in (null, -727379968)"));
+            Assert.assertEquals(63, runQuery("select a from y where (a*b) not in (null, -727379968)"));
+
+            // control: an all-narrow list without a NULL/widening element stays correct.
+            assertJitMatchesJava("select a from y where (a*b) in (5, -727379968)", true);
+        });
+    }
+
+    @Test
     public void testInOperatorOverflowNumericStringElementMatchesLiteral() throws Exception {
         // M1 regression: a numeric STRING/VARCHAR IN-list element against an overflowing
         // INT-arithmetic (narrow) key. isIntWidthElement wrapped the key only for
@@ -1215,6 +1247,58 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             Assert.assertEquals(1, runQuery("x where (a * b) in (sw)"));                   // wider string col widens
             Assert.assertEquals(0, runQuery("x where (a * b) not in (s)"));               // inverse
             Assert.assertEquals(1, runQuery("x where (a * b) in (7, s)"));                 // mixed var + const
+        });
+    }
+
+    @Test
+    public void testInOperatorOverflowSingleValueKeyUnderBooleanEquality() throws Exception {
+        // C2 regression (level-3 review): the SINGLE-VALUE IN form never set inKeyWidthOverride,
+        // so the key column leaves fell back to the predicate-global widening decision. A boolean
+        // equality of an IN check and a LONG comparison -- ((a*b) in (c)) = (nl > 0) -- is a single
+        // predicate, so the LONG sibling turned needsNarrowI64Widening on and the JIT computed the
+        // overflowing narrow-int key at 64 bits (10^12) where the Java InLong path wraps it to the
+        // INT element's width (-727379968). Bugfix 40 fixed this shape for '=' comparisons and
+        // Bugfix 38 for multi-value IN lists; the single-value IN sat between them. serializeIn now
+        // drives the override for the single-value form too, from its one element.
+        //
+        // Row 1 overflows: a*b wraps to INT -727379968 and widens to LONG 10^12. Row 2 wraps
+        // exactly onto INT_MIN (the INT_NULL sentinel): 65536*32768. Rows 3+ compute 3*3 = 9.
+        // The table has >= 64 rows so the shapes that stay vectorized exercise AVX2.
+        assertMemoryLeak(() -> {
+            execute("create table y as (select" +
+                    " cast(case when x = 1 then 1000000 when x = 2 then 65536 else 3 end as int) a," +
+                    " cast(case when x = 1 then 1000000 when x = 2 then 32768 else 3 end as int) b," +
+                    " cast(case when x = 1 then 1000000000000 when x = 3 then 5 else 0 end as long) nl," +
+                    " timestamp_sequence(0, 1000000) k" +
+                    " from long_sequence(64)) timestamp(k)");
+
+            // RED on HEAD: Java wraps the key against the INT element (row 1 matches the IN
+            // check), the JIT widened it (no row matched). not in / <> diverge the same way.
+            assertJitMatchesJava("select a from y where ((a*b) in (-727379968)) = (nl > 0)", true);
+            assertJitMatchesJava("select a from y where ((a*b) not in (-727379968)) = (nl > 0)", true);
+            assertJitMatchesJava("select a from y where ((a*b) in (-727379968)) <> (nl > 0)", true);
+            assertJitMatchesJava("select a from y where (nl > 0) = ((a*b) in (-727379968))", true);
+
+            // The Java (JIT-disabled) path is the oracle.
+            Assert.assertEquals(63, runQuery("select a from y where ((a*b) in (-727379968)) = (nl > 0)"));
+            Assert.assertEquals(1, runQuery("select a from y where ((a*b) not in (-727379968)) = (nl > 0)"));
+            Assert.assertEquals(1, runQuery("select a from y where ((a*b) in (-727379968)) <> (nl > 0)"));
+
+            // The override also closes the degenerate single-element NULL list: the key now widens
+            // against the NULL element on both paths, so the row-2 key wrapping onto INT_MIN no
+            // longer spuriously equals the I4 NULL sentinel on the JIT.
+            assertJitMatchesJava("select a from y where (a*b) in (null)", true);
+            Assert.assertEquals(0, runQuery("select a from y where (a*b) in (null)"));
+
+            // controls that already agreed: a LONG element widens the key on both paths; the
+            // multi-value list drives the override per element (Bugfix 38); a constant-fold key
+            // takes its width from its own comparison; separate predicates never shared the flag.
+            assertJitMatchesJava("select a from y where ((a*b) in (1000000000000)) = (nl > 0)", true);
+            assertJitMatchesJava("select a from y where ((a*b) in (5, -727379968)) = (nl > 0)", true);
+            assertJitMatchesJava("select a from y where ((1000000*1000000) in (-727379968)) = (nl > 0)", true);
+            assertJitMatchesJava("select a from y where (a*b) in (-727379968)", true);
+            assertJitMatchesJava("select a from y where (a*b) in (-727379968) and nl > 0", true);
+            assertJitMatchesJava("select a from y where (a*b) in (-727379968) or nl > 0", true);
         });
     }
 

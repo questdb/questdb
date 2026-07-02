@@ -1187,6 +1187,13 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
         if (widen) {
             putOperator(SX_I64);
+            // SX_I64 has no AVX2 implementation (avx2.h dispatches it to a bare return), so any
+            // filter that emits it must run scalar. The predicate-exit forceScalarMode computation
+            // (see serialize) catches the needsNarrowI64Widening/i64WidenLeaves triggers, but the
+            // per-element IN-key override (inKeyWidthOverride == I8, e.g. a NULL or overflow element)
+            // emits SX_I64 without flipping either flag. Tie forceScalarMode to the emission itself so
+            // a value-correct SX_I64 can never escape to the vectorized path.
+            forceScalarMode = true;
         }
     }
 
@@ -1672,17 +1679,20 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
         final ObjList<ExpressionNode> args = predicateContext.inOperationNode.args;
 
-        // A multi-value IN list keeps its operands as [elements..., key]. When the key is a
-        // NARROW-width integer arithmetic subtree (a constant fold that overflows INT, or a column
-        // product/sum that overflows at runtime), its emitted width must follow each element (I8 to
-        // widen against a LONG/TIMESTAMP element, I4 to wrap against an INT element) -- the way the
-        // Java InLong path reads the key per element (getLong vs getInt). So drive inKeyWidthOverride
+        // A multi-value IN list keeps its operands as [elements..., key]; the single-value form
+        // keeps its key / element in lhs / rhs (args empty). When the key is a NARROW-width integer
+        // arithmetic subtree (a constant fold that overflows INT, or a column product/sum that
+        // overflows at runtime), its emitted width must follow each element (I8 to widen against a
+        // LONG/TIMESTAMP/NULL element, I4 to wrap against an INT element) -- the way the Java InLong
+        // path reads the key per element (getLong vs getInt). So drive inKeyWidthOverride
         // from key-vs-element around each per-element key serialization below; descend() picks it up
-        // for a constant fold and maybeEmitI64Widening() for a column-leaf sign-extension. A
-        // genuinely-LONG key (I8) is always read at long width, and the single-value form (args
-        // empty; key/element in lhs/rhs) takes its width from the comparison mark -- neither needs
-        // the override.
-        final ExpressionNode inKey = args.size() > 0 ? args.getLast() : null;
+        // for a constant fold and maybeEmitI64Widening() for a column-leaf sign-extension. The
+        // single-value form needs the override too: without it the key column leaves fall back to
+        // the predicate-global widening decision, which a sibling LONG comparison in a boolean
+        // equality -- ((a*b) in (c)) = (nl > 0) -- turns on for the whole predicate, over-widening
+        // the key the Java filter wraps against an INT element. A genuinely-LONG key (I8) is always
+        // read at long width and never needs the override.
+        final ExpressionNode inKey = args.size() > 0 ? args.getLast() : predicateContext.inOperationNode.lhs;
         final int inKeyGenuineType = inKey != null ? genuineArithType(inKey) : UNDEFINED_CODE;
         final boolean widthSensitiveKey = inKey != null
                 && inKey.type == ExpressionNode.OPERATION
@@ -1703,8 +1713,12 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             if (args.size() < 3) {
                 // Single value: short-circuit, unrolled version of the below loop
                 // Two values: short-circuit, unrolled version of the below loop
+                if (widthSensitiveKey) {
+                    inKeyWidthOverride = inKeyElementWidth(predicateContext.inOperationNode.rhs);
+                }
                 traverseAlgo.traverse(predicateContext.inOperationNode.rhs, this);
                 traverseAlgo.traverse(predicateContext.inOperationNode.lhs, this);
+                inKeyWidthOverride = UNDEFINED_CODE;
                 putOperator(EQ);
                 putOperatorWithLabel(AND_SC, 0); // if false, jump to next_row
             } else {
@@ -1739,8 +1753,12 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
         // Non-short-circuit mode: use traditional boolean ORs
         if (args.size() < 3) {
+            if (widthSensitiveKey) {
+                inKeyWidthOverride = inKeyElementWidth(predicateContext.inOperationNode.rhs);
+            }
             traverseAlgo.traverse(predicateContext.inOperationNode.rhs, this);
             traverseAlgo.traverse(predicateContext.inOperationNode.lhs, this);
+            inKeyWidthOverride = UNDEFINED_CODE;
             putOperator(EQ);
         }
 
