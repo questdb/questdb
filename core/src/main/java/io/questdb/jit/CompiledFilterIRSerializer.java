@@ -578,6 +578,19 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         return arithExprType(node);
     }
 
+    /**
+     * Per-element IN width mirroring the Java InLongFunctionFactory
+     * isIntWidthElement rule: a narrow-int (BYTE/SHORT/INT) key wraps (I4)
+     * against a narrow-int element, widens (I8) against anything else (LONG,
+     * TIMESTAMP, NULL). serializeIn reads both the element and the key at this
+     * width, so an overflowing INT-arith element wraps with the key while a
+     * coexisting LONG element widens only its own key=element pairing.
+     */
+    private int inKeyElementWidth(ExpressionNode element) {
+        final int elementType = genuineArithType(element);
+        return (elementType == I1_TYPE || elementType == I2_TYPE || elementType == I4_TYPE) ? I4_TYPE : I8_TYPE;
+    }
+
     private static boolean isArithmeticOperation(ExpressionNode node) {
         final CharSequence token = node.token;
         if (node.paramCount < 2) {
@@ -1510,7 +1523,17 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         if (predicateContext.localTypesObserver.hasMixedSizes()) {
             serializeUntypedNumber(offset, position, token, negated, widenToI64);
         } else {
-            serializeNumber(offset, position, token, typeCode, negated);
+            // Under narrow-i64 widening the arithmetic operands are read at long width, so a
+            // numeric constant compared against them must be emitted at long width too. Otherwise
+            // an overflowing long literal (e.g. 1000000000000) truncates to int here (the observer
+            // saw only the narrow key columns) and never equals the widened key. The mixed-size
+            // path above already widens via serializeUntypedNumber; this covers the all-narrow case.
+            int numberTypeCode = typeCode;
+            if (predicateContext.needsNarrowI64Widening
+                    && (numberTypeCode == I1_TYPE || numberTypeCode == I2_TYPE || numberTypeCode == I4_TYPE)) {
+                numberTypeCode = I8_TYPE;
+            }
+            serializeNumber(offset, position, token, numberTypeCode, negated);
         }
     }
 
@@ -1597,10 +1620,12 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 // Label 2 = success (at least one IN match)
                 putOperatorWithLabel(BEGIN_SC, 2); // create success label
                 for (int i = 0, n = predicateContext.inOperationNode.args.size() - 1; i < n; i++) {
-                    traverseAlgo.traverse(args.get(i), this);
+                    // Read both the element and the key at this pairing's width so a coexisting
+                    // LONG element cannot widen an overflowing INT-arith element the key wraps.
                     if (widthSensitiveKey) {
-                        inKeyWidthOverride = foldCmpType(inKeyGenuineType, args.get(i)) == I8_TYPE ? I8_TYPE : I4_TYPE;
+                        inKeyWidthOverride = inKeyElementWidth(args.get(i));
                     }
+                    traverseAlgo.traverse(args.get(i), this);
                     traverseAlgo.traverse(args.getLast(), this);
                     inKeyWidthOverride = UNDEFINED_CODE;
                     putOperator(EQ);
@@ -1627,10 +1652,12 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
         int orCount = -1;
         for (int i = 0, n = predicateContext.inOperationNode.args.size() - 1; i < n; i++) {
-            traverseAlgo.traverse(args.get(i), this);
+            // Read both the element and the key at this pairing's width (see the short-circuit
+            // loop above and inKeyElementWidth).
             if (widthSensitiveKey) {
-                inKeyWidthOverride = foldCmpType(inKeyGenuineType, args.get(i)) == I8_TYPE ? I8_TYPE : I4_TYPE;
+                inKeyWidthOverride = inKeyElementWidth(args.get(i));
             }
+            traverseAlgo.traverse(args.get(i), this);
             traverseAlgo.traverse(args.getLast(), this);
             inKeyWidthOverride = UNDEFINED_CODE;
             putOperator(EQ);

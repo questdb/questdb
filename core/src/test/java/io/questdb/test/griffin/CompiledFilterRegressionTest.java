@@ -1167,6 +1167,44 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInOperatorOverflowWidenElementPerPairing() throws Exception {
+        // C1/C2: an overflowing INT-arithmetic IN key against a list that mixes a genuine-LONG
+        // element with an overflowing INT-arith element (C1) or a NULL element (C2). The Java
+        // InLong path reads the key per element: wrapped (getInt) against the INT-arith element,
+        // widened (getLong) against the LONG/NULL element. The JIT set the key width per element
+        // but left the element on the predicate-global widen flag, so a coexisting LONG element
+        // over-widened the INT-arith element (C1), and a wrapped key hitting INT_MIN spuriously
+        // equalled the NULL sentinel against a NULL element (C2). serializeIn now reads both the
+        // element and the key at the pairing width.
+        //
+        // row1: a*b and c*d both wrap to -727379968 (widen to 10^12); el=999 matches neither.
+        // row2: a*b = 2^31 wraps to INT_MIN (== INT_NULL); c*d = 1; el=999.
+        assertMemoryLeak(() -> {
+            execute("create table y (a int, b int, c int, d int, el long, k timestamp) timestamp(k)");
+            execute("insert into y values (1000000, 1000000, 1000000, 1000000, 999, 1)," +
+                    " (2, 1073741824, 1, 1, 999, 2)");
+
+            // C1: the INT-arith element must wrap with the key. RED on HEAD -- the key wrapped
+            // but the element widened, so the (key = c*d) pairing missed the wrapped match.
+            assertJitMatchesJava("select a from y where (a*b) in (c*d, el)", true);
+            assertJitMatchesJava("select a from y where (a*b) in (el, c*d)", true);
+            assertJitMatchesJava("select a from y where (a*b) in (5, c*d, el)", true);
+            assertJitMatchesJava("select a from y where (a*b) not in (c*d, el)", true);
+            Assert.assertEquals("a\n1000000\n", runJavaToString("select a from y where (a*b) in (c*d, el)"));
+
+            // C2: the key must widen against a NULL element, not wrap into INT_MIN and match the
+            // NULL sentinel. RED on HEAD -- row2's wrapped key (INT_MIN == INT_NULL) matched null.
+            assertJitMatchesJava("select a from y where (a*b) in (null, el)", true);
+            assertJitMatchesJava("select a from y where (a*b) in (el, null)", true);
+            assertJitMatchesJava("select a from y where (a*b) not in (null, el)", true);
+            Assert.assertEquals("a\n", runJavaToString("select a from y where (a*b) in (null, el)"));
+
+            // control: an all-narrow list wraps both key and element (no width to mix).
+            assertJitMatchesJava("select a from y where (a*b) in (c*d, 5)", true);
+        });
+    }
+
+    @Test
     public void testInOperatorOverflowWidenKeyOnLongElement() throws Exception {
         // C1 regression: an overflowing INT *arithmetic* KEY on the left of IN() against a
         // LONG element. 'in (LONG)' is 'key = LONG', which promotes to long, so the key must
@@ -1201,20 +1239,24 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
 
             // A LONG CONSTANT element widens the key too (matching '='). Both rows carry the
             // same a*b = 10^12, so the widened key matches both; a wrapped key would match
-            // neither. Const IN forms: single / two / multi. Interpreted IN must equal '='.
-            // (The JIT wraps an overflowing arithmetic key against a genuine-LONG constant --
-            // a pre-existing narrow-vs-long-const asymmetry that predates this PR and exists
-            // for '=' too -- so JIT parity is deliberately not asserted for these.)
+            // neither. The JIT now emits the long constant at long width under narrow-i64
+            // widening (serializeConstant), so it widens the key to match Java for '=', IN
+            // (single / two / multi) and relational, closing the narrow-vs-long-const asymmetry
+            // that predated this PR.
+            assertJitMatchesJava("select id from x where (a * b) = 1000000000000", true);
+            assertJitMatchesJava("select id from x where (a * b) in (1000000000000)", true);        // single
+            assertJitMatchesJava("select id from x where (a * b) in (1000000000000, 5)", true);     // two
+            assertJitMatchesJava("select id from x where (a * b) in (1000000000000, 5, 6)", true);  // multi
+            assertJitMatchesJava("select id from x where (a * b) > 999999999999", true);            // relational
+            assertJitMatchesJava("select id from x where (a * b) not in (1000000000000)", true);
             Assert.assertEquals("id\n1\n2\n", runJavaToString("select id from x where (a * b) = 1000000000000"));
-            Assert.assertEquals("id\n1\n2\n", runJavaToString("select id from x where (a * b) in (1000000000000)"));         // single
-            Assert.assertEquals("id\n1\n2\n", runJavaToString("select id from x where (a * b) in (1000000000000, 5)"));      // two
-            Assert.assertEquals("id\n1\n2\n", runJavaToString("select id from x where (a * b) in (1000000000000, 5, 6)"));   // multi
             Assert.assertEquals("id\n", runJavaToString("select id from x where (a * b) not in (1000000000000)"));
 
             // A runtime-constant (bind variable) LONG element forces InLongRuntimeConstFunction.
             bindVariableService.setLong("p", 1000000000000L);
+            assertJitMatchesJava("select id from x where (a * b) in (:p)", true);
+            assertJitMatchesJava("select id from x where (a * b) = :p", true);
             Assert.assertEquals("id\n1\n2\n", runJavaToString("select id from x where (a * b) in (:p)"));
-            Assert.assertEquals("id\n1\n2\n", runJavaToString("select id from x where (a * b) = :p"));
 
             // Control -- an INT element must still WRAP the key (matching EqInt and the JIT).
             // master read the key via getLong() and WIDENED it, so IN wrongly returned no row
