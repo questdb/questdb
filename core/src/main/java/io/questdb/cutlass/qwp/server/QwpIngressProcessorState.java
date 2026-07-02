@@ -112,6 +112,12 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     private int pendingHandshakeBytes;
     private int recvBufferLen;
     private long resumeAckSequence = -1;
+    // Set when a batch is refused because the node just flipped to a read-only
+    // replica (an in-place PRIMARY->REPLICA demote). A TRANSIENT failover, not a
+    // permanent auth failure -- the upgrade processor closes the connection with a
+    // reconnect-eligible code instead of sending a SECURITY_ERROR that a
+    // store-and-forward client would treat as a terminal HALT.
+    private boolean roleChangeClosePending;
     private SecurityContext securityContext;
     private int sendState = SEND_STATE_READY;
     private QwpStreamingDecoder streamingDecoder;
@@ -186,6 +192,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         streamingDecoder.reset();
         handshakeFlushPending = false;
         pendingHandshakeBytes = 0;
+        roleChangeClosePending = false;
     }
 
     /**
@@ -198,6 +205,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         currentStatus = Status.OK;
         bufferPosition = 0;
         streamingDecoder.reset();
+        roleChangeClosePending = false;
     }
 
     @Override
@@ -356,6 +364,10 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
 
     public boolean isOk() {
         return currentStatus == Status.OK;
+    }
+
+    public boolean isRoleChangeClosePending() {
+        return roleChangeClosePending;
     }
 
     public boolean isSendReady() {
@@ -618,7 +630,17 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
             // read-only-replica flag flips FIRST in the switch cascade), the whole batch is
             // rejected as an authorization error, which maps to Status.SECURITY_ERROR below.
             if (engine.isReadOnlyMode()) {
-                throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+                // INVARIANT B: an in-place PRIMARY-to-REPLICA demote is a TRANSIENT
+                // failover (the node can be promoted back / a sibling primary may
+                // exist), NOT a permanent auth failure. Do not reject the batch as an
+                // authorization error (which maps to SECURITY_ERROR and a store-and-
+                // forward client treats as a terminal HALT). Flag the connection for a
+                // reconnect-eligible close instead: the client reconnects, hits the
+                // 421 role reject on the now-replica endpoint, and retries from SF
+                // until a primary is reachable.
+                roleChangeClosePending = true;
+                reject(Status.NOT_ACCEPTING_WRITES, CairoException.READ_ONLY_ACCESS_MESSAGE, fd);
+                return;
             }
 
             // Verify the message version matches what was negotiated during the upgrade
@@ -684,7 +706,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
             rejectCommitError(e.getReason());
         } catch (CairoException e) {
             LOG.error().$('[').$(fd).$("] cairo error: ").$(e.getFlyweightMessage()).$();
-            reject(cairoExceptionStatus(e), e.getFlyweightMessage(), fd);
+            rejectCairoError(e);
         } catch (Throwable e) {
             LOG.critical().$('[').$(fd).$("] unexpected error: ").$(e).$();
             tudCache.setDistressed();
@@ -814,9 +836,37 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         }
     }
 
+    /**
+     * Rejects a batch that failed with a {@link CairoException}, with Invariant B
+     * containment for the in-place demote race.
+     * <p>
+     * The {@code engine.isReadOnlyMode()} gate at the top of
+     * {@link #processMessage()} re-checks the live role per batch, but the flag
+     * can flip BETWEEN that check and the WAL writer acquisition (or the commit)
+     * within the same batch. The deeper engine gates then refuse with
+     * {@code CairoException.authorization()} ("replica access is read-only"),
+     * which {@link #cairoExceptionStatus} would map to
+     * {@link Status#SECURITY_ERROR} -- a status a store-and-forward client
+     * latches as a terminal HALT and surfaces to its producer. Re-checking the
+     * live flag at catch time closes that window: if the node is (now)
+     * read-only, the refusal is the transient demote, so the connection is
+     * flagged for the same reconnect-eligible close as the top-gate path (the
+     * client reconnects, hits the 421 role reject on the now-replica endpoint,
+     * and retries from SF until a primary is reachable). A genuine ACL denial on
+     * a writable node (isReadOnlyMode() == false) still maps to SECURITY_ERROR.
+     */
+    private void rejectCairoError(CairoException e) {
+        if (e.isAuthorizationError() && engine.isReadOnlyMode()) {
+            roleChangeClosePending = true;
+            reject(Status.NOT_ACCEPTING_WRITES, e.getFlyweightMessage(), fd);
+            return;
+        }
+        reject(cairoExceptionStatus(e), e.getFlyweightMessage(), fd);
+    }
+
     private void rejectCommitError(Throwable th) {
         if (th instanceof CairoException e) {
-            reject(cairoExceptionStatus(e), e.getFlyweightMessage(), fd);
+            rejectCairoError(e);
             return;
         }
 

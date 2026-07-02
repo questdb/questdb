@@ -796,7 +796,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
     }
 
     private void handleBinaryMessage(HttpConnectionContext context, QwpIngressProcessorState state, long payload, int length)
-            throws PeerDisconnectedException, PeerIsSlowToReadException {
+            throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         long seq = state.nextMessageSequence();
         LOG.debug().$("WebSocket binary message [fd=").$(context.getFd())
                 .$(", len=").$(length)
@@ -810,6 +810,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
 
         byte responseStatus = STATUS_OK;
         String errorMessage = null;
+        boolean roleChangeClose = false;
 
         boolean deferCommit = false;
         try {
@@ -827,6 +828,12 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             if (state.isOk() && deferCommit) {
                 state.commitIfMaxUncommittedRowsReached();
             }
+            // Read AFTER the commit calls: processMessage's read-only gate AND the
+            // commit path's authorization-refusal containment (rejectCairoError)
+            // can both flag the role-change close; reading before commit() would
+            // miss the latter and send a client-visible error status instead of
+            // the graceful reconnect-eligible close.
+            roleChangeClose = state.isRoleChangeClosePending();
             // commit() swallows exceptions internally
             if (state.isOk()) {
                 if (deferCommit) {
@@ -863,6 +870,17 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 // Reset state for next message (but preserve connectionSymbolDict for delta encoding)
                 state.clear();
             }
+        }
+
+        // INVARIANT B: an in-place PRIMARY->REPLICA demote is TRANSIENT. Close the
+        // connection with a reconnect-eligible code instead of sending a
+        // SECURITY_ERROR that a store-and-forward client treats as a terminal HALT.
+        // sendFatalClose first flushes any pending ACK (so the client learns what
+        // committed); the client then reconnects, hits the 421 role reject on the
+        // now-replica endpoint, and retries from SF.
+        if (roleChangeClose) {
+            sendFatalClose(context, state, WebSocketCloseCode.NORMAL_CLOSURE, errorMessage);
+            return;
         }
 
         // Send response using cumulative ACK strategy
