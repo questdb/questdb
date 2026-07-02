@@ -1168,6 +1168,57 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInOperatorOverflowNumericStringElementMatchesLiteral() throws Exception {
+        // M1 regression: a numeric STRING/VARCHAR IN-list element against an overflowing
+        // INT-arithmetic (narrow) key. isIntWidthElement wrapped the key only for
+        // INT/SHORT/BYTE-TYPED elements, so a numeric string left the key on getLong()
+        // (widen). Thus (a * b) IN ('-727379968') returned 0 rows while the equivalent
+        // (a * b) IN (-727379968) and (a * b) = -727379968 both matched. The width is now
+        // derived from the parsed VALUE: an INT-range numeric string wraps the key mod 2^32
+        // (matching the numeric literal and '='), a wider value widens it. String IN-lists
+        // do not compile to the JIT, so this is a Java-path parity check against the
+        // numeric-literal spellings.
+        assertMemoryLeak(() -> {
+            // a * b wraps to INT -727379968 and widens to LONG 10^12; s/v carry the wrapped
+            // image as a numeric string/varchar, sw the widened image.
+            execute("create table x as (select cast(1000000 as int) a, cast(1000000 as int) b, " +
+                    "'-727379968' s, cast('-727379968' as varchar) v, '1000000000000' sw)");
+
+            // The string IN-list never compiles to the JIT; enabling it falls back to Java
+            // and matches, so there is no JIT divergence to fix here.
+            assertJitMatchesJava("x where (a * b) in ('-727379968')", false);
+
+            // INT-range numeric string wraps the key, matching IN (intLiteral) and '='.
+            Assert.assertEquals(1, runQuery("x where (a * b) in ('-727379968')"));         // single const string
+            Assert.assertEquals(1, runQuery("x where (a * b) in (-727379968)"));           // control: int literal
+            Assert.assertEquals(1, runQuery("x where (a * b) = -727379968"));              // control: '='
+            Assert.assertEquals(1, runQuery("x where (a * b) in (7, '-727379968')"));      // two const, mixed widths
+            Assert.assertEquals(1, runQuery("x where (a * b) in (7, 9, '-727379968')"));   // multi const
+            Assert.assertEquals(0, runQuery("x where (a * b) not in ('-727379968')"));     // inverse
+            Assert.assertEquals(1, runQuery("x where (a * b) in (cast('-727379968' as varchar))")); // varchar const
+
+            // A wider-than-INT numeric string widens the key, matching IN (longLiteral).
+            Assert.assertEquals(1, runQuery("x where (a * b) in ('1000000000000')"));      // single const string
+            Assert.assertEquals(1, runQuery("x where (a * b) in (1000000000000)"));        // control: long literal
+            Assert.assertEquals(0, runQuery("x where (a * b) in ('999')"));                // matches neither width
+
+            // runtime-const variant: a string bind variable forces InLongRuntimeConstFunction.
+            bindVariableService.setStr("sp", "-727379968");
+            Assert.assertEquals(1, runQuery("x where (a * b) in (:sp)"));                  // wraps to match
+            Assert.assertEquals(1, runQuery("x where (a * b) in (:sp, 7)"));               // mixed runtime + const
+            bindVariableService.setStr("swp", "1000000000000");
+            Assert.assertEquals(1, runQuery("x where (a * b) in (:swp)"));                 // widens to match
+
+            // var variant: a non-constant string/varchar column forces InLongVarFunction.
+            Assert.assertEquals(1, runQuery("x where (a * b) in (s)"));                    // INT-range string col wraps
+            Assert.assertEquals(1, runQuery("x where (a * b) in (v)"));                    // INT-range varchar col wraps
+            Assert.assertEquals(1, runQuery("x where (a * b) in (sw)"));                   // wider string col widens
+            Assert.assertEquals(0, runQuery("x where (a * b) not in (s)"));               // inverse
+            Assert.assertEquals(1, runQuery("x where (a * b) in (7, s)"));                 // mixed var + const
+        });
+    }
+
+    @Test
     public void testInOperatorOverflowWidenColumnArithKeyPerElement() throws Exception {
         // C2 regression: a COLUMN-arithmetic IN key (a * b) whose product overflows INT, in a
         // multi-value list that mixes a genuine-LONG element with an overflowing-INT element.

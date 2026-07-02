@@ -74,13 +74,14 @@ public class InLongFunctionFactory implements FunctionFactory {
         final int argCount = args.size() - 1;
         // When the key column (arg 0) is a narrow integer (INT/SHORT/BYTE) the IN
         // list is compared per element at the width of '=': an INT-typed element
-        // (including an overflowing INT arithmetic fold) is read at INT width so
-        // both key and element wrap mod 2^32, exactly as EqInt and the JIT do,
-        // while a LONG/TIMESTAMP element is read at long width so the key widens
-        // (getLong) to its full value. A single flag cannot express this because
-        // an overflowing INT arithmetic key wraps under getInt() but widens under
-        // getLong(); the per-element width picks the correct key read for each
-        // element. For a LONG/TIMESTAMP key every element widens to long anyway.
+        // (including an overflowing INT arithmetic fold), or a numeric STRING whose
+        // value fits INT, is read at INT width so both key and element wrap mod 2^32,
+        // exactly as EqInt and the JIT do, while a LONG/TIMESTAMP element or a wider
+        // numeric string is read at long width so the key widens (getLong) to its full
+        // value. A single flag cannot express this because an overflowing INT arithmetic
+        // key wraps under getInt() but widens under getLong(); the per-element width picks
+        // the correct key read for each element. For a LONG/TIMESTAMP key every element
+        // widens to long anyway.
         final boolean keyIsNarrowInt = isNarrowInt(ColumnType.tagOf(args.getQuick(0).getType()));
         for (int i = 1, n = args.size(); i < n; i++) {
             Function func = args.getQuick(i);
@@ -110,19 +111,24 @@ public class InLongFunctionFactory implements FunctionFactory {
 
         if (constCount == argCount) {
             switch (argCount) {
-                case 1:
+                case 1: {
+                    final long v = parseValue(argPositions, args.getQuick(1), 1, keyIsNarrowInt);
                     return new InLongSingleConstFunction(
                             args.getQuick(0),
-                            parseValue(argPositions, args.getQuick(1), 1, keyIsNarrowInt),
-                            isIntWidthElement(args.getQuick(1), keyIsNarrowInt));
-                case 2:
+                            v,
+                            isIntWidthElement(args.getQuick(1), v, keyIsNarrowInt));
+                }
+                case 2: {
+                    final long v0 = parseValue(argPositions, args.getQuick(1), 1, keyIsNarrowInt);
+                    final long v1 = parseValue(argPositions, args.getQuick(2), 2, keyIsNarrowInt);
                     return new InLongTwoConstFunction(
                             args.getQuick(0),
-                            parseValue(argPositions, args.getQuick(1), 1, keyIsNarrowInt),
-                            parseValue(argPositions, args.getQuick(2), 2, keyIsNarrowInt),
-                            isIntWidthElement(args.getQuick(1), keyIsNarrowInt),
-                            isIntWidthElement(args.getQuick(2), keyIsNarrowInt)
+                            v0,
+                            v1,
+                            isIntWidthElement(args.getQuick(1), v0, keyIsNarrowInt),
+                            isIntWidthElement(args.getQuick(2), v1, keyIsNarrowInt)
                     );
+                }
                 default:
                     // A narrow-int key needs an INT-width set for the elements the key wraps
                     // against; a LONG/TIMESTAMP key only ever widens, so the int set stays null.
@@ -176,12 +182,17 @@ public class InLongFunctionFactory implements FunctionFactory {
     }
 
     /**
-     * Reports whether any IN-list element (args past index 0) is INT/SHORT/BYTE
-     * typed, so an INT-width set is needed for a narrow-integer key.
+     * Reports whether any IN-list element (args past index 0) may feed the
+     * INT-width set for a narrow-integer key: an INT/SHORT/BYTE-typed element
+     * always does, and a numeric STRING/VARCHAR/SYMBOL element does when its
+     * value fits INT (decided per value at parse time). A string-like element is
+     * counted here even if it later widens, so the INT-width set is allocated and
+     * the key probed at INT width whenever one is present.
      */
     private static boolean hasNarrowIntElement(ObjList<Function> args) {
         for (int i = 1, n = args.size(); i < n; i++) {
-            if (isNarrowInt(ColumnType.tagOf(args.getQuick(i).getType()))) {
+            final int tag = ColumnType.tagOf(args.getQuick(i).getType());
+            if (isNarrowInt(tag) || isNumericStringLike(tag)) {
                 return true;
             }
         }
@@ -189,18 +200,43 @@ public class InLongFunctionFactory implements FunctionFactory {
     }
 
     /**
-     * Reports whether {@code func}, as an IN-list element, is compared at INT
-     * width against the key: true only when the key is a narrow integer and the
-     * element is itself INT/SHORT/BYTE-typed, in which case both key and element
-     * wrap mod 2^32 (matching EqInt and the JIT). Otherwise the element is
-     * compared at long width and the key widens via getLong().
+     * Reports whether {@code val} fits the INT range excluding the INT_NULL
+     * sentinel (Integer.MIN_VALUE), i.e. it would type as an INT literal and so
+     * wrap a narrow-integer key mod 2^32 rather than widen it.
      */
-    private static boolean isIntWidthElement(Function func, boolean keyIsNarrowInt) {
-        return keyIsNarrowInt && isNarrowInt(ColumnType.tagOf(func.getType()));
+    private static boolean isIntRangeValue(long val) {
+        return val > Integer.MIN_VALUE && val <= Integer.MAX_VALUE;
+    }
+
+    /**
+     * Reports whether {@code func}, as an IN-list element with parsed value
+     * {@code parsedVal}, is compared at INT width against the key: true when the
+     * key is a narrow integer and the element is either INT/SHORT/BYTE-typed or a
+     * numeric STRING/VARCHAR/SYMBOL whose value fits INT. In that case both key
+     * and element wrap mod 2^32 (matching EqInt, IN of a numeric literal, and the
+     * JIT). Otherwise the element is compared at long width and the key widens via
+     * getLong().
+     */
+    private static boolean isIntWidthElement(Function func, long parsedVal, boolean keyIsNarrowInt) {
+        if (!keyIsNarrowInt) {
+            return false;
+        }
+        final int tag = ColumnType.tagOf(func.getType());
+        if (isNarrowInt(tag)) {
+            return true;
+        }
+        // A numeric string has no declared integer width, so compare it at the width
+        // its value would carry as a literal: an INT-range value wraps (matching
+        // IN (intLiteral) and '='), a wider value or NULL widens (matching IN (longLiteral)).
+        return isNumericStringLike(tag) && isIntRangeValue(parsedVal);
     }
 
     private static boolean isNarrowInt(int typeTag) {
         return typeTag == ColumnType.BYTE || typeTag == ColumnType.SHORT || typeTag == ColumnType.INT;
+    }
+
+    private static boolean isNumericStringLike(int typeTag) {
+        return typeTag == ColumnType.STRING || typeTag == ColumnType.SYMBOL || typeTag == ColumnType.VARCHAR;
     }
 
     private static void parseToSets(
@@ -213,7 +249,7 @@ public class InLongFunctionFactory implements FunctionFactory {
         for (int i = 1, n = args.size(); i < n; i++) {
             Function func = args.getQuick(i);
             long val = parseValue(argPositions, func, i, keyIsNarrowInt);
-            if (isIntWidthElement(func, keyIsNarrowInt)) {
+            if (isIntWidthElement(func, val, keyIsNarrowInt)) {
                 outIntSet.add(val);
             } else {
                 outLongSet.add(val);
@@ -516,7 +552,8 @@ public class InLongFunctionFactory implements FunctionFactory {
         private final ObjList<Function> args;
         private final boolean keyIsNarrowInt;
         // Whether some element needs the key read at INT width (wrap) / long width (widen).
-        // Fixed by element TYPE, so a single-width list reads the key subtree once per row.
+        // A string-like element may need either, so both reads are enabled and the parsed
+        // value picks the width per row; a purely INT or LONG list reads the key once per row.
         private final boolean keyReadInt;
         private final boolean keyReadLong;
 
@@ -564,11 +601,19 @@ public class InLongFunctionFactory implements FunctionFactory {
                     case ColumnType.SYMBOL:
                         CharSequence str = func.getStrA(rec);
                         inVal = Numbers.parseLongQuiet(str);
+                        // An INT-range numeric string wraps the narrow key (matching
+                        // IN (intLiteral) and '='); a wider value widens it.
+                        if (keyIsNarrowInt && isIntRangeValue(inVal)) {
+                            keyVal = keyInt;
+                        }
                         break;
                     case ColumnType.VARCHAR:
                         Utf8Sequence seq = func.getVarcharA(rec);
                         CharSequence cs = seq == null ? null : seq.asAsciiCharSequence();
                         inVal = Numbers.parseLongQuiet(cs);
+                        if (keyIsNarrowInt && isIntRangeValue(inVal)) {
+                            keyVal = keyInt;
+                        }
                         break;
                 }
                 if (inVal == keyVal) {
