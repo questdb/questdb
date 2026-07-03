@@ -686,7 +686,20 @@ public class QuestDBFacadeE2ETest extends AbstractBootstrapTest {
                 final int rowsAlpha = 100;
                 final int rowsBeta = 50;
 
-                String config = "ws::addr=127.0.0.1:" + HTTP_PORT + ";";
+                // auto_flush_interval=3600000 (1h): the default 100ms interval
+                // auto-flush would fire on the next at() after any >=100ms stall
+                // (GC/JIT on a loaded CI agent), injecting a third txn per table.
+                // That would both break the awaitTxn(name, 2) barrier below (it
+                // returns at writerTxn >= 2, before the close-flush txn applies,
+                // so the reader would see a partial table) and degrade the
+                // choreographed shared mid-flush (a premature auto-flush drains
+                // the buffer it is meant to transmit). WS rejects
+                // auto_flush_interval=off outright, so a 1h interval -- orders of
+                // magnitude beyond the test's runtime -- stands in for it. With
+                // that, rows=1000 (> both row counts) and bytes=0, exactly two
+                // non-empty flushes per table are guaranteed: the shared
+                // mid-flush and the close flush.
+                String config = "ws::addr=127.0.0.1:" + HTTP_PORT + ";auto_flush_interval=3600000;";
                 try (QuestDB db = QuestDB.builder()
                         .fromConfig(config)
                         .senderPoolSize(2)
@@ -727,8 +740,9 @@ public class QuestDBFacadeE2ETest extends AbstractBootstrapTest {
                         }
                         // close() on each flushes whatever remains.
                     }
-                    // ws ingest is async. Each table sees two non-empty flushes
-                    // (the shared mid-flush + its close flush); wait for both.
+                    // ws ingest is async. With interval auto-flush disabled in the
+                    // config, each table sees exactly two non-empty flushes (the
+                    // shared mid-flush + its close flush); wait for both.
                     server.awaitTxn("alpha", 2);
                     server.awaitTxn("beta", 2);
 
