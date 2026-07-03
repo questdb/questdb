@@ -705,16 +705,32 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
             // bypasses per-write authorization entirely. Consulting engine.isReadOnlyMode() here
             // closes that boundary race: the instant the node starts demoting (the dynamic
             // read-only-replica flag flips FIRST in the switch cascade), the whole batch is
-            // rejected as an authorization error, which maps to Status.SECURITY_ERROR below.
+            // refused. HOW it is refused depends on WHY the node is read-only -- see
+            // isStaticReadOnlyInstance() for the contract.
             if (engine.isReadOnlyMode()) {
-                // INVARIANT B: an in-place PRIMARY-to-REPLICA demote is a TRANSIENT
-                // failover (the node can be promoted back / a sibling primary may
-                // exist), NOT a permanent auth failure. Do not reject the batch as an
-                // authorization error (which maps to SECURITY_ERROR and a store-and-
-                // forward client treats as a terminal HALT). Flag the connection for a
-                // reconnect-eligible close instead: the client reconnects, hits the
-                // 421 role reject on the now-replica endpoint, and retries from SF
-                // until a primary is reachable.
+                if (isStaticReadOnlyInstance()) {
+                    // Statically read-only (readonly=true in the server config): a permanent
+                    // property of this process, not a role transition. The role-change close
+                    // is WRONG here because its 421 backstop does not exist -- the upgrade
+                    // gate rejects only ROLE_REPLICA / ROLE_PRIMARY_CATCHUP, and a statically
+                    // read-only node keeps reporting its upgrade-eligible role (STANDALONE on
+                    // OSS) forever. A store-and-forward client treats the resulting
+                    // NORMAL_CLOSURE as orderly (no NACK, no poison strike, no typed
+                    // terminal) and would reconnect-replay in a silent infinite loop, its
+                    // producer never learning of the misconfiguration. Answer with the typed
+                    // SECURITY_ERROR NACK instead: the client latches it as terminal and
+                    // surfaces it loudly.
+                    reject(Status.SECURITY_ERROR, CairoException.READ_ONLY_ACCESS_MESSAGE, fd);
+                    return;
+                }
+                // INVARIANT B: role-derived read-only means an in-place PRIMARY-to-REPLICA
+                // demote is underway -- a TRANSIENT failover (the node can be promoted
+                // back / a sibling primary may exist), NOT a permanent auth failure. Do
+                // not reject the batch as an authorization error (which maps to
+                // SECURITY_ERROR and a store-and-forward client treats as a terminal
+                // HALT). Flag the connection for a reconnect-eligible close instead: the
+                // client reconnects, hits the 421 role reject on the now-replica
+                // endpoint, and retries from SF until a primary is reachable.
                 roleChangeClosePending = true;
                 reject(Status.NOT_ACCEPTING_WRITES, CairoException.READ_ONLY_ACCESS_MESSAGE, fd);
                 return;
@@ -914,6 +930,39 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     }
 
     /**
+     * Whether this node is read-only STATICALLY -- {@code readonly=true}
+     * ({@code READ_ONLY_INSTANCE}) in the server configuration -- as opposed to
+     * DYNAMICALLY through the role an enterprise engine reports. The distinction
+     * decides the refusal shape for write batches on a read-only node:
+     * <ul>
+     * <li>Role-derived read-only ({@code engine.isReadOnlyMode()} true while this
+     * flag is false; only reachable where an enterprise engine widens
+     * {@code isReadOnlyMode()} with the replica leg) is TRANSIENT. Refusals take
+     * the reconnect-eligible role-change close, and the reconnecting client is
+     * handed over to the 421 role reject of the now-replica endpoint.</li>
+     * <li>Static read-only is PERMANENT. The node's role never changes on account
+     * of it, so the 421 backstop never materialises, and a role-change close
+     * would send a store-and-forward client into a silent infinite
+     * reconnect-replay loop. Refusals must stay the typed, terminal
+     * {@link Status#SECURITY_ERROR} NACK.</li>
+     * </ul>
+     * When BOTH legs hold (an enterprise replica that is also statically
+     * read-only) the static answer wins: the node refuses writes regardless of
+     * any future promote, so the terminal NACK is the truthful signal. (The
+     * combination is unreachable mid-connection anyway -- a statically read-only
+     * node refuses the very first batch, before any role flip can land.)
+     * <p>
+     * The flag is immutable for the process lifetime (a {@code final} field of
+     * the server configuration; the dynamic replica leg is a SEPARATE
+     * configuration method), so consulting it after a live
+     * {@code engine.isReadOnlyMode()} read opens no TOCTOU window: the shape
+     * decision cannot flip between the two reads.
+     */
+    private boolean isStaticReadOnlyInstance() {
+        return engine.getConfiguration().isReadOnlyInstance();
+    }
+
+    /**
      * Rejects a batch that failed with a {@link CairoException}, with Invariant B
      * containment for the in-place demote race.
      * <p>
@@ -926,14 +975,17 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
      * {@link Status#SECURITY_ERROR} -- a status a store-and-forward client
      * latches as a terminal HALT and surfaces to its producer. Re-checking the
      * live flag at catch time closes that window: if the node is (now)
-     * read-only, the refusal is the transient demote, so the connection is
-     * flagged for the same reconnect-eligible close as the top-gate path (the
-     * client reconnects, hits the 421 role reject on the now-replica endpoint,
-     * and retries from SF until a primary is reachable). A genuine ACL denial on
-     * a writable node (isReadOnlyMode() == false) still maps to SECURITY_ERROR.
+     * read-only BECAUSE OF ITS ROLE, the refusal is the transient demote, so the
+     * connection is flagged for the same reconnect-eligible close as the
+     * top-gate path (the client reconnects, hits the 421 role reject on the
+     * now-replica endpoint, and retries from SF until a primary is reachable).
+     * A genuine ACL denial on a writable node (isReadOnlyMode() == false) still
+     * maps to SECURITY_ERROR -- and so does any refusal on a STATICALLY
+     * read-only node ({@link #isStaticReadOnlyInstance()}), where the
+     * role-change close has no 421 backstop and would loop the client forever.
      */
     private void rejectCairoError(CairoException e) {
-        if (e.isAuthorizationError() && engine.isReadOnlyMode()) {
+        if (e.isAuthorizationError() && engine.isReadOnlyMode() && !isStaticReadOnlyInstance()) {
             roleChangeClosePending = true;
             reject(Status.NOT_ACCEPTING_WRITES, e.getFlyweightMessage(), fd);
             return;

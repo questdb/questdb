@@ -308,16 +308,23 @@ public class QwpIngressDemoteRaceFuzzTest extends AbstractCairoTest {
     }
 
     private static CairoEngine newDemotableEngine(AtomicBoolean readOnly) {
-        // The base engine answers isReadOnlyMode() from configuration.isReadOnlyInstance()
-        // on EVERY call (documented live-read contract). Backing it with an AtomicBoolean
-        // reproduces the enterprise in-place demote: the flag flips dynamically while
-        // connections are mid-batch. The engine is constructed writable.
-        return new CairoEngine(new DefaultTestCairoConfiguration(root) {
+        // Enterprise widens isReadOnlyMode() at the ENGINE level (the dynamic replica
+        // leg: super.isReadOnlyMode() || isReadOnlyReplica()) while the static
+        // configuration.isReadOnlyInstance() flag stays false -- and the refusal-shape
+        // decision keys on exactly that difference: only ROLE-DERIVED read-only takes
+        // the reconnect-eligible role-change close, while static readonly=true keeps
+        // the terminal SECURITY_ERROR NACK (see isStaticReadOnlyInstance() in
+        // QwpIngressProcessorState). Model the demote the same way enterprise
+        // implements it: override the engine method, keep the config flag false.
+        // Backing it with an AtomicBoolean reproduces the in-place demote: the flag
+        // flips dynamically while connections are mid-batch. The engine is
+        // constructed writable.
+        return new CairoEngine(new DefaultTestCairoConfiguration(root)) {
             @Override
-            public boolean isReadOnlyInstance() {
+            public boolean isReadOnlyMode() {
                 return readOnly.get();
             }
-        });
+        };
     }
 
     private static void runScenario(
