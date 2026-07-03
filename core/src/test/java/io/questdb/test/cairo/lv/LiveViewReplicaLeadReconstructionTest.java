@@ -264,6 +264,72 @@ public class LiveViewReplicaLeadReconstructionTest extends AbstractCairoTest {
         });
     }
 
+    // Partitioned + anchored lead reconstruction. A snapshot-capable window that both PARTITIONs BY a
+    // key and carries an ANCHOR clause used to serve disk-only on a replica: its stalled-publish
+    // rollback needs to round-trip the per-partition function maps and the anchor bucket map, which the
+    // old scalar-only rollback could not do, so the reconstruction gate rejected these shapes. With the
+    // rollback extended to snapshot+restore the anchor window and partition maps (the in-RAM analog of a
+    // head-checkpoint write+restore), the replica now reconstructs the un-flushed lead for them too. This
+    // pins that: the replica rebuilds all 4 rows as an un-flushed lead over empty disk, maintaining the
+    // per-partition, per-day row_number() maps (sym A: 1, 2; sym B: 1, 2) rather than a global 1..4.
+    @Test
+    public void testReplicaReconstructsPartitionedAnchoredLead() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (sym SYMBOL, x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m AS " +
+                    "SELECT sym, x, ts, row_number() OVER w AS rn FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')");
+            final TableToken lvToken = engine.getTableTokenIfExists("lv");
+            Assert.assertNotNull(lvToken);
+
+            final LiveViewStateStore primaryStore = switchToReplicaMode();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+
+                // Two partitions interleaved in one base commit. Per-partition, per-day row numbers:
+                //   sym A: TS1 -> 1, TS3 -> 2 ; sym B: TS2 -> 1, TS4 -> 2.
+                execute("INSERT INTO base (sym, x, ts) VALUES " +
+                        "('A', 10, '" + TS1 + "'), ('B', 20, '" + TS2 + "'), " +
+                        "('A', 30, '" + TS3 + "'), ('B', 40, '" + TS4 + "')");
+                drainWalQueue();
+
+                // The replica lead loop reconstructs all 4 rows as an un-flushed lead over empty disk,
+                // driving the anchor bucket map and the per-partition row_number() maps through the same
+                // window pipeline the primary uses. Before the gate was lifted this returned early
+                // (disk-only), leaving leadRowCount == 0.
+                drainJob(job);
+
+                Assert.assertEquals("partitioned + anchored view reconstructed as a 4-row lead",
+                        4, instance.getLeadRowCount());
+            } finally {
+                switchToStore(primaryStore);
+            }
+
+            final String expected = """
+                    sym\tx\tts\trn
+                    A\t10\t2026-05-12T00:00:01.000000Z\t1
+                    B\t20\t2026-05-12T00:00:02.000000Z\t1
+                    A\t30\t2026-05-12T00:00:03.000000Z\t2
+                    B\t40\t2026-05-12T00:00:04.000000Z\t2
+                    """;
+            // Content is exact per-partition numbering, proving the partition maps (not a single global
+            // counter) drove the reconstruction ...
+            StringSink actual = new StringSink();
+            printSql("SELECT * FROM lv ORDER BY ts", actual);
+            Assert.assertEquals(expected, actual.toString());
+
+            // ... and the read routes through the reconstructed lead (empty disk + 4-row lead).
+            try (
+                    RecordCursorFactory factory = select("SELECT * FROM lv");
+                    LiveViewRecordCursor cursor = openLvCursor(factory)
+            ) {
+                Assert.assertTrue("reconstructed lead must be routing-eligible", cursor.isRoutingEligible());
+                Assert.assertEquals("size() equals the reconstructed lead over empty disk", 4, cursor.size());
+            }
+        });
+    }
+
     private static boolean drainJob(Job job) {
         boolean any = false;
         for (int i = 0; i < 64 && job.run(); i++) {

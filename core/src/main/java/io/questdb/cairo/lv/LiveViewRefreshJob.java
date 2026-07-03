@@ -184,14 +184,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private final LiveViewRefreshSqlExecutionContext executionContext;
     private final FilteringRecordCursor filteringCursor = new FilteringRecordCursor();
     // Read-only-replica lead-rollback scratch. Before each replica lead drain
-    // captureLeadRollback snapshots every window function's accumulator into
-    // leadRollbackScratch (start offsets in leadRollbackOffsets) plus the
-    // pre-drain latestSeenTs. If the ensuing publish stalls (both tier slots
-    // reader-pinned), finishLeadRefresh restores all three so the next tick
-    // re-drains the same base range identically instead of double-advancing the
-    // window (a poisoned re-drain would emit wrong row numbers or misclassify the
-    // batch as O3 and drop it). Set every leadMode cycle; consumed only within the
-    // same refreshInstance call, so per-worker (no cross-worker sharing).
+    // captureLeadRollback snapshots the anchored window's bucket map (at offset 0,
+    // when present) plus every window function's accumulator into leadRollbackScratch
+    // (function start offsets in leadRollbackOffsets) plus the pre-drain latestSeenTs.
+    // If the ensuing publish stalls (both tier slots reader-pinned), finishLeadRefresh
+    // restores all of them so the next tick re-drains the same base range identically
+    // instead of double-advancing the window (a poisoned re-drain would emit wrong row
+    // numbers or misclassify the batch as O3 and drop it). Set every leadMode cycle;
+    // consumed only within the same refreshInstance call, so per-worker (no cross-worker
+    // sharing).
     private boolean leadRollbackCaptured;
     private long leadRollbackLatestSeenTs;
     private final LongList leadRollbackOffsets = new LongList();
@@ -585,7 +586,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // the replica cannot -- it must re-drain next tick. Snapshot the window state now so
                 // finishLeadRefresh can restore it on a stalled publish, keeping the re-drain exact.
                 // The refreshInstance gate guarantees the window supports this in-RAM round-trip.
-                captureLeadRollback(windowFactory, latestSeenTsSnapshot);
+                captureLeadRollback(windowFactory, instance.getAnchorWindow(), latestSeenTsSnapshot);
                 // Compute the lead off the APPLIED base table, not the raw WAL: a replica's raw WAL
                 // segments race their own download/apply, so a raw read can transiently return 0 rows
                 // for already-applied data and drop the batch. The applied reader is consistent.
@@ -1609,7 +1610,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // (TODO §3: add a back-off so a persistently pinned slot does not spin the
                         // worker.)
                         if (leadRollbackCaptured) {
-                            restoreLeadRollback(instance, windowFactory);
+                            restoreLeadRollback(instance, windowFactory, instance.getAnchorWindow());
                         }
                         return;
                     }
@@ -1794,19 +1795,29 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Snapshots each window function's accumulator (plus the pre-drain {@code latestSeenTs}) into the
-     * per-worker {@link #leadRollbackScratch} so a stalled replica lead publish can restore them via
-     * {@link #restoreLeadRollback}. Records each function's payload start offset in
-     * {@link #leadRollbackOffsets}; the restore reads back at those offsets. Only the replica
-     * lead-reconstruction path calls this, and {@link #isLeadRollbackSupported} guarantees every
-     * function round-trips cleanly through {@link LiveViewFunctionSnapshot} (scalar, no partition map).
+     * Snapshots the LV's whole window state -- the anchored window's per-partition bucket map (when
+     * present) plus every window function's accumulator -- and the pre-drain {@code latestSeenTs} into
+     * the per-worker {@link #leadRollbackScratch}, so a stalled replica lead publish can restore them
+     * via {@link #restoreLeadRollback}. This is the in-RAM analog of a head-checkpoint write: it reuses
+     * the same {@link LiveViewWindow#snapshot} and {@link LiveViewFunctionSnapshot#write} primitives the
+     * checkpoint path uses, so it round-trips scalar, partitioned, and anchored shapes alike. The anchor
+     * block goes first, at offset 0, because {@link LiveViewWindow#restore} reads from offset 0; each
+     * function's payload start offset is recorded in {@link #leadRollbackOffsets}, and the restore reads
+     * back at those offsets. Only the replica lead-reconstruction path calls this, and
+     * {@link #isLeadRollbackSupported} guarantees the view is snapshot-capable (every function round-trips
+     * through {@link LiveViewFunctionSnapshot}; the anchor key shape has codec support).
      */
-    private void captureLeadRollback(WindowRecordCursorFactory windowFactory, long latestSeenTs) {
+    private void captureLeadRollback(WindowRecordCursorFactory windowFactory, LiveViewWindow anchorWindow, long latestSeenTs) {
         if (leadRollbackScratch == null) {
             leadRollbackScratch = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
         }
         leadRollbackScratch.jumpTo(0);
         leadRollbackOffsets.clear();
+        // Anchor bucket map first, at offset 0 (LiveViewWindow.restore reads from offset 0). A view with
+        // no anchored window skips it and its first function block starts at offset 0.
+        if (anchorWindow != null) {
+            anchorWindow.snapshot(leadRollbackScratch);
+        }
         final ObjList<WindowFunction> functions = windowFactory.getWindowFunctions();
         for (int i = 0, n = functions.size(); i < n; i++) {
             leadRollbackOffsets.add(leadRollbackScratch.getAppendOffset());
@@ -2030,15 +2041,23 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Restores the window accumulators and {@code latestSeenTs} that {@link #captureLeadRollback}
-     * snapshotted before a replica lead drain, undoing the drain's forward advance. The read counters
-     * end at the pre-drain state, so the next scan tick re-drains the same base range and re-produces
-     * the same output rows -- the row numbers and O3 frontier match what a first, un-stalled publish
-     * would have written. Each scalar function reads its state back from its recorded snapshot offset;
-     * {@link #isLeadRollbackSupported} kept the set to functions that round-trip without a preceding
-     * map clear.
+     * Restores the whole window state -- the anchored window's bucket map (when present) plus every
+     * window function's accumulator -- and {@code latestSeenTs} that {@link #captureLeadRollback}
+     * snapshotted before a replica lead drain, undoing the drain's forward advance. The in-RAM analog of
+     * a head-checkpoint restore: {@link LiveViewWindow#restore} and {@link LiveViewFunctionSnapshot#restore}
+     * clear the live maps ({@code anchorMap.clear()} / {@link WindowFunction#onSnapshotRestoreBegin}) and
+     * rehydrate them from the snapshot, so partitioned and anchored shapes roll back the same way scalar
+     * ones do. The maps survive the drain cursor's close (the live-view incremental cursor preserves
+     * window state), so the restore runs against live, non-freed state. The read counters end at the
+     * pre-drain state, so the next scan tick re-drains the same base range and re-produces the same
+     * output rows -- the row numbers and O3 frontier match what a first, un-stalled publish would have
+     * written. The anchor block is read from offset 0 (where {@code captureLeadRollback} wrote it); each
+     * function reads its state back from its recorded snapshot offset.
      */
-    private void restoreLeadRollback(LiveViewInstance instance, WindowRecordCursorFactory windowFactory) {
+    private void restoreLeadRollback(LiveViewInstance instance, WindowRecordCursorFactory windowFactory, LiveViewWindow anchorWindow) {
+        if (anchorWindow != null) {
+            anchorWindow.restore(leadRollbackScratch);
+        }
         final ObjList<WindowFunction> functions = windowFactory.getWindowFunctions();
         for (int i = 0, n = functions.size(); i < n; i++) {
             final WindowFunction f = functions.getQuick(i);
@@ -2124,26 +2143,22 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
     /**
      * Reports whether a replica can safely reconstruct this view's lead. Reconstruction requires that
-     * a stalled publish (both tier slots reader-pinned) be recoverable by rolling the window
-     * accumulator back to its pre-drain state and re-draining next tick -- the primary instead flushes
-     * the stall to disk, which a read-only replica cannot do. The in-RAM rollback
-     * ({@link #captureLeadRollback} / {@link #restoreLeadRollback}) round-trips each window function's
-     * accumulator through {@link LiveViewFunctionSnapshot}, so it is available only when every function
-     * is snapshot-capable and scalar (no partition map) and the view has no anchored window. Other
-     * shapes fall back to disk-only reads on the replica: correct, at worst one flush cycle stale.
+     * a stalled publish (both tier slots reader-pinned) be recoverable by rolling the window state back
+     * to its pre-drain snapshot and re-draining next tick -- the primary instead flushes the stall to
+     * disk, which a read-only replica cannot do. The in-RAM rollback ({@link #captureLeadRollback} /
+     * {@link #restoreLeadRollback}) is the in-RAM analog of a head-checkpoint write+restore, reusing the
+     * same {@link LiveViewWindow#snapshot} / {@link LiveViewFunctionSnapshot} primitives, so it round-trips
+     * exactly when the view is snapshot-capable: every window function supports snapshot, and -- when the
+     * view has an anchored window -- its partition-key shape has codec support. That is precisely
+     * {@link #computeSnapshotCapability}, cached once on the instance (the replica never writes the head
+     * checkpoint, so this call site may be the one to compute it). Non-snapshot-capable shapes fall back
+     * to disk-only reads on the replica: correct, at worst one flush cycle stale.
      */
     private boolean isLeadRollbackSupported(LiveViewInstance instance, WindowRecordCursorFactory windowFactory) {
-        if (instance.getAnchorWindow() != null) {
-            return false;
+        if (!instance.isSnapshotCapabilityComputed()) {
+            instance.setSnapshotCapability(computeSnapshotCapability(instance, windowFactory));
         }
-        final ObjList<WindowFunction> functions = windowFactory.getWindowFunctions();
-        for (int i = 0, n = functions.size(); i < n; i++) {
-            final WindowFunction f = functions.getQuick(i);
-            if (!f.supportsSnapshot() || f.getPartitionMap() != null) {
-                return false;
-            }
-        }
-        return true;
+        return instance.isSnapshotCapability();
     }
 
     /**
@@ -4646,11 +4661,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     if (leadReconstruction) {
                         if (!isLeadRollbackSupported(instance, getWindowFactory(instance))) {
                             // The replica cannot safely reconstruct this view's lead: a stalled publish
-                            // would leave the window accumulator advanced with no way to roll it back
-                            // (the primary flushes such a stall to disk; a read-only replica cannot).
-                            // Serve disk-only instead -- correct, at worst one flush cycle stale. Only
-                            // scalar snapshot-capable windows without an anchor round-trip the accumulator
-                            // through the in-RAM rollback; anchored / partitioned shapes take this branch.
+                            // would leave the window state advanced with no way to roll it back (the
+                            // primary flushes such a stall to disk; a read-only replica cannot). Serve
+                            // disk-only instead -- correct, at worst one flush cycle stale. Snapshot-capable
+                            // views -- including partitioned and anchored shapes -- round-trip their window
+                            // state through the in-RAM rollback; only non-snapshot-capable windows take this
+                            // branch.
                             return;
                         }
                         // Reconcile the in-RAM lead with the on-disk tier the global apply job
