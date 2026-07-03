@@ -1111,6 +1111,19 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         return ColumnType.isTimestamp(predicateContext.columnType);
     }
 
+    // A FLOAT column or bind-variable leaf. An out-of-INT-range integer constant compared
+    // directly against one types down to F4 (INT and FLOAT are both 4 bytes, so the observer
+    // sees no mixed size), and serializeNumber would then emit the constant as a lossy 32-bit
+    // float. The Java filter promotes both operands to double and compares exactly, so widen
+    // the constant to i64: scalar mode is forced and its convert() promotes the float column
+    // to double too. DOUBLE (F8) already compares exactly, so it is intentionally excluded.
+    private boolean isFloatLeaf(ExpressionNode node) {
+        if (node == null || (node.type != ExpressionNode.LITERAL && node.type != ExpressionNode.BIND_VARIABLE)) {
+            return false;
+        }
+        return arithExprType(node) == F4_TYPE;
+    }
+
     // A bare or unary-minus-wrapped integer CONSTANT node (I4- or I8-typed). Returns
     // false for float, keyword, and non-numeric constants, and for columns.
     private boolean isIntegerConst(ExpressionNode node) {
@@ -1482,6 +1495,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * the Java InLong path reads the key at long width for that element, so widen the
      * key and every integer-constant element (all value-preserving) to keep each
      * pairing at one width. The single-value form keeps key / element in lhs / rhs.
+     * <p>
+     * A FLOAT leaf compared directly against an out-of-INT-range integer constant
+     * diverges the same way (INT and FLOAT are both 4 bytes, so the constant types
+     * down to F4 and rounds to the nearest float, e.g. 3000000200 -> 3000000256f).
+     * Here only the constant widens to I8; the FLOAT column is not sign-extended but
+     * promoted to double by the scalar convert(), matching the Java filter which
+     * compares both operands at double width. See {@link #isFloatLeaf}. DOUBLE columns
+     * already compare exactly and are left vectorized.
      */
     private void markNarrowConstCmpWidenLeaves(ExpressionNode node) {
         if (node == null) {
@@ -1526,15 +1547,26 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     // Widens a narrow-int leaf and the out-of-INT-range integer constant it is
-    // paired with (either operand order). See markNarrowConstCmpWidenLeaves.
+    // paired with (either operand order). A FLOAT leaf paired with such a constant
+    // widens only the constant - see isFloatLeaf and markNarrowConstCmpWidenLeaves.
     private void markNarrowConstCmpWidenPair(ExpressionNode a, ExpressionNode b) {
-        final ExpressionNode leaf;
+        final ExpressionNode narrowLeaf;
         final ExpressionNode constNode;
         if (isNarrowIntLeaf(a) && isIntegerConst(b)) {
-            leaf = a;
+            narrowLeaf = a;
             constNode = b;
         } else if (isNarrowIntLeaf(b) && isIntegerConst(a)) {
-            leaf = b;
+            narrowLeaf = b;
+            constNode = a;
+        } else if (isFloatLeaf(a) && b != null && b.type == ExpressionNode.CONSTANT && isIntegerConst(b)) {
+            // The constant only widens - the FLOAT column is promoted to double by
+            // the scalar convert(), not sign-extended. A folded / negated overflow
+            // constant is an OPERATION handled by the fold-root path (descend +
+            // markI64WidenFoldRoots), so restrict this to a bare CONSTANT.
+            narrowLeaf = null;
+            constNode = b;
+        } else if (isFloatLeaf(b) && a != null && a.type == ExpressionNode.CONSTANT && isIntegerConst(a)) {
+            narrowLeaf = null;
             constNode = a;
         } else {
             return;
@@ -1544,7 +1576,11 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         if (arithExprType(constNode) != I8_TYPE) {
             return;
         }
-        addI64WidenLeaf(leaf);
+        // A narrow-int leaf sign-extends alongside the constant (value-preserving); a
+        // FLOAT leaf is left untouched and promoted to double by the scalar convert().
+        if (narrowLeaf != null) {
+            addI64WidenLeaf(narrowLeaf);
+        }
         addI64WidenLeaf(constNode);
     }
 

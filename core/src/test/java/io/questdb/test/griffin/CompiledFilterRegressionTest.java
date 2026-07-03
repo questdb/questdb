@@ -934,6 +934,43 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFloatDirectCompareOutOfRangeConstWiden() throws Exception {
+        // A FLOAT column compared directly against an out-of-INT-range integer constant
+        // diverged. INT and FLOAT are both 4 bytes, so hasMixedSizes() is false and the type
+        // observer types the constant F4; serializeNumber then emitted it as a lossy 32-bit
+        // float (3000000200 rounds to 3000000256f). The JIT compared at float width, while the
+        // Java filter promotes both operands to double and compares exactly. For a stored
+        // fcol=3000000256.0 the JIT dropped the row on "> 3000000200" (3000000256f > 3000000256f
+        // is false) that Java kept (3000000256.0 > 3000000200.0 is true), and it spuriously
+        // matched the row on "= 3000000200" that Java rejected.
+        // The serializer now widens the constant to a full I8 IMM and forces scalar mode, where
+        // the scalar convert() promotes the float column to double. JIT stays enabled.
+        assertMemoryLeak(() -> {
+            execute("create table t (fcol float, dcol double, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into t values " +
+                    "(3000000256.0, 3000000256.0, 0)," +     // boundary: 3000000200 rounds to this float
+                    "(3000000000.0, 3000000000.0, 1000000)," +
+                    "(5.0, 5.0, 2000000)," +
+                    "(null, null, 3000000)");
+            // Operators that diverged on the boundary row before the fix.
+            assertJitMatchesJava("t where fcol > 3000000200", true);
+            assertJitMatchesJava("t where fcol >= 3000000200", true);
+            assertJitMatchesJava("t where fcol = 3000000200", true);
+            assertJitMatchesJava("t where fcol <> 3000000200", true);
+            assertJitMatchesJava("t where fcol < 3000000200", true);
+            assertJitMatchesJava("t where fcol <= 3000000200", true);
+            // Single-value IN reduces to equality on the FLOAT key.
+            assertJitMatchesJava("t where fcol in (3000000200)", true);
+            // Control: a DOUBLE column stores 8 bytes and compares exactly on both paths, so it
+            // stays vectorized and unchanged.
+            assertJitMatchesJava("t where dcol > 3000000200", true);
+            // Control: an in-range constant compares at int width on both paths (the observer
+            // types it I4 and int-parse succeeds), so it must not widen.
+            assertJitMatchesJava("t where fcol > 5", true);
+        });
+    }
+
+    @Test
     public void testGeoHashConstant() throws Exception {
         final String query = "x " +
                 "where geo8 != ##1001 and geo16 != ##100110011001 and geo32 != ##1001100110011001 and geo64 != ##10011001100110011001100110011001";
