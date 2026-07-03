@@ -56,14 +56,24 @@ import io.questdb.std.str.Utf8s;
  */
 public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware {
     static final int SEND_STATE_READY = 0;
-    // Bounded grace (MicrosecondClock ticks) a role-change close may be deferred
-    // while committed-but-not-yet-durably-uploaded work drains. The demote cascade
+    // Bounded grace a role-change close may be deferred while
+    // committed-but-not-yet-durably-uploaded work drains. The demote cascade
     // flips the engine read-only FIRST and completes pending WAL uploads AFTERWARDS,
     // so at gate-reject time the durable-ack watermark can lag this connection's
     // committed work by the in-flight upload latency; closing inside that lag loses
     // the final durable ack forever and forces a duplicate-producing client replay.
-    // Uploads the demote drain is completing land in milliseconds; 10s is a stall
-    // guard, not an expected wait.
+    //
+    // NOTE: this budget is NOT a wall-clock teardown bound. Completion -- coverage
+    // OR expiry -- is evaluated ONLY on inbound, recv-driven re-entry: a gate-refused
+    // data frame (handleBinaryMessage) or the client's durable-ack keepalive PING
+    // (handlePing). There is no server-side timer and resumeSend does not re-poll, so
+    // the deadline is measured in MicrosecondClock ticks but enforced only while the
+    // client is live enough to poll. A conformant durable-ack client PINGs and
+    // completes in milliseconds (the demote drain's uploads land that fast); a fully
+    // silent client lingers deferred until the transport idle reaper tears the
+    // connection down via onConnectionClosed (best-effort final durable-ack flush,
+    // no CLOSE frame). 10s is a stall guard for the live-client path, not a
+    // guaranteed deadline.
     public static final long ROLE_CHANGE_CLOSE_UPLOAD_GRACE_MICROS = 10_000_000;
     static final int SEND_STATE_RESUME_ACK = 1;
     static final int SEND_STATE_RESUME_ACK_THEN_CLOSE = 7;
