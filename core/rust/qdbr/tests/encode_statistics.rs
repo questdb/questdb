@@ -608,6 +608,74 @@ fn questdb_parquet_reduces_multipage_string_exact_flags() {
     assert_eq!(thrift_stats.is_max_value_exact, Some(false));
 }
 
+/// A multi-page string chunk whose page bounds are in a prefix relationship:
+/// "ETH" is a proper prefix of "ETHW". Parquet orders BYTE_ARRAY unsigned, so
+/// "ETH" < "ETHW", and the row-group reduce must apply that length tiebreaker.
+/// If it collapses the chunk max to the shorter "ETH" -- byte-wise below a real
+/// value -- a reader pruning on `sym = 'ETHW'` skips the row group and drops the
+/// matching rows. The sibling test above uses values that differ at byte 0, so
+/// only this one exercises the prefix path.
+#[test]
+fn questdb_parquet_reduces_multipage_string_prefix_bounds() {
+    let low = "ETH";
+    let high = "ETHW";
+    let values = [low, high];
+    let (vc_data, vc_aux) = build_qdb_varchar_data(&values, &[false, false]);
+
+    let column = make_varchar_column(
+        "v",
+        ColumnType::new(ColumnTypeTag::Varchar, 0).code(),
+        vc_data.as_ptr(),
+        vc_data.len(),
+        vc_aux.as_ptr(),
+        vc_aux.len(),
+        values.len(),
+        Encoding::Plain.config(),
+    );
+    let partition = Partition {
+        table: "compat".to_string(),
+        columns: vec![column],
+    };
+
+    // A tiny page size puts each value on its own page, forcing reduce_binary to
+    // fold more than one page.
+    let mut buf = Cursor::new(Vec::new());
+    ParquetWriter::new(&mut buf)
+        .with_statistics(true)
+        .with_data_page_size(Some(8))
+        .finish(partition)
+        .expect("ParquetWriter::finish");
+    let data = buf.into_inner();
+
+    // The chunk must really span more than one data page, or reduce_binary would
+    // never fold across pages.
+    let options = ArrowReaderOptions::new().with_page_index(true);
+    let builder =
+        ParquetRecordBatchReaderBuilder::try_new_with_options(Bytes::from(data.clone()), options)
+            .expect("open parquet with arrow reader");
+    let offset_index = builder
+        .metadata()
+        .offset_index()
+        .expect("offset index present when statistics are written");
+    assert!(
+        offset_index[0][0].page_locations().len() > 1,
+        "the string chunk must span multiple data pages"
+    );
+
+    // The reduced max must keep the longer "ETHW", not the prefix "ETH": a bound
+    // of "ETH" is byte-wise below the real "ETHW" and would prune it away.
+    let metadata = external_metadata(&data);
+    let stats = metadata
+        .row_group(0)
+        .column(0)
+        .statistics()
+        .expect("varchar statistics");
+    let min = stats.min_bytes_opt().expect("min_value present");
+    let max = stats.max_bytes_opt().expect("max_value present");
+    assert_eq!(min, low.as_bytes(), "chunk min keeps the prefix");
+    assert_eq!(max, high.as_bytes(), "chunk max keeps the extended value");
+}
+
 /// Symbol columns encode through the dictionary path, but their min/max
 /// statistics must still take the String (UTF-8) truncation branch: a symbol
 /// value longer than the 64-byte bound is truncated and flagged inexact, just

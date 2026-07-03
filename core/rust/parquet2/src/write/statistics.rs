@@ -166,27 +166,28 @@ fn is_unsigned_integer_primitive_type(primitive_type: &PrimitiveType) -> bool {
     )
 }
 
+// Orders two Binary/String values as unsigned bytes and returns the max (or the
+// min). Vec<u8> ordering breaks a prefix tie by length ("ETH" < "ETHW"), which a
+// byte loop stopping at the shorter operand misses -- understating a chunk's max
+// or overstating its min when one page bound is a prefix of another's.
 fn ord_binary(a: Vec<u8>, b: Vec<u8>, max: bool) -> Vec<u8> {
-    for (v1, v2) in a.iter().zip(b.iter()) {
-        match v1.cmp(v2) {
-            std::cmp::Ordering::Greater => {
-                if max {
-                    return a;
-                } else {
-                    return b;
-                }
+    match a.cmp(&b) {
+        std::cmp::Ordering::Greater => {
+            if max {
+                a
+            } else {
+                b
             }
-            std::cmp::Ordering::Less => {
-                if max {
-                    return b;
-                } else {
-                    return a;
-                }
-            }
-            _ => {}
         }
+        std::cmp::Ordering::Less => {
+            if max {
+                b
+            } else {
+                a
+            }
+        }
+        std::cmp::Ordering::Equal => a,
     }
-    a
 }
 
 fn ord_binary_signed(a: Vec<u8>, b: Vec<u8>, max: bool) -> Vec<u8> {
@@ -421,6 +422,38 @@ mod tests {
         assert_eq!(a.max_value, Some(vec![0x20]), "all-null page keeps the max");
         let b = reduce_binary([&all_null, &bounded].into_iter());
         assert_eq!(b.max_value, Some(vec![0x20]), "order does not matter");
+    }
+
+    #[test]
+    fn reduce_binary_prefix_bounds_apply_length_tiebreaker() {
+        // Parquet orders BYTE_ARRAY values as unsigned bytes, so a proper prefix is
+        // strictly less than the value that extends it ("app" < "apple"). The chunk
+        // reduce must honour that length tiebreaker across pages, or the max
+        // understates and the min overstates the true bounds and prunes matching rows.
+        let short = binary_page(Some(b"app".to_vec()), Some(b"app".to_vec()));
+        let long = binary_page(Some(b"apple".to_vec()), Some(b"apple".to_vec()));
+
+        // Fold order [short, long] exercises the max branch (acc's shorter max must
+        // yield to the longer one); [long, short] exercises the min branch.
+        let a = reduce_binary([&short, &long].into_iter());
+        assert_eq!(
+            a.min_value,
+            Some(b"app".to_vec()),
+            "prefix is the chunk min"
+        );
+        assert_eq!(
+            a.max_value,
+            Some(b"apple".to_vec()),
+            "extension is the chunk max"
+        );
+
+        let b = reduce_binary([&long, &short].into_iter());
+        assert_eq!(b.min_value, Some(b"app".to_vec()), "order does not matter");
+        assert_eq!(
+            b.max_value,
+            Some(b"apple".to_vec()),
+            "order does not matter"
+        );
     }
 
     #[test]
