@@ -580,13 +580,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // base WAL forward on restart.
             leadRollbackCaptured = false;
             if (isLeadReconstruction()) {
-                // Read-only replica: the drain about to run mutates shared, non-transactional
-                // window state (the accumulator + latestSeenTs). If the publish then stalls (both
-                // tier slots reader-pinned) the primary would flush the rows straight to disk, but
-                // the replica cannot -- it must re-drain next tick. Snapshot the window state now so
-                // finishLeadRefresh can restore it on a stalled publish, keeping the re-drain exact.
-                // The refreshInstance gate guarantees the window supports this in-RAM round-trip.
-                captureLeadRollback(windowFactory, instance.getAnchorWindow(), latestSeenTsSnapshot);
                 // Compute the lead off the APPLIED base table, not the raw WAL: a replica's raw WAL
                 // segments race their own download/apply, so a raw read can transiently return 0 rows
                 // for already-applied data and drop the batch. The applied reader is consistent.
@@ -1151,6 +1144,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 return;
             }
 
+            // The forward scan below mutates shared, non-transactional window state (the accumulators +
+            // latestSeenTs). If the ensuing publish stalls (both tier slots reader-pinned) the primary
+            // would flush the rows straight to disk, but the replica cannot -- it must re-drain next tick.
+            // Snapshot the window state now, past the two early-returns above (neither of which touches
+            // window state), so finishLeadRefresh can restore it on a stalled publish and keep the
+            // re-drain exact. Deferring the snapshot to here, rather than taking it unconditionally in the
+            // caller, skips the O(W x P) walk on the frequent no-new-data and overlap-reset ticks -- the
+            // steady state during apply lag. The refreshInstance gate guarantees the window supports this
+            // in-RAM round-trip.
+            captureLeadRollback(windowFactory, instance.getAnchorWindow(), latestSeenTs);
+
             // Strictly-forward scan of the applied reader, ts > latestSeenTs (floored at the view's
             // lower bound), into the staging buffer -- the same motion drainBaseWal makes, off the
             // consistent applied table instead of the raw WAL. On the first cycle latestSeenTs is
@@ -1196,11 +1200,24 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             // reach disk truth.
                             instance.setLatestSeenTs(ts);
                             if (reconcileSeamTs != Numbers.LONG_NULL && ts <= reconcileSeamTs) {
-                                // Case B replica catch-up: this output row is already on the replicated
-                                // on-disk tier (a flush produced it). The windowCursor.hasNext() above
-                                // already drove the accumulators over it -- exactly the catch-up we need
-                                // -- but it must NOT enter the lead, or size() would double-count a row
-                                // disk already holds. Drive past it without staging.
+                                // Replica catch-up over the durable band: this output row is already on
+                                // the replicated on-disk tier (a flush produced it). The
+                                // windowCursor.hasNext() above already drove the accumulators over it --
+                                // exactly the catch-up we need -- but it must NOT enter the lead, or size()
+                                // would double-count a row disk already holds. Drive past it without
+                                // staging.
+                                //
+                                // Row-set imprecision (accepted): the seam is a single ts (the on-disk max
+                                // ts), but without dedup the base can add a genuinely-new output row that
+                                // TIES the seam ts in a later commit the flush did not cover. That row is
+                                // real un-flushed lead, yet ts <= reconcileSeamTs folds it into the durable
+                                // band and drops it, so the replica omits it from its result set until the
+                                // primary flushes it and clears the seam (~one FLUSH EVERY interval +
+                                // replication lag). This is a ROW-SET effect, unlike restampSlot's tie-at-
+                                // diskMaxTs which is count-only (there the seam still serves every slot
+                                // row). Splitting the tie exactly needs a per-row base seqTxn the slot does
+                                // not carry; a strict ts < seam would instead double-count the tied durable
+                                // rows, trading a transient omission for a transient duplicate.
                                 continue;
                             }
                             if (batchMaxTs == Numbers.LONG_NULL || ts > batchMaxTs) {
@@ -2226,9 +2243,24 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         if (tier == null) {
             return false;
         }
-        final long lvDiskSeqTxn = engine.getTableSequencerAPI()
-                .getTxnTracker(instance.getLiveViewToken()).getWriterTxn();
-        return tier.getSlot(tier.getPublishedIdx()).lvSeqTxn() != lvDiskSeqTxn;
+        // Pin the published slot before dereferencing it. This runs in scanForLaggingViews, outside the
+        // refresh latch that guards every other tier-slot access, so a concurrent refresh worker can free
+        // the tier (a dropped / invalidated view's refreshInstance finally) between the getInMemoryTier
+        // read above and the slot read below: freeNativeMemory nulls the slot arrays before the volatile
+        // inMemoryTier field, so an unpinned getSlot would return null and NPE into run(). acquireRead
+        // returns -1 once the tier is closed -- nothing to reconcile then -- and otherwise holds the free
+        // off until releaseRead, mirroring the read-pin protocol LiveViewRecordCursor.of uses.
+        final int slotIdx = tier.acquireRead();
+        if (slotIdx < 0) {
+            return false;
+        }
+        try {
+            final long lvDiskSeqTxn = engine.getTableSequencerAPI()
+                    .getTxnTracker(instance.getLiveViewToken()).getWriterTxn();
+            return tier.getSlot(slotIdx).lvSeqTxn() != lvDiskSeqTxn;
+        } finally {
+            tier.releaseRead(slotIdx);
+        }
     }
 
     /**

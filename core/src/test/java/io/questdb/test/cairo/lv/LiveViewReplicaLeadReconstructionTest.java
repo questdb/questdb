@@ -24,11 +24,13 @@
 
 package io.questdb.test.cairo.lv;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.lv.ForwardingLiveViewStateStore;
+import io.questdb.cairo.lv.LiveViewInMemoryTier;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewStateStore;
@@ -817,6 +819,104 @@ public class LiveViewReplicaLeadReconstructionTest extends AbstractCairoTest {
             ) {
                 Assert.assertTrue("reconstructed lead must be routing-eligible", cursor.isRoutingEligible());
                 Assert.assertEquals("size() equals disk plus the genuine lead", 5, cursor.size());
+            }
+        });
+    }
+
+    // Replica stalled-publish rollback. On a read-only replica the lead publish can fail (both tier
+    // slots reader-pinned, or a mid-swap error): the primary would flush the drained rows straight to
+    // disk, but the replica cannot, so finishLeadRefresh rolls the window state back to its pre-drain
+    // snapshot (restoreLeadRollback) and leaves refreshedUpToSeqTxn where it was, so the next tick
+    // re-drains the exact same range and re-produces identical output. This pins that capture/restore
+    // round-trip via the setFailNextPublishSwap hook (the same one the primary-path emergency-flush
+    // smoke test uses) in replica mode; growth.bytes = 0 forces the slow-path swap the injection fires on.
+    //
+    // The rollback is load-bearing: without it the stalled drain's forward advance to the accumulator
+    // (row_number() -> 4) and latestSeenTs (-> TS4) would persist while refreshedUpToSeqTxn stayed at 1,
+    // so the re-drain would scan ts > TS4, find nothing, and lose batch 2 permanently (leaving only rn
+    // 1, 2). With the rollback the re-drain reconstructs the identical rn 1..4.
+    @Test
+    public void testReplicaStalledPublishRollsBackAndRedrains() throws Exception {
+        // The publishSwap injection fires only on the slow-path swap; growth.bytes = 0 forces it.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_GROWTH_BYTES, 0);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            final TableToken lvToken = engine.getTableTokenIfExists("lv");
+            Assert.assertNotNull(lvToken);
+
+            final LiveViewStateStore primaryStore = switchToReplicaMode();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+
+                // Batch 1 lands strictly in order; the replica reconstructs it as a 2-row lead over empty
+                // disk (accumulator -> 2, frontier at TS2, loop frontier at base seqTxn 1).
+                execute("INSERT INTO base (ts, x) VALUES ('" + TS1 + "', 10), ('" + TS2 + "', 20)");
+                drainWalQueue();
+                drainJob(job);
+                Assert.assertEquals("batch 1 reconstructed as a 2-row lead", 2, instance.getLeadRowCount());
+                Assert.assertEquals("loop frontier at batch 1", 1, instance.getRefreshedUpToSeqTxn());
+                Assert.assertEquals("frontier advanced past the seen row",
+                        MicrosFormatUtils.parseUTCTimestamp(TS2), instance.getLatestSeenTs());
+
+                // Batch 2 applies to the base. Arm a one-shot publishSwap failure so the batch-2 lead
+                // publish stalls on the slow-path swap.
+                execute("INSERT INTO base (ts, x) VALUES ('" + TS3 + "', 30), ('" + TS4 + "', 40)");
+                drainWalQueue();
+                final LiveViewInMemoryTier tier = instance.getInMemoryTier();
+                Assert.assertNotNull("tier allocated after the first reconstruction", tier);
+                tier.setFailNextPublishSwap(new RuntimeException("test: simulated replica publish stall"));
+
+                // Single-step the stalled tick (drainJob would loop straight past it into the recovery,
+                // since the hook self-clears). The drain advances the accumulators over batch 2 and
+                // captures the pre-drain snapshot, the publish throws, and finishLeadRefresh's replica
+                // hatch rolls the window state back WITHOUT rewriting disk, leaving the loop frontier
+                // unadvanced.
+                Assert.assertTrue("stalled tick did work", job.run());
+                Assert.assertEquals("stalled publish does not grow the lead", 2, instance.getLeadRowCount());
+                Assert.assertEquals("stalled publish leaves the loop frontier unadvanced",
+                        1, instance.getRefreshedUpToSeqTxn());
+                Assert.assertEquals("rollback restores the pre-drain frontier",
+                        MicrosFormatUtils.parseUTCTimestamp(TS2), instance.getLatestSeenTs());
+                try (TableReader lvReader = engine.getReader(lvToken)) {
+                    Assert.assertEquals("the replica never flushes the stalled lead to disk", 0, lvReader.size());
+                }
+
+                // The recovery tick re-drains the identical batch-2 range (the hook self-cleared) and
+                // publishes the lead, re-producing the same row numbers and frontier a first, un-stalled
+                // publish would have.
+                drainJob(job);
+                Assert.assertEquals("recovery re-drains batch 2 as the genuine lead", 4, instance.getLeadRowCount());
+                Assert.assertEquals("recovery advances the loop frontier past batch 2",
+                        2, instance.getRefreshedUpToSeqTxn());
+                Assert.assertEquals("recovery frontier matches an un-stalled publish",
+                        MicrosFormatUtils.parseUTCTimestamp(TS4), instance.getLatestSeenTs());
+            } finally {
+                switchToStore(primaryStore);
+            }
+
+            final String expected = """
+                    ts\tx\trn
+                    2026-05-12T00:00:01.000000Z\t10\t1
+                    2026-05-12T00:00:02.000000Z\t20\t2
+                    2026-05-12T00:00:03.000000Z\t30\t3
+                    2026-05-12T00:00:04.000000Z\t40\t4
+                    """;
+            // Content is exact global rn 1..4 -- the rollback kept the re-drain in step, so no batch-2 row
+            // was lost and none was double-numbered ...
+            StringSink actual = new StringSink();
+            printSql("SELECT * FROM lv ORDER BY ts", actual);
+            Assert.assertEquals(expected, actual.toString());
+
+            // ... and the read routes through the reconstructed lead over empty disk (size 4).
+            try (
+                    RecordCursorFactory factory = select("SELECT * FROM lv");
+                    LiveViewRecordCursor cursor = openLvCursor(factory)
+            ) {
+                Assert.assertTrue("reconstructed lead must be routing-eligible", cursor.isRoutingEligible());
+                Assert.assertEquals("size() equals the reconstructed lead over empty disk", 4, cursor.size());
             }
         });
     }
