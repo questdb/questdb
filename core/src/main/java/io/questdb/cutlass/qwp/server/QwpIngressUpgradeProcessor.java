@@ -1057,11 +1057,14 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         // keepalive PING is the recv-driven poll that observes upload completion
         // (durable acks are only ever flushed on inbound events). The flush above
         // already delivered any newly-covered durable ack; once coverage is full
-        // (or the grace budget is exhausted) emit the reconnect-eligible close.
-        if (state.isRoleChangeCloseDeferred()
-                && (state.isDurableWorkFullyUploaded(engine.getDurableAckRegistry())
-                || state.isRoleChangeCloseGraceExpired())) {
-            sendFatalClose(context, state, WebSocketCloseCode.NORMAL_CLOSURE, state.getRoleChangeCloseReason());
+        // (or the grace budget is exhausted) the close is routed through
+        // roleChangeCloseWithUploadGrace -- the same exit the gate-refused
+        // data-frame re-entry takes -- so close behaviour and diagnostics
+        // cannot drift between the two polls (a grace-expired close observed
+        // by PING used to proceed silently, skipping the un-acked-durable-work
+        // alarm). While the deferral holds, fall through to the pong keepalive.
+        if (state.isRoleChangeCloseDeferred() && isRoleChangeCloseCompletable(state)) {
+            roleChangeCloseWithUploadGrace(context, state, state.getRoleChangeCloseReason());
             return;
         }
 
@@ -1107,6 +1110,20 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
     }
 
     /**
+     * Completion predicate for a deferred role-change close: the registry's
+     * durable-upload watermark covers every committed seqTxn (replay window
+     * empty), or the bounded grace budget is exhausted (availability over the
+     * duplicate guard). Single source of truth shared by the deferral's two
+     * re-entry polls -- gate-refused data frames and keepalive PINGs
+     * ({@link #handlePing}) -- so the close path and its diagnostics cannot
+     * drift between them.
+     */
+    private boolean isRoleChangeCloseCompletable(QwpIngressProcessorState state) {
+        return state.isDurableWorkFullyUploaded(engine.getDurableAckRegistry())
+                || state.isRoleChangeCloseGraceExpired();
+    }
+
+    /**
      * INVARIANT B role-change close with an exactly-once guard for durable-ack
      * connections.
      * <p>
@@ -1144,9 +1161,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             QwpIngressProcessorState state,
             CharSequence reason
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
-        if (state.isDurableAckEnabled()
-                && !state.isDurableWorkFullyUploaded(engine.getDurableAckRegistry())
-                && !state.isRoleChangeCloseGraceExpired()) {
+        if (state.isDurableAckEnabled() && !isRoleChangeCloseCompletable(state)) {
             boolean firstDeferral = !state.isRoleChangeCloseDeferred();
             state.deferRoleChangeClose(reason);
             if (firstDeferral) {
@@ -1159,7 +1174,12 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             flushPendingAck(context, state);
             return;
         }
-        if (state.isRoleChangeCloseGraceExpired()) {
+        if (state.isRoleChangeCloseGraceExpired()
+                && !state.isDurableWorkFullyUploaded(engine.getDurableAckRegistry())) {
+            // Grace expired with genuinely un-acked durable work: the one
+            // close the operator must see. A slow-but-clean close -- uploads
+            // catching up after the deadline but before this re-entry --
+            // leaves an empty replay window and must not raise this alarm.
             LOG.error().$("role-change close upload grace expired; closing with un-acked durable work, client replay may duplicate [fd=")
                     .$(context.getFd()).I$();
         }
