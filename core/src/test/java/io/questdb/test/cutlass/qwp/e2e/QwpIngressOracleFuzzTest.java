@@ -51,6 +51,7 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.AtomicReferenceArray;
@@ -453,6 +454,11 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
         //   3. Watermark purity: every row flushed before the poisoned
         //      chunk lands exactly per the oracle -- acks never cross a
         //      rejected frame, and the halt does not disturb settled data.
+        //   4. Retention: the NACKed frame's bytes survive in the sender's
+        //      SF slot past close -- the terminal preserves the only
+        //      replayable copy. Proven functionally by reopening the slot
+        //      and observing the byte-identical replay latch the same
+        //      deterministic terminal again.
         //
         // The poisoned chunk is each poisoned producer's LAST chunk on
         // purpose: frames published after a rejected frame are head-of-line
@@ -495,9 +501,10 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
                     }
                 }
                 // producer 0 is always poisoned so every run exercises the
-                // escalation; the rest flip a coin so the clean-close path
-                // stays covered too
-                if (p == 0 || master.nextBoolean()) {
+                // escalation and the retention proof in (e) below; producer
+                // 1 is always clean so the purge check in (d) never runs
+                // vacuous; the rest flip a coin
+                if (p == 0 || (p > 1 && master.nextBoolean())) {
                     poisonedProducers++;
                     QwpRow[] chunk = new QwpRow[chunkSize];
                     int badRow = master.nextInt(chunkSize);
@@ -658,9 +665,11 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
                         .$(" handler calls=").$(observed).$();
 
                 // (d) SF hygiene: clean producers' slots purge on clean
-                // close. Poisoned producers' slots intentionally RETAIN the
-                // rejected bytes (no silent loss -- the terminal preserves
-                // the frame on disk), so they are excluded here.
+                // close. Producer 1 is always clean, so this check never
+                // runs vacuous. Poisoned producers' slots intentionally
+                // RETAIN the rejected bytes (no silent loss -- the terminal
+                // preserves the frame on disk); retention is asserted in
+                // (e), so they are excluded here.
                 List<String> cleanDirs = new ArrayList<>();
                 for (int p = 0; p < producerCount; p++) {
                     if (poisonChunks[p] == null) {
@@ -668,6 +677,59 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
                     }
                 }
                 assertSlotsPurged(cleanDirs.toArray(new String[0]), slotCapFor(sfMaxBytes));
+
+                // (e) Retention proof: the poisoned frame must still be on
+                // disk in producer 0's slot. Byte counting cannot
+                // distinguish a retained frame (a few KB) from clean-close
+                // residue under the generous purge cap, so retention is
+                // proven functionally: a fresh sender on the same slot must
+                // recover the frame, replay it byte-identically, and latch
+                // the same deterministic poison terminal again. A client
+                // bug that purges the NACKed frame's slot leaves nothing to
+                // replay and times out below. Producer 0 is always
+                // poisoned, so this check fires in every run. Client-side
+                // reopen only -- no server bounce, in keeping with the
+                // no-transport-blip design of this test.
+                CompletableFuture<SenderError> replayTerminalFut = new CompletableFuture<>();
+                SenderErrorHandler replayHandler = err -> {
+                    if (err.getAppliedPolicy() == SenderError.Policy.TERMINAL) {
+                        replayTerminalFut.complete(err);
+                    }
+                };
+                String replayConnect = "ws::addr=localhost:" + port + ";sf_dir=" + sfDirs[0]
+                        + ";initial_connect_retry=true"
+                        + ";reconnect_max_duration_millis=120000"
+                        + ";close_flush_timeout_millis=120000"
+                        + ";sf_max_bytes=" + sfMaxBytes
+                        + ";max_frame_rejections=1"
+                        + ";error_inbox_capacity=4096;";
+                try (Sender ignore = Sender.builder(replayConnect).errorHandler(replayHandler).build()) {
+                    SenderError replayTerminal;
+                    try {
+                        replayTerminal = replayTerminalFut.get(120, TimeUnit.SECONDS);
+                    } catch (TimeoutException e) {
+                        throw new AssertionError("retained poison frame did not replay from " + sfDirs[0]
+                                + ": the SF slot no longer holds the rejected frame -- the terminal must"
+                                + " preserve the only replayable copy on disk", e);
+                    }
+                    if (replayTerminal.getCategory() != SenderError.Category.PROTOCOL_VIOLATION) {
+                        throw new AssertionError("replayed poison frame: expected PROTOCOL_VIOLATION terminal, got " + replayTerminal);
+                    }
+                    String rMsg = replayTerminal.getServerMessage();
+                    if (rMsg == null || !rMsg.contains("overflows DECIMAL(50,6)")) {
+                        throw new AssertionError("replayed terminal should carry the decimal overflow rejection, got: " + rMsg);
+                    }
+                }
+
+                // the replayed frame must be rejected wholesale again --
+                // frame-drop atomicity holds across SF recovery too
+                drainWalQueue();
+                assertQuery("SELECT count() FROM " + TABLE_NAME
+                        + " WHERE id IN (" + poisonedIdInList + ")")
+                        .withEngine(engine)
+                        .withContext(sqlExecutionContext)
+                        .noLeakCheck()
+                        .returnsOnce("count\n0\n");
             }
         });
     }
