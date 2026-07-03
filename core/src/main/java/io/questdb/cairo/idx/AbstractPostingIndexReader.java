@@ -103,9 +103,6 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     protected int genCount;
     protected int keyCount;
     protected RecordMetadata metadata;
-    // Assertion-only stamp of the thread that last checked out a cursor; see
-    // assertStampOperatingThread() / assertSameOperatingThread().
-    private long assertOperatingThreadId = -1L;
     // Last successfully observed seqlock value of the chain header's active
     // page. Used by reloadConditionally to detect any publish (appendNewEntry
     // or extendHead — both republish the header) and skip the picker walk
@@ -124,6 +121,9 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     // compares against pinnedTableTxn to force a re-pick on pin change even
     // when the chain seqlock has not advanced.
     private long lastPickedPinnedTxn = Long.MIN_VALUE;
+    // Id of the thread that last checked a cursor out of this reader; see
+    // isOperatingThread() / stampOperatingThread().
+    private long operatingThreadId = -1L;
     private long partitionTimestamp;
     private long partitionTxn;
     // Strict-pin: the table txn this reader is pinned at via the scoreboard.
@@ -1091,27 +1091,6 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         return (long) (count + 1) * (longOffsets ? Long.BYTES : Integer.BYTES);
     }
 
-    // Single-owner tripwire (assertion-only). A posting reader and its pooled
-    // cursors are driven by exactly one thread at a time: the thread that owns the
-    // enclosing TableReader between pool acquire/release. getCursor() stamps that
-    // thread via assertStampOperatingThread() and every cursor close() checks it
-    // here. A posting cursor whose close() runs after the reader was released to the
-    // pool and re-acquired by another thread -- the lifecycle hazard that
-    // CoveringIndexRecordCursorFactory.CoveringCursor.close() avoids by freeing the
-    // row cursor BEFORE the frame cursor -- trips this assert instead of silently
-    // re-pooling into / racing a concurrently-reloaded reader. Never relied upon for
-    // correctness: the isOpen() guard in each cursor close() is the actual leak
-    // mitigation, and this stamp is only written under -ea.
-    protected boolean assertSameOperatingThread() {
-        final long owner = assertOperatingThreadId;
-        return owner == -1L || owner == Thread.currentThread().threadId();
-    }
-
-    protected boolean assertStampOperatingThread() {
-        assertOperatingThreadId = Thread.currentThread().threadId();
-        return true;
-    }
-
     protected void ensureSidecarOpen(int c) {
         MemoryMR mem = sidecarMems.getQuick(c);
         long publishedEnd = c < sidecarFileEndOffsets.size() ? sidecarFileEndOffsets.getQuick(c) : 0L;
@@ -1146,6 +1125,26 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         }
     }
 
+    // Single-owner pooling gate. A posting reader and its pooled cursors are
+    // driven by one logical owner at a time, but that owner is not pinned to
+    // one OS thread: suspendable queries (HTTP exports, pgwire fragments)
+    // migrate the connection -- and the TableReader it holds -- across worker
+    // threads between fragments, with the event loop serializing the handoff.
+    // A cursor checked out on one worker can therefore legitimately close on
+    // another. getCursor() records its thread via stampOperatingThread();
+    // cursor close() paths consult this method to decide whether re-pooling
+    // into freeCursors is safe -- "isOpen() then freeCursors.add(this)" is a
+    // non-atomic check-then-act on a plain ObjList, so it must stay serialized
+    // with getCursor() on the stamping thread. Off-thread closes skip the pool
+    // and free the cursor-local buffers directly, which touches no
+    // reader-shared state. The same gate defuses the stale-cursor hazard where
+    // a cursor outlives its reader's release to the reader pool and another
+    // thread re-acquires (and re-stamps) the reader: the stale close degrades
+    // to a local release instead of racing the new owner's getCursor().
+    protected boolean isOperatingThread() {
+        return operatingThreadId == Thread.currentThread().threadId();
+    }
+
     protected void openRequiredSidecars(int[] requiredCoverColumns) {
         if (coverCount == 0) {
             return;
@@ -1166,6 +1165,10 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 coveredAvailable[c] = sidecarMems.getQuick(c).getFd() != -1;
             }
         }
+    }
+
+    protected void stampOperatingThread() {
+        operatingThreadId = Thread.currentThread().threadId();
     }
 
     protected abstract class AbstractCoveringCursor implements CoveringRowCursor {

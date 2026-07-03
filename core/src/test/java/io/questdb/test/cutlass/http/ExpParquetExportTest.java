@@ -1980,14 +1980,17 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
 
     @Test
     public void testParquetExportPageFramePostingIndexCoveringScanMultiWorker() throws Exception {
-        // Reproduces "posting index cursor closed off the reader's owning thread".
-        // A POSTING-indexed covering scan (symbol IN (...)) exported as parquet drives the
-        // MultiKeyCoveringPageFrameCursor. On a multi-worker HTTP server the export streams
-        // across worker threads and HttpConnectionContext.reset() closes the page-frame cursor
-        // on a worker other than the one that opened the posting index cursor. Cursor.close()
-        // then trips AbstractPostingIndexReader.assertSameOperatingThread(), aborting the close
-        // and leaking the reader. getExportTester() pins workerCount=1, which hides the race;
-        // this test uses several workers so the close can land off the owning thread.
+        // Regression for "posting index cursor closed off the reader's owning thread"
+        // (AssertionError under -ea). A POSTING-indexed covering scan (symbol IN (...))
+        // exported as parquet drives the MultiKeyCoveringPageFrameCursor. On a multi-worker
+        // HTTP server the export streams across worker threads and
+        // HttpConnectionContext.reset() closes the page-frame cursor on a worker other than
+        // the one that opened the posting index cursor. Cursor.close() used to assert
+        // same-thread and abort the close, leaking the reader; it now detects the off-thread
+        // close via AbstractPostingIndexReader.isOperatingThread() and releases the cursor's
+        // buffers directly instead of re-pooling. getExportTester() pins workerCount=1,
+        // which hides the migration; this test uses several workers so the close can land
+        // off the operating thread.
         new HttpQueryTestBuilder()
                 .withTempFolder(root)
                 .withWorkerCount(4)
