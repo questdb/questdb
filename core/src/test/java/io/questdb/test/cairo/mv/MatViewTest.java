@@ -4392,6 +4392,27 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInformationSchemaTablesShowsMaterializedView() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (sym varchar, price double, ts #TIMESTAMP) " +
+                            "timestamp(ts) partition by DAY WAL"
+            );
+            createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
+            drainQueues();
+            // information_schema.tables reports the full "MATERIALIZED VIEW" table_type and
+            // is_insertable_into=false for a materialized view (mirror of the LIVE VIEW coverage
+            // in LiveViewTest#testInformationSchemaTablesShowsLiveView)
+            assertQuery("select table_type, is_insertable_into from information_schema.tables() " +
+                    "where table_name = 'price_1h'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("table_type\tis_insertable_into\n" +
+                            "MATERIALIZED VIEW\tfalse\n");
+        });
+    }
+
+    @Test
     public void testInsertAfterTruncate() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -8831,6 +8852,83 @@ public class MatViewTest extends AbstractCairoTest {
                             view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\tinvalidation_reason\trefresh_base_table_txn\tbase_table_txn
                             price_1h\tmanual\tbase_price\t2099-01-01T01:01:07.000000Z\t2099-01-01T01:01:07.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h;\tinvalid\tbase table is dropped or renamed\t2\t1
                             """);
+        });
+    }
+
+    @Test
+    public void testViewStatusReportsRefreshingWhileRefreshInFlight() throws Exception {
+        assertMemoryLeak(() -> {
+            final SOCountDownLatch started = new SOCountDownLatch(1);
+            final SOCountDownLatch stopped = new SOCountDownLatch(1);
+            final AtomicBoolean refreshed = new AtomicBoolean(true);
+
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+
+            // sleep() parks the refresh mid-flight: the in-memory refresh start timestamp is
+            // set but the finish has not been persisted yet, which is exactly the window in
+            // which view_status must read 'refreshing'
+            String viewSql = "select sym, last(price) as price, ts from base_price where sleep(120000) sample by 1h";
+            createMatView(viewSql);
+            drainQueues();
+
+            execute(
+                    "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')"
+            );
+            drainWalQueue();
+
+            new Thread(
+                    () -> {
+                        started.countDown();
+                        try {
+                            try (MatViewRefreshJob job = new MatViewRefreshJob(0, engine, 0)) {
+                                refreshed.set(job.run());
+                            }
+                        } finally {
+                            Path.clearThreadLocals();
+                            stopped.countDown();
+                        }
+                    }, "mat_view_refresh_thread"
+            ).start();
+
+            started.await();
+
+            // wait until the refresh query is registered (parked in sleep()); once it appears
+            // in query_activity() the refresh is genuinely in flight
+            long queryId = -1;
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                String activityQuery = "select query_id, query from query_activity() where query ='" + viewSql + "'";
+                try (final RecordCursorFactory factory = CairoEngine.select(compiler, activityQuery, sqlExecutionContext)) {
+                    while (stopped.getCount() != 0) {
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            if (cursor.hasNext()) {
+                                queryId = cursor.getRecord().getLong(0);
+                                break;
+                            }
+                        }
+                    }
+                } catch (SqlException e) {
+                    Assert.fail(e.getMessage());
+                }
+            }
+            Assert.assertTrue(queryId > 0);
+
+            assertQuery("select view_name, view_status from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_status
+                            price_1h\trefreshing
+                            """);
+
+            // unblock the parked refresh so the worker thread can finish
+            execute("cancel query " + queryId);
+            stopped.await();
+            Assert.assertFalse(refreshed.get());
         });
     }
 

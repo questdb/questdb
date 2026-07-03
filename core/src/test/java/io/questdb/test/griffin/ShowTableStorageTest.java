@@ -187,6 +187,27 @@ public class ShowTableStorageTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testTableStorageIncludesMaterializedView() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base_price (sym varchar, price double, ts timestamp) " +
+                    "timestamp(ts) partition by DAY WAL");
+            execute("create materialized view price_1h as " +
+                    "select sym, last(price) as price, ts from base_price sample by 1h");
+            execute("insert into base_price values" +
+                    "('gbpusd', 1.320, '2024-09-10T12:01')" +
+                    ",('gbpusd', 1.323, '2024-09-10T12:02')");
+            drainWalAndMatViewQueues();
+            engine.releaseAllWriters();
+            // a materialized view is a WAL-backed table, so it appears as a row in table_storage()
+            assertQuery("select tableName, walEnabled, rowCount from table_storage() where tableName = 'price_1h'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("tableName\twalEnabled\trowCount\n" +
+                            "price_1h\ttrue\t1\n");
+        });
+    }
+
     private long getDirSize(@NotNull CharSequence tableName) {
         final TableToken token = sqlExecutionContext.getTableToken(tableName);
         return Files.getDirSize(
