@@ -2024,12 +2024,21 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // Exact boundary: the flush landed precisely the lead, so the slot rows are exactly
                 // the just-flushed disk rows. Re-stamp the slot as a disk subset and drop the lead.
                 // The accumulators already sit at disk (latestSeenTs == diskMaxTs), so no catch-up is
-                // pending.
+                // pending. Only zero the instance count when the slot re-stamp lands, so the two stay
+                // consistent -- a reader pins the slot and the re-stamp is skipped. Unlike the
+                // partial-overlap tail below, a stale slot cannot lean on isLeadSlotStale to retry: a
+                // racy publish (the apply job advanced the disk seqTxn between the drain's read and the
+                // publish) already stamped the slot at the current disk seqTxn, so isLeadSlotStale reads
+                // false. Keeping leadRowCount > 0 re-arms the leadSubsumedByDisk scan trigger instead,
+                // which retries the re-stamp next tick; leaving it desynced (instance 0, slot > 0) would
+                // strand the fence serving size() = disk.size() + slot.leadRowCount, over-counting the
+                // durable rows for good.
                 instance.setLeadReconcileSeamTs(Numbers.LONG_NULL);
                 final long lvDiskSeqTxn = engine.getTableSequencerAPI()
                         .getTxnTracker(instance.getLiveViewToken()).getWriterTxn();
-                restampSlotAfterFlush(instance, lvDiskSeqTxn);
-                instance.setLeadRowCount(0);
+                if (restampSlot(instance, lvDiskSeqTxn, 0)) {
+                    instance.setLeadRowCount(0);
+                }
                 return;
             }
             // Steady state caught up: the loop already drove commits through the window pipeline
@@ -4637,12 +4646,25 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             final long processedTo = leadOnly ? instance.getRefreshedUpToSeqTxn() : instance.getLastProcessedSeqTxn();
             // Replica-only: the global apply job advances the on-disk tier (and its seqTxn)
             // independently of new base commits, so a lead built before a replicated flush landed must
-            // be reconciled even when the base head has not moved. isLeadSlotStale fires exactly when
-            // the on-disk seqTxn has advanced past the slot's stamp -- covering both the fully-subsumed
+            // be reconciled even when the base head has not moved. isLeadSlotStale fires when the
+            // on-disk seqTxn has advanced past the slot's stamp -- covering both the fully-subsumed
             // flush (whole lead now on disk) and the partial-overlap flush (a prefix on disk, a
             // remainder still lead) -- so reconcileLeadWithDisk re-stamps the slot and trims the
             // now-durable prefix instead of leaving reads stuck disk-only.
-            final boolean needsLeadReconcile = leadOnly && isLeadSlotStale(instance);
+            //
+            // The slot stamp alone is not enough: the drain reads the on-disk state at the start of a
+            // tick, stages the lead, then publishes it. If the apply job advances the disk past the
+            // loop's frontier BETWEEN the read and the publish, publishToInMemoryTier stamps the slot
+            // with the already-advanced seqTxn, so isLeadSlotStale reads false even though the staged
+            // rows are now fully on disk -- and with the base head not moving either, no trigger fires
+            // and the subsumed lead lingers, over-counting size()/count() by the durable rows. Fire the
+            // reconcile whenever a non-empty lead sits at or below the applied watermark (exact-boundary
+            // or Case B), which reconcileLeadWithDisk resolves by dropping it; the partial-overlap case
+            // (a genuine remainder above disk, applied < refreshedUpTo) is left to isLeadSlotStale.
+            final boolean leadSubsumedByDisk = leadOnly
+                    && instance.getLeadRowCount() > 0
+                    && instance.getAppliedWatermark() >= instance.getRefreshedUpToSeqTxn();
+            final boolean needsLeadReconcile = leadOnly && (isLeadSlotStale(instance) || leadSubsumedByDisk);
             if (head > processedTo || needsLeadReconcile || needsRestore || needsBackfill) {
                 refreshInstance(instance, head);
                 didWork = true;
@@ -4767,11 +4789,27 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // after the sweep without an artificial 100ms+ stall.
                 if (instance.getStateReader().getBackfillState() == LiveViewState.BACKFILL_STATE_BACKFILLING) {
                     if (leadReconstruction) {
-                        // A replica never runs the backfill sweep (it writes disk). The primary's
-                        // backfilled rows arrive via replication and land on the on-disk tier; the
-                        // replica serves them off disk and reconstructs only the lead on top. (TODO
-                        // §3: a view captured mid-backfill in _lv.s serves disk-only until the
-                        // primary's backfill completes and the in-band watermark clears the state.)
+                        // A replica never runs the backfill sweep (it writes disk). Serve disk-only
+                        // while BACKFILLING. This is NOT the common replica path: _lv.s never
+                        // replicates (only _lv, the definition, ships to the sequencer dir), so
+                        // WalEvents.reconstructLiveViewFiles synthesizes a default _lv.s whose
+                        // backfillState is ACTIVE, and CairoEngine.applyLiveViewData preserves that
+                        // local state as it advances the in-band watermark. A replica fed purely by
+                        // replication therefore never sees BACKFILLING here -- it runs the ordinary
+                        // lead-reconstruction path below, serving the primary's backfilled rows off the
+                        // replicated on-disk tier and reconstructing the un-flushed lead on top (see the
+                        // enterprise test testReplicateBackfillLiveViewReconstructsLead).
+                        //
+                        // This branch is reachable only for a node whose OWN _lv.s carries BACKFILLING:
+                        // a primary demoted, or restarted, mid-sweep. Disk-only is the safe choice there
+                        // -- the node cannot reliably detect the sweep's completion from replicated
+                        // state (neither _lv.s nor the .cp replicate, and every sweep commit carries the
+                        // same backfillTargetSeqTxn watermark), and clearing BACKFILLING early would
+                        // skip the sweep resume on a later promote and leave pre-CREATE history
+                        // unmaterialised. The state does NOT self-clear from the in-band watermark
+                        // (applyLiveViewData preserves the local backfillState), so this view stays
+                        // disk-only until the node promotes (and completes/resumes the sweep) or the
+                        // view is recreated.
                         return;
                     }
                     attempted = true;
@@ -4976,7 +5014,20 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         int maxRetry = engine.getConfiguration().getLiveViewFlushRetryMax();
         long maxDurationMicros = engine.getConfiguration().getLiveViewFlushRetryMaxDurationMicros();
         long elapsedUs = retryStartUs == Numbers.LONG_NULL ? 0 : nowUs - retryStartUs;
-        boolean budgetExhausted = retryCount >= maxRetry || elapsedUs >= maxDurationMicros;
+        // A transiently unresolvable table is not a refresh error the COUNT budget should
+        // invalidate on. It happens when the refresh worker scans a newly registered instance
+        // during the CREATE deferred-name window -- createLiveView registers the instance in the
+        // refresh registry before commitDeferredTableNameAndRelease flips the table name, so
+        // getWalWriter throws "table does not exist" until the name commits -- or when a concurrent
+        // DROP is mid-flight. A BACKFILL view fires the refresh scan immediately at CREATE (its
+        // sweep covers existing history, not a future commit), so a fast worker can spin the count
+        // budget to exhaustion inside that sub-millisecond window and brick a freshly created view.
+        // Gate this case on the wall-clock duration budget only: the CREATE transient clears within
+        // the same CREATE and the retry succeeds, while a genuinely never-resolving table still
+        // invalidates after the duration cap. A dropped/invalidated view is short-circuited by the
+        // isDropped()/isInvalid() gate in refreshInstance, so it never spins here.
+        boolean tableTransient = t instanceof CairoException ce && ce.isTableDoesNotExist();
+        boolean budgetExhausted = elapsedUs >= maxDurationMicros || (!tableTransient && retryCount >= maxRetry);
         if (budgetExhausted) {
             LOG.critical().$("live view refresh budget exhausted, invalidating [view=").$(instance.getDefinition().getViewName())
                     .$(", retryCount=").$(retryCount)
