@@ -210,7 +210,11 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         // Use slow path when:
         // - filter is present (need to evaluate each row)
         // - using index (row order may not be sequential)
-        if (filter != null || rowCursorFactory.isUsingIndex()) {
+        // - pushdown pruning is active: the cursor drops whole non-matching parquet row groups,
+        //   so the metadata-only frame-size accounting below would count physical rows the cursor
+        //   never yields and land the skip short (re-reading already-consumed rows). The row-by-row
+        //   walk skips exactly the rows hasNext() yields, matching the pruned scan.
+        if (filter != null || rowCursorFactory.isUsingIndex() || frameCursor.hasActivePushdownFilter()) {
             while (rowCount.get() > 0 && hasNext()) {
                 rowCount.dec();
             }

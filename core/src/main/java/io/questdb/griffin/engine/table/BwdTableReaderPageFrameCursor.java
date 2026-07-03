@@ -144,6 +144,11 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     }
 
     @Override
+    public boolean hasActivePushdownFilter() {
+        return pushdownFilterConditions != null && pushdownFilterConditions.size() > 0;
+    }
+
+    @Override
     public SymbolTable newSymbolTable(int columnIndex) {
         return reader.newSymbolTable(columnIndexes.getQuick(columnIndex));
     }

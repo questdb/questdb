@@ -544,14 +544,33 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
         // convert mid-stream and keep refreshing over the partially-parquet base,
         // and every run converts once more at the end. The recompute oracle is
         // unchanged - the from-scratch recompute reads the same parquet/native
-        // base. (A BACKFILL view over a parquet base is deliberately excluded: it
-        // double-counts rows, a separate parquet-read defect - see runParquetBaseFuzz.)
+        // base. BACKFILL over a parquet base has its own arm (testFuzzBackfillParquetBase),
+        // since it reads base partitions rather than the WAL stream.
         final Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1 + rnd.nextInt(4));
         assertMemoryLeak(() -> {
             for (int i = 0; i < FIXED_WIDTH_VARIANTS.length; i++) {
                 runParquetBaseFuzz(rnd, FIXED_WIDTH_VARIANTS[i], 120 + rnd.nextInt(160),
                         rnd.nextBoolean(), rnd.nextBoolean());
+            }
+        });
+    }
+
+    @Test
+    public void testFuzzBackfillParquetBase() throws Exception {
+        // Differential fuzz over a BACKFILL view whose pre-CREATE history lives in
+        // parquet partitions. The backfill sweep reads base partitions through a
+        // page-frame cursor and resumes across turns with skipRows(); when the view
+        // carries a WHERE, the filter is pushed down to the parquet row-group level,
+        // so a fully non-matching partition is pruned before the scan yields its
+        // rows. The skip must land on the same row the pruned scan next yields.
+        // A tiny per-turn budget maximises the number of skipRows() resumes.
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1 + rnd.nextInt(4));
+        assertMemoryLeak(() -> {
+            for (int i = 0; i < FIXED_WIDTH_VARIANTS.length; i++) {
+                runBackfillParquetFuzz(rnd, FIXED_WIDTH_VARIANTS[i], 120 + rnd.nextInt(160),
+                        rnd.nextBoolean());
             }
         });
     }
@@ -3168,13 +3187,10 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
     // more at the end. The recompute oracle is unchanged - the from-scratch
     // recompute reads the same base, parquet partitions and all.
     //
-    // NOTE: this arm deliberately does NOT use BACKFILL. BACKFILL reads base
-    // partitions through a page-frame cursor, and a BACKFILL live view over a
-    // base with parquet partitions currently double-counts rows (reproduced
-    // deterministically while writing this arm - the backfill over parquet
-    // partitions over-reads). That is a separate defect in the parquet
-    // partition read path, out of scope for this test-only change; this arm
-    // stays on the incremental (WAL-consuming) path, which is transparent.
+    // NOTE: this arm stays on the incremental (WAL-consuming) path, which is
+    // transparent to parquet conversion. BACKFILL over a parquet base is covered
+    // separately by runBackfillParquetFuzz: it reads base partitions, so it
+    // exercises the parquet page-frame skip path the incremental path does not.
     private void runParquetBaseFuzz(Rnd rnd, int variant, int rowCount, boolean o3, boolean inMemory) throws Exception {
         if (currentMicros < 0) {
             setCurrentMicros(MicrosTimestampDriver.floor("2025-12-31T00:00:00.000000Z"));
@@ -3257,6 +3273,101 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
 
         // The oracle: the live view must equal the window query recomputed over
         // the base (whose partitions are now a parquet/native mix).
+        TestUtils.assertSqlCursors(
+                engine,
+                sqlExecutionContext,
+                "(" + viewSql + ") ORDER BY 1",
+                "(lv) ORDER BY 1",
+                LOG,
+                true
+        );
+
+        execute("DROP LIVE VIEW lv");
+        execute("DROP TABLE base");
+    }
+
+    // Backfill-over-parquet fuzz (see testFuzzBackfillParquetBase). The whole
+    // dataset is committed and (a random prefix of its settled partitions)
+    // converted to parquet BEFORE the view is created with BACKFILL, so the sweep
+    // reads parquet base partitions. A WHERE clause (present most runs) pushes the
+    // filter down to the parquet row-group level; with a tiny per-turn budget the
+    // sweep resumes with skipRows() many times, each of which must land past the
+    // pruned row groups. The oracle is the from-scratch recompute over the
+    // (parquet/native) base.
+    private void runBackfillParquetFuzz(Rnd rnd, int variant, int rowCount, boolean inMemory) throws Exception {
+        if (currentMicros < 0) {
+            setCurrentMicros(MicrosTimestampDriver.floor("2025-12-31T00:00:00.000000Z"));
+        }
+
+        final int n = 1 + rnd.nextInt(MAX_FRAME);
+        final int symCount = 1 + rnd.nextInt(SYMBOLS.length);
+        // WHERE present on most runs so the parquet row-group pushdown path is the
+        // common case; the no-WHERE runs cover the plain (non-pruned) skip.
+        final boolean withWhere = rnd.nextInt(4) != 0;
+
+        final String viewSql = "SELECT " + projection(variant, n) + " FROM base" + (withWhere ? " WHERE i > 0" : "");
+        final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
+                + (inMemory ? "IN MEMORY 60s " : "")
+                + "BACKFILL AS " + viewSql;
+
+        execute("DROP LIVE VIEW IF EXISTS lv");
+        execute("DROP TABLE IF EXISTS base");
+        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+        LOG.info().$("LV backfill-parquet fuzz: variant=").$(variant).$(", rows=").$(rowCount)
+                .$(", n=").$(n).$(", symCount=").$(symCount).$(", inMem=").$(inMemory)
+                .$(", where=").$(withWhere).$(", sql=").$(viewSql).$();
+
+        // Strictly-unique, strictly-increasing timestamps crossing a partition
+        // boundary every few rows, so the run has several settled partitions.
+        final long[] tsv = new long[rowCount];
+        final int[] symIdx = new int[rowCount];
+        final long[] iv = new long[rowCount];
+        final double[] xv = new double[rowCount];
+        final boolean[] xNull = new boolean[rowCount];
+        long ts = MicrosTimestampDriver.floor("2026-01-01T00:00:00.000000Z");
+        for (int k = 0; k < rowCount; k++) {
+            ts += 1 + rnd.nextInt(1_000_000);
+            if (rnd.nextInt(8) == 0) {
+                ts += 86_400_000_000L; // cross a day partition boundary
+            }
+            tsv[k] = ts;
+            symIdx[k] = rnd.nextInt(20) == 0 ? -1 : rnd.nextInt(symCount);
+            iv[k] = rnd.nextInt(20) == 0 ? Numbers.LONG_NULL : (rnd.nextInt(2001) - 1000);
+            xNull[k] = rnd.nextInt(20) == 0;
+            xv[k] = rnd.nextDouble() * 1000.0;
+        }
+
+        final StringSink sink = new StringSink();
+        LiveViewRefreshJob job = null;
+        try {
+            // Commit the whole dataset in order (the backfill captures pre-CREATE
+            // history), then convert a random prefix of settled partitions to
+            // parquet before the view exists.
+            final int[] order = segmentOrder(rnd, 0, rowCount, false);
+            final int[] cb = commitBounds(rnd, order.length);
+            for (int c = 0; c + 1 < cb.length; c++) {
+                insertCommit(sink, order, cb[c], cb[c + 1], tsv, symIdx, iv, xv, xNull, null);
+                drainWalQueue();
+            }
+            final long firstDay = MicrosTimestampDriver.floor("2026-01-01T00:00:00.000000Z");
+            final long maxDay = tsv[rowCount - 1] - tsv[rowCount - 1] % 86_400_000_000L;
+            // Convert [firstDay, cutoff) to parquet; cutoff lands on a random day
+            // boundary so the base is a parquet/native mix at backfill time.
+            long cutoff = firstDay + (1 + rnd.nextInt(8)) * 86_400_000_000L;
+            if (cutoff > maxDay) {
+                cutoff = maxDay;
+            }
+            convertPartitionsToParquet(firstDay, cutoff);
+
+            execute(createSql);
+            job = new LiveViewRefreshJob(0, engine, 1);
+            driveBackfillToCompletion(job, "lv");
+            driveRefreshToQuiescence(job);
+        } finally {
+            Misc.free(job);
+        }
+
         TestUtils.assertSqlCursors(
                 engine,
                 sqlExecutionContext,
