@@ -79,7 +79,6 @@ import io.questdb.std.Chars;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.IntList;
-import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -143,10 +142,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // commit mid-gap and handed off to o3Replay (which rebuilt disk + re-stamped
     // the watermarks). Distinct from the non-negative replayed-row counts.
     private static final long REPLAY_TO_APPLIED_O3 = -1L;
-    // Read-only-replica lead publish-stall back-off: retry floor after a both-slots-pinned publish.
-    // 100ms bounds the retry rate to <=10/s and stays well inside the FLUSH EVERY freshness envelope
-    // (>=1s), so the disk-only reads served meanwhile never exceed the documented one-flush-cycle bound.
-    private static final long REPLICA_LEAD_RETRY_BACKOFF_US = 100_000L;
     private final PageFrameAddressCache addressCache = new PageFrameAddressCache();
     private final AnchorDispatchingCursor anchorDispatchingCursor = new AnchorDispatchingCursor();
     private final ApplyWal2TableJob applyJob;
@@ -187,20 +182,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private final CairoEngine engine;
     private final LiveViewRefreshSqlExecutionContext executionContext;
     private final FilteringRecordCursor filteringCursor = new FilteringRecordCursor();
-    // Read-only-replica lead-rollback scratch. Before each replica lead drain
-    // captureLeadRollback snapshots the anchored window's bucket map (at offset 0,
-    // when present) plus every window function's accumulator into leadRollbackScratch
-    // (function start offsets in leadRollbackOffsets) plus the pre-drain latestSeenTs.
-    // If the ensuing publish stalls (both tier slots reader-pinned), finishLeadRefresh
-    // restores all of them so the next tick re-drains the same base range identically
-    // instead of double-advancing the window (a poisoned re-drain would emit wrong row
-    // numbers or misclassify the batch as O3 and drop it). Set every leadMode cycle;
-    // consumed only within the same refreshInstance call, so per-worker (no cross-worker
-    // sharing).
-    private boolean leadRollbackCaptured;
-    private long leadRollbackLatestSeenTs;
-    private final LongList leadRollbackOffsets = new LongList();
-    private MemoryCARW leadRollbackScratch;
     private final PageFrameMemoryPool memoryPool = new PageFrameMemoryPool(0);
     private final Path path = new Path();
     private final LiveViewRefreshTask refreshTask = new LiveViewRefreshTask();
@@ -302,7 +283,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         checkpointReader = Misc.free(checkpointReader);
         checkpointRestoreScratch = Misc.free(checkpointRestoreScratch);
         checkpointWriter = Misc.free(checkpointWriter);
-        leadRollbackScratch = Misc.free(leadRollbackScratch);
         stagingBuffer = Misc.free(stagingBuffer);
     }
 
@@ -312,6 +292,149 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // time. The continuation framework may remount this job on a peer carrier,
         // so workerContext.carrierId() is not asserted against it here.
         return processNotifications();
+    }
+
+    // Read-only-replica lead-reconstruction seam. The primary refresh loop maintains an un-flushed
+    // in-RAM lead as a normal part of live-view operation; a read-only replica has no primary-side
+    // WAL to drain, so it reconstructs that same lead off the applied base table for freshness parity.
+    // That reconstruction is an enterprise concern: EntLiveViewRefreshJob (questdb-ent) overrides the
+    // hooks below and composes over the accessors/helpers here. The defaults are primary behaviour --
+    // isLeadReconstruction() is false, the drain/o3/publish-stall hooks decline (return false) so the
+    // caller runs the primary path, and reconcileLeadWithDisk is a no-op. This job never runs a replica
+    // path itself; only the enterprise subclass does.
+
+    protected boolean deferReplicaLeadWork(LiveViewInstance instance) {
+        return false;
+    }
+
+    /**
+     * Lets a read-only replica supply the lead rows from the applied base table instead of the raw
+     * base WAL. Returns {@code true} when it handled the drain (result already in {@link #getDrainResult()});
+     * the primary default returns {@code false}, so {@link #incrementalRefresh} runs {@code drainBaseWal}.
+     */
+    protected boolean drainLeadOverride(
+            LiveViewInstance instance,
+            WindowRecordCursorFactory windowFactory,
+            TableToken baseToken,
+            int cursorTimestampIndex,
+            long viewLowerBoundTimestamp,
+            long fromSeqTxn,
+            boolean populateTier
+    ) throws SqlException {
+        return false;
+    }
+
+    protected CairoEngine getEngine() {
+        return engine;
+    }
+
+    protected DrainResult getDrainResult() {
+        return drainResult;
+    }
+
+    protected LiveViewRefreshSqlExecutionContext getExecutionContext() {
+        return executionContext;
+    }
+
+    protected LiveViewInMemoryBuffer getStagingBuffer() {
+        return stagingBuffer;
+    }
+
+    protected IntList getStagingSymbolColumnIndexes() {
+        return stagingSymbolColumnIndexes;
+    }
+
+    protected LiveViewStateStore getStateStore() {
+        return stateStore;
+    }
+
+    protected WalEventReader getWalEventReader() {
+        return walEventReader;
+    }
+
+    protected Path getWalPath() {
+        return walPath;
+    }
+
+    /**
+     * Reports whether this worker reconstructs the un-flushed lead in RAM without owning the durable
+     * tier (the read-only-replica mode: refresh disabled, lead reconstruction enabled). The primary
+     * default is {@code false}; EntLiveViewRefreshJob overrides it.
+     */
+    protected boolean isLeadReconstruction() {
+        return false;
+    }
+
+    protected boolean isLeadRollbackSupported(LiveViewInstance instance, WindowRecordCursorFactory windowFactory) {
+        return false;
+    }
+
+    protected boolean isLeadSlotStale(LiveViewInstance instance) {
+        return false;
+    }
+
+    /**
+     * Handles an out-of-order base commit detected while reconstructing the lead. A read-only replica
+     * overrides this to reset the window state to cold-start and serve disk-only until the primary's
+     * replicated O3 correction lands (it must not rewrite its own on-disk tier); the primary default
+     * returns {@code false}, so {@link #finishLeadRefresh} rewrites disk via {@code o3Replay}.
+     */
+    protected boolean onLeadO3Detected(
+            LiveViewInstance instance,
+            WindowRecordCursorFactory windowFactory,
+            TableToken baseToken,
+            long advanceTo
+    ) {
+        return false;
+    }
+
+    /**
+     * Handles a lead publish that stalled with both in-mem tier slots reader-pinned. A read-only replica
+     * overrides this to roll the window state back and arm a retry back-off (it cannot flush to disk);
+     * the primary default returns {@code false}, so {@link #finishLeadRefresh} flushes the stall to disk.
+     */
+    protected boolean onLeadPublishStalled(
+            LiveViewInstance instance,
+            WindowRecordCursorFactory windowFactory,
+            long advanceTo,
+            long appendedRows
+    ) throws SqlException {
+        return false;
+    }
+
+    /**
+     * Builds the compiled scan pipeline (timestamp lower-bound + optional filter + optional anchor
+     * dispatch + window) over {@code pageCursor}, returning the incremental window cursor. Hides the
+     * package-private cursor helpers from the enterprise subclass, which composes over the returned
+     * {@link RecordCursor}.
+     */
+    protected RecordCursor openLeadScanCursor(
+            RecordCursor pageCursor,
+            int baseTimestampIndex,
+            long scanLowTs,
+            Function filter,
+            LiveViewWindow anchorWindow,
+            WindowRecordCursorFactory windowFactory
+    ) throws SqlException {
+        tsLowerBoundCursor.of(pageCursor, baseTimestampIndex, scanLowTs);
+        RecordCursor source = tsLowerBoundCursor;
+        if (filter != null) {
+            filteringCursor.of(source, filter, executionContext);
+            source = filteringCursor;
+        }
+        if (anchorWindow != null) {
+            anchorDispatchingCursor.of(source, anchorWindow, executionContext);
+            source = anchorDispatchingCursor;
+        }
+        return windowFactory.getIncrementalCursor(source, executionContext);
+    }
+
+    /**
+     * Reconciles a read-only replica's in-RAM lead against the on-disk tier the global apply job
+     * advances asynchronously from replicated WAL. The primary default is a no-op (the primary owns
+     * every disk advance, so its lead never trails an external flush); EntLiveViewRefreshJob overrides it.
+     */
+    protected void reconcileLeadWithDisk(LiveViewInstance instance) {
     }
 
     /**
@@ -582,16 +705,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // disk by the rows accumulated since the last flush; reads serve them
             // via the seam cut. The lead is in RAM only and recovered by replaying
             // base WAL forward on restart.
-            leadRollbackCaptured = false;
-            if (isLeadReconstruction()) {
-                // Compute the lead off the APPLIED base table, not the raw WAL: a replica's raw WAL
-                // segments race their own download/apply, so a raw read can transiently return 0 rows
-                // for already-applied data and drop the batch. The applied reader is consistent.
-                drainAppliedBaseForLead(
-                        instance, windowFactory, baseToken, cursorTimestampIndex,
-                        viewLowerBoundTimestamp, fromSeqTxn, populateTier
-                );
-            } else {
+            //
+            // A read-only replica overrides drainLeadOverride to compute the lead off the APPLIED
+            // base table instead: its raw WAL segments race their own download/apply, so a raw read
+            // can transiently return 0 rows for already-applied data and drop the batch, whereas the
+            // applied reader is consistent. The primary default returns false, so the raw-WAL drain
+            // below runs. Either source lands its result in drainResult, which finishLeadRefresh then
+            // publishes as the un-flushed lead.
+            if (!drainLeadOverride(
+                    instance, windowFactory, baseToken, cursorTimestampIndex,
+                    viewLowerBoundTimestamp, fromSeqTxn, populateTier
+            )) {
                 drainBaseWal(
                         instance, windowFactory, baseToken, baseMetadata, baseTimestampIndex,
                         cursorTimestampIndex, viewLowerBoundTimestamp, filter, fromSeqTxn, toSeqTxn,
@@ -743,25 +867,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 maybeWriteHeadCheckpoint(instance, windowFactory, advanceTo, batchMaxTs, appendedRows);
             }
         }
-    }
-
-    /**
-     * Read-only-replica anti-spin gate: returns true to skip this view's lead work this tick while the
-     * publish-stall back-off {@link LiveViewInstance#getLeadRetryAfterUs()} that
-     * {@link #finishLeadRefresh} armed (both in-mem tier slots reader-pinned) has not elapsed, and
-     * clears it once it has. Skipping (vs re-draining to a stall) lets the worker idle; reads stay
-     * disk-only via the seqTxn fence meanwhile.
-     */
-    private boolean deferReplicaLeadWork(LiveViewInstance instance) {
-        final long retryAfterUs = instance.getLeadRetryAfterUs();
-        if (retryAfterUs == Numbers.LONG_NULL) {
-            return false;
-        }
-        if (engine.getConfiguration().getMicrosecondClock().getTicks() < retryAfterUs) {
-            return true;
-        }
-        instance.setLeadRetryAfterUs(Numbers.LONG_NULL);
-        return false;
     }
 
     /**
@@ -1042,254 +1147,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             if (reader != null) {
                 reader.close();
             }
-        }
-    }
-
-    /**
-     * Read-only-replica lead compute over the APPLIED base TABLE rather than the raw WAL. A replica
-     * does not write its own base WAL segments -- it downloads them and applies them asynchronously,
-     * and the segment files can still be settling (mid-download / post-apply purge) when the sequencer
-     * head already advertises the commit. A raw-WAL read ({@link #drainBaseWal}) then transiently
-     * returns zero rows for a commit whose data is already applied, which would advance
-     * {@code refreshedUpToSeqTxn} past an un-read batch and drop it permanently. The applied base
-     * table reader is the consistent source: it reflects exactly what {@code ApplyWal2TableJob} has
-     * materialised (the same rows the raw read is racing to see), so the lead never misses an applied
-     * batch.
-     * <p>
-     * The method mirrors {@link #drainBaseWal}'s contract -- it populates {@link #drainResult} and the
-     * staging buffer and writes no LV WAL -- so {@link #finishLeadRefresh} publishes the result as the
-     * un-flushed lead unchanged; only the source of the rows differs. It reads whatever is applied now
-     * (no {@code waitForApply} block: a replica must not stall the lead loop on apply lag) and scans
-     * strictly forward of the frontier ({@code ts > latestSeenTs}), continuing the window accumulators
-     * exactly as the raw-WAL path does. A below-frontier arrival (overlap) sets {@code o3Detected} off
-     * the reliably-replicated WAL-E event min-ts (never the race-prone data columns); finishLeadRefresh's
-     * replica hatch then drops the tentative lead and waits for the primary's replicated o3 correction
-     * to land on disk -- the replica never rewrites its own tier.
-     * <p>
-     * When {@link #reconcileLeadWithDisk} has armed {@link LiveViewInstance#getLeadReconcileSeamTs()}
-     * (a replicated flush outran the loop's accumulators -- Case B), rows at or below the seam are
-     * already on disk: the scan drives the accumulators over them (the catch-up) but does not stage
-     * them, so the reconstructed lead does not double-count durable rows. The seam clears once the
-     * accumulators reach it.
-     */
-    private void drainAppliedBaseForLead(
-            LiveViewInstance instance,
-            WindowRecordCursorFactory windowFactory,
-            TableToken baseToken,
-            int cursorTimestampIndex,
-            long viewLowerBoundTimestamp,
-            long fromSeqTxn,
-            boolean populateTier
-    ) throws SqlException {
-        final RecordCursorFactory filterFactory = windowFactory.getBaseFactory();
-        final Function filter = filterFactory.getFilter();
-        final RecordCursorFactory pageFrameFactory = filter != null ? filterFactory.getBaseFactory() : filterFactory;
-        final RecordMetadata baseMetadata = pageFrameFactory.getMetadata();
-        final int baseTimestampIndex = baseMetadata.getTimestampIndex();
-
-        // Non-blocking: drain up to whatever the base table has applied right now. Unlike the coupled
-        // drainAppliedBase, a replica lead loop never waitForApply-blocks; the next scan tick resumes
-        // when apply advances.
-        TableReader reader = engine.getReader(baseToken);
-        boolean readerAttached = false;
-        try {
-            final long effectiveSeqTxn = reader.getSeqTxn();
-            if (effectiveSeqTxn <= fromSeqTxn) {
-                // Nothing new applied to the base table yet (the sequencer head ran ahead of apply).
-                // Leave refreshedUpToSeqTxn where it is (advanceTo not > it) so a later tick retries.
-                drainResult.advanceTo = effectiveSeqTxn;
-                return;
-            }
-
-            final long latestSeenTs = instance.getLatestSeenTs();
-            // Case B catch-up seam (reconcileLeadWithDisk armed it when a replicated flush outran the
-            // loop's accumulators): output rows at or below it are already on the replicated on-disk
-            // tier, so the scan drives the accumulators over them but does not stage them. LONG_NULL in
-            // steady state, where every scanned row (ts > latestSeenTs) is genuine un-flushed lead.
-            final long reconcileSeamTs = instance.getLeadReconcileSeamTs();
-            // Overlap trigger over (fromSeqTxn, effectiveSeqTxn]. The min ts comes from the base WAL-E
-            // event files, which replicate reliably (only the column DATA read races), so a
-            // below-frontier arrival is detected without touching the race-prone data columns.
-            long batchMinTs = Numbers.LONG_NULL;
-            try (TransactionLogCursor txnCursor = engine.getTableSequencerAPI().getCursor(baseToken, fromSeqTxn)) {
-                while (txnCursor.hasNext()) {
-                    final long txn = txnCursor.getTxn();
-                    if (txn > effectiveSeqTxn) {
-                        break;
-                    }
-                    final int walId = txnCursor.getWalId();
-                    if (walId <= 0) {
-                        continue;
-                    }
-                    final int segmentId = txnCursor.getSegmentId();
-                    final int segmentTxn = txnCursor.getSegmentTxn();
-                    walPath.of(engine.getConfiguration().getDbRoot())
-                            .concat(baseToken)
-                            .concat(WAL_NAME_BASE).put(walId).slash().put(segmentId);
-                    final WalEventCursor eventCursor = WalTxnDetails.openWalEFile(walPath, walEventReader, segmentTxn, txn);
-                    if (!WalTxnType.isDataType(eventCursor.getType())) {
-                        continue;
-                    }
-                    final WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
-                    long txnMinTs = dataInfo.getMinTimestamp();
-                    if (dataInfo.getDedupMode() == WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE) {
-                        // A REPLACE_RANGE commit deletes [rangeLo, rangeHi) beyond its own
-                        // inserted rows, which may all sit above the frontier - or be absent
-                        // entirely in a pure-delete commit whose min timestamp reads
-                        // Long.MAX_VALUE. The range low, clamped to the view's lower bound,
-                        // is the commit's true overlap minimum. Mirrors drainAppliedBase /
-                        // drainBaseWal O3 detection so a below-frontier range-replace on a
-                        // non-dedup base fires the replica o3 hatch instead of leaving the
-                        // in-RAM accumulators counting the now-deleted rows.
-                        final long deleteLo = Math.max(dataInfo.getReplaceRangeTsLow(), viewLowerBoundTimestamp);
-                        if (deleteLo < dataInfo.getReplaceRangeTsHi()) {
-                            txnMinTs = deleteLo;
-                        }
-                    }
-                    if (batchMinTs == Numbers.LONG_NULL || txnMinTs < batchMinTs) {
-                        batchMinTs = txnMinTs;
-                    }
-                }
-            }
-
-            final boolean overlap = latestSeenTs != Numbers.LONG_NULL
-                    && batchMinTs != Numbers.LONG_NULL
-                    && batchMinTs <= latestSeenTs;
-            if (overlap) {
-                // A base row at/below the frontier. The primary rewrites its LV disk via o3Replay and
-                // replicates the REPLACE_RANGE; the replica must not rewrite disk. Signal o3 so
-                // finishLeadRefresh's replica hatch drops the tentative lead and waits for the
-                // replicated correction to land, then re-derives forward.
-                drainResult.o3Detected = true;
-                drainResult.o3LateRowTs = batchMinTs;
-                drainResult.o3SeqTxn = effectiveSeqTxn;
-                drainResult.advanceTo = effectiveSeqTxn;
-                return;
-            }
-
-            // The forward scan below mutates shared, non-transactional window state (the accumulators +
-            // latestSeenTs). If the ensuing publish stalls (both tier slots reader-pinned) the primary
-            // would flush the rows straight to disk, but the replica cannot -- it must re-drain next tick.
-            // Snapshot the window state now, past the two early-returns above (neither of which touches
-            // window state), so finishLeadRefresh can restore it on a stalled publish and keep the
-            // re-drain exact. Deferring the snapshot to here, rather than taking it unconditionally in the
-            // caller, skips the O(W x P) walk on the frequent no-new-data and overlap-reset ticks -- the
-            // steady state during apply lag. The refreshInstance gate guarantees the window supports this
-            // in-RAM round-trip.
-            captureLeadRollback(windowFactory, instance.getAnchorWindow(), latestSeenTs);
-
-            // Strictly-forward scan of the applied reader, ts > latestSeenTs (floored at the view's
-            // lower bound), into the staging buffer -- the same motion drainBaseWal makes, off the
-            // consistent applied table instead of the raw WAL. On the first cycle latestSeenTs is
-            // LONG_NULL, so the floor governs and the scan builds window state from empty.
-            final long scanLowTs = latestSeenTs == Numbers.LONG_NULL
-                    ? viewLowerBoundTimestamp
-                    : Math.max(latestSeenTs + 1, viewLowerBoundTimestamp);
-
-            final LiveViewSymbolCache symbolCache = populateTier ? instance.getInMemoryTier().getSymbolCache() : null;
-            final boolean internSymbols = symbolCache != null && stagingSymbolColumnIndexes.size() > 0;
-            long appendedRows = 0;
-            long batchMaxTs = Numbers.LONG_NULL;
-            long stagingMinTs = Numbers.LONG_NULL;
-            long stagingMaxTs = Numbers.LONG_NULL;
-            try (TableReader committedSymbolReader = internSymbols ? engine.getReader(instance.getLiveViewToken()) : null) {
-                engine.detachReader(reader);
-                executionContext.of(reader);
-                readerAttached = true;
-                if (internSymbols) {
-                    for (int si = 0, sn = stagingSymbolColumnIndexes.size(); si < sn; si++) {
-                        final int c = stagingSymbolColumnIndexes.getQuick(si);
-                        symbolCache.anchor(c, committedSymbolReader.getSymbolMapReader(c).getSymbolCount());
-                    }
-                }
-                try (RecordCursor pageCursor = pageFrameFactory.getCursor(executionContext)) {
-                    tsLowerBoundCursor.of(pageCursor, baseTimestampIndex, scanLowTs);
-                    RecordCursor source = tsLowerBoundCursor;
-                    if (filter != null) {
-                        filteringCursor.of(source, filter, executionContext);
-                        source = filteringCursor;
-                    }
-                    final LiveViewWindow anchorWindow = instance.getAnchorWindow();
-                    if (anchorWindow != null) {
-                        anchorDispatchingCursor.of(source, anchorWindow, executionContext);
-                        source = anchorDispatchingCursor;
-                    }
-                    try (RecordCursor windowCursor = windowFactory.getIncrementalCursor(source, executionContext)) {
-                        final Record outRecord = windowCursor.getRecord();
-                        while (windowCursor.hasNext()) {
-                            final long ts = outRecord.getTimestamp(cursorTimestampIndex);
-                            // Advance the frontier for every row, including the on-disk catch-up band
-                            // below the seam, so the accumulators (row_number(), running aggregates)
-                            // reach disk truth.
-                            instance.setLatestSeenTs(ts);
-                            if (reconcileSeamTs != Numbers.LONG_NULL && ts <= reconcileSeamTs) {
-                                // Replica catch-up over the durable band: this output row is already on
-                                // the replicated on-disk tier (a flush produced it). The
-                                // windowCursor.hasNext() above already drove the accumulators over it --
-                                // exactly the catch-up we need -- but it must NOT enter the lead, or size()
-                                // would double-count a row disk already holds. Drive past it without
-                                // staging.
-                                //
-                                // Row-set imprecision (accepted): the seam is a single ts (the on-disk max
-                                // ts), but without dedup the base can add a genuinely-new output row that
-                                // TIES the seam ts in a later commit the flush did not cover. That row is
-                                // real un-flushed lead, yet ts <= reconcileSeamTs folds it into the durable
-                                // band and drops it, so the replica omits it from its result set until the
-                                // primary flushes it and clears the seam (~one FLUSH EVERY interval +
-                                // replication lag). This is a ROW-SET effect, unlike restampSlot's tie-at-
-                                // diskMaxTs which is count-only (there the seam still serves every slot
-                                // row). Splitting the tie exactly needs a per-row base seqTxn the slot does
-                                // not carry; a strict ts < seam would instead double-count the tied durable
-                                // rows, trading a transient omission for a transient duplicate.
-                                continue;
-                            }
-                            if (batchMaxTs == Numbers.LONG_NULL || ts > batchMaxTs) {
-                                batchMaxTs = ts;
-                            }
-                            if (populateTier) {
-                                stagingBuffer.copyRowFromRecord(outRecord, appendedRows);
-                                if (internSymbols) {
-                                    for (int si = 0, sn = stagingSymbolColumnIndexes.size(); si < sn; si++) {
-                                        final int c = stagingSymbolColumnIndexes.getQuick(si);
-                                        stagingBuffer.putInt(appendedRows, c,
-                                                symbolCache.intern(c, outRecord.getSymA(c), committedSymbolReader.getSymbolMapReader(c)));
-                                    }
-                                }
-                                if (stagingMinTs == Numbers.LONG_NULL) {
-                                    stagingMinTs = ts;
-                                }
-                                if (stagingMaxTs == Numbers.LONG_NULL || ts > stagingMaxTs) {
-                                    stagingMaxTs = ts;
-                                }
-                            }
-                            appendedRows++;
-                        }
-                    }
-                }
-            } finally {
-                if (readerAttached) {
-                    executionContext.clearReader();
-                    engine.attachReader(reader);
-                }
-            }
-
-            // The accumulators have reached the on-disk seam, so the Case B catch-up is done and normal
-            // staging resumes next tick. Clear it here (not on the early-return above) so a base that
-            // lags the flush keeps the seam armed until it actually applies the flushed band.
-            if (reconcileSeamTs != Numbers.LONG_NULL && instance.getLatestSeenTs() >= reconcileSeamTs) {
-                instance.setLeadReconcileSeamTs(Numbers.LONG_NULL);
-            }
-            if (appendedRows > 0 && populateTier) {
-                stagingBuffer.setRowCount(appendedRows);
-                stagingBuffer.setSeamTs(stagingMinTs);
-            }
-            drainResult.advanceTo = effectiveSeqTxn;
-            drainResult.appendedRows = appendedRows;
-            drainResult.batchMaxTs = batchMaxTs;
-            drainResult.stagingMaxTs = stagingMaxTs;
-            drainResult.stagingMinTs = stagingMinTs;
-        } finally {
-            reader.close();
         }
     }
 
@@ -1601,40 +1458,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         final long advanceTo = drainResult.advanceTo;
         final long appendedRows = drainResult.appendedRows;
         final long stagingMaxTs = drainResult.stagingMaxTs;
-        // On a read-only replica the escape hatches below (o3Replay, emergency flush) both write the
-        // LV's on-disk tier, which the replica must never do -- the primary owns those writes and
-        // replicates the result. Guard them so the replica stays read-only.
-        final boolean leadReconstruction = isLeadReconstruction();
 
         if (drainResult.o3Detected) {
-            if (leadReconstruction) {
-                // The replica must not rewrite its on-disk tier. The primary handles the
-                // out-of-order base commit via o3Replay and replicates the REPLACE_RANGE, which the
-                // apply job lands here. An O3 commit reorders rows the accumulators already processed
-                // in arrival order, so the in-RAM window state (the row_number() counter, running
-                // aggregates) and latestSeenTs now disagree with the corrected ordering the primary
-                // will replicate; a forward-only re-derive would carry that drift into every later
-                // lead row. Reset the window state to identity and clear latestSeenTs so the reconcile
-                // treats the view as cold-started: with latestSeenTs unset, the next reconcileLeadWithDisk
-                // tick takes its unseeded-cold-start branch and arms the catch-up seam at the on-disk max
-                // ts (over non-empty disk), so when the corrected rows land the next drain re-seeds the
-                // accumulators over the whole applied base history yet keeps the durable band out of the
-                // lead -- size() does not double-count. The staged lead's low seam ts shadows any stale
-                // disk rows meanwhile. Drop the tentative lead and serve disk-only until then.
-                // No extra retry gate is needed here: latestSeenTs == LONG_NULL stops the drain from
-                // re-detecting the same O3, and refreshedUpToSeqTxn == advanceTo (== the applied head)
-                // quiets the scan. A disk-watermark gate was considered and rejected -- it would hold a
-                // view whose disk is still empty at the O3 (the common case) disk-only until a flush
-                // lands, whereas the cold-start re-derive already rebuilds the correct lead sooner.
-                clearWindowState(windowFactory, instance.getAnchorWindow());
-                // forceSetLatestSeenTs, not setLatestSeenTs: the latter is monotonic (it ignores a
-                // lower ts to keep an O3 row from retroactively lowering the frontier), so it would
-                // no-op on LONG_NULL. The reset back to cold start is the one intentional non-monotonic
-                // move, exactly what forceSetLatestSeenTs exists for.
-                instance.forceSetLatestSeenTs(Numbers.LONG_NULL);
-                instance.setLeadRowCount(0);
-                instance.setTierStale(true);
-                instance.setRefreshedUpToSeqTxn(advanceTo);
+            // The escape hatches below (o3Replay, emergency flush) both rewrite the LV's on-disk tier.
+            // A read-only replica must never do that -- the primary owns those writes and replicates
+            // the result -- so it overrides onLeadO3Detected to reset the window state to cold-start
+            // and serve disk-only until the primary's replicated O3 correction lands. The primary
+            // default returns false and rewrites disk via o3Replay below.
+            if (onLeadO3Detected(instance, windowFactory, baseToken, advanceTo)) {
                 return;
             }
             // Discard the in-RAM lead and recompute. o3Replay re-feeds base data
@@ -1672,22 +1503,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     published = false;
                 }
                 if (!published) {
-                    if (leadReconstruction) {
-                        // The replica cannot flush the stalled lead to disk (read-only). Roll the
-                        // window accumulator + latestSeenTs back to their pre-drain snapshot and leave
-                        // refreshedUpToSeqTxn where it was, so the next scan tick re-drains this exact
-                        // range once a reader releases a slot; reads fall back to disk-only via the
-                        // seqTxn fence meanwhile. Without the rollback the drain's advance to the
-                        // accumulator and latestSeenTs would persist while refreshedUpToSeqTxn stayed
-                        // behind, so the re-drain would double-advance the window (wrong row numbers)
-                        // or, with an inflated latestSeenTs, misclassify the batch as O3 and drop it.
-                        if (leadRollbackCaptured) {
-                            restoreLeadRollback(instance, windowFactory, instance.getAnchorWindow());
-                        }
-                        // Arm a back-off so scanForLaggingViews skips this view instead of re-draining
-                        // every tick while both slots stay pinned; reads fall back to disk-only meanwhile.
-                        instance.setLeadRetryAfterUs(
-                                engine.getConfiguration().getMicrosecondClock().getTicks() + REPLICA_LEAD_RETRY_BACKOFF_US);
+                    // A read-only replica cannot flush the stalled lead to disk. It overrides
+                    // onLeadPublishStalled to roll the window state back to its pre-drain snapshot and
+                    // arm a retry back-off, leaving refreshedUpToSeqTxn where it was so the next scan
+                    // tick re-drains this exact range once a reader releases a slot; reads fall back to
+                    // disk-only via the seqTxn fence meanwhile. The primary default returns false and
+                    // flushes the stall straight to disk below.
+                    if (onLeadPublishStalled(instance, windowFactory, advanceTo, appendedRows)) {
                         return;
                     }
                     // The lead could not enter RAM (both slots reader-pinned, or a
@@ -1871,240 +1693,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Snapshots the LV's whole window state -- the anchored window's per-partition bucket map (when
-     * present) plus every window function's accumulator -- and the pre-drain {@code latestSeenTs} into
-     * the per-worker {@link #leadRollbackScratch}, so a stalled replica lead publish can restore them
-     * via {@link #restoreLeadRollback}. This is the in-RAM analog of a head-checkpoint write: it reuses
-     * the same {@link LiveViewWindow#snapshot} and {@link LiveViewFunctionSnapshot#write} primitives the
-     * checkpoint path uses, so it round-trips scalar, partitioned, and anchored shapes alike. The anchor
-     * block goes first, at offset 0, because {@link LiveViewWindow#restore} reads from offset 0; each
-     * function's payload start offset is recorded in {@link #leadRollbackOffsets}, and the restore reads
-     * back at those offsets. Only the replica lead-reconstruction path calls this, and
-     * {@link #isLeadRollbackSupported} guarantees the view is snapshot-capable (every function round-trips
-     * through {@link LiveViewFunctionSnapshot}; the anchor key shape has codec support).
-     */
-    private void captureLeadRollback(WindowRecordCursorFactory windowFactory, LiveViewWindow anchorWindow, long latestSeenTs) {
-        if (leadRollbackScratch == null) {
-            leadRollbackScratch = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
-        }
-        leadRollbackScratch.jumpTo(0);
-        leadRollbackOffsets.clear();
-        // Anchor bucket map first, at offset 0 (LiveViewWindow.restore reads from offset 0). A view with
-        // no anchored window skips it and its first function block starts at offset 0.
-        if (anchorWindow != null) {
-            anchorWindow.snapshot(leadRollbackScratch);
-        }
-        final ObjList<WindowFunction> functions = windowFactory.getWindowFunctions();
-        for (int i = 0, n = functions.size(); i < n; i++) {
-            leadRollbackOffsets.add(leadRollbackScratch.getAppendOffset());
-            LiveViewFunctionSnapshot.write(leadRollbackScratch, functions.getQuick(i));
-        }
-        leadRollbackLatestSeenTs = latestSeenTs;
-        leadRollbackCaptured = true;
-    }
-
-    /**
-     * Read-only-replica reconciliation of the in-RAM lead against the on-disk tier. On a replica the
-     * global {@link io.questdb.cairo.wal.ApplyWal2TableJob} materialises the LV's on-disk tier from
-     * replicated WAL asynchronously, advancing the applied watermark (and the on-disk seqTxn)
-     * independently of the lead loop. A lead computed while the applied watermark lagged the base (the
-     * inevitable catch-up window, or a replicated flush landing after the lead was built) then holds
-     * rows that are now durable on disk, which {@code size()} would double-count; and the slot's
-     * stamped seqTxn no longer matches the advanced disk reader, so the read-path fence routes
-     * disk-only until the slot is re-stamped.
-     * <p>
-     * <b>Unseeded cold start</b> ({@code latestSeenTs == LONG_NULL}, checked first): no base commit has
-     * been driven through the window pipeline this session -- a fresh / restarted instance booted at a
-     * non-zero applied watermark, or an O3 reset that cleared the frontier. The next drain re-derives
-     * the whole applied history from the view lower bound, so drop any lead, force a clean tier rebuild,
-     * and arm {@code leadReconcileSeamTs = diskMaxTs} over non-empty disk so the re-derive drives the
-     * accumulators over the durable band without staging it (an empty disk leaves the seam clear). This
-     * precedes the three branches below because the O3 reset sets {@code refreshedUpToSeqTxn}
-     * explicitly, so an unseeded loop can land in any of them -- and none of them arms the seam for an
-     * unseeded loop.
-     * <p>
-     * <b>Disk outran the loop / Case B</b> ({@code refreshedUpToSeqTxn < appliedWatermark}): the
-     * applied point covers base commits the loop never drove through the window pipeline, so the
-     * accumulators trail disk over the {@code (latestSeenTs, diskMaxTs]} band. Drop the lead, force a
-     * clean tier rebuild ({@code tierStale}) since the slot is missing that band, leave the slot stamp
-     * stale (fence -> disk-only) and arm {@code leadReconcileSeamTs = diskMaxTs}. The drain then drives
-     * the accumulators over the band without staging it (so {@code size()} does not double-count the
-     * durable rows) and stages only the genuine lead above disk; {@code refreshedUpToSeqTxn} stays put
-     * and the drain advances it as it re-derives. The seam persists across ticks when the base itself
-     * lags the replicated flush.
-     * <p>
-     * <b>Exact boundary</b> ({@code refreshedUpToSeqTxn == appliedWatermark}): the flush landed
-     * precisely the lead, so the slot rows are the just-flushed disk rows. Re-stamp the slot as a disk
-     * subset and drop the lead; the accumulators already sit at disk, so no catch-up is armed.
-     * <p>
-     * <b>Partial-overlap</b> ({@code appliedWatermark < refreshedUpToSeqTxn}): a replicated flush
-     * covers only a prefix of the lead, leaving a genuine un-flushed remainder above the applied
-     * point. Act once the on-disk seqTxn has advanced past the slot's stamp: slot rows at or below
-     * the on-disk max timestamp are now durable overlap, rows above it stay lead. The slot is
-     * ts-ascending, so a binary search locates the boundary; re-stamp the slot to the reader's seqTxn
-     * with that trimmed {@code leadRowCount}, keeping the remainder as lead instead of dropping it.
-     * The accumulators are untouched -- they already ran forward to {@code refreshedUpToSeqTxn} and
-     * only move forward, exactly {@code restampSlotAfterFlush}'s post-flush invariant, just triggered
-     * by an external disk advance instead of a self-flush.
-     */
-    private void reconcileLeadWithDisk(LiveViewInstance instance) {
-        final long applied = instance.getAppliedWatermark();
-        final long refreshedUpTo = instance.getRefreshedUpToSeqTxn();
-        if (instance.getLatestSeenTs() == Numbers.LONG_NULL) {
-            // No base commit has been driven through the window pipeline this session -- an unseeded
-            // loop. Two ways in: a fresh / restarted instance booted at a non-zero applied watermark
-            // (disk already holds the primary's flushed rows), or finishLeadRefresh's O3 reset cleared
-            // the frontier back to cold start after an out-of-order base commit. Either way the next
-            // drain cold-starts from the view lower bound (drainAppliedBaseForLead floors the scan there
-            // when latestSeenTs is unset) and re-derives the whole applied history, so any prior lead is
-            // void. Drop it, force a clean tier rebuild (the slot is missing the re-derived band), and --
-            // when disk already holds flushed rows -- arm the catch-up seam at the on-disk max ts so the
-            // re-derive drives the accumulators over the durable band WITHOUT staging it; otherwise it
-            // would stage the re-derived history as lead on top of the same rows on disk and size() /
-            // count() would double-count. Disk empty -> a genuinely fresh view (nothing flushed yet):
-            // leave the seam clear (diskMaxTs stays LONG_NULL) so the first drain stages the whole
-            // history as lead.
-            //
-            // Handle this here, ahead of the three refreshedUpTo-vs-applied branches below, because the
-            // O3 reset sets refreshedUpToSeqTxn explicitly -- so an unseeded loop can land in ANY of
-            // them (Case B when the correction flush batched extra seqTxns, partial-overlap when new base
-            // data applied before the correction replicated), and none of those branches arms the seam
-            // for latestSeenTs == LONG_NULL. Only the exact-boundary path used to, which is why a cold
-            // start over disk that skewed off the boundary re-staged the durable band.
-            long diskMaxTs = Numbers.LONG_NULL;
-            try (TableReader lvReader = engine.getReader(instance.getLiveViewToken())) {
-                if (lvReader.size() > 0) {
-                    diskMaxTs = lvReader.getMaxTimestamp();
-                }
-            }
-            instance.setLeadRowCount(0);
-            instance.setTierStale(true);
-            instance.setLeadReconcileSeamTs(diskMaxTs);
-            return;
-        }
-        if (refreshedUpTo < applied) {
-            // Disk outran the loop (Case B): a replicated flush advanced the on-disk tier (and the
-            // applied watermark) past the point the lead loop has computed -- the loop fell behind, or
-            // the LV WAL applied ahead of the base. Every prior lead row is now on disk, and the
-            // on-disk band (latestSeenTs, diskMaxTs] holds rows the loop never drove through the window
-            // pipeline, so the accumulators (row_number(), running aggregates) trail disk. A plain
-            // drain-forward would re-scan that band (ts > latestSeenTs) and re-stage it as lead,
-            // double-counting rows disk already holds (an inflated size() / count()).
-            //
-            // Drop the stale lead and force a clean tier rebuild -- the slot is missing the outran
-            // band, so appending onto it would leave a gap -- and leave the slot stamp stale so reads
-            // route disk-only until the rebuild lands. Arm the catch-up seam at the on-disk max ts so
-            // the drain drives the accumulators over the flushed band WITHOUT staging it, then stages
-            // only the genuine lead above disk. Keep refreshedUpToSeqTxn where it is: the drain
-            // re-derives the band to catch the accumulators up and advances refreshedUpToSeqTxn as it
-            // goes. When the base itself lags the flush the drain reads nothing until the base applies;
-            // the seam persists across ticks and reads stay disk-only meanwhile.
-            long diskMaxTs = Numbers.LONG_NULL;
-            try (TableReader lvReader = engine.getReader(instance.getLiveViewToken())) {
-                if (lvReader.size() > 0) {
-                    diskMaxTs = lvReader.getMaxTimestamp();
-                }
-            }
-            instance.setLeadRowCount(0);
-            instance.setTierStale(true);
-            // Arm the seam only when the accumulators actually trail disk. latestSeenTs is non-null here
-            // (the unseeded cold-start / O3-reset case returned at the top of this method, arming the
-            // seam over non-empty disk). latestSeenTs == diskMaxTs means the flushed commits produced no
-            // rows above the frontier, so the plain ts > latestSeenTs scan already excludes the on-disk
-            // band and no seam is needed.
-            if (diskMaxTs != Numbers.LONG_NULL && instance.getLatestSeenTs() < diskMaxTs) {
-                instance.setLeadReconcileSeamTs(diskMaxTs);
-            } else {
-                instance.setLeadReconcileSeamTs(Numbers.LONG_NULL);
-            }
-            return;
-        }
-        if (refreshedUpTo == applied) {
-            if (instance.getLeadRowCount() > 0) {
-                // Exact boundary: the flush landed precisely the lead, so the slot rows are exactly
-                // the just-flushed disk rows. Re-stamp the slot as a disk subset and drop the lead.
-                // The accumulators already sit at disk (latestSeenTs == diskMaxTs), so no catch-up is
-                // pending. Only zero the instance count when the slot re-stamp lands, so the two stay
-                // consistent -- a reader pins the slot and the re-stamp is skipped. Unlike the
-                // partial-overlap tail below, a stale slot cannot lean on isLeadSlotStale to retry: a
-                // racy publish (the apply job advanced the disk seqTxn between the drain's read and the
-                // publish) already stamped the slot at the current disk seqTxn, so isLeadSlotStale reads
-                // false. Keeping leadRowCount > 0 re-arms the leadSubsumedByDisk scan trigger instead,
-                // which retries the re-stamp next tick; leaving it desynced (instance 0, slot > 0) would
-                // strand the fence serving size() = disk.size() + slot.leadRowCount, over-counting the
-                // durable rows for good.
-                instance.setLeadReconcileSeamTs(Numbers.LONG_NULL);
-                final long lvDiskSeqTxn = engine.getTableSequencerAPI()
-                        .getTxnTracker(instance.getLiveViewToken()).getWriterTxn();
-                if (restampSlot(instance, lvDiskSeqTxn, 0)) {
-                    instance.setLeadRowCount(0);
-                }
-                return;
-            }
-            // Steady state caught up: the loop already drove commits through the window pipeline
-            // (latestSeenTs is non-null -- the unseeded cold-start / O3-reset case returned at the top
-            // of this method) and the lead is empty. No catch-up is pending; clear any seam.
-            instance.setLeadReconcileSeamTs(Numbers.LONG_NULL);
-            return;
-        }
-        // Partial-overlap: a genuine un-flushed remainder sits above the applied point. Only act once
-        // a replicated flush has advanced the on-disk seqTxn past the slot's stamp; otherwise the
-        // lead is still fresh and no row has moved to disk.
-        instance.setLeadReconcileSeamTs(Numbers.LONG_NULL);
-        if (instance.getLeadRowCount() <= 0) {
-            return;
-        }
-        final LiveViewInMemoryTier tier = instance.getInMemoryTier();
-        if (tier == null) {
-            return;
-        }
-        final LiveViewInMemoryBuffer pubSlot = tier.getSlot(tier.getPublishedIdx());
-        final long lvDiskSeqTxn = engine.getTableSequencerAPI()
-                .getTxnTracker(instance.getLiveViewToken()).getWriterTxn();
-        if (pubSlot.lvSeqTxn() == lvDiskSeqTxn) {
-            // The slot already reflects the current on-disk version -- no flush has landed since it
-            // was published, so no lead row has moved to disk.
-            return;
-        }
-        // A replicated flush covers a prefix of the lead. Read the reader's own seqTxn (the coordinate
-        // a query's disk reader reports, so stamping the slot with it re-engages the fence) and its
-        // max timestamp (the on-disk seam: slot rows at or below it are now durable overlap, rows
-        // above it are the genuine un-flushed remainder).
-        final long readerSeqTxn;
-        final long diskMaxTs;
-        try (TableReader lvReader = engine.getReader(instance.getLiveViewToken())) {
-            readerSeqTxn = lvReader.getSeqTxn();
-            diskMaxTs = lvReader.size() > 0 ? lvReader.getMaxTimestamp() : Numbers.LONG_NULL;
-        }
-        // The slot is ts-ascending; binary-search the first row whose ts exceeds diskMaxTs. Every row
-        // from there up is the un-flushed remainder that stays lead. lo == rowCount (no such row)
-        // means the flush subsumed the whole lead -> newLead == 0. Imprecision (accepted): if output
-        // rows with ts == diskMaxTs straddle the flush boundary (same ts across base commits), they
-        // all count as overlap, so size() can undercount by the tied rows. The row SET is still exact
-        // (the seam serves every slot row); only size()/count(*) is affected. An exact split needs
-        // per-row base seqTxn, which the slot does not carry.
-        final int tsCol = pubSlot.getTimestampColumnIndex();
-        final long rowCount = pubSlot.rowCount();
-        long lo = 0;
-        long hi = rowCount;
-        while (lo < hi) {
-            final long mid = (lo + hi) >>> 1;
-            if (pubSlot.getLong(mid, tsCol) > diskMaxTs) {
-                hi = mid;
-            } else {
-                lo = mid + 1;
-            }
-        }
-        final long newLead = rowCount - lo;
-        // Update the instance count only when the slot re-stamp lands, so the two stay consistent. If
-        // a reader pins the published slot the re-stamp is skipped: the fence keeps reads disk-only
-        // (correct, at worst one flush cycle stale) and the next tick retries via isLeadSlotStale.
-        if (restampSlot(instance, readerSeqTxn, newLead)) {
-            instance.setLeadRowCount(newLead);
-        }
-    }
-
-    /**
      * Re-stamps the published slot's LV-table seqTxn and lead count under the writer sentinel, so
      * reads regain seam routing (the fence holds) immediately with the correct
      * {@code size() = disk.size() + leadRowCount}. Best-effort: when a reader pins the slot the
@@ -2112,7 +1700,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * disk-only until the next refresh re-publishes a fresh slot. Returns {@code true} when the slot
      * was re-stamped, {@code false} when the CAS failed (or there is no tier).
      */
-    private boolean restampSlot(LiveViewInstance instance, long lvSeqTxn, long leadRowCount) {
+    protected boolean restampSlot(LiveViewInstance instance, long lvSeqTxn, long leadRowCount) {
         final LiveViewInMemoryTier tier = instance.getInMemoryTier();
         if (tier == null) {
             return false;
@@ -2140,32 +1728,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      */
     private void restampSlotAfterFlush(LiveViewInstance instance, long lvAppliedSeqTxn) {
         restampSlot(instance, lvAppliedSeqTxn, 0);
-    }
-
-    /**
-     * Restores the whole window state -- the anchored window's bucket map (when present) plus every
-     * window function's accumulator -- and {@code latestSeenTs} that {@link #captureLeadRollback}
-     * snapshotted before a replica lead drain, undoing the drain's forward advance. The in-RAM analog of
-     * a head-checkpoint restore: {@link LiveViewWindow#restore} and {@link LiveViewFunctionSnapshot#restore}
-     * clear the live maps ({@code anchorMap.clear()} / {@link WindowFunction#onSnapshotRestoreBegin}) and
-     * rehydrate them from the snapshot, so partitioned and anchored shapes roll back the same way scalar
-     * ones do. The maps survive the drain cursor's close (the live-view incremental cursor preserves
-     * window state), so the restore runs against live, non-freed state. The read counters end at the
-     * pre-drain state, so the next scan tick re-drains the same base range and re-produces the same
-     * output rows -- the row numbers and O3 frontier match what a first, un-stalled publish would have
-     * written. The anchor block is read from offset 0 (where {@code captureLeadRollback} wrote it); each
-     * function reads its state back from its recorded snapshot offset.
-     */
-    private void restoreLeadRollback(LiveViewInstance instance, WindowRecordCursorFactory windowFactory, LiveViewWindow anchorWindow) {
-        if (anchorWindow != null) {
-            anchorWindow.restore(leadRollbackScratch);
-        }
-        final ObjList<WindowFunction> functions = windowFactory.getWindowFunctions();
-        for (int i = 0, n = functions.size(); i < n; i++) {
-            final WindowFunction f = functions.getQuick(i);
-            LiveViewFunctionSnapshot.restore(leadRollbackScratch, leadRollbackOffsets.getQuick(i), f, f.snapshotFormatVersion());
-        }
-        instance.forceSetLatestSeenTs(leadRollbackLatestSeenTs);
     }
 
     /**
@@ -2230,73 +1792,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         try (MetadataCacheReader metaRO = engine.getMetadataCache().readLock()) {
             final CairoTable baseTable = metaRO.getTable(baseToken);
             return baseTable != null && baseTable.hasDedup();
-        }
-    }
-
-    /**
-     * Reports whether this worker's state store selects the read-only-replica lead-reconstruction
-     * mode: refresh disabled (no flush/apply/durable-watermark writes -- the on-disk tier is fed by
-     * the global apply job from replicated WAL) but lead reconstruction enabled (rebuild each view's
-     * un-flushed lead in RAM for freshness parity). See {@link ReplicaLiveViewStateStore}.
-     */
-    private boolean isLeadReconstruction() {
-        return !stateStore.isRefreshEnabled() && stateStore.isLeadReconstructionEnabled();
-    }
-
-    /**
-     * Reports whether a replica can safely reconstruct this view's lead. Reconstruction requires that
-     * a stalled publish (both tier slots reader-pinned) be recoverable by rolling the window state back
-     * to its pre-drain snapshot and re-draining next tick -- the primary instead flushes the stall to
-     * disk, which a read-only replica cannot do. The in-RAM rollback ({@link #captureLeadRollback} /
-     * {@link #restoreLeadRollback}) is the in-RAM analog of a head-checkpoint write+restore, reusing the
-     * same {@link LiveViewWindow#snapshot} / {@link LiveViewFunctionSnapshot} primitives, so it round-trips
-     * exactly when the view is snapshot-capable: every window function supports snapshot, and -- when the
-     * view has an anchored window -- its partition-key shape has codec support. That is precisely
-     * {@link #computeSnapshotCapability}, cached once on the instance (the replica never writes the head
-     * checkpoint, so this call site may be the one to compute it). Non-snapshot-capable shapes fall back
-     * to disk-only reads on the replica: correct, at worst one flush cycle stale.
-     */
-    private boolean isLeadRollbackSupported(LiveViewInstance instance, WindowRecordCursorFactory windowFactory) {
-        if (!instance.isSnapshotCapabilityComputed()) {
-            instance.setSnapshotCapability(computeSnapshotCapability(instance, windowFactory));
-        }
-        return instance.isSnapshotCapability();
-    }
-
-    /**
-     * Read-only-replica lead-reconstruction signal: reports whether the published slot's stamped
-     * LV-table seqTxn trails the current on-disk seqTxn while an un-flushed lead exists. That means a
-     * replicated flush has advanced the on-disk tier past the point the lead was published against,
-     * so {@link #reconcileLeadWithDisk} must re-stamp the slot (and trim the now-durable lead prefix)
-     * to re-engage the read-path fence. Cheap: one sequencer read plus a slot field. Returns false
-     * when there is no lead or no tier. The apply job advances the on-disk seqTxn on a different
-     * thread than this lead loop, so this is the signal that they have diverged and need reconciling.
-     */
-    private boolean isLeadSlotStale(LiveViewInstance instance) {
-        if (instance.getLeadRowCount() <= 0) {
-            return false;
-        }
-        final LiveViewInMemoryTier tier = instance.getInMemoryTier();
-        if (tier == null) {
-            return false;
-        }
-        // Pin the published slot before dereferencing it. This runs in scanForLaggingViews, outside the
-        // refresh latch that guards every other tier-slot access, so a concurrent refresh worker can free
-        // the tier (a dropped / invalidated view's refreshInstance finally) between the getInMemoryTier
-        // read above and the slot read below: freeNativeMemory nulls the slot arrays before the volatile
-        // inMemoryTier field, so an unpinned getSlot would return null and NPE into run(). acquireRead
-        // returns -1 once the tier is closed -- nothing to reconcile then -- and otherwise holds the free
-        // off until releaseRead, mirroring the read-pin protocol LiveViewRecordCursor.of uses.
-        final int slotIdx = tier.acquireRead();
-        if (slotIdx < 0) {
-            return false;
-        }
-        try {
-            final long lvDiskSeqTxn = engine.getTableSequencerAPI()
-                    .getTxnTracker(instance.getLiveViewToken()).getWriterTxn();
-            return tier.getSlot(slotIdx).lvSeqTxn() != lvDiskSeqTxn;
-        } finally {
-            tier.releaseRead(slotIdx);
         }
     }
 
@@ -2869,7 +2364,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * canonical full reset every window function already implements for cursor
      * re-iteration; for partitioned functions it clears the map too.
      */
-    private static void clearWindowState(WindowRecordCursorFactory windowFactory, LiveViewWindow anchorWindow) {
+    protected static void clearWindowState(WindowRecordCursorFactory windowFactory, LiveViewWindow anchorWindow) {
         final ObjList<WindowFunction> functions = windowFactory.getWindowFunctions();
         for (int i = 0, n = functions.size(); i < n; i++) {
             functions.getQuick(i).toTop();
@@ -3874,7 +3369,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * per LV lifetime on the first refresh after the compiled factory is
      * available; subsequent calls short-circuit on the cached flag.
      */
-    private static boolean computeSnapshotCapability(LiveViewInstance instance, WindowRecordCursorFactory windowFactory) {
+    protected static boolean computeSnapshotCapability(LiveViewInstance instance, WindowRecordCursorFactory windowFactory) {
         final LiveViewWindow anchorWindow = instance.getAnchorWindow();
         if (anchorWindow != null && !LiveViewSnapshotKeyCodec.isAllTypesSupported(anchorWindow.getPartitionKeyTypes())) {
             return false;
@@ -4736,8 +4231,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         turnCommitsProcessed = 0;
         // Lead-reconstruction mode: a read-only replica computes the un-flushed lead into RAM for
         // freshness parity but must never flush, apply, backfill, or advance a durable watermark --
-        // the on-disk tier is fed by the global apply job from replicated WAL. Refresh disabled +
-        // lead reconstruction enabled selects it (see ReplicaLiveViewStateStore).
+        // the on-disk tier is fed by the global apply job from replicated WAL. The enterprise
+        // subclass overrides isLeadReconstruction() to select it; the primary default is false.
         final boolean leadReconstruction = isLeadReconstruction();
         try {
             if (instance.isDropped() || instance.isInvalid()) {
@@ -5089,24 +4584,24 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * emitted, the timestamp range, and any out-of-order detection. The
      * disk-subset cycle and the lead refresh both read it after the call.
      */
-    private static final class DrainResult {
+    protected static final class DrainResult {
         // Highest base seqTxn processed this pass (-1 if none).
-        long advanceTo;
+        public long advanceTo;
         // Output rows emitted this pass (mirrored to the staging buffer when the
         // tier is populated; written to the LV WAL when a walWriter was supplied).
-        long appendedRows;
+        public long appendedRows;
         // Max output timestamp across the pass, in base-table units (LONG_NULL if none).
-        long batchMaxTs;
+        public long batchMaxTs;
         // The offending late-row timestamp when o3Detected.
-        long o3LateRowTs;
+        public long o3LateRowTs;
         // True when a base commit arrived out of order; the caller hands off to o3Replay.
-        boolean o3Detected;
+        public boolean o3Detected;
         // The base seqTxn of the out-of-order commit when o3Detected.
-        long o3SeqTxn;
+        public long o3SeqTxn;
         // Max output timestamp mirrored to the staging buffer (LONG_NULL if none).
-        long stagingMaxTs;
+        public long stagingMaxTs;
         // Min output timestamp mirrored to the staging buffer (LONG_NULL if none).
-        long stagingMinTs;
+        public long stagingMinTs;
 
         void reset() {
             advanceTo = -1;
