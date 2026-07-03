@@ -42,6 +42,7 @@ import io.questdb.cairo.lv.LiveViewWindow;
 import io.questdb.cairo.lv.LiveViewInMemoryBuffer;
 import io.questdb.cairo.lv.LiveViewInMemoryTier;
 import io.questdb.cairo.lv.LiveViewInstance;
+import io.questdb.cairo.lv.LiveViewLifecycleState;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewState;
 import io.questdb.cairo.vm.api.MemoryA;
@@ -4325,6 +4326,166 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRestartWithTornStateAndNoRecoverableFloorSurfacesStateUnreadable() throws Exception {
+        // Tier A fallback for the torn-_lv.s durability path: when the state file is
+        // torn AND the LV's own WAL sequencer log holds no applied LIVE_VIEW_DATA block
+        // (nothing was ever flushed, or the log was purged), there is no safe resume
+        // floor. Registering the view ACTIVE with a too-low floor would replay the base
+        // from the start and duplicate rows, so buildViewGraphs surfaces it as a
+        // droppable state_unreadable stub instead of stranding it invisibly.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0);
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, sym, x, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            final TableToken lvToken = engine.getLiveViewRegistry().getViewInstance("lv").getLiveViewToken();
+
+            // No refresh is ever driven, so no LIVE_VIEW_DATA block is committed to the
+            // LV WAL: readLiveViewAppliedMaxBaseSeqTxn will return -1 (no recoverable floor).
+            final FilesFacade ff = configuration.getFilesFacade();
+            truncateLiveViewStateFile(ff, lvToken);
+
+            // Restart: rebuild the registry from disk with the torn _lv.s in place.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            // The view is registered as a droppable stub (not silently skipped) and
+            // surfaces in live_views() as state_unreadable - distinct from a too-new
+            // version_unsupported format.
+            final LiveViewInstance stub = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull("torn _lv.s with no recoverable floor must register a stub", stub);
+            Assert.assertTrue(stub.isStub());
+            Assert.assertEquals(LiveViewLifecycleState.STATE_UNREADABLE, stub.getLifecycleState());
+            assertQuery("SELECT view_name, view_status FROM live_views() WHERE view_name = 'lv'")
+                    .noLeakCheck().noRandomAccess()
+                    .returns("view_name\tview_status\nlv\tstate_unreadable\n");
+
+            // DROP LIVE VIEW removes the stub best-effort - no longer an undroppable zombie.
+            execute("DROP LIVE VIEW lv");
+            assertQuery("SELECT count() FROM live_views() WHERE view_name = 'lv'")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
+            assertQuery("SELECT count() FROM tables() WHERE table_name = 'lv'")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
+        });
+    }
+
+    @Test
+    public void testRestartWithTornStateButValidHeadCheckpoint() throws Exception {
+        // Torn-_lv.s recovery (the "head .cp valid but _lv.s write was torn" durability
+        // case). A torn _lv.s throws a CairoException whose errno is NOT
+        // LV_FILE_VERSION_UNSUPPORTED. Rather than silently skip the view (which stranded
+        // it as an invisible, frozen, undroppable zombie), buildViewGraphs reconstructs
+        // the lost durable watermarks from the last applied LIVE_VIEW_DATA block in the
+        // LV's own WAL sequencer log and resumes the view ACTIVE: the head .cp restores
+        // the window accumulators and the forward drain catches up. This test truncates
+        // _lv.s while leaving the head .cp and the _lv table data intact, then asserts the
+        // view recovers, converges to a from-scratch recompute (the accumulator for the
+        // partition that spans the fault must survive), rewrites a valid _lv.s (a second
+        // restart takes the normal path), and stays droppable.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0);
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, sym, x, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            final TableToken lvToken = engine.getLiveViewRegistry().getViewInstance("lv").getLiveViewToken();
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base VALUES " +
+                        "('2026-04-01T00:00:00.000000Z', 'a', 1), " +
+                        "('2026-04-01T00:00:01.000000Z', 'b', 2)");
+                drainWalQueue();
+                setCurrentMicros(2_000_000L);
+                drainJob(job);
+                drainWalQueue();
+            }
+            // Before the fault: the view holds 2 committed, durable rows in its _lv table.
+            assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n2\n");
+
+            final FilesFacade ff = configuration.getFilesFacade();
+
+            // The head .cp survives untouched (the "valid checkpoint" half of the asymmetry):
+            // it carries the window accumulators as of the flush point, incl. sum(x)=1 for 'a'.
+            try (Path cpDir = new Path()) {
+                cpDir.of(configuration.getDbRoot()).concat(lvToken).concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME);
+                Assert.assertTrue("head .cp dir must survive the fault", ff.exists(cpDir.$()));
+            }
+
+            // Inject the torn write: truncate _lv.s below HEADER_SIZE so BlockFileReader.of
+            // throws "block file too small" (errno 0) - the non-version branch.
+            truncateLiveViewStateFile(ff, lvToken);
+
+            // Restart: rebuild the registry from disk with the torn _lv.s in place.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            // The view recovers ACTIVE - registered, visible in live_views(), rows intact.
+            final LiveViewInstance recovered = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull("torn _lv.s must recover, not strand the view", recovered);
+            Assert.assertFalse("recovered view is a real instance, not a stub", recovered.isStub());
+            Assert.assertEquals(LiveViewLifecycleState.ACTIVE, recovered.getLifecycleState());
+            assertQuery("SELECT view_name, view_status FROM live_views() WHERE view_name = 'lv'")
+                    .noLeakCheck().noRandomAccess()
+                    .returns("view_name\tview_status\nlv\tactive\n");
+            assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n2\n");
+
+            // The base advances; the recovered view refreshes forward and converges. The new
+            // 'a' row must read s=4 (1+3), proving the head .cp restored the 'a' accumulator
+            // across the fault - a lost accumulator would restart the running sum at 3.
+            execute("INSERT INTO base VALUES ('2026-04-01T00:00:02.000000Z', 'a', 3)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(4_000_000L);
+                drainJob(job);
+                drainWalQueue();
+            }
+            assertQuery("SELECT ts, sym, x, s FROM lv ORDER BY ts")
+                    .noLeakCheck().timestamp("ts").expectSize()
+                    .returns("ts\tsym\tx\ts\n" +
+                            "2026-04-01T00:00:00.000000Z\ta\t1\t1.0\n" +
+                            "2026-04-01T00:00:01.000000Z\tb\t2\t2.0\n" +
+                            "2026-04-01T00:00:02.000000Z\ta\t3\t4.0\n");
+
+            // Recovery rewrote a valid _lv.s: a second restart takes the normal load path
+            // (still ACTIVE, no stub, data intact) and keeps converging.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            final LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull("rewritten _lv.s must load on a clean restart", reloaded);
+            Assert.assertFalse(reloaded.isStub());
+            Assert.assertEquals(LiveViewLifecycleState.ACTIVE, reloaded.getLifecycleState());
+            assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n3\n");
+
+            // The recovered view remains droppable via SQL - no longer a zombie.
+            execute("DROP LIVE VIEW lv");
+            assertQuery("SELECT count() FROM live_views() WHERE view_name = 'lv'")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
+            assertQuery("SELECT count() FROM tables() WHERE table_name = 'lv'")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
+        });
+    }
+
+    // Truncates a live view's _lv.s below the BlockFile header so BlockFileReader.of
+    // throws "block file too small" (errno 0) - a faithful torn-partial-write artifact
+    // on the non-version branch.
+    private void truncateLiveViewStateFile(FilesFacade ff, TableToken lvToken) {
+        try (Path sPath = new Path()) {
+            sPath.of(configuration.getDbRoot()).concat(lvToken).concat(LiveViewState.LIVE_VIEW_STATE_FILE_NAME);
+            Assert.assertTrue(ff.exists(sPath.$()));
+            final long fd = ff.openRW(sPath.$(), CairoConfiguration.O_NONE);
+            Assert.assertTrue(fd > 0);
+            try {
+                Assert.assertTrue(ff.truncate(fd, 8));
+            } finally {
+                ff.close(fd);
+            }
+        }
+    }
+
+    @Test
     public void testRestartWithUnappliedBaseSeqTxnConverges() throws Exception {
         // Distinct from "retained base WAL": here the base's OWN table lags its sequencer at restart.
         // batch2 is committed to the base WAL but never applied to the base table (no drainWalQueue),
@@ -4826,17 +4987,18 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testLoaderRejectsHalfCreatedLiveView() throws Exception {
+    public void testLoaderSurfacesHalfCreatedLiveViewAsDroppableStub() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
 
-            // Simulate a crash that left _lv on disk but not _lv.s. With the
-            // engine's atomic write order (_lv.s first, _lv last) this state can
-            // only occur via external corruption, but if it does the loader must
-            // reject the LV rather than fall back to a default subscribeFromSeqTxn
-            // that would re-replay the entire base table.
+            // Simulate a crash that left _lv on disk but not _lv.s. With the engine's
+            // atomic write order (_lv.s first, _lv last) this can only occur via external
+            // corruption. The loader must not fall back to a default subscribeFromSeqTxn
+            // (which would re-replay the entire base table), and it must not silently skip
+            // the view (which would strand it as an invisible, undroppable zombie). It
+            // surfaces a non-refreshing, droppable state_unreadable stub instead.
             TableToken token = engine.getLiveViewRegistry().getViewInstance("lv").getLiveViewToken();
             FilesFacade ff = engine.getConfiguration().getFilesFacade();
             try (Path path = new Path()) {
@@ -4849,12 +5011,18 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             engine.getLiveViewRegistry().clear();
             engine.buildViewGraphs();
 
-            Assert.assertNull(
-                    "loader must refuse to register a live view whose _lv.s is missing",
-                    engine.getLiveViewRegistry().getViewInstance("lv")
-            );
-            // No DROP here: the loader rejected the LV, so the SQL surface no
-            // longer sees it. Per-test fixture cleans up the on-disk leftover.
+            LiveViewInstance stub = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull("missing _lv.s must surface a stub, not be silently skipped", stub);
+            Assert.assertTrue(stub.isStub());
+            Assert.assertEquals(LiveViewLifecycleState.STATE_UNREADABLE, stub.getLifecycleState());
+            assertQuery("SELECT view_name, view_status FROM live_views() WHERE view_name = 'lv'")
+                    .noLeakCheck().noRandomAccess()
+                    .returns("view_name\tview_status\nlv\tstate_unreadable\n");
+
+            // The stub is droppable via SQL - no undroppable zombie left behind.
+            execute("DROP LIVE VIEW lv");
+            assertQuery("SELECT count() FROM live_views() WHERE view_name = 'lv'")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
         });
     }
 
@@ -10606,7 +10774,9 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
             LiveViewInstance stub = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull("version-unsupported view must still be registered", stub);
-            Assert.assertTrue("stub must report version-unsupported", stub.isVersionUnsupported());
+            Assert.assertTrue("stub must be a load-failure stub", stub.isStub());
+            Assert.assertEquals("stub must report version-unsupported",
+                    LiveViewLifecycleState.VERSION_UNSUPPORTED, stub.getLifecycleState());
 
             // view_name and view_status surface; definition/state columns are NULL
             // (string columns render empty, long columns render "null").
@@ -10640,7 +10810,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
             LiveViewInstance stub = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(stub);
-            Assert.assertTrue(stub.isVersionUnsupported());
+            Assert.assertEquals(LiveViewLifecycleState.VERSION_UNSUPPORTED, stub.getLifecycleState());
             assertQuery("SELECT view_name, view_status FROM live_views() WHERE view_name = 'lv'").noLeakCheck().noRandomAccess().returns("view_name\tview_status\n" +
                     "lv\tversion_unsupported\n");
 

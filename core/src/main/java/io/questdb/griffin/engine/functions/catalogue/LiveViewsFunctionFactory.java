@@ -201,7 +201,7 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
 
                 @Override
                 public long getLong(int col) {
-                    if (instance.isVersionUnsupported()) {
+                    if (instance.isStub()) {
                         // The stub has a null definition and default state; every
                         // numeric column is NULL.
                         return Numbers.LONG_NULL;
@@ -287,7 +287,7 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
 
                 @Override
                 public CharSequence getStrA(int col) {
-                    if (instance.isVersionUnsupported()) {
+                    if (instance.isStub()) {
                         // The stub has a null definition; surface only the name
                         // (from the token) and the status, NULL for the rest.
                         return switch (col) {

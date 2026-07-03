@@ -287,12 +287,14 @@ public class LiveViewInstance implements QuietCloseable {
     // suffices - the latch's acquire/release supplies the happens-before edge,
     // same discipline as flushRetryCount.
     private boolean tierStale;
-    // True only for a minimal stub registered by the catalogue load path when the
-    // on-disk _lv / _lv.s carry an unsupported newer format version. Such an
-    // instance has a null definition and default runtime state; getLifecycleState
-    // reports VERSION_UNSUPPORTED and the catalogue surfaces only view_name /
-    // view_status. Final, so it is safely published to the catalogue read thread.
-    private final boolean versionUnsupported;
+    // Non-null only for a minimal stub registered by the catalogue load path when
+    // the on-disk _lv / _lv.s could not be loaded (a too-new format version, or a
+    // torn / corrupt file with no recoverable state). Such an instance has a null
+    // definition and default runtime state; getLifecycleState reports this terminal
+    // state (VERSION_UNSUPPORTED or STATE_UNREADABLE) and the catalogue surfaces only
+    // view_name / view_status. Final, so it is safely published to the catalogue read
+    // thread. Null for a normally-loaded instance.
+    private final LiveViewLifecycleState stubState;
     // Wall-clock (micros) when the in-mem tier's slow-path tryAcquireWrite first
     // observed both slots reader-pinned. Numbers.LONG_NULL when not stalled.
     // Cleared on the next successful acquire. Surfaces via
@@ -302,20 +304,22 @@ public class LiveViewInstance implements QuietCloseable {
     public LiveViewInstance(LiveViewDefinition definition, TableToken liveViewToken) {
         this.definition = definition;
         this.liveViewToken = liveViewToken;
-        this.versionUnsupported = false;
+        this.stubState = null;
     }
 
     /**
-     * Builds a minimal stub for a live view whose on-disk files carry an
-     * unsupported newer format version. Carries only the token; the definition is
-     * null and the runtime state stays at defaults. The catalogue surfaces it with
-     * {@code view_status='version_unsupported'}; the refresh worker never runs
-     * against it, and DROP LIVE VIEW removes it best-effort.
+     * Builds a minimal stub for a live view the catalogue load path could not fully
+     * load: a too-new on-disk format ({@link LiveViewLifecycleState#VERSION_UNSUPPORTED})
+     * or a torn / corrupt {@code _lv} / {@code _lv.s} with no recoverable state
+     * ({@link LiveViewLifecycleState#STATE_UNREADABLE}). Carries only the token; the
+     * definition is null and the runtime state stays at defaults. The catalogue surfaces
+     * it with the matching {@code view_status}; the refresh worker never runs against it,
+     * and DROP LIVE VIEW removes it best-effort.
      */
-    public LiveViewInstance(TableToken liveViewToken) {
+    public LiveViewInstance(TableToken liveViewToken, LiveViewLifecycleState stubState) {
         this.definition = null;
         this.liveViewToken = liveViewToken;
-        this.versionUnsupported = true;
+        this.stubState = stubState;
     }
 
     /**
@@ -564,10 +568,10 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     public LiveViewLifecycleState getLifecycleState() {
-        if (versionUnsupported) {
-            // Stub for an unloadable newer-schema view: its durable signals were
-            // never read, so report the terminal state directly.
-            return LiveViewLifecycleState.VERSION_UNSUPPORTED;
+        if (stubState != null) {
+            // Stub for an unloadable view (too-new format, or torn / corrupt state):
+            // its durable signals were never read, so report the terminal state directly.
+            return stubState;
         }
         // A registered LiveViewInstance has, by definition, completed CREATE,
         // so CREATING is unreachable here. close() always flips `dropped` before
@@ -728,6 +732,17 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * @return {@code true} for a minimal, definition-less stub registered when the
+     * catalogue load path could not load the on-disk files (a too-new format version,
+     * or a torn / corrupt {@code _lv} / {@code _lv.s} with no recoverable state). Such
+     * a stub is visible in the catalogue and droppable but never refreshes. See the
+     * stub constructor and {@link #getLifecycleState()}.
+     */
+    public boolean isStub() {
+        return stubState != null;
+    }
+
+    /**
      * @return {@code true} when the published in-mem slot may still hold pre-O3
      * rows from a both-slots-pinned rebuild skip. While set, the next normal
      * publish drops the retained rows rather than carrying them forward. See
@@ -735,14 +750,6 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public boolean isTierStale() {
         return tierStale;
-    }
-
-    /**
-     * @return {@code true} for a minimal stub registered when the on-disk files
-     * carry an unsupported newer format version (see the stub constructor).
-     */
-    public boolean isVersionUnsupported() {
-        return versionUnsupported;
     }
 
     /**

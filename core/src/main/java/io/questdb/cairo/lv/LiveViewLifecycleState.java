@@ -63,7 +63,19 @@ public enum LiveViewLifecycleState {
      * {@link #derive}, since the caller of {@code derive} holds a live
      * {@link LiveViewInstance} (the deserialisation already succeeded).
      */
-    VERSION_UNSUPPORTED;
+    VERSION_UNSUPPORTED,
+    /**
+     * Restart load found the on-disk {@code _lv} / {@code _lv.s} torn or
+     * corrupt (a non-version read error), and could not reconstruct the
+     * durable watermarks from the LV's own WAL sequencer log either, so the
+     * view cannot resume refreshing. Distinct from {@link #VERSION_UNSUPPORTED}
+     * (a too-new format an upgrade would fix) so operators can tell corruption
+     * apart. The row data may still be queryable; the load path surfaces the
+     * view here as a droppable stub instead of stranding it invisibly. Set
+     * externally by the catalogue load path; not reachable from
+     * {@link #derive}.
+     */
+    STATE_UNREADABLE;
 
     /**
      * Derives the lifecycle state of a registered {@link LiveViewInstance}
@@ -104,6 +116,7 @@ public enum LiveViewLifecycleState {
             case INVALID -> "invalid";
             case DROPPING -> "dropping";
             case VERSION_UNSUPPORTED -> "version_unsupported";
+            case STATE_UNREADABLE -> "state_unreadable";
         };
     }
 }

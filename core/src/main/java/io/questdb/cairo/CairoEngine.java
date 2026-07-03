@@ -35,6 +35,7 @@ import io.questdb.cairo.frm.file.FrameFactory;
 import io.questdb.cairo.lv.LiveViewCheckpointWriter;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewInstance;
+import io.questdb.cairo.lv.LiveViewLifecycleState;
 import io.questdb.cairo.lv.LiveViewRecovery;
 import io.questdb.cairo.lv.LiveViewRegistry;
 import io.questdb.cairo.lv.LiveViewState;
@@ -817,9 +818,57 @@ public class CairoEngine implements Closeable, WriterSource {
                                         .put(tableToken.getTableName()).put(']');
                             }
                             path.of(configuration.getDbRoot()).concat(tableToken).concat(LiveViewState.LIVE_VIEW_STATE_FILE_NAME);
-                            reader.of(path.$());
                             LiveViewStateReader stateReader = new LiveViewStateReader();
-                            stateReader.of(reader, tableToken);
+                            boolean tornStateRecovered = false;
+                            try {
+                                reader.of(path.$());
+                                stateReader.of(reader, tableToken);
+                            } catch (CairoException stateEx) {
+                                if (stateEx.getErrno() == CairoException.LV_FILE_VERSION_UNSUPPORTED) {
+                                    // A too-new state format is not corruption; let the outer
+                                    // catch surface it as version_unsupported.
+                                    throw stateEx;
+                                }
+                                // The _lv.s is torn / corrupt (a non-version read error), but the
+                                // _lv table data and any head .cp accumulators are intact. Every
+                                // lost durable watermark is a base seqTxn, and they track the
+                                // applied point together (see LiveViewRefreshJob.finishLeadRefresh /
+                                // tryRestoreFromHead), so reconstruct them from the last applied
+                                // LIVE_VIEW_DATA block recorded in the LV's own WAL sequencer log.
+                                // If that is gone too (purged / unreadable), there is no safe resume
+                                // floor - registering ACTIVE with a too-low floor would replay the
+                                // base from the start and duplicate rows - so fall back to a
+                                // droppable state_unreadable stub.
+                                final long appliedFloor = readLiveViewAppliedMaxBaseSeqTxn(tableToken);
+                                if (appliedFloor < 0) {
+                                    LOG.error().$("live view state unreadable and no recoverable floor, surfacing as state_unreadable [view=")
+                                            .$(tableToken)
+                                            .$(", errno=").$(stateEx.getErrno())
+                                            .$(", msg=").$safe(stateEx.getFlyweightMessage())
+                                            .I$();
+                                    registerLiveViewStubIfAbsent(tableToken, LiveViewLifecycleState.STATE_UNREADABLE);
+                                    continue;
+                                }
+                                LOG.info().$("live view state unreadable, recovering durable floor from applied WAL [view=")
+                                        .$(tableToken)
+                                        .$(", appliedMaxBaseSeqTxn=").$(appliedFloor)
+                                        .$(", errno=").$(stateEx.getErrno())
+                                        .$(", msg=").$safe(stateEx.getFlyweightMessage())
+                                        .I$();
+                                // clear() defaults backfillState to ACTIVE. A view torn
+                                // mid-backfill therefore recovers as ACTIVE and resumes the
+                                // forward (incremental) drain from the applied floor with
+                                // correct results; an unfinished backfill sweep does not
+                                // resume, so historical rows it had not yet swept can be
+                                // missing. That is a narrow corruption-during-backfill case
+                                // and still strictly better than an undroppable zombie.
+                                stateReader.clear();
+                                stateReader.setSubscribeFromSeqTxn(appliedFloor)
+                                        .setLastProcessedSeqTxn(appliedFloor)
+                                        .setAppliedWatermark(appliedFloor)
+                                        .setLvConsumedSeqTxn(appliedFloor);
+                                tornStateRecovered = true;
+                            }
                             instance.initFromState(stateReader);
                             // A persisted invalidation always wins — the original reason is more
                             // specific (base drop vs base rename vs schema change), so we only
@@ -837,6 +886,12 @@ public class CairoEngine implements Closeable, WriterSource {
                                             .I$();
                                     instance.markInvalid("base table is not WAL table", nowUs);
                                 }
+                            }
+                            if (tornStateRecovered) {
+                                // Rewrite the torn _lv.s from the reconstructed state (now also
+                                // reflecting any base-existence invalidation above) so a later
+                                // restart reads a valid file and takes the normal load path.
+                                persistLiveViewState(tableToken, instance.getStateReader());
                             }
                             liveViewRegistry.registerView(instance);
                             // Register the LV with the shared dependents graph so
@@ -896,17 +951,24 @@ public class CairoEngine implements Closeable, WriterSource {
                                     .$(", errno=").$(ce.getErrno())
                                     .$(", msg=").$safe(ce.getFlyweightMessage())
                                     .I$();
-                            liveViewRegistry.registerVersionUnsupportedView(new LiveViewInstance(tableToken));
+                            registerLiveViewStubIfAbsent(tableToken, LiveViewLifecycleState.VERSION_UNSUPPORTED);
                         } else {
-                            LOG.error().$("could not load live view [view=").$(tableToken)
-                                    .$(", msg=").$safe(ce.getFlyweightMessage())
+                            // Torn / corrupt _lv or _lv.s with no recoverable state (the
+                            // definition read failed, or the _lv.s recovery above could not
+                            // reconstruct a floor). Surface it as a droppable state_unreadable
+                            // stub rather than silently skipping it, which would strand the
+                            // directory as an invisible, undroppable zombie.
+                            LOG.error().$("could not load live view, surfacing as state_unreadable [view=").$(tableToken)
                                     .$(", errno=").$(ce.getErrno())
+                                    .$(", msg=").$safe(ce.getFlyweightMessage())
                                     .I$();
+                            registerLiveViewStubIfAbsent(tableToken, LiveViewLifecycleState.STATE_UNREADABLE);
                         }
                     } catch (Throwable th) {
-                        LOG.error().$("could not load live view [view=").$(tableToken)
+                        LOG.error().$("could not load live view, surfacing as state_unreadable [view=").$(tableToken)
                                 .$(", msg=").$safe(th.getMessage())
                                 .I$();
+                        registerLiveViewStubIfAbsent(tableToken, LiveViewLifecycleState.STATE_UNREADABLE);
                     }
                 }
             }
@@ -1517,9 +1579,9 @@ public class CairoEngine implements Closeable, WriterSource {
         }
         LiveViewInstance instance = liveViewRegistry.removeView(name);
         if (instance != null) {
-            // A version-unsupported stub was never added to the dependents graph
-            // (its base table could not be resolved), so skip that cleanup for it.
-            if (!instance.isVersionUnsupported()) {
+            // A definition-less load-failure stub was never added to the dependents
+            // graph (its base table could not be resolved), so skip that cleanup for it.
+            if (!instance.isStub()) {
                 // Drop the LV from the dependents graph too so a multi-LV chain's
                 // snapshot ordering does not still see the dropped view.
                 dependentViewGraph.removeLiveView(instance.getLiveViewToken(), instance.getDefinition().getBaseTableName());
@@ -3784,6 +3846,28 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    /**
+     * Rewrites {@code _lv.s} from {@code state}, replacing a torn / corrupt file with a
+     * freshly reconstructed CORE_STATE block so a later restart reads it via the normal
+     * load path. Used by {@link #buildViewGraphs()} after it recovers the durable
+     * watermarks of a view whose state file was unreadable.
+     */
+    private void persistLiveViewState(TableToken liveViewToken, LiveViewStateReader state) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        try (
+                BlockFileWriter writer = new BlockFileWriter(ff, configuration.getCommitMode());
+                Path p = new Path()
+        ) {
+            p.of(configuration.getDbRoot()).concat(liveViewToken).concat(LiveViewState.LIVE_VIEW_STATE_FILE_NAME);
+            // Remove the torn file first so the writer creates a fresh, well-formed
+            // BlockFile (mapping the truncated file would leave the region header
+            // uninitialised) - the same fresh-write path CREATE takes.
+            ff.removeQuiet(p.$());
+            writer.of(p.$());
+            LiveViewState.append(state, writer);
+        }
+    }
+
     private TableToken rebaseWalTable0(TableToken oldToken, String suppliedDir, boolean replicaVariant) {
         assertRebaseRole(replicaVariant);
         if (!oldToken.isWal() || oldToken.isView()) {
@@ -4024,6 +4108,20 @@ public class CairoEngine implements Closeable, WriterSource {
         }
         enqueueCompileView(newToken);
         return newToken;
+    }
+
+    /**
+     * Registers a definition-less load-failure stub for {@code liveViewToken} so a view
+     * the load path could not read stays visible in {@code live_views()} and droppable,
+     * instead of being silently skipped (which strands the directory as an invisible,
+     * undroppable zombie). No-op when the view is already registered, so a failure that
+     * fires after {@link #buildViewGraphs()} has already registered the real instance
+     * (e.g. a later checkpoint sweep throwing) never clobbers it with a stub.
+     */
+    private void registerLiveViewStubIfAbsent(TableToken liveViewToken, LiveViewLifecycleState stubState) {
+        if (liveViewRegistry.getViewInstance(liveViewToken.getTableName()) == null) {
+            liveViewRegistry.registerStubView(new LiveViewInstance(liveViewToken, stubState));
+        }
     }
 
     private TableToken rename0(Path fromPath, TableToken fromTableToken, Path toPath, CharSequence toTableName) {
