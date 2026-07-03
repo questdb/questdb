@@ -1009,6 +1009,85 @@ public class LiveViewReplicaLeadReconstructionTest extends AbstractCairoTest {
         });
     }
 
+    // Read-only-replica apply-lag anti-spin. During replication catch-up the base SEQUENCER head
+    // (getTxnTracker(base).getSeqTxn()) routinely runs ahead of the APPLIED base point
+    // (getTxnTracker(base).getWriterTxn(), the value a fresh reader also reports via getSeqTxn()),
+    // because the replica appends the replicated txnlog before ApplyWal2TableJob materialises the
+    // segment data. The replica lead loop only reads the applied base table, so it can progress no
+    // further than the applied point; drainAppliedBaseForLead early-returns once its frontier reaches
+    // it. scanForLaggingViews therefore gates the replica scan on the applied point (getWriterTxn),
+    // NOT the sequencer head -- so a sequencer head that leads apply does not wake the loop. Were it to
+    // gate on the sequencer head, the scan would report work every tick, the drain would early-return
+    // with no forward progress, and the worker would busy-spin.
+    //
+    // This pins that invariant: with the base sitting sequencer-ahead-of-applied and the lead already
+    // caught up to the applied point, the scan reports NO work, and wakes only once apply advances (so
+    // freshness is preserved -- just deferred until the base actually applies, not the sequencer head).
+    @Test
+    public void testReplicaScanIdlesWhileBaseApplyLagsSequencerHead() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            final TableToken baseToken = engine.getTableTokenIfExists("base");
+            Assert.assertNotNull(baseToken);
+
+            final LiveViewStateStore primaryStore = switchToReplicaMode();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+
+                // Batch 1 lands AND applies on the base; the replica reconstructs it as a 2-row lead over
+                // empty disk, catching the loop frontier up to the applied base seqTxn 1.
+                execute("INSERT INTO base (ts, x) VALUES ('" + TS1 + "', 10), ('" + TS2 + "', 20)");
+                drainWalQueue();
+                drainJob(job);
+                Assert.assertEquals("batch 1 reconstructed as a 2-row lead", 2, instance.getLeadRowCount());
+                Assert.assertEquals("loop frontier caught up to the applied base", 1, instance.getRefreshedUpToSeqTxn());
+
+                // Steady state: no new applied base commits and no replicated flush, so the scan idles.
+                // (Isolates "is the caught-up scan quiet?" from the sequencer-ahead check below.)
+                Assert.assertFalse("scan idles once the lead is caught up to the applied base", drainJob(job));
+
+                // Batch 2 commits to the base SEQUENCER but is NOT applied (no drainWalQueue) -- the exact
+                // replication-catch-up state where the sequencer head leads the applied point.
+                execute("INSERT INTO base (ts, x) VALUES ('" + TS3 + "', 30), ('" + TS4 + "', 40)");
+                Assert.assertEquals("base sequencer head advanced to batch 2",
+                        2, engine.getTableSequencerAPI().getTxnTracker(baseToken).getSeqTxn());
+                Assert.assertEquals("base apply still trails at batch 1",
+                        1, engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn());
+
+                // The scan gates on the applied point (getWriterTxn), not the sequencer head, so the
+                // sequencer-ahead base does NOT wake the lead loop: no work, no useless re-drain, no spin.
+                Assert.assertFalse("sequencer head ahead of apply must not wake the lead loop", drainJob(job));
+                Assert.assertEquals("loop frontier unchanged while apply lags", 1, instance.getRefreshedUpToSeqTxn());
+                Assert.assertEquals("lead unchanged while apply lags", 2, instance.getLeadRowCount());
+
+                // Once apply catches up, the scan wakes and the lead advances to cover batch 2 -- freshness
+                // is preserved, only deferred until the base actually applies.
+                drainWalQueue();
+                Assert.assertEquals("base apply caught up to batch 2",
+                        2, engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn());
+                Assert.assertTrue("scan wakes once apply advances", drainJob(job));
+                Assert.assertEquals("lead now covers batch 2 over empty disk", 4, instance.getLeadRowCount());
+                Assert.assertEquals("loop frontier advanced to the newly applied base", 2, instance.getRefreshedUpToSeqTxn());
+            } finally {
+                switchToStore(primaryStore);
+            }
+
+            final String expected = """
+                    ts\tx\trn
+                    2026-05-12T00:00:01.000000Z\t10\t1
+                    2026-05-12T00:00:02.000000Z\t20\t2
+                    2026-05-12T00:00:03.000000Z\t30\t3
+                    2026-05-12T00:00:04.000000Z\t40\t4
+                    """;
+            StringSink actual = new StringSink();
+            printSql("SELECT * FROM lv ORDER BY ts", actual);
+            Assert.assertEquals(expected, actual.toString());
+        });
+    }
+
     private static boolean drainJob(Job job) {
         boolean any = false;
         for (int i = 0; i < 64 && job.run(); i++) {
