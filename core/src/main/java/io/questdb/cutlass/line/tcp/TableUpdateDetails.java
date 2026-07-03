@@ -236,7 +236,7 @@ public class TableUpdateDetails implements Closeable {
             // acquire the lock, skip the lock acquire entirely. This is NOT the
             // authoritative refusal -- the in-lock re-check below is.
             if (engine.isReadOnlyMode()) {
-                throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+                throw CairoException.readOnlyAccess();
             }
             // Hold the role-switch lock across the authoritative re-check and the
             // actual commit. The role-flip path in EntCairoEngine acquires the same
@@ -256,7 +256,7 @@ public class TableUpdateDetails implements Closeable {
                 // authorizeCommit(): a real authorization failure must still roll back the writer
                 // and surface as a wrapped CommitFailedException, exactly as before this gate existed.
                 if (engine.isReadOnlyMode()) {
-                    throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+                    throw CairoException.readOnlyAccess();
                 }
                 try {
                     authorizeCommit();

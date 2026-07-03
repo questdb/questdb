@@ -1015,22 +1015,39 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
      * {@link #processMessage()} re-checks the live role per batch, but the flag
      * can flip BETWEEN that check and the WAL writer acquisition (or the commit)
      * within the same batch. The deeper engine gates then refuse with
-     * {@code CairoException.authorization()} ("replica access is read-only"),
-     * which {@link #cairoExceptionStatus} would map to
-     * {@link Status#SECURITY_ERROR} -- a status a store-and-forward client
-     * latches as a terminal HALT and surfaces to its producer. Re-checking the
-     * live flag at catch time closes that window: if the node is (now)
-     * read-only BECAUSE OF ITS ROLE, the refusal is the transient demote, so the
-     * connection is flagged for the same reconnect-eligible close as the
-     * top-gate path (the client reconnects, hits the 421 role reject on the
-     * now-replica endpoint, and retries from SF until a primary is reachable).
-     * A genuine ACL denial on a writable node (isReadOnlyMode() == false) still
-     * maps to SECURITY_ERROR -- and so does any refusal on a STATICALLY
-     * read-only node ({@link #isStaticReadOnlyInstance()}), where the
-     * role-change close has no 421 backstop and would loop the client forever.
+     * {@code CairoException.readOnlyAccess()}, which
+     * {@link #cairoExceptionStatus} would map to {@link Status#SECURITY_ERROR}
+     * -- a status a store-and-forward client latches as a terminal HALT and
+     * surfaces to its producer.
+     * <p>
+     * Classification keys on {@link CairoException#isReadOnlyAccessRefusal()}
+     * -- the marker every read-only gate stamps at the THROW site -- never on
+     * live engine state at catch time. A live {@code engine.isReadOnlyMode()}
+     * re-read here races with a demote REVERT: when the demote fails between
+     * the throw and the catch (real path:
+     * {@code EntCairoEngine.drainWriterPool(restorePrimaryOnTimeout=true)}
+     * restores PRIMARY on drain-budget expiry, and nothing fences the
+     * throw-to-catch propagation -- the commit path releases the role-switch
+     * READ lock as the exception unwinds), the re-read would see writable and
+     * leak the transient refusal as a terminal SECURITY_ERROR for a
+     * milliseconds-long condition on a node that ended up writable PRIMARY.
+     * The marker records the refusal's CAUSE, which no later state flip can
+     * rewrite.
+     * <p>
+     * Shape decision for a marked refusal: role-derived read-only takes the
+     * reconnect-eligible close (the client reconnects, hits the 421 role reject
+     * on the now-replica endpoint, and retries from SF until a primary is
+     * reachable); a STATICALLY read-only node
+     * ({@link #isStaticReadOnlyInstance()}, an immutable config flag -- no
+     * TOCTOU) keeps the terminal SECURITY_ERROR, because the role-change close
+     * has no 421 backstop there and would loop the client forever. A genuine
+     * ACL denial (unmarked authorization error) maps to SECURITY_ERROR
+     * regardless of the node's role at catch time: ACL state is
+     * role-independent, so the terminal NACK is truthful even when the denial
+     * lands mid-demote.
      */
     private void rejectCairoError(CairoException e) {
-        if (e.isAuthorizationError() && engine.isReadOnlyMode() && !isStaticReadOnlyInstance()) {
+        if (e.isReadOnlyAccessRefusal() && !isStaticReadOnlyInstance()) {
             roleChangeClosePending = true;
             reject(Status.NOT_ACCEPTING_WRITES, e.getFlyweightMessage(), fd);
             return;

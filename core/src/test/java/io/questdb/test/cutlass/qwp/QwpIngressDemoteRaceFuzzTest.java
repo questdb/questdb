@@ -118,11 +118,11 @@ public class QwpIngressDemoteRaceFuzzTest extends AbstractCairoTest {
                         final RaceTudCache tudCache = installRaceTudCache(state, demotableEngine, lineConfig);
 
                         // Mirror the TableUpdateDetails.commit in-lock re-check contract:
-                        // once the demote flips the flag, the commit refuses with a RAW
-                        // authorization error (outside CommitFailedException wrapping).
+                        // once the demote flips the flag, the commit refuses with the MARKED
+                        // read-only refusal (outside CommitFailedException wrapping).
                         final Runnable commitRefusal = () -> {
                             if (readOnly.get()) {
-                                throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+                                throw CairoException.readOnlyAccess();
                             }
                         };
                         tudCache.commitHook = commitRefusal;
@@ -218,10 +218,13 @@ public class QwpIngressDemoteRaceFuzzTest extends AbstractCairoTest {
      * and nothing fences the throw-to-catch propagation (the commit path releases
      * the role-switch READ lock in its finally as the exception unwinds), so the
      * write-locked {@code setCurrentRole(PRIMARY)} can land in between.
-     * {@code rejectCairoError} then re-reads the LIVE {@code engine.isReadOnlyMode()},
-     * sees writable, and falls through to {@code cairoExceptionStatus} ->
-     * {@code SECURITY_ERROR}: the client latches a permanent terminal HALT for a
-     * milliseconds-long condition, on a node that ended up writable PRIMARY.
+     * A catch-time re-read of the LIVE {@code engine.isReadOnlyMode()} (the
+     * pre-fix classification) then sees writable and falls through to
+     * {@code cairoExceptionStatus} -> {@code SECURITY_ERROR}: the client latches
+     * a permanent terminal HALT for a milliseconds-long condition, on a node
+     * that ended up writable PRIMARY. The fix classifies by the
+     * {@code isReadOnlyAccessRefusal()} marker stamped at the throw site, which
+     * no later state flip can rewrite.
      * <p>
      * The hook compresses that interleaving deterministically: flip to read-only,
      * shape the refusal exactly as the deep gates produce it, revert to writable,
@@ -257,8 +260,9 @@ public class QwpIngressDemoteRaceFuzzTest extends AbstractCairoTest {
                         final RaceTudCache tudCache = installRaceTudCache(state, demotableEngine, lineConfig);
                         final Runnable demoteRefuseThenRevert = () -> {
                             readOnly.set(true);   // demote Step 1: dynamic flag flips mid-batch
-                            final CairoException e = CairoException.authorization()
-                                    .put(CairoException.READ_ONLY_ACCESS_MESSAGE); // refusal shaped while REPLICA
+                            // refusal shaped (and MARKED) while REPLICA, exactly as every
+                            // production read-only gate now throws it
+                            final CairoException e = CairoException.readOnlyAccess();
                             readOnly.set(false);  // drain budget expires -> demote fails -> PRIMARY restored
                             throw e;              // propagates to the catch AFTER the revert
                         };
@@ -427,12 +431,12 @@ public class QwpIngressDemoteRaceFuzzTest extends AbstractCairoTest {
             }
             case 1: {
                 // Flip lands between the gate and the WAL writer acquisition: the
-                // engine-level acquire refuses with a raw authorization error
+                // engine-level acquire refuses with the marked read-only refusal
                 // (EntCairoEngine.getWalWriter contract). Handled by the
                 // processMessage CairoException arm → rejectCairoError.
                 tudCache.getTudHook = () -> {
                     readOnly.set(true);
-                    throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+                    throw CairoException.readOnlyAccess();
                 };
                 boolean roleChangeClose = driveBatch(state, oneTableMessage((byte) 0));
                 assertContainedRefusal(state, roleChangeClose, "writer acquisition");
@@ -440,12 +444,12 @@ public class QwpIngressDemoteRaceFuzzTest extends AbstractCairoTest {
             }
             case 2: {
                 // Flip lands between the gate and the commit: the in-lock re-check in
-                // TableUpdateDetails.commit refuses with a raw authorization error
+                // TableUpdateDetails.commit refuses with the marked read-only refusal
                 // (deliberately outside CommitFailedException wrapping; QwpTudCache
                 // propagates it raw). Handled by rejectCommitError → rejectCairoError.
                 tudCache.commitHook = () -> {
                     readOnly.set(true);
-                    throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+                    throw CairoException.readOnlyAccess();
                 };
                 boolean roleChangeClose = driveBatch(state, zeroTableMessage((byte) 0));
                 assertContainedRefusal(state, roleChangeClose, "commit");
@@ -456,7 +460,7 @@ public class QwpIngressDemoteRaceFuzzTest extends AbstractCairoTest {
                 // commitIfMaxUncommittedRowsReached).
                 tudCache.maxRowsCommitHook = () -> {
                     readOnly.set(true);
-                    throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+                    throw CairoException.readOnlyAccess();
                 };
                 boolean roleChangeClose = driveBatch(state, zeroTableMessage(QwpConstants.FLAG_DEFER_COMMIT));
                 assertContainedRefusal(state, roleChangeClose, "deferred commit");

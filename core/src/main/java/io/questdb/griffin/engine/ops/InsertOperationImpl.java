@@ -135,7 +135,7 @@ public class InsertOperationImpl implements InsertOperation {
             // sole externalization point, so the in-lock re-check here closes the whole window.
             if (engine.isReadOnlyMode()) {
                 writer.rollback();
-                throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+                throw CairoException.readOnlyAccess();
             }
             final Lock lock = engine.getRoleSwitchReadLock();
             lock.lock();
@@ -147,7 +147,7 @@ public class InsertOperationImpl implements InsertOperation {
                 // tables/protocols share the read side and never serialize against each other.
                 if (engine.isReadOnlyMode()) {
                     writer.rollback();
-                    throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+                    throw CairoException.readOnlyAccess();
                 }
                 writer.commit();
             } finally {

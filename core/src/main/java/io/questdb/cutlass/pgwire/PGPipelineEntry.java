@@ -402,7 +402,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         // the lock entirely. This is NOT the authoritative refusal -- the in-lock re-check below is.
         if (engine.isReadOnlyMode()) {
             rollback(pendingWriters);
-            throw kaput().put((Throwable) CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE));
+            throw kaput().put((Throwable) CairoException.readOnlyAccess());
         }
         // Hold the role-switch READ lock across the authoritative re-check and the actual commit. The
         // role-flip path in EntCairoEngine acquires the WRITE side of this lock around the REPLICA flag
@@ -421,7 +421,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             // unaffected. The parked writers are rolled back so nothing lands on the demoting node.
             if (engine.isReadOnlyMode()) {
                 rollback(pendingWriters);
-                throw kaput().put((Throwable) CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE));
+                throw kaput().put((Throwable) CairoException.readOnlyAccess());
             }
             try {
                 for (ObjObjHashMap.Entry<TableToken, TableWriterAPI> pendingWriter : pendingWriters) {
@@ -702,7 +702,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             // BEGIN/INSERT that parks a writer and straddles the demote.
             if (engine.isReadOnlyMode()
                     && ReadOnlyStatementGate.isRefusedOnReadOnly(this.sqlType, operation, engine.getConfiguration())) {
-                throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+                throw CairoException.readOnlyAccess();
             }
             switch (this.sqlType) {
                 case CompiledQuery.EXPLAIN:
@@ -1456,7 +1456,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     ) throws SqlException {
         if (engine.isReadOnlyMode()
                 && ReadOnlyStatementGate.isRefusedOnReadOnly(sqlType, operation, engine.getConfiguration())) {
-            throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+            throw CairoException.readOnlyAccess();
         }
         long affectedRowCount = 0;
         engine.getMetrics().pgWireMetrics().markStart();
@@ -1468,7 +1468,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             // cannot interleave (its write acquire waits), while other commits share the read side.
             if (engine.isReadOnlyMode()
                     && ReadOnlyStatementGate.isRefusedOnReadOnly(sqlType, operation, engine.getConfiguration())) {
-                throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+                throw CairoException.readOnlyAccess();
             }
             try (OperationFuture fut = operation.execute(sqlExecutionContext, tempSequence)) {
                 fut.await();
@@ -1505,7 +1505,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         try {
             if (engine.isReadOnlyMode()
                     && ReadOnlyStatementGate.isRefusedOnReadOnly(sqlType, operation, engine.getConfiguration())) {
-                throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+                throw CairoException.readOnlyAccess();
             }
             engine.execute(sqlText, sqlExecutionContext);
         } finally {
@@ -1728,14 +1728,14 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                             // runs fully as PRIMARY while the flip's write acquire waits for the read hold.
                             if (engine.isReadOnlyMode()) {
                                 rollback(pendingWriters);
-                                throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+                                throw CairoException.readOnlyAccess();
                             }
                             final Lock lock = engine.getRoleSwitchReadLock();
                             lock.lock();
                             try {
                                 if (engine.isReadOnlyMode()) {
                                     rollback(pendingWriters);
-                                    throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+                                    throw CairoException.readOnlyAccess();
                                 }
                                 // Update implicitly commits. WAL table cannot do 2 commits in 1 call and require commits to be made upfront.
                                 fireParkedUpdateMintObserver();
