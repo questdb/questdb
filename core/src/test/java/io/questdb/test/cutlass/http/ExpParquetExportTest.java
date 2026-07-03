@@ -1990,7 +1990,11 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
         // close via AbstractPostingIndexReader.isOperatingThread() and releases the cursor's
         // buffers directly instead of re-pooling. getExportTester() pins workerCount=1,
         // which hides the migration; this test uses several workers so the close can land
-        // off the operating thread.
+        // off the operating thread. The builder is hand-rolled rather than chained off
+        // getExportTester() because the helper also injects randomized 1-1024-byte forced
+        // send/recv fragmentation (documented slow on Mac/Windows), which this 300k-row,
+        // 4-client test cannot afford; the fixed 2048-byte send buffer already fragments
+        // the stream enough to force suspend/resume migrations.
         new HttpQueryTestBuilder()
                 .withTempFolder(root)
                 .withWorkerCount(4)

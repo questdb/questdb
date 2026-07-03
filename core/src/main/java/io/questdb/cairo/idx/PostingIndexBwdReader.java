@@ -157,7 +157,6 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         protected long maxValue;
         protected long minValue;
         protected long next;
-        boolean isPooled;
         private long blockBufferAddr = 0;
         private int blockBufferCapacity = 0;
         private int blockBufferPos;
@@ -195,34 +194,14 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
 
         @Override
         public void close() {
-            // Only return to the idle pool while the owning reader is still open
-            // AND this close() runs on the reader's operating thread (the thread
-            // that last checked a cursor out via getCursor()).
-            //
-            // isOpen(): the pool retains blockBufferAddr (NATIVE_INDEX_READER) for
-            // reuse and relies on the reader's close() draining freeCursors to
-            // reclaim it; a cursor that re-pools after the reader was closed would
-            // never be drained again and would leak its block buffer.
-            //
-            // isOperatingThread(): "check isOpen() then freeCursors.add(this)" is
-            // a non-atomic check-then-act on a plain (unsynchronized) ObjList, so
-            // it is only safe when it cannot interleave with another thread's
-            // getCursor(). A reader is NOT pinned to one OS thread for its
-            // lifetime: suspendable queries (HTTP exports, pgwire fragments)
-            // migrate the connection -- and the TableReader it holds -- across
-            // worker threads between fragments, so a cursor checked out on one
-            // worker can legitimately close on another. Such an off-thread close
-            // skips the pool and falls through to releaseResources(), which frees
-            // only cursor-local buffers and touches no reader-shared state, so it
-            // is safe from any thread. The same gate covers the stale-cursor
-            // hazard where a cursor outlives its reader's release to the reader
-            // pool and another thread re-acquires (and re-stamps) the reader:
-            // the stale close degrades to a local release instead of racing the
-            // new owner's getCursor(). (CoveringIndexRecordCursorFactory.
-            // CoveringCursor.close() additionally frees the row cursor BEFORE the
-            // frame cursor releases the TableReader, so on that path the reader
-            // is always still open here.)
-            if (!isPooled && isOperatingThread() && isOpen() && freeCursors.size() < MAX_CACHED_FREE_CURSORS) {
+            // Re-pool only while the owning reader is still open (the pool retains
+            // blockBufferAddr, NATIVE_INDEX_READER, and only the reader's close()
+            // drains freeCursors to reclaim it) and on the reader's operating
+            // thread; off-thread closes fall through to releaseResources(), which
+            // frees only cursor-local buffers and is safe from any thread. See
+            // AbstractPostingIndexReader.isOperatingThread() for the full
+            // rationale and the gate's limits.
+            if (canRepool(freeCursors.size())) {
                 isPooled = true;
                 closeCoveringResources();
                 if (efRankDirAddr != 0) {
@@ -967,7 +946,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         public void close() {
             // See Cursor.close(): re-pool only while the reader is open and on the
             // reader's operating thread; otherwise release directly.
-            if (!isPooled && isOperatingThread() && isOpen() && freeNullCursors.size() < MAX_CACHED_FREE_CURSORS) {
+            if (canRepool(freeNullCursors.size())) {
                 isPooled = true;
                 closeCoveringResources();
                 if (efRankDirAddr != 0) {

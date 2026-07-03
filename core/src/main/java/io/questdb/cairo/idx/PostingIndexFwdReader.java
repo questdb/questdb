@@ -169,7 +169,6 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         protected long maxValue;
         protected long minValue;
         protected long next;
-        boolean isPooled;
         private long blockBufferAddr = 0;
         private int blockBufferCapacity = 0;
         private int blockBufferEnd;
@@ -213,13 +212,11 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         public void close() {
             // Re-pool only while the reader is still open (a cursor that re-pools
             // after the reader closed would strand blockBufferAddr,
-            // NATIVE_INDEX_READER, in a never-drained pool) AND on the reader's
-            // operating thread (suspendable queries migrate the connection across
-            // workers, so close() can legitimately run off the getCursor() thread;
-            // freeCursors is unsynchronized, so off-thread closes free the
-            // cursor-local buffers directly instead). See
-            // PostingIndexBwdReader.Cursor.close() for the full rationale.
-            if (!isPooled && isOperatingThread() && isOpen() && freeCursors.size() < MAX_CACHED_FREE_CURSORS) {
+            // NATIVE_INDEX_READER, in a never-drained pool) and on the reader's
+            // operating thread; off-thread closes release the cursor-local
+            // buffers directly. See AbstractPostingIndexReader.isOperatingThread()
+            // for the full rationale and the gate's limits.
+            if (canRepool(freeCursors.size())) {
                 isPooled = true;
                 closeCoveringResources();
                 resetCoveringState();
@@ -921,7 +918,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         public void close() {
             // See Cursor.close(): re-pool only while the reader is open and on the
             // reader's operating thread; otherwise release directly.
-            if (!isPooled && isOperatingThread() && isOpen() && freeNullCursors.size() < MAX_CACHED_FREE_CURSORS) {
+            if (canRepool(freeNullCursors.size())) {
                 isPooled = true;
                 closeCoveringResources();
                 resetCoveringState();

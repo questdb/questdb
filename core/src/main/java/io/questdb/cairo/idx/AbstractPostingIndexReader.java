@@ -1125,22 +1125,32 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         }
     }
 
-    // Single-owner pooling gate. A posting reader and its pooled cursors are
-    // driven by one logical owner at a time, but that owner is not pinned to
-    // one OS thread: suspendable queries (HTTP exports, pgwire fragments)
-    // migrate the connection -- and the TableReader it holds -- across worker
-    // threads between fragments, with the event loop serializing the handoff.
-    // A cursor checked out on one worker can therefore legitimately close on
-    // another. getCursor() records its thread via stampOperatingThread();
-    // cursor close() paths consult this method to decide whether re-pooling
-    // into freeCursors is safe -- "isOpen() then freeCursors.add(this)" is a
-    // non-atomic check-then-act on a plain ObjList, so it must stay serialized
-    // with getCursor() on the stamping thread. Off-thread closes skip the pool
-    // and free the cursor-local buffers directly, which touches no
-    // reader-shared state. The same gate defuses the stale-cursor hazard where
-    // a cursor outlives its reader's release to the reader pool and another
-    // thread re-acquires (and re-stamps) the reader: the stale close degrades
-    // to a local release instead of racing the new owner's getCursor().
+    // Single-owner pooling gate. One logical owner at a time drives a posting
+    // reader and its pooled cursors, but that owner is not pinned to one OS
+    // thread: suspendable queries (HTTP exports, pgwire fragments) migrate the
+    // connection -- and the TableReader it holds -- across worker threads
+    // between fragments, with the event loop serializing the handoff. A cursor
+    // checked out on one worker can therefore legitimately close on another.
+    // getCursor() records its thread via stampOperatingThread(); each cursor
+    // close() consults this method (via AbstractCoveringCursor.canRepool) to
+    // decide whether re-pooling is safe -- "isOpen() then freeCursors.add(this)"
+    // is a non-atomic check-then-act on a plain ObjList, so it must stay
+    // serialized with getCursor() on the stamping thread. Off-thread closes
+    // skip the pool and free the cursor-local buffers directly, which touches
+    // no reader-shared state.
+    //
+    // This gate is defense-in-depth, not a concurrency primitive. The field is
+    // a plain long: a stale closer (a cursor that outlives its reader's
+    // release to the reader pool) can still pass the gate by closing on the
+    // original stamping thread before the new owner's first getCursor()
+    // re-stamps, and even after a re-stamp the JMM lets the stale closer read
+    // its own older stamp. Correctness for the pooled-reader case relies on
+    // every close path freeing row cursors BEFORE the frame cursor releases
+    // the TableReader (CoveringIndexRecordCursorFactory.CoveringCursor.close(),
+    // closePendingCursor(), closeMergeCursors()); the gate merely narrows the
+    // window when that ordering is broken. Making the field volatile would fix
+    // only the visibility half, not the before-re-stamp timing, so it stays
+    // plain.
     protected boolean isOperatingThread() {
         return operatingThreadId == Thread.currentThread().threadId();
     }
@@ -1196,6 +1206,9 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         protected long[] fsstOffsetsAddrs;
         protected long[] fsstOffsetsCapacities;
         protected boolean isCurrentGenDense;
+        // True while this cursor sits in its reader's free-cursor pool; the
+        // pooling close() sets it, the getCursor() pop clears it.
+        protected boolean isPooled;
         protected long[] keyBlockAddrs;
         protected int requestedKey;
         protected int sealedGenKeyCount;
@@ -2260,6 +2273,16 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 keyBlockAddrs[c] = mem.addressOf(keyBlockStart);
             }
             cachedKeyBlockStride = stride;
+        }
+
+        // Single place that decides whether close() may return this cursor to
+        // its reader's free-cursor pool; see isOperatingThread() for why the
+        // operating-thread term is load-bearing. Every cursor close() must
+        // route its pooling branch through this gate -- a close that bypasses
+        // it re-introduces the unsynchronized freeCursors mutation off the
+        // stamping thread.
+        protected final boolean canRepool(int poolSize) {
+            return !isPooled && isOperatingThread() && isOpen() && poolSize < MAX_CACHED_FREE_CURSORS;
         }
 
         protected void closeCoveringResources() {
