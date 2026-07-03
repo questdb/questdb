@@ -1378,6 +1378,17 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private void markI64WidenOperand(ExpressionNode child, int parentType, boolean parentLong) {
         if (parentLong && parentType != I8_TYPE && isWidenableLeaf(child)) {
             addNarrowLeaf(child);
+        } else if (parentLong && isIntegerConst(child) && arithExprType(child) == I8_TYPE) {
+            // An out-of-INT-range integer constant operand of a long-width arithmetic op.
+            // A co-present FLOAT/DOUBLE column suppresses the global narrow-i64 widening and
+            // types the constant down to F4/F8 (as an INT it is 4 bytes, so hasMixedSizes()
+            // is false), yet the Java filter computes the enclosing product/sum at long width
+            // via MulInt/AddInt#getLong before converting to floating point. Flag it so
+            // serializeConstant emits a full I8 IMM rather than a lossy 32-bit float, and so
+            // the predicate runs scalar: the vectorized path has no i32->i64 promotion
+            // (avx2.h convert()), while the scalar convert() widens the narrow column operand
+            // for free (as it already does for the mixed-size DOUBLE case).
+            addI64WidenLeaf(child);
         } else {
             markI64Widen(child, parentLong);
         }
@@ -1774,6 +1785,19 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             int numberTypeCode = typeCode;
             if ((predicateContext.needsNarrowI64Widening || widenToI64) && !keepNarrow
                     && (numberTypeCode == I1_TYPE || numberTypeCode == I2_TYPE || numberTypeCode == I4_TYPE)) {
+                numberTypeCode = I8_TYPE;
+            } else if (widenToI64 && !keepNarrow
+                    && (numberTypeCode == F4_TYPE || numberTypeCode == F8_TYPE)
+                    && longConstantTypeCode(token) == I8_TYPE) {
+                // A FLOAT/DOUBLE column co-present with a narrow-int leaf types this
+                // out-of-INT-range integer constant down to F4/F8 (both 4 bytes as INT, so
+                // hasMixedSizes() is false), but a marker flagged it to widen: the Java filter
+                // reads it at long width -- as an arithmetic operand (markI64WidenOperand,
+                // MulInt/AddInt#getLong) or a direct comparison operand (markNarrowConstCmp-
+                // WidenLeaves, getLong). Emitting a lossy 32-bit float here would make the JIT
+                // do a float multiply/compare and drop rows the Java filter keeps. Emit a full
+                // I8 IMM instead. Flagging forces scalar mode, where the scalar convert()
+                // widens the narrow operand to i64 and int32*int64 stays exact.
                 numberTypeCode = I8_TYPE;
             }
             serializeNumber(offset, position, token, numberTypeCode, negated);

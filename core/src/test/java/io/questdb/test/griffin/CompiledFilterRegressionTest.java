@@ -877,6 +877,53 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFloatArithmeticOperandWiden() throws Exception {
+        // An out-of-INT-range integer constant used as an ARITHMETIC OPERAND against a
+        // narrow-int column, in a predicate that also has a FLOAT column, diverged.
+        // INT and FLOAT are both 4 bytes, so hasMixedSizes() is false and the type
+        // observer types the constant F4; a co-present float also suppresses the global
+        // narrow-i64 widening. serializeConstant then emitted the constant as a lossy
+        // 32-bit float and the predicate vectorized, but AVX2 convert() has no i32->i64
+        // path, so i32 * 3000000000 was computed as a float multiply. The Java filter
+        // computes it at long width (MulInt#getLong) and only then converts to floating
+        // point, so for i32=7 it kept the row (21000000000 > 20999999488.0) while the JIT
+        // dropped it (20999999488.0f > 20999999488.0f is false).
+        // The serializer now flags the out-of-range integer operand: it emits a full I8
+        // IMM and runs scalar, where the scalar convert() widens the narrow column to i64
+        // and int32 * int64 stays exact. JIT stays enabled (scalar mode).
+        assertMemoryLeak(() -> {
+            execute("create table t (i32 int, i64 long, fcol float, dcol double, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into t values " +
+                    "(7, 7, 20999999488.0, 20999999488.0, 0)," +           // 7*3e9=21000000000 > fcol; float multiply drops it
+                    "(-7, -7, 20999999488.0, 20999999488.0, 1000000)," +   // negative operand exercised via the fold path
+                    "(1, 1, 2000000000000.0, 2000000000000.0, 2000000)," + // addition: 1+2e12 > fcol; float add loses the 1
+                    "(46341, 46341, 5.0, 5.0, 3000000)," +
+                    "(0, 0, -1.0, -1.0, 4000000)," +
+                    "(null, null, 1.0, 1.0, 5000000)");
+            // Previously diverging shapes fixed by this change: an out-of-INT-range integer
+            // constant as a bare (non-negated) arithmetic operand, alongside a FLOAT column.
+            // Still JIT-compiled, now correct.
+            assertJitMatchesJava("t where i32 * 3000000000 > fcol", true);
+            assertJitMatchesJava("t where i32 + 2000000000000 > fcol", true);
+            // An AND chain with a LONG column splits into per-comparison predicate contexts,
+            // so the "i32 * 3000000000 > fcol" comparison is again pure INT+FLOAT and diverged.
+            assertJitMatchesJava("t where i32 * 3000000000 > fcol and i64 > 0", true);
+            // Control: a negated out-of-range operand (-3000000000) is a unary-minus subtree
+            // that descend() folds via its own long-width path, so it was already correct.
+            assertJitMatchesJava("t where i32 * -3000000000 > fcol", true);
+            // Control: a DOUBLE column makes the predicate mixed-size (INT 4B, DOUBLE 8B),
+            // which already runs scalar and emits the constant as I8 -- correct before too.
+            assertJitMatchesJava("t where i32 * 3000000000 > dcol", true);
+            // Control: a direct FLOAT-vs-out-of-range-constant comparison is not an
+            // arithmetic operand; it stays vectorized and unchanged.
+            assertJitMatchesJava("t where fcol > 3000000000", true);
+            // Control: an in-range constant operand wraps at INT width under a float on
+            // both paths (getInt), so it must not widen.
+            assertJitMatchesJava("t where i32 * 3 > fcol", true);
+        });
+    }
+
+    @Test
     public void testGeoHashConstant() throws Exception {
         final String query = "x " +
                 "where geo8 != ##1001 and geo16 != ##100110011001 and geo32 != ##1001100110011001 and geo64 != ##10011001100110011001100110011001";
