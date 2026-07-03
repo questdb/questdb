@@ -1870,12 +1870,14 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
         // Dense prefix: every row flushed before the bad one landed.
         assertQuery("SELECT v FROM ws_async_multi_ok WHERE v <= 3 ORDER BY v")
                 .noLeakCheck()
-                .returnsOnce("v\n1\n2\n3\n");
+                .returns("v\n1\n2\n3\n");
         // Frame-drop atomicity: the rejected row never landed — the err
         // table still holds only the initial setup row.
         assertQuery("SELECT count() FROM ws_async_multi_err")
                 .noLeakCheck()
-                .returnsOnce("count\n1\n");
+                .noRandomAccess()
+                .expectSize()
+                .returns("count\n1\n");
     }
 
     @Test
