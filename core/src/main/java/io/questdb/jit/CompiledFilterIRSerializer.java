@@ -805,7 +805,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             }
         }
 
-        serializeConstant(offset, position, token, negate, isI64WidenLeaf(node));
+        serializeConstant(offset, position, token, negate, isI64WidenLeaf(node), isI64WrapLeaf(node));
     }
 
     private void backfillNode(long key, ExpressionNode value) {
@@ -1662,7 +1662,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
     }
 
-    private void serializeConstant(long offset, int position, final CharSequence token, boolean negated, boolean widenToI64) throws SqlException {
+    private void serializeConstant(long offset, int position, final CharSequence token, boolean negated, boolean widenToI64, boolean keepNarrow) throws SqlException {
         final int len = token.length();
         final int typeCode = predicateContext.localTypesObserver.constantTypeCode();
         if (typeCode == UNDEFINED_CODE) {
@@ -1756,7 +1756,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             throw SqlException.position(position).put("numeric constant in non-numeric expression: ").put(token);
         }
         if (predicateContext.localTypesObserver.hasMixedSizes()) {
-            serializeUntypedNumber(offset, position, token, negated, widenToI64);
+            serializeUntypedNumber(offset, position, token, negated, widenToI64, keepNarrow);
         } else {
             // Under narrow-i64 widening the arithmetic operands are read at long width, so a
             // numeric constant compared against them must be emitted at long width too. Otherwise
@@ -1766,8 +1766,13 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             // widenToI64 also covers a plain out-of-INT-range constant vs a narrow-int leaf: the
             // observer typed it down to I4, so serializeNumber would emit a lossy float on overflow.
             // markNarrowConstCmpWidenLeaves tags both sides to widen to i64.
+            // keepNarrow overrides both: a narrow-int arithmetic operand constant on the wrap side
+            // of an INT-width comparison (e.g. the 2 in i32*2 when a sibling comparison flips the
+            // predicate-global flag on) must stay I4 so int32_mul wraps mod 2^32 with the I4 column
+            // key; widening it to I8 would promote the whole product to long width and drop the wrap.
+            // i64WrapLeaves marks exactly those, mirroring maybeEmitI64Widening for the column leaf.
             int numberTypeCode = typeCode;
-            if ((predicateContext.needsNarrowI64Widening || widenToI64)
+            if ((predicateContext.needsNarrowI64Widening || widenToI64) && !keepNarrow
                     && (numberTypeCode == I1_TYPE || numberTypeCode == I2_TYPE || numberTypeCode == I4_TYPE)) {
                 numberTypeCode = I8_TYPE;
             }
@@ -2273,15 +2278,19 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         putOperand(offset, VAR, typeCode, index);
     }
 
-    private void serializeUntypedNumber(long offset, int position, final CharSequence token, boolean negated, boolean widenToI64) throws SqlException {
+    private void serializeUntypedNumber(long offset, int position, final CharSequence token, boolean negated, boolean widenToI64, boolean keepNarrow) throws SqlException {
         long sign = negated ? -1 : 1;
 
         // Emit the constant as I8 when the predicate computes at long width and
         // has no float (SubLong / AddLong reach into MulInt.getLong), or when
         // markFloatI64WidenLeaves tagged this constant as living under a
         // LONG-width subtree despite a float elsewhere. Otherwise keep it I4 so
-        // int32_mul wraps mod 2^32 on both the JIT and Java sides.
-        boolean keepI4 = (!predicateContext.localTypesObserver.hasI8() || predicateContext.hasFloatInPredicate)
+        // int32_mul wraps mod 2^32 on both the JIT and Java sides. keepNarrow
+        // (an i64WrapLeaves constant: a narrow-int arithmetic operand on the wrap
+        // side of an INT-width comparison) forces I4 even when an I8 column is
+        // present, so a mixed-size predicate does not promote the wrapping product.
+        boolean keepI4 = keepNarrow
+                || (!predicateContext.localTypesObserver.hasI8() || predicateContext.hasFloatInPredicate)
                 && !widenToI64;
         if (keepI4) {
             try {

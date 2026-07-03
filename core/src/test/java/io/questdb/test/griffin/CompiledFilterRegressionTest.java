@@ -711,6 +711,46 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConstantOperandWidthUnderBooleanEquality() throws Exception {
+        // The constant-operand analog of testColumnArithmeticWidthUnderBooleanEquality.
+        // A boolean equality of two comparisons -- (cmp) = (cmp) -- forms a SINGLE
+        // predicate context, so a sibling LONG comparison (here i32*3000000000, whose
+        // out-of-INT-range constant promotes to long) turns the predicate-global
+        // narrow-i64 widening on for the whole predicate. The narrow-int COLUMN leaf
+        // on the wrap-side comparison is already kept at i32 (i64WrapLeaves), but the
+        // in-range CONSTANT operand it multiplies with (the 2 in i32*2) was still
+        // widened to i64 by serializeConstant, so the JIT promoted the whole product
+        // to long width and never wrapped -- MulInt#getInt wraps mod 2^32 in the Java
+        // filter. For (i32*3000000000 > 0) = (i32*2 > 5) the Java filter returned
+        // 2 rows and the JIT 4. serializeConstant now keeps an i64WrapLeaves constant
+        // at i32, matching the wrap-side column, so both agree. JIT stays enabled.
+        assertMemoryLeak(() -> {
+            execute("create table t (i32 int, i64 long, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into t values " +
+                    "(2147483647, 1, 0)," +
+                    "(2147483646, 2, 1000000)," +
+                    "(3, 3, 2000000)," +
+                    "(null, null, 3000000)");
+            // Previously diverging shapes: an in-range constant operand on the wrap
+            // side of an INT-width comparison, paired with a LONG-width comparison.
+            assertJitMatchesJava("t where (i32 * 3000000000 > 0) = (i32 * 2 > 5)", true);
+            assertJitMatchesJava("t where (i32 * 2 > 5) = (i32 * 3000000000 > 0)", true); // operand order
+            assertJitMatchesJava("t where (i32 * 3000000000 > 0) <> (i32 * 2 > 5)", true);
+            // The LONG-comparison side is an out-of-INT-range constant equality.
+            assertJitMatchesJava("t where (i32 = 2147483648) = (i32 * 2 > 5)", true);
+            // Addition instead of multiplication on the wrap side.
+            assertJitMatchesJava("t where (i32 * 3000000000 > 0) = (i32 + 2000000000 > 5)", true);
+            // Mixed-size path (i64 observed too): serializeUntypedNumber keeps the 2 at i32.
+            assertJitMatchesJava("t where (i32 * 3000000000 > 0) = (i32 * 2 > 5) and i64 > 0", true);
+            // Controls: single comparison, AND, OR each form separate predicate
+            // contexts and already wrapped the constant on both paths.
+            assertJitMatchesJava("t where i32 * 2 > 5", true);
+            assertJitMatchesJava("t where i32 * 2 > 5 and i32 * 3000000000 > 0", true);
+            assertJitMatchesJava("t where i32 * 2 > 5 or i32 * 3000000000 > 0", true);
+        });
+    }
+
+    @Test
     public void testConstantOverflowFoldOnByteColumn() throws Exception {
         // Overflowing INT constant arithmetic must agree across JIT off/scalar/
         // vectorized. A BYTE column compares at INT width, so the JIT folds the
