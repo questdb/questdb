@@ -209,6 +209,89 @@ public class QwpIngressDemoteRaceFuzzTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * Deterministic reproduction of the demote-REVERT race: the deep-gate refusal
+     * is thrown while the node is read-only (demote Step 1 landed mid-batch), but
+     * the demote FAILS before the exception reaches the state's catch block. Real
+     * path: {@code EntCairoEngine.drainWriterPool(restorePrimaryOnTimeout=true)}
+     * restores PRIMARY when the drain budget expires on busy non-WAL writers --
+     * and nothing fences the throw-to-catch propagation (the commit path releases
+     * the role-switch READ lock in its finally as the exception unwinds), so the
+     * write-locked {@code setCurrentRole(PRIMARY)} can land in between.
+     * {@code rejectCairoError} then re-reads the LIVE {@code engine.isReadOnlyMode()},
+     * sees writable, and falls through to {@code cairoExceptionStatus} ->
+     * {@code SECURITY_ERROR}: the client latches a permanent terminal HALT for a
+     * milliseconds-long condition, on a node that ended up writable PRIMARY.
+     * <p>
+     * The hook compresses that interleaving deterministically: flip to read-only,
+     * shape the refusal exactly as the deep gates produce it, revert to writable,
+     * THEN throw -- the exception reaches the catch after the revert, exactly as
+     * when the drain-timeout restore wins the race. Production
+     * {@code isReadOnlyMode()} is a volatile flag read (enterprise widens it with
+     * the cached volatile {@code isReadOnlyReplica}), so the AtomicBoolean is
+     * memory-semantics-equivalent; the ordering is a legal production schedule,
+     * not a test artifact.
+     * <p>
+     * NOTE: the meta-invariant in {@link #testDemoteFlipAtRandomInjectionPointsFuzz}
+     * cannot catch this case -- it re-reads the same live flag the bug re-reads
+     * (after the revert {@code readOnly.get()} IS false, so a leaked
+     * SECURITY_ERROR passes it). The oracle here is cause-based instead: the
+     * refusal was CAUSED by the transient demote, so the client must get the
+     * reconnect-eligible shape regardless of what the flag reads at catch time.
+     */
+    @Test
+    public void testDemoteRevertBetweenThrowAndCatchStaysContained() throws Exception {
+        assertMemoryLeak(() -> {
+            final AtomicBoolean readOnly = new AtomicBoolean(false);
+            final LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+
+            try (CairoEngine demotableEngine = newDemotableEngine(readOnly)) {
+                // The revert can race any of the three post-gate refusal windows.
+                for (int window = 0; window < 3; window++) {
+                    readOnly.set(false);
+                    final QwpIngressProcessorState state =
+                            new QwpIngressProcessorState(1024, 4096, demotableEngine, lineConfig);
+                    try {
+                        state.of(1, AllowAllSecurityContext.INSTANCE);
+                        final RaceTudCache tudCache = installRaceTudCache(state, demotableEngine, lineConfig);
+                        final Runnable demoteRefuseThenRevert = () -> {
+                            readOnly.set(true);   // demote Step 1: dynamic flag flips mid-batch
+                            final CairoException e = CairoException.authorization()
+                                    .put(CairoException.READ_ONLY_ACCESS_MESSAGE); // refusal shaped while REPLICA
+                            readOnly.set(false);  // drain budget expires -> demote fails -> PRIMARY restored
+                            throw e;              // propagates to the catch AFTER the revert
+                        };
+                        final byte[] message;
+                        final String where;
+                        switch (window) {
+                            case 0:
+                                tudCache.getTudHook = demoteRefuseThenRevert;
+                                message = oneTableMessage((byte) 0);
+                                where = "revert vs writer acquisition";
+                                break;
+                            case 1:
+                                tudCache.commitHook = demoteRefuseThenRevert;
+                                message = zeroTableMessage((byte) 0);
+                                where = "revert vs commit";
+                                break;
+                            default:
+                                tudCache.maxRowsCommitHook = demoteRefuseThenRevert;
+                                message = zeroTableMessage(QwpConstants.FLAG_DEFER_COMMIT);
+                                where = "revert vs deferred commit";
+                                break;
+                        }
+                        final boolean roleChangeClose = driveBatch(state, message);
+                        assertContainedRefusal(state, roleChangeClose, where);
+                    } finally {
+                        state.onDisconnected();
+                        state.close();
+                    }
+                }
+            }
+        });
+    }
+
     private static void assertContainedRefusal(QwpIngressProcessorState state, boolean roleChangeClose, String where) {
         Assert.assertFalse(where + ": batch must be refused", state.isOk());
         Assert.assertNotEquals(
