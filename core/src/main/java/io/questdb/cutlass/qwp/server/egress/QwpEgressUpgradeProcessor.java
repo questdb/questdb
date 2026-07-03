@@ -82,6 +82,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.Zstd;
 import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * HTTP request processor for the QWP egress endpoint at {@code /read/v1}.
@@ -175,6 +176,15 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
      */
     public static volatile int DEBUG_FORCE_INTERNAL_ERROR_ON_RESUME = 0;
     /**
+     * Test-only: when set to {@code N > 0}, the next {@code N} SELECT cursor-open
+     * attempts throw {@link TableReferenceOutOfDateException} before any bytes are
+     * streamed to the client. Tests use this to exercise the bounded stale-plan
+     * recompile loop deterministically without racing real DDL. Production leaves
+     * the counter at 0 and pays one volatile read per SELECT cursor open.
+     */
+    @TestOnly
+    public static volatile int DEBUG_FORCE_STALE_PLAN_RECOMPILES = 0;
+    /**
      * Test-only: when set to {@code N > 0}, {@link #streamResults} throws
      * {@link PeerDisconnectedException#INSTANCE} once {@code N} batches have
      * already been committed on the current stream. That propagates through
@@ -196,6 +206,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
     private final WebSocketFrameParser frameParser = new WebSocketFrameParser();
     private final QwpEgressMetrics metrics;
     private final int recvBufferSize;
+    private final int maxSqlRecompileAttempts;
     /**
      * Per-worker cache of compiled {@link RecordCursorFactory} keyed by SQL text.
      * {@code HttpServer.bind} calls {@code factory.newInstance()} once per HTTP
@@ -217,6 +228,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                 .getForceRecvFragmentationChunkSize();
         this.metrics = engine.getMetrics().qwpEgressMetrics();
         this.recvBufferSize = httpConfiguration.getRecvBufferSize();
+        this.maxSqlRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
         this.sharedWorkerCount = sharedWorkerCount;
         this.selectCache = httpConfiguration.isQueryCacheEnabled()
                 ? new ConcurrentAssociativeCache<>(httpConfiguration.getConcurrentCacheConfiguration())
@@ -1072,14 +1084,14 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             );
             sqlCtx.initNow();
 
-            // Retry-once loop: a factory returned by the compile cache may have a
+            // Bounded retry loop: a factory returned by the compile cache may have a
             // stale TableReader reference if the table was dropped+recreated after
             // the factory was compiled (matching by SQL text alone; tableId and
             // metadataVersion don't survive). Detected by
             // {@link TableReferenceOutOfDateException} on cursor open. We drop the
-            // stale factory and recompile. Two consecutive occurrences means the
-            // table changed mid-recompile -- rare and probably indicates an abusive
-            // DDL pattern; propagate as a normal error.
+            // stale factory and recompile, matching HTTP/PGWire's bounded
+            // maxSqlRecompileAttempts behavior. The retry stays before beginStreaming*,
+            // so no query bytes have reached the client yet.
             //
             // Compose the select-cache key: SQL text on its own for bindless
             // queries (existing shape), or [type0,type1,...]sql when binds are
@@ -1088,12 +1100,10 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             // return a factory whose bind signature does not match the
             // current request. Mirrors pgwire's TypesAndSelect design.
             final CharSequence cacheKey = decoder.buildSelectCacheKey(state.getBindVariableService());
-            int attempts = 0;
-            while (true) {
-                attempts++;
+            for (int retries = 0; ; retries++) {
                 try {
                     // Cache lookup only on first attempt. Retry always recompiles.
-                    if (attempts == 1) {
+                    if (retries == 0) {
                         factory = selectCache.poll(cacheKey);
                     }
                     if (factory == null) {
@@ -1119,6 +1129,11 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                     // PageFrameMemoryRecord.getInt. Factories that don't support it
                     // (filtered/joined/grouped queries) keep the existing RecordCursor
                     // path without change.
+                    int forcedStalePlanRecompiles = DEBUG_FORCE_STALE_PLAN_RECOMPILES;
+                    if (forcedStalePlanRecompiles > 0) {
+                        DEBUG_FORCE_STALE_PLAN_RECOMPILES = forcedStalePlanRecompiles - 1;
+                        throw TableReferenceOutOfDateException.of("qwp_debug_stale_plan");
+                    }
                     if (factory.supportsPageFrameCursor()) {
                         int order = factory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_BACKWARD
                                 ? PartitionFrameCursorFactory.ORDER_DESC
@@ -1134,13 +1149,15 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                     // beginStreaming{,PageFrame} they'd be owned by state, but the
                     // exception fires BEFORE that (on getCursor / getPageFrameCursor),
                     // so we still own them here.
+                    cursor = Misc.free(cursor);
+                    pageFrameCursor = Misc.free(pageFrameCursor);
                     factory = Misc.free(factory);
-                    if (attempts >= 2) {
-                        // Fresh compile also raced with a DDL -- unusual, propagate.
-                        throw e;
+                    if (retries == maxSqlRecompileAttempts) {
+                        throw SqlException.$(0, e.getFlyweightMessage());
                     }
-                    LOG.info().$("Egress cached factory stale, recompiling [fd=").$(context.getFd())
+                    LOG.info().$("Egress query plan stale, recompiling [fd=").$(context.getFd())
                             .$(", requestId=").$(requestId)
+                            .$(", retry=").$(retries + 1)
                             .$(", error=").$safe(e.getFlyweightMessage()).I$();
                 }
             }
