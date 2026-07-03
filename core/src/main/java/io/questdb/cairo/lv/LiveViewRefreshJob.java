@@ -90,6 +90,8 @@ import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 
+import java.util.concurrent.locks.Lock;
+
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
 
 /**
@@ -759,7 +761,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // inline apply below makes the rows durable in the LV's on-disk
                 // table; only then do we advance lvConsumedSeqTxn so base WAL
                 // retention releases.
-                walWriter.commitLiveView(drainResult.advanceTo);
+                fencedLiveViewCommit(() -> walWriter.commitLiveView(drainResult.advanceTo));
             }
         }
 
@@ -1102,7 +1104,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             }
                         }
                         if (appendedRows > 0) {
-                            walWriter.commitLiveView(effectiveSeqTxn);
+                            fencedLiveViewCommit(() -> walWriter.commitLiveView(effectiveSeqTxn));
                         }
                     }
                 }
@@ -1455,6 +1457,40 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         drainResult.stagingMinTs = stagingMinTs;
     }
 
+    // The refresh job runs on a worker pool an in-place primary-to-replica demote never halts: it
+    // acquires the LV WalWriter while PRIMARY (getWalWriter's eager read-only check passes), pumps the
+    // window, then externalizes a replicated LV seqTxn with no in-lock read-only re-check between the
+    // acquire and the commit. A demote flips the read-only flag at the front of the cascade
+    // (prepareForRoleSwitch) but tears the uploader down only later, so a commit that lands in that window
+    // mints a local-only LV seqTxn the closing uploader never ships -- the new primary never sees it, and
+    // the ex-primary's on-disk tier / _lv.s advances past what replicated (silent loss). Route every LV
+    // commit family (flushLead, the in-WAL-order and applied-base drains, the o3Replay REPLACE_RANGE
+    // corrections, and the backfill sweep) through this fence: hold the role-switch READ lock across an
+    // authoritative in-lock isReadOnlyMode() re-check and the commit, so the mint is atomic against the
+    // role flip. Either the flip ran first (refuse -- the commit throws the read-only authorization error,
+    // which handleRefreshFailure treats as retry-later, never invalidate; a live view is derived state so
+    // the new primary recomputes the lead forward) or the mint lands fully as PRIMARY while the flip's
+    // WRITE acquire waits for this read hold and replicates. This fences the WAL externalization only; the
+    // in-mem tier publish, the inline apply and the _lv.s watermark advance are local recovery state the
+    // demote can safely leave behind. Mirrors MatViewRefreshJob.fencedMatViewCommit. A strict no-op for
+    // non-replicating deployments: the read lock is uncontended and the read-only flag is static.
+    private void fencedLiveViewCommit(Runnable commit) {
+        if (engine.isReadOnlyMode()) {
+            throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+        }
+        final Lock lock = engine.getRoleSwitchReadLock();
+        lock.lock();
+        try {
+            if (engine.isReadOnlyMode()) {
+                throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+            }
+            engine.fireRoleSwitchMintObserver();
+            commit.run();
+        } finally {
+            lock.unlock();
+        }
+    }
+
     /**
      * Post-drain step for a lead refresh: publishes the just-drained staging rows
      * into the in-mem tier as the un-flushed lead (no commit, no apply), advancing
@@ -1631,7 +1667,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 row.append();
                 flushedMaxTs = ts;
             }
-            walWriter.commitLiveView(advanceTo);
+            fencedLiveViewCommit(() -> walWriter.commitLiveView(advanceTo));
         } finally {
             // The overlays reference symbolReader, now closed; drop them so a later
             // flush of a non-SYMBOL view cannot reuse a stale resolver.
@@ -2090,7 +2126,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         }
                     }
                     if (appendedRows > 0) {
-                        walWriter.commitLiveViewWithReplaceRange(advanceTo, replayLowTs, Long.MAX_VALUE);
+                        fencedLiveViewCommit(() -> walWriter.commitLiveViewWithReplaceRange(advanceTo, replayLowTs, Long.MAX_VALUE));
                     }
                 }
             }
@@ -2297,11 +2333,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             final long replaceLowTs = lateRowTs != Numbers.LONG_NULL && lateRowTs >= viewLowerBoundTimestamp
                                     ? Math.min(replayMinTs, lateRowTs)
                                     : replayMinTs;
-                            walWriter.commitLiveViewWithReplaceRange(
+                            fencedLiveViewCommit(() -> walWriter.commitLiveViewWithReplaceRange(
                                     effectiveSeqTxn,
                                     replaceLowTs,
                                     Long.MAX_VALUE
-                            );
+                            ));
                         }
                     }
                 }
@@ -2564,7 +2600,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         dataOffset += (filter != null ? filteringCursor.getBaseRowsConsumed() : processedThisTurn);
                     }
                     if (appendedThisTurn > 0) {
-                        walWriter.commitLiveView(sweepSeqTxn);
+                        fencedLiveViewCommit(() -> walWriter.commitLiveView(sweepSeqTxn));
                     }
                 }
             }
@@ -4519,6 +4555,21 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * separate branch that never invalidates -- see {@link #onReplicaLeadRefreshFailure}.
      */
     private String handleRefreshFailure(LiveViewInstance instance, Throwable t, boolean leadReconstruction) {
+        if (t instanceof CairoException ce && ce.isAuthorizationError()) {
+            // A demote flipped the read-only flag after this cycle acquired its WalWriter but before the
+            // commit; fencedLiveViewCommit re-checked isReadOnlyMode() under the role-switch read lock and
+            // refused the mint (or getWalWriter's own eager check refused the acquire). A role-switch
+            // refusal is NOT a refresh failure: never invalidate. Invalidation is durable and sticky with
+            // no replica-side recovery, so counting a demote refusal toward the flush-retry budget could
+            // brick a view locally while the primary stays healthy. Retry later instead -- the node is
+            // becoming a replica and the next tick runs lead reconstruction; a live view is derived state,
+            // so the new primary recomputes the lead forward. The refresh job runs under the internal
+            // all-access context, so an authorization error here can only be the read-only gate. Mirrors
+            // MatViewRefreshJob.rethrowReadOnlyRefusal + handleErrorRetryRefresh.
+            LOG.info().$("live view refresh refused by read-only gate, retrying later [view=")
+                    .$(instance.getDefinition().getViewName()).I$();
+            return null;
+        }
         long nowUs = engine.getConfiguration().getMicrosecondClock().getTicks();
         instance.recordRefreshFailure(nowUs);
         if (leadReconstruction) {
