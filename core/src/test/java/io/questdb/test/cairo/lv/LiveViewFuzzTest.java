@@ -1100,7 +1100,8 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
                     "ts, sym, i, last_value(ts) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN " + (n + 1) + " PRECEDING AND 1 PRECEDING) AS v";
             case LAST_VALUE_IGNORE_NULLS_VARIANT -> "ts, sym, i, last_value(ts) IGNORE NULLS OVER (" + frame + ") AS v";
             case NTH_VALUE_VARIANT -> "ts, sym, i, nth_value(ts, " + (1 + (n & 3)) + ") OVER (" + frame + ") AS v";
-            case FIRST_VALUE_IGNORE_NULLS_VARIANT -> "ts, sym, i, first_value(i) IGNORE NULLS OVER (" + frame + ") AS v";
+            case FIRST_VALUE_IGNORE_NULLS_VARIANT ->
+                    "ts, sym, i, first_value(i) IGNORE NULLS OVER (" + frame + ") AS v";
             default -> throw new IllegalArgumentException("variant=" + variant);
         };
     }
