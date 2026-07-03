@@ -884,6 +884,10 @@ public class LiveViewReplicaLeadReconstructionTest extends AbstractCairoTest {
                     Assert.assertEquals("the replica never flushes the stalled lead to disk", 0, lvReader.size());
                 }
 
+                // The stall armed the publish-stall back-off, so advance the clock past its retry floor
+                // before the recovery tick (scanForLaggingViews skips the view until the floor passes).
+                setCurrentMicros(instance.getLeadRetryAfterUs());
+
                 // The recovery tick re-drains the identical batch-2 range (the hook self-cleared) and
                 // publishes the lead, re-producing the same row numbers and frontier a first, un-stalled
                 // publish would have.
@@ -918,6 +922,90 @@ public class LiveViewReplicaLeadReconstructionTest extends AbstractCairoTest {
                 Assert.assertTrue("reconstructed lead must be routing-eligible", cursor.isRoutingEligible());
                 Assert.assertEquals("size() equals the reconstructed lead over empty disk", 4, cursor.size());
             }
+        });
+    }
+
+    // Read-only-replica publish-stall back-off. When a lead publish cannot land (both in-mem tier slots
+    // reader-pinned, or a publish error), a replica cannot flush the lead to disk (it is read-only), so
+    // the loop must retry on a later tick. Without a back-off the scan re-drains the whole window
+    // pipeline every tick only to re-stall, busy-spinning the worker. finishLeadRefresh now arms a
+    // wall-clock retry floor and scanForLaggingViews skips the view until it elapses, so the worker
+    // idles; reads fall back to disk-only via the seqTxn fence meanwhile. Once the stall clears and the
+    // floor passes, the loop retries and lands the stalled row.
+    //
+    // The stall is forced with the tier's single-shot publishSwap failure hook plus a reader pin on the
+    // published slot (so the publish takes the slow path that calls publishSwap) -- the same
+    // "!published -> replica branch" the both-slots-pinned case reaches, without corrupting slot content.
+    @Test
+    public void testReplicaPublishStallArmsBackoffInsteadOfSpinning() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            final TableToken lvToken = engine.getTableTokenIfExists("lv");
+            Assert.assertNotNull(lvToken);
+
+            final LiveViewStateStore primaryStore = switchToReplicaMode();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+
+                // Batch 1 reconstructs a 2-row lead over empty disk, allocating and publishing the tier.
+                setCurrentMicros(1_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('" + TS2 + "', 20), ('" + TS4 + "', 40)");
+                drainWalQueue();
+                drainJob(job);
+                Assert.assertEquals(2, instance.getLeadRowCount());
+                Assert.assertEquals("no back-off armed in steady state", Numbers.LONG_NULL, instance.getLeadRetryAfterUs());
+                final LiveViewInMemoryTier tier = instance.getInMemoryTier();
+                Assert.assertNotNull(tier);
+
+                // Pin the published slot (routes the next publish to the slow path) and arm a one-shot
+                // publishSwap failure, so the batch-2 lead cannot land -- the read-only-replica stall.
+                final int pin = tier.acquireRead();
+                tier.setFailNextPublishSwap(new IllegalStateException("forced publish stall"));
+                final long retryFloor;
+                try {
+                    setCurrentMicros(2_000L);
+                    execute("INSERT INTO base (ts, x) VALUES ('" + TS5 + "', 50)");
+                    drainWalQueue();
+                    Assert.assertTrue("first tick drives the drain and hits the stall", drainJob(job));
+
+                    // The stall armed a wall-clock back-off in the future and left the lead unchanged --
+                    // the new row could not publish.
+                    retryFloor = instance.getLeadRetryAfterUs();
+                    Assert.assertTrue("publish stall must arm a retry floor in the future", retryFloor > 2_000L);
+                    Assert.assertEquals("stalled row did not enter the lead", 2, instance.getLeadRowCount());
+
+                    // Anti-spin: while the floor holds, the scan skips the view, so the worker reports no
+                    // work and idles instead of re-draining the whole pipeline every tick.
+                    Assert.assertFalse("gated view yields no work while the back-off holds", drainJob(job));
+                    Assert.assertEquals("back-off unchanged while it holds", retryFloor, instance.getLeadRetryAfterUs());
+                    setCurrentMicros(retryFloor - 1);
+                    Assert.assertFalse("still gated one tick before the floor", drainJob(job));
+                } finally {
+                    tier.releaseRead(pin);
+                }
+
+                // Reader released and the floor reached: the loop retries, lands the stalled row (the
+                // failure hook was single-shot and already self-cleared), and clears the back-off.
+                setCurrentMicros(retryFloor);
+                drainJob(job);
+                Assert.assertEquals("back-off cleared after a successful retry", Numbers.LONG_NULL, instance.getLeadRetryAfterUs());
+                Assert.assertEquals("all three rows now in the lead over empty disk", 3, instance.getLeadRowCount());
+            } finally {
+                switchToStore(primaryStore);
+            }
+
+            final String expected = """
+                    ts\tx\trn
+                    2026-05-12T00:00:02.000000Z\t20\t1
+                    2026-05-12T00:00:04.000000Z\t40\t2
+                    2026-05-12T00:00:05.000000Z\t50\t3
+                    """;
+            StringSink actual = new StringSink();
+            printSql("SELECT * FROM lv ORDER BY ts", actual);
+            Assert.assertEquals(expected, actual.toString());
         });
     }
 

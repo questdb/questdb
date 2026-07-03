@@ -143,6 +143,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // commit mid-gap and handed off to o3Replay (which rebuilt disk + re-stamped
     // the watermarks). Distinct from the non-negative replayed-row counts.
     private static final long REPLAY_TO_APPLIED_O3 = -1L;
+    // Read-only-replica lead publish-stall back-off: retry floor after a both-slots-pinned publish.
+    // 100ms bounds the retry rate to <=10/s and stays well inside the FLUSH EVERY freshness envelope
+    // (>=1s), so the disk-only reads served meanwhile never exceed the documented one-flush-cycle bound.
+    private static final long REPLICA_LEAD_RETRY_BACKOFF_US = 100_000L;
     private final PageFrameAddressCache addressCache = new PageFrameAddressCache();
     private final AnchorDispatchingCursor anchorDispatchingCursor = new AnchorDispatchingCursor();
     private final ApplyWal2TableJob applyJob;
@@ -739,6 +743,25 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 maybeWriteHeadCheckpoint(instance, windowFactory, advanceTo, batchMaxTs, appendedRows);
             }
         }
+    }
+
+    /**
+     * Read-only-replica anti-spin gate: returns true to skip this view's lead work this tick while the
+     * publish-stall back-off {@link LiveViewInstance#getLeadRetryAfterUs()} that
+     * {@link #finishLeadRefresh} armed (both in-mem tier slots reader-pinned) has not elapsed, and
+     * clears it once it has. Skipping (vs re-draining to a stall) lets the worker idle; reads stay
+     * disk-only via the seqTxn fence meanwhile.
+     */
+    private boolean deferReplicaLeadWork(LiveViewInstance instance) {
+        final long retryAfterUs = instance.getLeadRetryAfterUs();
+        if (retryAfterUs == Numbers.LONG_NULL) {
+            return false;
+        }
+        if (engine.getConfiguration().getMicrosecondClock().getTicks() < retryAfterUs) {
+            return true;
+        }
+        instance.setLeadRetryAfterUs(Numbers.LONG_NULL);
+        return false;
     }
 
     /**
@@ -1598,8 +1621,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // accumulators over the whole applied base history yet keeps the durable band out of the
                 // lead -- size() does not double-count. The staged lead's low seam ts shadows any stale
                 // disk rows meanwhile. Drop the tentative lead and serve disk-only until then.
-                // (TODO §3: gate the retry on the disk watermark advancing past o3SeqTxn so the scan
-                // does not re-detect the same O3 every tick.)
+                // No extra retry gate is needed here: latestSeenTs == LONG_NULL stops the drain from
+                // re-detecting the same O3, and refreshedUpToSeqTxn == advanceTo (== the applied head)
+                // quiets the scan. A disk-watermark gate was considered and rejected -- it would hold a
+                // view whose disk is still empty at the O3 (the common case) disk-only until a flush
+                // lands, whereas the cold-start re-derive already rebuilds the correct lead sooner.
                 clearWindowState(windowFactory, instance.getAnchorWindow());
                 // forceSetLatestSeenTs, not setLatestSeenTs: the latter is monotonic (it ignores a
                 // lower ts to keep an O3 row from retroactively lowering the frontier), so it would
@@ -1655,11 +1681,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // accumulator and latestSeenTs would persist while refreshedUpToSeqTxn stayed
                         // behind, so the re-drain would double-advance the window (wrong row numbers)
                         // or, with an inflated latestSeenTs, misclassify the batch as O3 and drop it.
-                        // (TODO §3: add a back-off so a persistently pinned slot does not spin the
-                        // worker.)
                         if (leadRollbackCaptured) {
                             restoreLeadRollback(instance, windowFactory, instance.getAnchorWindow());
                         }
+                        // Arm a back-off so scanForLaggingViews skips this view instead of re-draining
+                        // every tick while both slots stay pinned; reads fall back to disk-only meanwhile.
+                        instance.setLeadRetryAfterUs(
+                                engine.getConfiguration().getMicrosecondClock().getTicks() + REPLICA_LEAD_RETRY_BACKOFF_US);
                         return;
                     }
                     // The lead could not enter RAM (both slots reader-pinned, or a
@@ -4586,6 +4614,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
             TableToken baseToken = instance.getDefinition().getBaseTableToken();
             if (baseToken == null) {
+                continue;
+            }
+            // Replica anti-spin: skip a view whose lead loop armed a publish-stall back-off that has not
+            // elapsed, so the worker idles instead of re-draining into the same stall every tick.
+            if (leadOnly && deferReplicaLeadWork(instance)) {
                 continue;
             }
             long head = engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn();

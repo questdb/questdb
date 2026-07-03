@@ -215,6 +215,11 @@ public class LiveViewInstance implements QuietCloseable {
     // already holds, double-counting size()), then clears the seam once caught up. LONG_NULL means
     // "not catching up". In-RAM only; mutated under the refresh latch only.
     private long leadReconcileSeamTs = Numbers.LONG_NULL;
+    // Read-only-replica publish-stall back-off: a wall-clock retry floor armed when a lead publish
+    // stalls (both in-mem tier slots reader-pinned, so a read-only replica cannot flush the lead).
+    // scanForLaggingViews skips the view until the clock passes it, so the worker does not re-derive
+    // every tick. LONG_NULL means no back-off pending. In-RAM only; mutated under the refresh latch only.
+    private long leadRetryAfterUs = Numbers.LONG_NULL;
     // In-RAM lead row count: the number of output rows refreshed into the in-mem
     // tier but not yet flushed to the LV's on-disk table. Grows with each refresh
     // tick, reset to 0 at flush. Stamped onto the published slot so reads can serve
@@ -547,6 +552,15 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public long getLeadReconcileSeamTs() {
         return leadReconcileSeamTs;
+    }
+
+    /**
+     * @return the read-only-replica publish-stall retry floor (wall-clock micros before which the lead
+     * loop must not retry a both-slots-pinned publish), or {@link Numbers#LONG_NULL} when no back-off is
+     * pending. See {@link #leadRetryAfterUs}.
+     */
+    public long getLeadRetryAfterUs() {
+        return leadRetryAfterUs;
     }
 
     /**
@@ -961,6 +975,13 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public void setLeadReconcileSeamTs(long leadReconcileSeamTs) {
         this.leadReconcileSeamTs = leadReconcileSeamTs;
+    }
+
+    /**
+     * Sets the read-only-replica publish-stall retry floor. See {@link #leadRetryAfterUs}.
+     */
+    public void setLeadRetryAfterUs(long leadRetryAfterUs) {
+        this.leadRetryAfterUs = leadRetryAfterUs;
     }
 
     /**
