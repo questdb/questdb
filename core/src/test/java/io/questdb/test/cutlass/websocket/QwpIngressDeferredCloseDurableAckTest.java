@@ -25,6 +25,7 @@
 package io.questdb.test.cutlass.websocket;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.wal.DurableAckRegistry;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
@@ -552,6 +553,132 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                     // RED until fixed: the grace-expired branch claims
                     // un-acked durable work without checking upload coverage.
                     capture.assertNotLogged("closing with un-acked durable work");
+                } finally {
+                    Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                    Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    /**
+     * Completion via the DATA-FRAME re-entry on coverage alone, strictly
+     * WITHIN the grace budget. {@code isRoleChangeCloseCompletable} is a
+     * disjunction -- durable coverage reached OR grace expired -- and every
+     * other deferral-exit test in this class either completes via the PING
+     * re-entry or crosses the grace deadline first (so the expiry disjunct
+     * is also true when the close fires). This test isolates the remaining
+     * exit: the injected clock NEVER moves off zero, so the ONLY way the
+     * close can complete is the coverage disjunct, observed by the
+     * gate-refused data frame in {@code handleBinaryMessage}'s deferral
+     * branch.
+     * <p>
+     * Pins, fix-shape-agnostic:
+     * <ul>
+     *   <li>the deferral exits promptly on coverage -- a regression that
+     *       quietly rewires completion to grace expiry alone (a full grace
+     *       stall for every well-behaved client on every demote) goes red
+     *       here and nowhere else;</li>
+     *   <li>the final durable ack precedes the reconnect-eligible CLOSE on
+     *       this exit too (the exactly-once handshake);</li>
+     *   <li>the data frame that triggers the completion is refused, not
+     *       committed -- INVARIANT B's engine-untouched deferral window;</li>
+     *   <li>a within-grace close must not raise the grace-expired operator
+     *       alarm.</li>
+     * </ul>
+     */
+    @Test
+    public void testDataFrameReEntryCompletesCloseWithinGraceOnCoverageAlone() throws Exception {
+        final LogCapture capture = new LogCapture();
+        assertMemoryLeak(() -> {
+            final AtomicBoolean readOnly = new AtomicBoolean(false);
+            final AtomicLong durableWatermark = new AtomicLong(-1L);
+            final long[] nowMicros = {0L};
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+
+            execute("create table tabf (v long, ts timestamp) timestamp(ts) partition by day wal");
+
+            try (CairoEngine demotableEngine = newEngineWithRegistry(readOnly, durableWatermark)) {
+                QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(demotableEngine, httpConfig);
+
+                byte[] frame0 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabf", 100L, 1_000_000L));
+                byte[] frame1 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabf", 200L, 2_000_000L));
+                byte[] frame2 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabf", 300L, 3_000_000L));
+                byte[] wire = concat(frame0, frame1, frame2);
+
+                PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
+                long recvBuf = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                BlockingRecordingRawSocket rawSocket = new BlockingRecordingRawSocket(sendBuf, SEND_BUFFER_SIZE);
+                try (TestableContext context = new TestableContext(httpConfig, nf, rawSocket, recvBuf, RECV_BUFFER_SIZE)) {
+                    QwpIngressProcessorState state = setupClockedState(httpConfig, context, demotableEngine, nowMicros);
+
+                    // Phase A: PRIMARY. seq=0 commits; cumulative ACK drains.
+                    drive(processor, context, nf, frame0.length);
+                    Assert.assertTrue("test setup: cumulative ACK must have drained", state.isSendReady());
+
+                    // Phase B: in-place demote. seq=1 is gate-rejected; the
+                    // role-change close is deferred awaiting upload coverage
+                    // (registry watermark lags at -1).
+                    readOnly.set(true);
+                    drive(processor, context, nf, frame1.length);
+                    Assert.assertTrue(
+                            "test setup: role-change close must be deferred awaiting durable upload coverage",
+                            state.isRoleChangeCloseDeferred()
+                    );
+
+                    // Phase C: the demote drain completes WELL within the
+                    // grace budget -- the clock never moves off zero, so the
+                    // expiry disjunct stays false for the whole test.
+                    durableWatermark.set(Long.MAX_VALUE);
+                    Assert.assertFalse(
+                            "test setup: grace budget must NOT be exhausted -- this test isolates the coverage disjunct",
+                            state.isRoleChangeCloseGraceExpired()
+                    );
+                    Assert.assertTrue(
+                            "test setup: durable work must be fully uploaded",
+                            state.isDurableWorkFullyUploaded(demotableEngine.getDurableAckRegistry())
+                    );
+
+                    // Phase D: the writer is NOT quiesced -- the next data
+                    // frame hits the deferral gate, which must refuse it AND
+                    // observe coverage, completing the close on the spot.
+                    capture.start();
+                    try {
+                        nf.release(frame2.length);
+                        try {
+                            processor.resumeRecv(context);
+                            Assert.fail("Expected ServerDisconnectException (coverage-complete close via data-frame re-entry)");
+                        } catch (ServerDisconnectException expected) {
+                        }
+                        drainLogQueue(capture, "sentinel: within-grace data-frame close done");
+                    } finally {
+                        capture.stop();
+                    }
+
+                    // The exactly-once handshake holds on this exit: the
+                    // final durable ack precedes the reconnect-eligible CLOSE.
+                    assertFinalDurableAckPrecedesClose(rawSocket.sentFrames, 1000 /* NORMAL_CLOSURE */);
+
+                    // A within-grace close is clean by construction: the
+                    // grace-expired operator alarm must not fire.
+                    capture.assertNotLogged("role-change close upload grace expired");
+
+                    // INVARIANT B: the data frame that completed the close
+                    // was refused -- only seq=0's row may exist. A second row
+                    // here means the deferral gate let a frame commit while
+                    // its sequence was simultaneously marked unresolved for
+                    // the ack clamp -- the double-accounting the gate exists
+                    // to prevent. (The gate is engine-role-agnostic by then,
+                    // so flip the read-only flag back for the WAL apply.)
+                    readOnly.set(false);
+                    drainWalQueue(demotableEngine);
+                    try (TableReader reader = demotableEngine.getReader("tabf")) {
+                        Assert.assertEquals(
+                                "data frame refused during the deferral must not commit",
+                                1, reader.size()
+                        );
+                    }
                 } finally {
                     Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
                     Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
