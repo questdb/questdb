@@ -1979,6 +1979,85 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testParquetExportPageFramePostingIndexCoveringScanMultiWorker() throws Exception {
+        // Reproduces "posting index cursor closed off the reader's owning thread".
+        // A POSTING-indexed covering scan (symbol IN (...)) exported as parquet drives the
+        // MultiKeyCoveringPageFrameCursor. On a multi-worker HTTP server the export streams
+        // across worker threads and HttpConnectionContext.reset() closes the page-frame cursor
+        // on a worker other than the one that opened the posting index cursor. Cursor.close()
+        // then trips AbstractPostingIndexReader.assertSameOperatingThread(), aborting the close
+        // and leaking the reader. getExportTester() pins workerCount=1, which hides the race;
+        // this test uses several workers so the close can land off the owning thread.
+        new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(4)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .withSendBufferSize(2048)
+                .withCopyExportRoot(root + "/export")
+                .withCopyInputRoot(root + "/export")
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute("""
+                            CREATE TABLE deriv (
+                                symbol SYMBOL INDEX TYPE POSTING INCLUDE (open, high, low, close, volume, timestamp),
+                                open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE, volume DOUBLE,
+                                timestamp TIMESTAMP
+                            ) TIMESTAMP(timestamp) PARTITION BY MONTH""", sqlExecutionContext);
+                    // 8 symbols spread over several monthly partitions; enough rows that the
+                    // parquet stream fragments and resumes across workers.
+                    engine.execute("""
+                            INSERT INTO deriv
+                            SELECT 'S' || (x % 8),
+                                rnd_double(), rnd_double(), rnd_double(), rnd_double(), rnd_double(),
+                                timestamp_sequence('2025-01-01T00:00:00.000000Z', 60_000_000L)
+                            FROM long_sequence(300_000)""", sqlExecutionContext);
+
+                    final String query = "SELECT timestamp, open, high, low, close, symbol FROM deriv " +
+                            "WHERE symbol IN ('S0','S1','S2','S3','S4','S5','S6','S7')";
+
+                    final int threadCount = 4;
+                    final CyclicBarrier barrier = new CyclicBarrier(threadCount);
+                    final AtomicInteger successCount = new AtomicInteger();
+                    final AtomicInteger errorCount = new AtomicInteger();
+                    final Thread[] threads = new Thread[threadCount];
+                    for (int i = 0; i < threadCount; i++) {
+                        final int threadId = i;
+                        threads[i] = new Thread(() -> {
+                            HttpClient client = null;
+                            try {
+                                barrier.await();
+                                client = HttpClientFactory.newPlainTextInstance();
+                                HttpClient.Request req = client.newRequest("localhost", 9001);
+                                req.GET().url("/exp")
+                                        .query("query", query)
+                                        .query("fmt", "parquet")
+                                        .query("filename", "posting_covering_" + threadId);
+                                try (var respHeaders = req.send()) {
+                                    respHeaders.await();
+                                    TestUtils.assertEquals("200", respHeaders.getStatusCode());
+                                    respHeaders.getResponse().discard();
+                                    successCount.incrementAndGet();
+                                }
+                            } catch (Throwable e) {
+                                errorCount.incrementAndGet();
+                                LOG.error().$("export client failed: ").$(e).$();
+                            } finally {
+                                Misc.free(client);
+                                Path.clearThreadLocals();
+                            }
+                        });
+                        threads[i].start();
+                    }
+                    for (Thread thread : threads) {
+                        thread.join();
+                    }
+
+                    Assert.assertEquals("Expected no failed parquet exports", 0, errorCount.get());
+                    Assert.assertEquals("Expected all parquet exports to succeed", threadCount, successCount.get());
+                });
+    }
+
+    @Test
     public void testParquetExportPageFrameVarcharAndArrayColumns() throws Exception {
         getExportTester()
                 .run((engine, sqlExecutionContext) -> {
