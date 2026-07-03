@@ -648,7 +648,9 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
                             .withEngine(engine)
                             .withContext(sqlExecutionContext)
                             .noLeakCheck()
-                            .returnsOnce("count\n0\n");
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("count\n0\n");
                 }
 
                 // (c) Async error notifications: each poisoned producer saw
@@ -729,7 +731,9 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
                         .withEngine(engine)
                         .withContext(sqlExecutionContext)
                         .noLeakCheck()
-                        .returnsOnce("count\n0\n");
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("count\n0\n");
             }
         });
     }
