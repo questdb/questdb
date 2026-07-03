@@ -4422,6 +4422,22 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * True when {@code e} is the specific failure {@link WalTxnDetails#openWalEFile}
+     * raises when the base WAL event file the lead re-derive wants is absent: the
+     * errno is file-does-not-exist and the wrapper carries the "cannot read WAL
+     * event file" prefix. An enterprise backup/restore captures only the applied
+     * base TABLE, not the base WAL segments (a normal restart retains them via the
+     * {@code WalPurgeJob} {@code lvConsumedSeqTxn} purge clamp), so the first boot
+     * refresh's {@code drainBaseWal} hits exactly this. The narrow match keeps a
+     * genuinely corrupt WAL event file (read with errno 0) on the invalidating
+     * path rather than silently rebuilding over it.
+     */
+    private static boolean isBaseWalEventFileMissing(CairoException e) {
+        return e.isFileCannotRead()
+                && Chars.contains(e.getFlyweightMessage(), "cannot read WAL event file");
+    }
+
+    /**
      * Replaces {@code slot}'s contents with the current {@code stagingBuffer}
      * rows and stamps the slot. The slot is reset first (full replace, not an
      * append) - the rebuild slot reflects the disk tail exactly, with no carry
@@ -4634,6 +4650,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 return;
             }
             boolean attempted = false;
+            // First cycle after restart with no head .cp to restore from. A normal
+            // restart that had a lead always left a .cp; the .cp is missing only on
+            // a fresh view (never flushed) or after an enterprise backup/restore
+            // (the backup excludes derived checkpoint artifacts). This is the
+            // necessary half of the guard on the applied-base lead re-derive below;
+            // the sufficient half is the drain actually failing to read the base
+            // WAL (a live primary's WAL is present, so it never falls back).
+            boolean firstCycleWithoutCheckpoint = false;
             try {
                 // First cycle after restart restores from the head
                 // .cp (if any). Single-shot per LV lifetime - the flag flips
@@ -4646,6 +4670,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     reconcileAppliedFloorAfterRestart(instance);
                     if (instance.getHeadCheckpointLvSeqTxn() != Numbers.LONG_NULL) {
                         tryRestoreFromHead(instance, getWindowFactory(instance));
+                    } else {
+                        firstCycleWithoutCheckpoint = true;
                     }
                 }
                 // BACKFILL phase: a view created with the BACKFILL clause sits
@@ -4716,7 +4742,50 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // since the last flush. TransactionLogCursor treats txnLo as
                         // exclusive, so pass refreshFrom directly.
                         attempted = true;
-                        incrementalRefresh(instance, refreshFrom, seqTxn, true);
+                        try {
+                            incrementalRefresh(instance, refreshFrom, seqTxn, true);
+                        } catch (CairoException e) {
+                            // Primary-only recovery: o3HeadMissReplay opens a WalWriter, which a
+                            // read-only replica refuses -- and a replica reads the applied base
+                            // table anyway (drainAppliedBaseForLead), so it never raises this error.
+                            final boolean rederiveFromAppliedBase = firstCycleWithoutCheckpoint
+                                    && !leadReconstruction
+                                    && isBaseWalEventFileMissing(e);
+                            if (!rederiveFromAppliedBase) {
+                                throw e;
+                            }
+                            // Enterprise backup/restore gap: re-deriving the un-flushed
+                            // lead from the raw base WAL (drainBaseWal) failed because the
+                            // backup preserved only the applied base TABLE, not the base
+                            // WAL segments -- and dropped the head .cp too (a normal
+                            // restart keeps the segments via the WalPurgeJob
+                            // lvConsumedSeqTxn purge clamp and re-derives forward). Rebuild
+                            // the tier from the applied base table instead: o3HeadMissReplay
+                            // re-seeds the window from identity (correct row_number() 1..N),
+                            // rewrites the tier with a single REPLACE_RANGE, and advances the
+                            // watermarks -- self-contained on the backed-up base, needing
+                            // neither the base WAL nor the .cp. This is the primary-side
+                            // analog of the replica's applied-base lead reconstruction and
+                            // costs no more than the dedup restart path's replay. Only the
+                            // first cycle after a checkpoint-less restore reaches here (a
+                            // live primary's base WAL is present, so the drain never throws).
+                            LOG.info().$("live view lead re-derive fell back to applied base after restore [view=")
+                                    .$(instance.getDefinition().getViewName())
+                                    .$(", head=").$(seqTxn)
+                                    .$(", reason=").$safe(e.getFlyweightMessage()).I$();
+                            o3HeadMissReplay(
+                                    instance,
+                                    getWindowFactory(instance),
+                                    Numbers.LONG_NULL,
+                                    instance.getDefinition().getBaseTableToken(),
+                                    seqTxn
+                            );
+                            // o3HeadMissReplay flushed the whole tier to disk and advanced
+                            // lastProcessed/appliedWatermark, so no un-flushed lead remains.
+                            // Keep refreshedUpTo == lastProcessed so the flush block below is
+                            // skipped and a later ALTER cannot see a phantom lead.
+                            instance.setRefreshedUpToSeqTxn(instance.getLastProcessedSeqTxn());
+                        }
                     }
                     // Flush the accumulated lead on the FLUSH EVERY cadence -- primary only. A
                     // read-only replica never flushes: its on-disk tier is materialised by the
