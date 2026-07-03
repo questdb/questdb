@@ -597,13 +597,19 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 state.onResumeAckComplete();
                 LOG.debug().$("Resumed ACK sent before fatal close [fd=").$(context.getFd())
                         .$(", upTo=").$(state.getLastAckedSequence()).I$();
-                sendDeferredFatalClose(context, state);
+                finishDeferredFatalClose(context, state);
             }
             case QwpIngressProcessorState.SEND_STATE_RESUME_DURABLE_ACK_THEN_CLOSE -> {
                 context.resumeResponseSend();
                 state.onResumeDurableAckComplete();
                 LOG.debug().$("Resumed durable ACK sent before fatal close [fd=").$(context.getFd()).I$();
-                sendDeferredFatalClose(context, state);
+                finishDeferredFatalClose(context, state);
+            }
+            case QwpIngressProcessorState.SEND_STATE_RESUME_DRAIN_THEN_CLOSE -> {
+                context.resumeResponseSend();
+                state.onResumeDrainComplete();
+                LOG.debug().$("Resumed parked response drained before fatal close [fd=").$(context.getFd()).I$();
+                finishDeferredFatalClose(context, state);
             }
             case QwpIngressProcessorState.SEND_STATE_RESUME_CLOSE -> {
                 context.resumeResponseSend();
@@ -747,6 +753,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             }
             case QwpIngressProcessorState.SEND_STATE_RESUME_ACK_THEN_CLOSE,
                  QwpIngressProcessorState.SEND_STATE_RESUME_DURABLE_ACK_THEN_CLOSE,
+                 QwpIngressProcessorState.SEND_STATE_RESUME_DRAIN_THEN_CLOSE,
                  QwpIngressProcessorState.SEND_STATE_RESUME_CLOSE -> // The peer is voluntarily closing, but we have a fatal CLOSE
                 // queued. The pending response will be torn down anyway, so
                 // there is no value in attempting to flush the deferred CLOSE
@@ -763,6 +770,39 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 throw PeerDisconnectedException.INSTANCE;
             }
         }
+    }
+
+    /**
+     * Resume-path completion of a deferred fatal CLOSE: flushes pending
+     * cumulative/durable ack progress first, then emits the CLOSE frame — the
+     * same ordering {@link #sendFatalClose} guarantees on the happy path.
+     * <p>
+     * This ordering carries the role-change close deferral's invariant
+     * ({@link #roleChangeCloseWithUploadGrace}): the final durable ack must
+     * precede the CLOSE frame, because a durable-ack store-and-forward client
+     * advances its replay/trim watermark only on STATUS_DURABLE_ACK frames.
+     * Emitting the CLOSE without it leaves the watermark stale, and on
+     * reconnect the client replays batches this server (or the promoted
+     * replica, via replication) already owns — duplicates on tables without
+     * DEDUP UPSERT KEYS, precisely under send backpressure at demote time.
+     * The pre-fix resume branches called {@link #sendDeferredFatalClose}
+     * directly, so any CLOSE that was ever deferred behind a blocked send
+     * skipped the final durable ack entirely.
+     * <p>
+     * If the flush blocks again, the CLOSE is re-parked behind the newly
+     * blocked ack frame and the dispatcher resumes us; every resume drains
+     * one parked frame, so the sequence terminates.
+     */
+    private void finishDeferredFatalClose(HttpConnectionContext context, QwpIngressProcessorState state)
+            throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+        try {
+            flushPendingAck(context, state);
+        } catch (PeerIsSlowToReadException e) {
+            state.reArmDeferredFatalClose();
+            LOG.debug().$("Pre-close ack flush blocked, re-deferring fatal CLOSE [fd=").$(context.getFd()).I$();
+            throw e;
+        }
+        sendDeferredFatalClose(context, state);
     }
 
     private void flushPendingAck(HttpConnectionContext context, QwpIngressProcessorState state)

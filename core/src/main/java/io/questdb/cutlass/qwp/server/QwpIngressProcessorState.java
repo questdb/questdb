@@ -69,6 +69,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     static final int SEND_STATE_RESUME_ACK_THEN_CLOSE = 7;
     static final int SEND_STATE_RESUME_ACK_THEN_ERROR = 3;
     static final int SEND_STATE_RESUME_CLOSE = 6;
+    static final int SEND_STATE_RESUME_DRAIN_THEN_CLOSE = 10;
     static final int SEND_STATE_RESUME_DURABLE_ACK = 4;
     static final int SEND_STATE_RESUME_DURABLE_ACK_THEN_CLOSE = 8;
     static final int SEND_STATE_RESUME_DURABLE_ACK_THEN_ERROR = 5;
@@ -668,12 +669,23 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
                 || sendState == SEND_STATE_RESUME_DURABLE_ACK_THEN_ERROR
                 || sendState == SEND_STATE_RESUME_DURABLE_ACK_THEN_CLOSE) {
             sendState = SEND_STATE_RESUME_DURABLE_ACK_THEN_CLOSE;
+        } else if (sendState == SEND_STATE_RESUME_CLOSE) {
+            // The parked bytes ARE a CLOSE frame (a previous fatal close was
+            // partially flushed). The resume path finishes that flush and
+            // disconnects; the just-stored code/reason are redundant.
+            clearDeferredClose();
         } else {
-            // RESUME_ERROR collapses to RESUME_CLOSE — the app-level error
-            // would have followed the same disconnect anyway, and the CLOSE
-            // frame is a stronger protocol-level signal.
+            // RESUME_PONG / RESUME_ERROR (or a re-entered DRAIN_THEN_CLOSE):
+            // some non-ack response is parked. Drain it on resume, then flush
+            // final ack/durable-ack progress and emit the stored CLOSE frame.
+            // The previous collapse to RESUME_CLOSE was wrong on two counts:
+            // RESUME_CLOSE assumes the parked bytes are the CLOSE frame
+            // itself, so the deferred CLOSE was never written (the client saw
+            // a bare FIN with no close code), and the final durable ack was
+            // dropped with it, leaving a durable-ack client's replay
+            // watermark stale (reconnect-replay duplicates).
             clearDeferredError();
-            sendState = SEND_STATE_RESUME_CLOSE;
+            sendState = SEND_STATE_RESUME_DRAIN_THEN_CLOSE;
         }
     }
 
@@ -693,6 +705,16 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         lastAckedSequence = resumeAckSequence;
         resumeAckSequence = -1;
         resumeAckSeqTxns.clear();
+        sendState = SEND_STATE_READY;
+    }
+
+    /**
+     * Completes the drain of a parked non-ack response (pong or error
+     * response) that a deferred fatal CLOSE was queued behind. Returns to
+     * READY so the caller can flush final ack/durable-ack progress and emit
+     * the deferred CLOSE frame.
+     */
+    public void onResumeDrainComplete() {
         sendState = SEND_STATE_READY;
     }
 
@@ -832,6 +854,26 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
             rejectMsg.clear();
             rejectMsg.put("unexpected error: ").put(e.getMessage());
             reject(Status.INTERNAL_ERROR, rejectMsg, fd);
+        }
+    }
+
+    /**
+     * Re-parks a deferred fatal CLOSE behind an ack/durable-ack send that
+     * blocked during the resume path's pre-close flush
+     * ({@code QwpIngressUpgradeProcessor#finishDeferredFatalClose}). The
+     * deferred close code/reason are already stored from the original
+     * {@link #onFatalCloseBlocked} call, so this performs only the state
+     * transition. Routing the stored reason back through onFatalCloseBlocked
+     * would clear the reason sink and then append it to itself, losing the
+     * reason.
+     */
+    public void reArmDeferredFatalClose() {
+        assert sendState == SEND_STATE_RESUME_ACK || sendState == SEND_STATE_RESUME_DURABLE_ACK
+                : "reArmDeferredFatalClose called in wrong state: " + sendState;
+        if (sendState == SEND_STATE_RESUME_ACK) {
+            sendState = SEND_STATE_RESUME_ACK_THEN_CLOSE;
+        } else if (sendState == SEND_STATE_RESUME_DURABLE_ACK) {
+            sendState = SEND_STATE_RESUME_DURABLE_ACK_THEN_CLOSE;
         }
     }
 
