@@ -1467,6 +1467,73 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnresolvedSequenceClampsAckWatermark() throws Exception {
+        // Defense-in-depth for the cumulative-ack leapfrog: a sequence that was
+        // consumed but neither committed nor error-responded (role-change close
+        // paths) must never be covered by the cumulative-ack watermark, even if
+        // the processor-level deferral gate regresses.
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+
+                state.setHighestProcessedSequence(0);
+                state.markSequenceUnresolved(1);
+
+                // watermark must not reach the unresolved sequence...
+                state.setHighestProcessedSequence(1);
+                Assert.assertEquals(0, state.getHighestProcessedSequence());
+                // ...nor leapfrog past it
+                state.setHighestProcessedSequence(2);
+                Assert.assertEquals(0, state.getHighestProcessedSequence());
+
+                // marking keeps the minimum: a later, higher unresolved sequence
+                // must not loosen the clamp
+                state.markSequenceUnresolved(5);
+                state.setHighestProcessedSequence(6);
+                Assert.assertEquals(0, state.getHighestProcessedSequence());
+
+                // advancing strictly below the unresolved sequence stays legal
+                // (clamp boundary is firstUnresolved - 1; here that is 0)
+                state.setHighestProcessedSequence(0);
+                Assert.assertEquals(0, state.getHighestProcessedSequence());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testUnresolvedSequenceResetOnDisconnect() throws Exception {
+        // The unresolved marker is per-connection: after the reconnect-eligible
+        // close the client replays from its acked watermark, so a recycled state
+        // must accept fresh sequences without clamping.
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                state.markSequenceUnresolved(0);
+                state.setHighestProcessedSequence(3);
+                Assert.assertEquals(-1, state.getHighestProcessedSequence());
+
+                state.onDisconnected();
+
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                state.setHighestProcessedSequence(3);
+                Assert.assertEquals(3, state.getHighestProcessedSequence());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
     public void testCommitConsumerThrowRejectsState() throws Exception {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =

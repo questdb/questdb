@@ -802,6 +802,26 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 .$(", len=").$(length)
                 .$(", seq=").$(seq).I$();
 
+        // INVARIANT B enforcement: while a role-change close deferral is armed,
+        // the connection exists ONLY to deliver the final durable ack before
+        // the CLOSE frame. Data frames arriving in this window must not touch
+        // the engine: the demote can revert within the grace period (in-place
+        // re-promote), and a frame that slipped past the live read-only gate
+        // would commit and advance the cumulative-ack watermark PAST the
+        // silently refused frame that armed the deferral -- the client would
+        // trim that frame's store-and-forward slot and its rows would be lost.
+        // Treat every data frame in this window exactly like the refused frame
+        // that armed the deferral: consume its sequence (the client replays it
+        // after the reconnect-eligible close), record it as unresolved for the
+        // ack clamp, and re-poll the deferral for coverage/expiry.
+        if (state.isRoleChangeCloseDeferred()) {
+            LOG.debug().$("WebSocket data frame refused, role-change close deferral armed [fd=").$(context.getFd())
+                    .$(", seq=").$(seq).I$();
+            state.markSequenceUnresolved(seq);
+            roleChangeCloseWithUploadGrace(context, state, state.getRoleChangeCloseReason());
+            return;
+        }
+
         if (!state.isOk()) {
             LOG.debug().$("WebSocket ignoring message, state is in error [fd=").$(context.getFd()).I$();
             sendErrorResponse(context, state, seq, STATUS_INTERNAL_ERROR, "Previous message failed");
@@ -880,6 +900,11 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         // final durable ack is delivered BEFORE the CLOSE frame and the client's
         // replay window is empty -- see roleChangeCloseWithUploadGrace.
         if (roleChangeClose) {
+            // No error response goes out for this frame -- the refusal is
+            // transient and the client replays from its acked watermark after
+            // the reconnect-eligible close. Until that close, no cumulative
+            // OK ack may cover this sequence.
+            state.markSequenceUnresolved(seq);
             roleChangeCloseWithUploadGrace(context, state, errorMessage);
             return;
         }
@@ -1059,8 +1084,12 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
      * So: while committed work remains un-uploaded, DEFER the close (bounded by
      * {@link QwpIngressProcessorState#ROLE_CHANGE_CLOSE_UPLOAD_GRACE_MICROS})
      * and keep flushing ack progress. Re-entry points during the deferral are
-     * further gate-rejected data frames (this method) and the client's
-     * durable-ack keepalive PINGs ({@link #handlePing}). Once the registry
+     * further data frames (refused by the deferral gate at the top of
+     * {@code handleBinaryMessage} BEFORE they can touch the engine -- the live
+     * read-only gate alone is not sufficient, because an in-place re-promote
+     * within the grace window would let a frame commit and advance the
+     * cumulative ack past the silently refused frame that armed the deferral)
+     * and the client's durable-ack keepalive PINGs ({@link #handlePing}). Once the registry
      * covers the connection's pending seqTxns, sendFatalClose flushes the final
      * durable ack and only then emits NORMAL_CLOSURE: the replay window is
      * empty and every in-flight batch lands exactly once. If uploads stall past

@@ -134,6 +134,19 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     // events (gate-rejected frames, keepalive PINGs) until the durable-upload
     // registry covers pendingDurableSeqTxns or the grace budget expires.
     private long roleChangeCloseDeferredDeadline = -1;
+    // Lowest sequence number consumed from the wire but neither committed nor
+    // answered with an error response. Only the role-change close path can
+    // leave a sequence in this limbo: it consumes the sequence, then either
+    // closes the connection or defers the close -- in both cases without an
+    // error response, because the refusal is TRANSIENT and the client is
+    // expected to replay from its acked watermark after the reconnect-eligible
+    // close. Cleared only on disconnect: once a sequence is unresolved, the
+    // connection's sole legitimate exit is that close. The cumulative-ack
+    // watermark must never reach this sequence -- a cumulative OK ack confirms
+    // every sequence up to and including its value, so an ack at or past an
+    // unresolved sequence would make a store-and-forward client trim rows the
+    // server never wrote. Enforced in setHighestProcessedSequence.
+    private long firstUnresolvedSequence = -1;
     private SecurityContext securityContext;
     private int sendState = SEND_STATE_READY;
     private QwpStreamingDecoder streamingDecoder;
@@ -457,6 +470,18 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         return wsHandshakeSent;
     }
 
+    /**
+     * Records a sequence number that was consumed from the wire but will get
+     * neither a commit nor an error response -- the role-change close paths.
+     * Keeps the minimum across calls; {@link #setHighestProcessedSequence}
+     * refuses to advance the cumulative-ack watermark to or past it.
+     */
+    public void markSequenceUnresolved(long seq) {
+        if (firstUnresolvedSequence == -1 || seq < firstUnresolvedSequence) {
+            firstUnresolvedSequence = seq;
+        }
+    }
+
     public long nextMessageSequence() {
         return messageSequence++;
     }
@@ -559,6 +584,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         clearDeferredClose();
         roleChangeCloseDeferredDeadline = -1;
         roleChangeCloseReason.clear();
+        firstUnresolvedSequence = -1;
         wsHandshakeSent = false;
 
         // Drop any durable-ack state; the connection is going away, so even if
@@ -830,6 +856,25 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     }
 
     public void setHighestProcessedSequence(long highestProcessedSequence) {
+        // LAST-RESORT CONTAINMENT for the cumulative-ack leapfrog: a sequence
+        // flagged by markSequenceUnresolved was refused without an error
+        // response, so no cumulative OK ack may ever cover it -- the client
+        // would trim its store-and-forward slot for rows the server never
+        // wrote. The deferral gate in the upgrade processor's
+        // handleBinaryMessage must prevent any commit after such a refusal;
+        // if the watermark still tries to advance past the unresolved
+        // sequence, that gate has regressed. Clamp and scream: the client
+        // stalls on acks and replays after the close -- an availability hit,
+        // never data loss.
+        if (firstUnresolvedSequence != -1 && highestProcessedSequence >= firstUnresolvedSequence) {
+            LOG.critical().$('[').$(fd)
+                    .$("] cumulative-ack watermark tried to leapfrog an unresolved sequence; clamping [requested=")
+                    .$(highestProcessedSequence)
+                    .$(", firstUnresolved=").$(firstUnresolvedSequence)
+                    .$(']').$();
+            this.highestProcessedSequence = Math.max(this.highestProcessedSequence, firstUnresolvedSequence - 1);
+            return;
+        }
         this.highestProcessedSequence = highestProcessedSequence;
     }
 
