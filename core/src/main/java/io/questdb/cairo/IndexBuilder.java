@@ -151,6 +151,7 @@ public class IndexBuilder extends RebuildColumnBase {
             CharSequence columnName,
             long partitionNameTxn,
             long partitionSize,
+            long partitionTop,
             long partitionTimestamp,
             int timestampType,
             int partitionBy,
@@ -177,7 +178,15 @@ public class IndexBuilder extends RebuildColumnBase {
 
                 final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, columnWriterIndex);
                 if (columnTop > -1L) {
-                    if (partitionSize > columnTop) {
+                    // A zero-copy split suffix child records donor-shared column tops in
+                    // shared-file coordinates (file_row = logical + partitionTop - columnTop);
+                    // the per-column shift applies only to columns born before the child.
+                    final long colPartitionTop = partitionTop > 0
+                            && columnVersionReader.getColumnTopPartitionTimestamp(columnWriterIndex) < partitionTimestamp
+                            ? partitionTop
+                            : 0;
+                    final long logicalColumnTop = Math.max(0, columnTop - colPartitionTop);
+                    if (partitionSize > logicalColumnTop) {
                         LOG.info().$("indexing [path=").$(path).I$();
                         createIndexFiles(ff, columnName, indexValueBlockCapacity, plen, columnNameTxn);
 
@@ -207,7 +216,10 @@ public class IndexBuilder extends RebuildColumnBase {
                             // queries to silently fall back to the slower
                             // column-file read path.
                             configureCoveringIfNeeded(metadata, columnIndex, columnVersionReader, partitionTimestamp);
-                            indexer.index(ff, columnDataFd, columnTop, partitionSize);
+                            // The indexer shifts the logical range to physical row ids and reads
+                            // the column file at (physical - columnTop).
+                            indexer.setPartitionTop(colPartitionTop);
+                            indexer.index(ff, columnDataFd, logicalColumnTop, partitionSize);
                             indexer.seal();
                         } finally {
                             ff.close(columnDataFd);

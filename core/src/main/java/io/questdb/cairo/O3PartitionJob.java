@@ -923,18 +923,24 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             final int openColumnMode;
             long newMinPartitionTimestamp;
 
+            // A zero-copy suffix child's rows live at file rows [P, P + srcDataMax) of the shared
+            // donor timestamp file. Widen the mapping by P rows and run every row-indexed geometry
+            // read below against srcTimestampVecAddr (the child's logical row 0); srcTimestampAddr
+            // stays the raw mapping base for unmapping. P is 0 for a normal partition.
+            final long partitionTopRows = tableWriter.getPartitionTopByTimestamp(partitionTimestamp);
+            final long srcTimestampVecAddr;
             try {
                 // out of order is hitting existing partition
                 // partitionTimestamp is in fact a ceil of ooo timestamp value for the given partition
                 // so this check is for matching ceilings
                 if (last) {
                     dataTimestampHi = maxTimestamp;
-                    srcTimestampSize = srcDataMax * 8L;
+                    srcTimestampSize = (partitionTopRows + srcDataMax) * 8L;
                     // negative fd indicates descriptor reuse
                     srcTimestampFd = -columns.getQuick(getPrimaryColumnIndex(timestampIndex)).getFd();
                     srcTimestampAddr = mapRW(ff, -srcTimestampFd, srcTimestampSize, MemoryTag.MMAP_O3);
                 } else {
-                    srcTimestampSize = srcDataMax * 8L;
+                    srcTimestampSize = (partitionTopRows + srcDataMax) * 8L;
                     // out of order data is going into archive partition
                     // we need to read "low" and "high" boundaries of the partition. "low" being the oldest timestamp
                     // and "high" being newest
@@ -953,7 +959,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     srcTimestampAddr = mapRW(ff, srcTimestampFd, srcTimestampSize, MemoryTag.MMAP_O3);
                     dataTimestampHi = Unsafe.getLong(srcTimestampAddr + srcTimestampSize - Long.BYTES);
                 }
-                dataTimestampLo = Unsafe.getLong(srcTimestampAddr);
+                srcTimestampVecAddr = srcTimestampAddr + partitionTopRows * 8L;
+                dataTimestampLo = Unsafe.getLong(srcTimestampVecAddr);
 
                 // create copy jobs
                 // we will have maximum of 3 stages:
@@ -1026,7 +1033,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         // When deduplication is enabled, take into the merge the rows which are equals
                         // to the o3TimestampLo in the else block, e.g. reduce the prefix size
                         prefixHi = Vect.boundedBinarySearch64Bit(
-                                srcTimestampAddr,
+                                srcTimestampVecAddr,
                                 o3TimestampLo - mergeEquals,
                                 0,
                                 srcDataMax - 1,
@@ -1047,7 +1054,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             branch = 2;
                             mergeO3Hi = srcOooHi;
                             mergeDataHi = Vect.boundedBinarySearch64Bit(
-                                    srcTimestampAddr,
+                                    srcTimestampVecAddr,
                                     o3TimestampHi,
                                     mergeDataLo,
                                     srcDataMax - 1,
@@ -1163,7 +1170,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             // To make inserts stable table rows with timestamp == o3TimestampHi
                             // should go into the merge section.
                             mergeDataHi = Vect.boundedBinarySearch64Bit(
-                                    srcTimestampAddr,
+                                    srcTimestampVecAddr,
                                     o3TimestampHi,
                                     0,
                                     srcDataMax - 1,
@@ -1256,7 +1263,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     newMinPartitionTimestamp = Math.min(o3TimestampMin, dataTimestampLo);
                 } else {
                     newMinPartitionTimestamp = calculateMinDataTimestampAfterReplacement(
-                            srcTimestampAddr,
+                            srcTimestampVecAddr,
                             sortedTimestampsAddr,
                             prefixType,
                             suffixType,
@@ -1318,14 +1325,16 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                                 // Check that replace first timestamp matches exactly the first timestamp in the partition
                                 // and the last timestamp matches the last timestamp in the partition.
-                                if (Unsafe.getLong(srcTimestampAddr + removedDataRangeLo * Long.BYTES)
+                                if (Unsafe.getLong(srcTimestampVecAddr + removedDataRangeLo * Long.BYTES)
                                         == getTimestampIndexValue(sortedTimestampsAddr, o3RangeLo)
-                                        && Unsafe.getLong(srcTimestampAddr + removedDataRangeHi * Long.BYTES)
+                                        && Unsafe.getLong(srcTimestampVecAddr + removedDataRangeHi * Long.BYTES)
                                         == getTimestampIndexValue(sortedTimestampsAddr, o3RangeHi)) {
 
                                     // We are replacing with exactly the same number of rows
                                     // Maybe the rows are of the same data, then we don't need to rewrite the partition
-                                    if (tableWriter.checkReplaceCommitIdenticalToPartition(
+                                    // (checkReplaceCommitIdenticalToPartition maps column files without the
+                                    // suffix-child physical base, so skip the noop fast-path when P > 0)
+                                    if (partitionTopRows == 0 && tableWriter.checkReplaceCommitIdenticalToPartition(
                                             partitionTimestamp,
                                             srcNameTxn,
                                             srcDataMax,
@@ -1449,10 +1458,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // child floor timestamp ts[R2] must be strictly greater than the middle's max timestamp
                 // (o3TimestampHi in the only geometry branch that reaches here with a DATA tail suffix);
                 // a same-timestamp run straddling the boundary defeats this and falls back to a 2-way copy.
-                final long suffixChildPartitionTop = mergeDataHi + 1; // R2
+                final long suffixChildPartitionTop = mergeDataHi + 1; // R2 (logical row in this partition)
                 final long suffixChildRowCount = srcDataMax - suffixChildPartitionTop;
                 final long suffixChildTimestamp = suffixChildRowCount > 0
-                        ? Unsafe.getLong(srcTimestampAddr + suffixChildPartitionTop * Long.BYTES)
+                        ? Unsafe.getLong(srcTimestampVecAddr + suffixChildPartitionTop * Long.BYTES)
                         : Long.MIN_VALUE;
                 final boolean canHardlinkSplit = !isParquet
                         && tableWriter.isHardlinkSplitEnabled()
@@ -1473,7 +1482,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 && prefixHi > 2 * (mergeDataHi - mergeDataLo + suffixHi - suffixLo + mergeO3Hi - mergeO3Lo)))
                 ) {
                     // large prefix copy, better to split the partition
-                    long maxSourceTimestamp = Unsafe.getLong(srcTimestampAddr + prefixHi * Long.BYTES);
+                    long maxSourceTimestamp = Unsafe.getLong(srcTimestampVecAddr + prefixHi * Long.BYTES);
                     assert maxSourceTimestamp <= o3TimestampLo;
                     boolean canSplit = true;
 
@@ -1482,7 +1491,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         // because 2 partition parts cannot have data with exactly same timestamp.
                         // To make this work, we can reduce the prefix by the size of the rows which equals to o3TimestampLo.
                         long newPrefixHi = -1 + Vect.boundedBinarySearch64Bit(
-                                srcTimestampAddr,
+                                srcTimestampVecAddr,
                                 o3TimestampLo,
                                 prefixLo,
                                 prefixHi - 1,
@@ -1501,7 +1510,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             ) {
                                 prefixHi = newPrefixHi;
                                 mergeDataLo = newMergeDataLo;
-                                maxSourceTimestamp = Unsafe.getLong(srcTimestampAddr + prefixHi * Long.BYTES);
+                                maxSourceTimestamp = Unsafe.getLong(srcTimestampVecAddr + prefixHi * Long.BYTES);
                                 mergeType = O3_BLOCK_MERGE;
                                 assert maxSourceTimestamp < o3TimestampLo;
                             } else {
@@ -1536,7 +1545,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             o3SplitPartitionSize -= suffixChildRowCount;
                             Unsafe.putLong(partitionUpdateSinkAddr + 8 * Long.BYTES, SPLIT_THREE_WAY_HARDLINK);
                             Unsafe.putLong(partitionUpdateSinkAddr + 9 * Long.BYTES, suffixChildTimestamp);
-                            Unsafe.putLong(partitionUpdateSinkAddr + 10 * Long.BYTES, suffixChildPartitionTop);
+                            // The child's partition top is a FILE row of the shared inodes: when the
+                            // source is itself a suffix child (re-split), compose with its own top P.
+                            Unsafe.putLong(partitionUpdateSinkAddr + 10 * Long.BYTES, partitionTopRows + suffixChildPartitionTop);
                             Unsafe.putLong(partitionUpdateSinkAddr + 11 * Long.BYTES, suffixChildRowCount);
                         }
 
@@ -1951,7 +1962,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 int columnType = metadata.getColumnType(i);
                 if (columnType > 0 && metadata.isDedupKey(i) && i != metadata.getTimestampIndex()) {
                     final int columnSize = !ColumnType.isVarSize(columnType) ? ColumnType.sizeOf(columnType) : -1;
-                    final long columnTop = tableWriter.getColumnTop(partitionTimestamp, i, mergeDataHi + 1);
+                    // On a zero-copy suffix child the _cv record is donor-file-relative for columns
+                    // born before the child: translate it into the child-logical top and the physical
+                    // base rows of the column's shared file region (both 0-neutral otherwise).
+                    final long columnPartitionTop = tableWriter.getPartitionTopByTimestamp(partitionTimestamp, i);
+                    final long rawColumnTop = tableWriter.getColumnTop(partitionTimestamp, i, mergeDataHi + 1);
+                    final long columnTop = columnPartitionTop > 0 ? Math.max(0, rawColumnTop - columnPartitionTop) : rawColumnTop;
+                    final long columnPhysBaseRows = Math.max(0, columnPartitionTop - rawColumnTop);
                     CharSequence columnName = metadata.getColumnName(i);
                     long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, i);
 
@@ -2007,7 +2024,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             );
                             long fd = TableUtils.openRO(ff, TableUtils.dFile(tableRootPath, columnName, columnNameTxn), LOG);
 
-                            long fixMapSize = (mergeDataHi + 1 - columnTop) * columnSize;
+                            long fixMapSize = (columnPhysBaseRows + mergeDataHi + 1 - columnTop) * columnSize;
                             long fixMappedAddress = TableUtils.mapAppendColumnBuffer(
                                     ff,
                                     fd,
@@ -2017,7 +2034,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                     mapMemTag
                             );
 
-                            DedupColumnCommitAddresses.setColAddressValues(addr, Math.abs(fixMappedAddress) - columnTop * columnSize);
+                            DedupColumnCommitAddresses.setColAddressValues(addr, Math.abs(fixMappedAddress) + (columnPhysBaseRows - columnTop) * columnSize);
 
                             final long oooColAddress = oooColumns.get(getPrimaryColumnIndex(i)).addressOf(0);
                             DedupColumnCommitAddresses.setO3DataAddressValues(addr, oooColAddress);
@@ -2029,7 +2046,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             );
                         } else {
                             // Variable length column
-                            long rows = mergeDataHi + 1 - columnTop;
+                            long rows = columnPhysBaseRows + mergeDataHi + 1 - columnTop;
                             ColumnTypeDriver driver = ColumnType.getDriver(columnType);
                             long auxMapSize = driver.getAuxVectorSize(rows);
 
@@ -2071,7 +2088,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             ) : 0;
 
                             long auxRecSize = driver.auxRowsToBytes(1);
-                            DedupColumnCommitAddresses.setColAddressValues(addr, auxMappedAddress - columnTop * auxRecSize, varMappedAddress, varMapSize);
+                            DedupColumnCommitAddresses.setColAddressValues(addr, auxMappedAddress + (columnPhysBaseRows - columnTop) * auxRecSize, varMappedAddress, varMapSize);
 
                             MemoryCR oooVarCol = oooColumns.get(getPrimaryColumnIndex(i));
                             final long oooVarColAddress = oooVarCol.addressOf(0);
@@ -3117,6 +3134,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         // Number of rows to insert from the O3 segment into this partition.
         final long srcOooBatchRowSize = srcOooHi - srcOooLo + 1;
 
+        // A zero-copy suffix child's rows live at file rows [P, P + srcDataMax) of the shared donor
+        // timestamp file: run row-indexed reads against the child's logical row 0. P is 0 for a
+        // normal partition, and srcTimestampAddr stays the raw mapping base for unmapping.
+        final long partitionTopRows = tableWriter.getPartitionTopByTimestamp(oldPartitionTimestamp);
+        final long srcTimestampVecAddr = srcTimestampAddr + partitionTopRows * 8L;
+
         long timestampMergeIndexAddr = 0;
         long timestampMergeIndexSize = 0;
         final TableRecordMetadata metadata = tableWriter.getMetadata();
@@ -3130,7 +3153,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     timestampMergeIndexSize = tempIndexSize;
 
                     timestampMergeIndexAddr = createMergeIndex(
-                            srcTimestampAddr,
+                            srcTimestampVecAddr,
                             sortedTimestampsAddr,
                             mergeDataLo,
                             mergeDataHi,
@@ -3146,7 +3169,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     final long dedupRows = getDedupRows(
                             oldPartitionTimestamp,
                             srcNameTxn,
-                            srcTimestampAddr,
+                            srcTimestampVecAddr,
                             mergeDataLo,
                             mergeDataHi,
                             sortedTimestampsAddr,
@@ -3169,7 +3192,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                             // All the rows are duplicates, the commit does not add any new lines.
                             // Check non-key columns if they are exactly the same as the rows they replace
-                            if (tableWriter.checkDedupCommitIdenticalToPartition(
+                            // (checkDedupCommitIdenticalToPartition maps column files without the
+                            // suffix-child physical base, so skip the noop fast-path when P > 0)
+                            if (partitionTopRows == 0 && tableWriter.checkDedupCommitIdenticalToPartition(
                                     oldPartitionTimestamp,
                                     srcNameTxn,
                                     srcDataOldPartitionSize,
@@ -3219,7 +3244,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         // No duplicates.
                         // Maybe it's append only, if the OOO data "touches" the partition data then we
                         // do not need to merge, append is good enough
-                        long dataMergeMaxTimestamp = Unsafe.getLong(srcTimestampAddr + mergeDataHi * Long.BYTES);
+                        long dataMergeMaxTimestamp = Unsafe.getLong(srcTimestampVecAddr + mergeDataHi * Long.BYTES);
                         appendOnly = oooTimestampMin >= dataMergeMaxTimestamp;
                     }
 

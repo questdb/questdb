@@ -358,10 +358,16 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
 
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
             final int updateColumnIndex = updateColumnIndexes.get(columnIndex);
+            // A zero-copy split suffix child records donor-shared column tops in shared-file
+            // coordinates (file_row = logical + partitionTop - columnTop). The effective top is
+            // computed in logical rows and recorded back through the same convention: the
+            // rewritten file is child-local and 0-based, so its record is logicalTop + shift.
+            final long shift = tableWriter.getPartitionTopByTimestamp(partitionTimestamp, updateColumnIndex);
             final long columnTop = tableWriter.getColumnTop(partitionTimestamp, updateColumnIndex, -1);
-            long effectiveColumnTop = calculatedEffectiveColumnTop(firstUpdatedPartitionRowId, columnTop);
+            final long logicalColumnTop = columnTop > -1 ? Math.max(0, columnTop - shift) : -1;
+            long effectiveColumnTop = calculatedEffectiveColumnTop(firstUpdatedPartitionRowId, logicalColumnTop);
             if (effectiveColumnTop > -1L) {
-                tableWriter.upsertColumnVersion(partitionTimestamp, updateColumnIndex, effectiveColumnTop);
+                tableWriter.upsertColumnVersion(partitionTimestamp, updateColumnIndex, effectiveColumnTop + shift);
             }
         }
     }
@@ -388,7 +394,12 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
             final int toType = tableMetadata.getColumnType(columnIndex);
 
             if (currentRow > prevRow) {
-                final long oldColumnTop = tableWriter.getColumnTop(partitionTimestamp, columnIndex, -1);
+                // Work in logical rows: a zero-copy split suffix child records donor-shared
+                // column tops in shared-file coordinates and its source rows live at +srcRowShift.
+                final long partitionTop = tableWriter.getPartitionTopByTimestamp(partitionTimestamp, columnIndex);
+                final long rawColumnTop = tableWriter.getColumnTop(partitionTimestamp, columnIndex, -1);
+                final long oldColumnTop = rawColumnTop > -1 ? Math.max(0, rawColumnTop - partitionTop) : -1;
+                final long srcRowShift = rawColumnTop > -1 ? Math.max(0, partitionTop - rawColumnTop) : 0;
                 final long newColumnTop = calculatedEffectiveColumnTop(firstUpdatedRowId, oldColumnTop);
                 copyColumn(
                         prevRow,
@@ -399,7 +410,8 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                         dstVarMem,
                         newColumnTop,
                         oldColumnTop,
-                        toType
+                        toType,
+                        srcRowShift
                 );
             }
             switch (ColumnType.tagOf(toType)) {
@@ -540,7 +552,8 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
             MemoryCMARW dstVarMem,
             long newColumnTop,
             long oldColumnTop,
-            int columnType
+            int columnType,
+            long srcRowShift
     ) {
         assert newColumnTop <= oldColumnTop || oldColumnTop < 0;
 
@@ -561,7 +574,8 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                     dstFixMem,
                     dstVarMem,
                     columnType,
-                    shl
+                    shl,
+                    srcRowShift
             );
         }
 
@@ -574,7 +588,8 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                         srcVarMem, dstFixMem,
                         dstVarMem,
                         columnType,
-                        shl
+                        shl,
+                        srcRowShift
                 );
             } else {
                 // prevRow < oldColumnTop
@@ -609,7 +624,8 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                             dstFixMem,
                             dstVarMem,
                             columnType,
-                            shl
+                            shl,
+                            srcRowShift
                     );
                 }
             }
@@ -627,7 +643,12 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
             MemoryCMARW dstVarMem = dstColumns.get(2 * i + 1);
 
             final int columnIndex = updateColumnIndexes.getQuick(i);
-            final long oldColumnTop = tableWriter.getColumnTop(partitionTimestamp, columnIndex, -1);
+            // Work in logical rows: a zero-copy split suffix child records donor-shared column
+            // tops in shared-file coordinates and its source rows live at +srcRowShift.
+            final long partitionTop = tableWriter.getPartitionTopByTimestamp(partitionTimestamp, columnIndex);
+            final long rawColumnTop = tableWriter.getColumnTop(partitionTimestamp, columnIndex, -1);
+            final long oldColumnTop = rawColumnTop > -1 ? Math.max(0, rawColumnTop - partitionTop) : -1;
+            final long srcRowShift = rawColumnTop > -1 ? Math.max(0, partitionTop - rawColumnTop) : 0;
             final long newColumnTop = calculatedEffectiveColumnTop(minRow, oldColumnTop);
             final int columnType = tableMetadata.getColumnType(columnIndex);
 
@@ -641,7 +662,8 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                         dstVarMem,
                         newColumnTop,
                         oldColumnTop,
-                        columnType
+                        columnType,
+                        srcRowShift
                 );
             }
         }
@@ -655,12 +677,13 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
             MemoryCMARW dstFixMem,
             MemoryCMARW dstDataMem,
             int columnType,
-            int shl
+            int shl,
+            long srcRowShift // donor-file shift of a zero-copy split suffix child source; 0 otherwise
     ) {
         if (ColumnType.isVarSize(columnType)) {
             final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
-            long dataOffsetLo = columnTypeDriver.getDataVectorOffset(srcFixMem.addressOf(0), rowLo);
-            long srcDataSize = columnTypeDriver.getDataVectorSize(srcFixMem.addressOf(0), rowLo, rowHi - 1);
+            long dataOffsetLo = columnTypeDriver.getDataVectorOffset(srcFixMem.addressOf(0), rowLo + srcRowShift);
+            long srcDataSize = columnTypeDriver.getDataVectorSize(srcFixMem.addressOf(0), rowLo + srcRowShift, rowHi + srcRowShift - 1);
             long srcDataAddr = srcDataMem.addressOf(dataOffsetLo);
             long copyToOffset = dstDataMem.getAppendOffset();
             dstDataMem.putBlockOfBytes(srcDataAddr, srcDataSize);
@@ -672,7 +695,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
 
             columnTypeDriver.shiftCopyAuxVector(
                     dataOffsetLo - copyToOffset,
-                    srcFixMem.addressOf(columnTypeDriver.getAuxVectorOffset(rowLo)),
+                    srcFixMem.addressOf(columnTypeDriver.getAuxVectorOffset(rowLo + srcRowShift)),
                     0,
                     rowHi - rowLo - 1, // inclusive
                     dstAddr,
@@ -681,7 +704,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
             dstFixMem.jumpTo(columnTypeDriver.getAuxVectorSize(rowHi));
         } else {
             dstFixMem.putBlockOfBytes(
-                    srcFixMem.addressOf(rowLo << shl),
+                    srcFixMem.addressOf((rowLo + srcRowShift) << shl),
                     (rowHi - rowLo) << shl
             );
         }

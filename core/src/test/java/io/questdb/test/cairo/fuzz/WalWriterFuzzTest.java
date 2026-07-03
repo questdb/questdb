@@ -428,7 +428,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     @Test
     public void testWalMetadataAddDeleteColumnHeavy() throws Exception {
         setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, "POSTING");
-        Rnd rnd = generateRandom(LOG, 1526190694382147614L, 2684230139848143701L);
+        Rnd rnd = generateRandom(LOG);
         setTestParams(rnd);
 
         setFuzzProbabilities(

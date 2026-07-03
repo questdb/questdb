@@ -138,6 +138,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
                 columnName,
                 partitionNameTxn,
                 partitionSize,
+                tableWriter.getPartitionTopByTimestamp(partitionTimestamp),
                 partitionTimestamp,
                 tableWriter.getMetadata().getTimestampType(),
                 tableWriter.getPartitionBy(),
@@ -168,7 +169,8 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
             long partitionNameTxn,
             long partitionTimestamp,
             int partitionBy,
-            long partitionSize
+            long partitionSize,
+            long partitionTop
     ) {
         doReindex(
                 ff,
@@ -177,6 +179,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
                 metadata.getColumnName(columnIndex),
                 partitionNameTxn,
                 partitionSize,
+                partitionTop,
                 partitionTimestamp,
                 metadata.getTimestampType(),
                 partitionBy,
@@ -267,7 +270,8 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
                             partitionBy,
                             -1L,
                             0L,
-                            txReader.getTransientRowCount()
+                            txReader.getTransientRowCount(),
+                            0L
                     );
                 }
             }
@@ -284,7 +288,8 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
             int partitionBy,
             long partitionNameTxn,
             long partitionTimestamp,
-            long partitionSize
+            long partitionSize,
+            long partitionTop
     ) {
         boolean isIndexed = false;
 
@@ -300,7 +305,8 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
                             partitionNameTxn,
                             partitionTimestamp,
                             partitionBy,
-                            partitionSize
+                            partitionSize,
+                            partitionTop
                     );
                 }
             }
@@ -317,7 +323,8 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
                         partitionNameTxn,
                         partitionTimestamp,
                         partitionBy,
-                        partitionSize
+                        partitionSize,
+                        partitionTop
                 );
             } else {
                 throw CairoException.nonCritical().put(unsupportedColumnMessage);
@@ -347,7 +354,8 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
                 partitionBy,
                 txReader.getPartitionNameTxn(partitionIndex),
                 partitionTimestamp,
-                partitionSize
+                partitionSize,
+                txReader.isPartitionParquet(partitionIndex) ? 0 : txReader.getPartitionTop(partitionIndex)
         );
     }
 
@@ -371,6 +379,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
             CharSequence columnName,
             long partitionNameTxn,
             long partitionSize,
+            long partitionTop,
             long partitionTimestamp,
             int timestampType,
             int partitionBy,

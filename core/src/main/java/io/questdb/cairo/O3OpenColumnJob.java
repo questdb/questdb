@@ -73,6 +73,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long timestampMin,
             long partitionTimestamp,
             long srcDataTop,
+            long srcDataPhysBaseRows,
+            long dstIndexAdjustRows,
             long srcDataMax,
             int indexBlockCapacity,
             MemoryMA dstFixMem,
@@ -98,6 +100,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     timestampMin,
                     partitionTimestamp,
                     srcDataTop,
+                    srcDataPhysBaseRows,
                     srcDataMax,
                     indexBlockCapacity,
                     0,
@@ -153,6 +156,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     timestampMin,
                     partitionTimestamp,
                     srcDataTop,
+                    srcDataPhysBaseRows,
+                    dstIndexAdjustRows,
                     srcDataMax,
                     indexBlockCapacity,
                     0,
@@ -219,6 +224,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long oooPartitionMin,
             long oooPartitionHi,
             long srcDataTop,
+            long srcDataPhysBaseRows,
             long srcDataMax,
             int prefixType,
             long prefixLo,
@@ -246,6 +252,10 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long columnNameTxn,
             long partitionUpdateSinkAddr
     ) {
+        // A column with a child-logical top cannot simultaneously have a shared physical base:
+        // effTop > 0 implies the donor top lands inside the child (base 0), and base > 0 implies
+        // the shared data covers the child's first row (top 0).
+        assert srcDataPhysBaseRows == 0 || srcDataTop == 0;
         int partCount = 0;
         long dstDataFd = 0;
         long dstVarAddr = 0;
@@ -386,13 +396,18 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     }
                 }
             } else {
-                srcDataFixOffset = 0;
+                // A zero-copy suffix child's rows live at file rows [srcDataPhysBaseRows,
+                // srcDataPhysBaseRows + srcDataMax) of the shared donor file: widen the aux mapping
+                // by the base and point srcDataFixOffset at the child's first row. The var data is
+                // mapped from 0 because aux entries hold absolute data offsets. Both are 0-neutral
+                // for a normal partition.
+                srcDataFixOffset = columnTypeDriver.auxRowsToBytes(srcDataPhysBaseRows);
                 if (srcDataMax > 0) {
-                    newAuxSize = columnTypeDriver.getAuxVectorSize(srcDataMax);
+                    newAuxSize = columnTypeDriver.getAuxVectorSize(srcDataPhysBaseRows + srcDataMax);
                     srcAuxAddr = mapRW(ff, srcFixFd, newAuxSize, MemoryTag.MMAP_O3);
                     ff.madvise(srcAuxAddr, newAuxSize, Files.POSIX_MADV_SEQUENTIAL);
 
-                    srcDataSize = columnTypeDriver.getDataVectorSizeAt(srcAuxAddr, srcDataMax - 1);
+                    srcDataSize = columnTypeDriver.getDataVectorSizeAt(srcAuxAddr, srcDataPhysBaseRows + srcDataMax - 1);
                     srcDataAddr = srcDataSize > 0 ? mapRO(ff, srcVarFd, srcDataSize, MemoryTag.MMAP_O3) : 0;
                     ff.madvise(srcDataAddr, srcDataSize, Files.POSIX_MADV_SEQUENTIAL);
                 }
@@ -1304,6 +1319,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long timestampMin,
             long partitionTimestamp,
             long srcDataTop,
+            long srcDataPhysBaseRows,
             long srcDataMax,
             int indexBlockCapacity,
             long srcTimestampFd,
@@ -1333,13 +1349,13 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
 
             // A zero-copy split suffix child appends at the true tail of the shared donor file:
-            // file rows = logical rows + partitionTop (same convention as appendFixColumn).
-            // partitionTop is 0 for a normal partition, keeping all math below byte-identical.
-            final long partitionTop = tableWriter.getPartitionTopByTimestamp(partitionTimestamp);
-            final long srcDataFileRows = srcDataMax + partitionTop - srcDataTop;
+            // file rows = logical rows + srcDataPhysBaseRows - srcDataTop, where srcDataPhysBaseRows
+            // is the per-column physical base of the shared region (0 for a normal partition and for
+            // columns whose files are local to the child, keeping all math below byte-identical).
+            final long srcDataFileRows = srcDataMax + srcDataPhysBaseRows - srcDataTop;
 
             long o3DataSize = columnTypeDriver.getDataVectorSize(srcOooAuxAddr, srcOooLo, srcOooHi);
-            dstAuxSize = columnTypeDriver.getAuxVectorSize(dstRowCount + partitionTop);
+            dstAuxSize = columnTypeDriver.getAuxVectorSize(dstRowCount + srcDataPhysBaseRows);
 
             if (dstAuxMem == null || dstAuxMem.getAppendAddressSize() < dstAuxSize || dstDataMem.getAppendAddressSize() < o3DataSize) {
                 assert dstAuxMem == null || dstAuxMem.getAppendOffset() - columnTypeDriver.getMinAuxVectorSize() == columnTypeDriver.getAuxVectorOffset(srcDataFileRows);
@@ -1625,6 +1641,16 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 );
                 break;
             case OPEN_LAST_PARTITION_FOR_MERGE:
+                // On a zero-copy suffix child the writer-supplied column top is shared-file-relative
+                // for columns born before the child: translate it into the child-logical top and the
+                // physical base rows of the column's shared file region.
+                long srcDataPhysBaseRows = 0;
+                final long columnPartitionTop = tableWriter.getPartitionTopByTimestamp(oldPartitionTimestamp, columnIndex);
+                if (columnPartitionTop > 0) {
+                    final long rawColumnTop = tableWriter.getColumnTop(oldPartitionTimestamp, columnIndex, columnPartitionTop + srcDataMax);
+                    srcDataTop = Math.min(srcDataMax, Math.max(0, rawColumnTop - columnPartitionTop));
+                    srcDataPhysBaseRows = Math.max(0, columnPartitionTop - rawColumnTop);
+                }
                 mergeLastPartition(
                         pathToNewPartition,
                         pplen,
@@ -1642,6 +1668,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         timestampMin,
                         partitionTimestamp,
                         srcDataTop,
+                        srcDataPhysBaseRows,
                         srcDataMax,
                         prefixType,
                         prefixLo,
@@ -1819,6 +1846,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long timestampMin,
             long partitionTimestamp, // <- pass thru
             long srcDataTop,
+            long srcDataPhysBaseRows,
+            long dstIndexAdjustRows,
             long srcDataMax,
             int indexBlockCapacity,
             long srcTimestampFd,
@@ -1846,15 +1875,15 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         final int shl = ColumnType.pow2SizeOf(columnType);
         final FilesFacade ff = tableWriter.getFilesFacade();
         // A zero-copy split suffix child appends at the true tail of the shared donor file: the dst byte offset
-        // and mapped size widen by partitionTop rows so file_row = srcDataMax + partitionTop - srcDataTop. The
-        // index row-id adjust (dstIndexAdjust) stays srcDataTop, so stored row ids are PHYSICAL (logical + P),
-        // matching the partition-top-aware index reader. partitionTop is 0 for a normal partition (byte-identical).
-        final long partitionTop = tableWriter.getPartitionTopByTimestamp(partitionTimestamp);
+        // and mapped size widen by srcDataPhysBaseRows (the per-column physical base of the shared region) so
+        // file_row = srcDataMax + srcDataPhysBaseRows - srcDataTop. The index row-id adjust (dstIndexAdjustRows)
+        // is the raw donor-relative column top, so stored row ids are PHYSICAL (logical + P), matching the
+        // partition-top-aware index reader. Both are 0-neutral for a normal partition (byte-identical).
 
         dstFixAddr = 0;
-        dstFixSize = (dstLen + partitionTop) << shl;
+        dstFixSize = (dstLen + srcDataPhysBaseRows) << shl;
         try {
-            dstFixOffset = (srcDataMax + partitionTop - srcDataTop) << shl;
+            dstFixOffset = (srcDataMax + srcDataPhysBaseRows - srcDataTop) << shl;
             if (dstFixMem == null || dstFixMem.getAppendAddressSize() < dstFixSize) {
                 // Area we want to write is not mapped
                 dstFixAddr = mapRW(ff, Math.abs(dstFixFd), dstFixSize, MemoryTag.MMAP_O3);
@@ -1866,7 +1895,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 dstFixSize = -dstFixSize;
             }
             dstIndexOffset = dstFixOffset;
-            dstIndexAdjust = srcDataTop;
+            dstIndexAdjust = dstIndexAdjustRows;
             dstFixFileOffset = dstFixOffset;
 
             if (indexBlockCapacity > -1 && !indexWriter.isOpen()) {
@@ -1996,33 +2025,46 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
     ) {
         long dstFixFd = 0;
         long dstVarFd = 0;
+        long srcDataPhysBaseRows = 0;
+        long dstIndexAdjustRows = srcDataTop;
         final FilesFacade ff = tableWriter.getFilesFacade();
-        if (srcDataTop == -1) {
-            try {
+        try {
+            final long columnPartitionTop = tableWriter.getPartitionTopByTimestamp(oldPartitionTimestamp, columnIndex);
+            if (srcDataTop == -1 || columnPartitionTop > 0) {
                 // When partition is split, it's column top remains same.
                 // On writing to the split partition second time the column top can be bigger than the partition.
                 // Trim column top to partition top.
-                srcDataTop = Math.min(srcDataMax, tableWriter.getColumnTop(oldPartitionTimestamp, columnIndex, srcDataMax));
+                // On a zero-copy suffix child the _cv record is shared-file-relative for columns born
+                // before the child (columnPartitionTop > 0): translate it into the child-logical top
+                // and the physical base rows of the column's shared file region. The index row-id
+                // adjust stays the raw shared-file-relative top so stored row ids are PHYSICAL (logical + P).
+                final long rawColumnTop = tableWriter.getColumnTop(oldPartitionTimestamp, columnIndex, columnPartitionTop + srcDataMax);
+                srcDataTop = Math.min(srcDataMax, Math.max(0, rawColumnTop - columnPartitionTop));
+                srcDataPhysBaseRows = Math.max(0, columnPartitionTop - rawColumnTop);
+                dstIndexAdjustRows = srcDataTop + columnPartitionTop - srcDataPhysBaseRows;
                 if (srcDataTop == srcDataMax) {
-                    Unsafe.putLong(colTopSinkAddr, srcDataMax);
+                    // Column has no data in this partition yet: the first write creates local files,
+                    // and the recorded top stays in shared-file coordinates for gate-true columns
+                    // (columnPartitionTop is 0 otherwise, keeping the value logical).
+                    Unsafe.putLong(colTopSinkAddr, columnPartitionTop + srcDataMax);
                 }
-            } catch (Throwable e) {
-                LOG.error().$("append mid partition error 1 [table=").$(tableWriter.getTableToken())
-                        .$(", e=").$(e)
-                        .I$();
-                freeTimestampIndex(
-                        columnCounter,
-                        0,
-                        0,
-                        srcTimestampFd,
-                        srcTimestampAddr,
-                        srcTimestampSize,
-                        tableWriter,
-                        ff,
-                        CairoException.isCairoOomError(e)
-                );
-                throw e;
             }
+        } catch (Throwable e) {
+            LOG.error().$("append mid partition error 1 [table=").$(tableWriter.getTableToken())
+                    .$(", e=").$(e)
+                    .I$();
+            freeTimestampIndex(
+                    columnCounter,
+                    0,
+                    0,
+                    srcTimestampFd,
+                    srcTimestampAddr,
+                    srcTimestampSize,
+                    tableWriter,
+                    ff,
+                    CairoException.isCairoOomError(e)
+            );
+            throw e;
         }
 
         final long dstRowCount = srcOooHi - srcOooLo + 1 + srcDataMax - srcDataTop;
@@ -2062,6 +2104,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     timestampMin,
                     partitionTimestamp,
                     srcDataTop,
+                    srcDataPhysBaseRows,
                     srcDataMax,
                     indexBlockCapacity,
                     srcTimestampFd,
@@ -2138,6 +2181,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     timestampMin,
                     partitionTimestamp,
                     srcDataTop,
+                    srcDataPhysBaseRows,
+                    dstIndexAdjustRows,
                     srcDataMax,
                     indexBlockCapacity,
                     srcTimestampFd,
@@ -2440,6 +2485,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long oooPartitionHi,
             long srcDataMax,
             long srcDataTop,
+            long srcDataPhysBaseRows,
             long srcDataFixFd,
             long srcTimestampFd,
             long srcTimestampAddr,
@@ -2466,6 +2512,10 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long columnNameTxn,
             long partitionUpdateSinkAddr
     ) {
+        // A column with a child-logical top cannot simultaneously have a shared physical base:
+        // effTop > 0 implies the donor top lands inside the child (base 0), and base > 0 implies
+        // the shared data covers the child's first row (top 0).
+        assert srcDataPhysBaseRows == 0 || srcDataTop == 0;
         int partCount = 0;
         long dstFixAppendOffset1;
         long srcDataFixSize = 0;
@@ -2539,8 +2589,12 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     }
                 }
             } else {
-                srcDataFixSize = srcDataMax << shl;
-                srcDataFixOffset = 0;
+                // A zero-copy suffix child's rows live at file rows [srcDataPhysBaseRows,
+                // srcDataPhysBaseRows + srcDataMax) of the shared donor file: widen the mapping by
+                // the base and point srcDataFixOffset at the child's first row. Both are 0-neutral
+                // for a normal partition.
+                srcDataFixSize = (srcDataPhysBaseRows + srcDataMax) << shl;
+                srcDataFixOffset = srcDataPhysBaseRows << shl;
                 if (srcDataFixSize > 0) {
                     srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize, MemoryTag.MMAP_O3);
                     ff.madvise(srcDataFixAddr, srcDataFixSize, Files.POSIX_MADV_SEQUENTIAL);
@@ -2707,6 +2761,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long oooPartitionMin,
             long oooPartitionHi,
             long srcDataTop,
+            long srcDataPhysBaseRows,
             long srcDataMax,
             int prefixType,
             long prefixLo,
@@ -2755,6 +2810,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     oooPartitionMin,
                     oooPartitionHi,
                     srcDataTop,
+                    srcDataPhysBaseRows,
                     srcDataMax,
                     prefixType,
                     prefixLo,
@@ -2801,6 +2857,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     oooPartitionHi,
                     srcDataMax,
                     srcDataTop,
+                    srcDataPhysBaseRows,
                     -activeFixFd,
                     srcTimestampFd,
                     srcTimestampAddr,
@@ -2878,27 +2935,34 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long partitionUpdateSinkAddr
     ) {
         final FilesFacade ff = tableWriter.getFilesFacade();
+        long srcDataPhysBaseRows = 0;
         // not set, we need to check file existence and read
-        if (srcDataTop == -1) {
-            try {
-                srcDataTop = Math.min(tableWriter.getColumnTop(oldPartitionTimestamp, columnIndex, srcDataMax), srcDataMax);
-            } catch (Throwable e) {
-                LOG.error().$("merge mid partition error 1 [table=").$(tableWriter.getTableToken())
-                        .$(", e=").$(e)
-                        .I$();
-                freeTimestampIndex(
-                        columnCounter,
-                        timestampMergeIndexAddr,
-                        timestampMergeIndexSize,
-                        srcTimestampFd,
-                        srcTimestampAddr,
-                        srcTimestampSize,
-                        tableWriter,
-                        ff,
-                        CairoException.isCairoOomError(e)
-                );
-                throw e;
+        try {
+            final long columnPartitionTop = tableWriter.getPartitionTopByTimestamp(oldPartitionTimestamp, columnIndex);
+            if (srcDataTop == -1 || columnPartitionTop > 0) {
+                // On a zero-copy suffix child the _cv record is shared-file-relative for columns born
+                // before the child (columnPartitionTop > 0): translate it into the child-logical top
+                // and the physical base rows of the column's shared file region.
+                final long rawColumnTop = tableWriter.getColumnTop(oldPartitionTimestamp, columnIndex, columnPartitionTop + srcDataMax);
+                srcDataTop = Math.min(srcDataMax, Math.max(0, rawColumnTop - columnPartitionTop));
+                srcDataPhysBaseRows = Math.max(0, columnPartitionTop - rawColumnTop);
             }
+        } catch (Throwable e) {
+            LOG.error().$("merge mid partition error 1 [table=").$(tableWriter.getTableToken())
+                    .$(", e=").$(e)
+                    .I$();
+            freeTimestampIndex(
+                    columnCounter,
+                    timestampMergeIndexAddr,
+                    timestampMergeIndexSize,
+                    srcTimestampFd,
+                    srcTimestampAddr,
+                    srcTimestampSize,
+                    tableWriter,
+                    ff,
+                    CairoException.isCairoOomError(e)
+            );
+            throw e;
         }
 
         long srcDataFixFd = 0;
@@ -2944,6 +3008,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     oooPartitionMin,
                     oooPartitionHi,
                     srcDataTop,
+                    srcDataPhysBaseRows,
                     srcDataMax,
                     prefixType,
                     prefixLo,
@@ -3014,6 +3079,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     oooPartitionHi,
                     srcDataMax,
                     srcDataTop,
+                    srcDataPhysBaseRows,
                     srcDataFixFd,
                     srcTimestampFd,
                     srcTimestampAddr,

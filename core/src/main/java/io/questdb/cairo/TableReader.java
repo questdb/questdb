@@ -381,7 +381,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                     !indexReader.isOpen()
                             || indexReader.getColumnTxn() != columnNameTxn
                             || indexReader.getPartitionTxn() != partitionTxn
-                            || indexReader.getPartitionTop() != getPartitionTop(partitionIndex)
+                            || indexReader.getPartitionTop() != getPartitionTop(partitionIndex, columnIndex)
             ) {
                 int plen = path.size();
                 try {
@@ -391,13 +391,14 @@ public class TableReader implements Closeable, SymbolTableSource {
                             metadata.getColumnName(columnIndex),
                             columnNameTxn,
                             partitionTxn,
-                            // DONOR/physical column top (unchanged); partitionTop is passed separately and the
-                            // reader shifts its query window into donor .k/.v space by +partitionTop.
+                            // DONOR/physical column top (unchanged); the per-column partition top is passed
+                            // separately and the reader shifts its query window into donor .k/.v space by
+                            // +partitionTop (0 for a column whose index files are child-local).
                             getColumnTop(columnBase, columnIndex),
                             metadata,
                             columnVersionReader,
                             partitionTimestamp,
-                            getPartitionTop(partitionIndex)
+                            getPartitionTop(partitionIndex, columnIndex)
                     );
                 } finally {
                     path.trimTo(plen);
@@ -556,6 +557,22 @@ public class TableReader implements Closeable, SymbolTableSource {
      */
     public long getPartitionTop(int partitionIndex) {
         return openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_PARTITION_TOP);
+    }
+
+    /**
+     * Per-column partition top: the donor-file shift applies only to columns born before the suffix
+     * child (their files are hardlinked from the donor and their _cv record is donor-file-relative).
+     * A column added at or after the child's timestamp has local files addressed from file row 0,
+     * so its shift is 0. Also 0 for every contiguous partition.
+     */
+    public long getPartitionTop(int partitionIndex, int columnIndex) {
+        final long partitionTop = getPartitionTop(partitionIndex);
+        if (partitionTop == 0) {
+            return 0;
+        }
+        final long partitionTimestamp = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE);
+        final long colTopPartTs = columnVersionReader.getColumnTopPartitionTimestamp(metadata.getWriterIndex(columnIndex));
+        return colTopPartTs < partitionTimestamp ? partitionTop : 0;
     }
 
     public int getPartitionedBy() {
@@ -1077,13 +1094,14 @@ public class TableReader implements Closeable, SymbolTableSource {
                         metadata.getColumnName(columnIndex),
                         columnNameTxn,
                         partitionTxn,
-                        // DONOR/physical column top (unchanged); partitionTop passed separately.
+                        // DONOR/physical column top (unchanged); the per-column partition top is
+                        // passed separately (0 for a column whose index files are child-local).
                         getColumnTop(columnBase, columnIndex),
                         metadata,
                         columnVersionReader,
                         partitionTimestamp,
                         txn,
-                        getPartitionTop(partitionIndex)
+                        getPartitionTop(partitionIndex, columnIndex)
                 );
                 if (direction == IndexReader.DIR_BACKWARD) {
                     indexes.setQuick(globalIndex, reader);

@@ -225,8 +225,19 @@ public class ConvertOperatorImpl implements Closeable {
                         final long maxRow = tableWriter.getPartitionSize(partitionIndex);
 
                         final long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, existingColIndex);
+                        // A zero-copy split suffix child hardlinks the donor's column files: a
+                        // donor-shared column's _cv record is in shared-file coordinates and its
+                        // rows live at file_row = logical + partitionTop - columnTop. Read the
+                        // source through that shift (skipRows), and record the new child-local,
+                        // 0-based file's top as logicalColumnTop + partitionTop so the shared-file
+                        // convention resolves it as file_row = logical - logicalColumnTop.
+                        final long srcShift = columnTop > -1
+                                ? tableWriter.getPartitionTopByTimestamp(partitionTimestamp, existingColIndex)
+                                : 0;
+                        final long logicalColumnTop = Math.max(0, columnTop - srcShift);
                         if (columnTop > -1) {
-                            long rowCount = maxRow - columnTop;
+                            final long skipRows = Math.max(0, srcShift - columnTop);
+                            long rowCount = maxRow - logicalColumnTop;
                             long partitionNameTxn = tableWriter.getPartitionNameTxn(partitionIndex);
 
                             if (rowCount > 0) {
@@ -262,7 +273,12 @@ public class ConvertOperatorImpl implements Closeable {
                                     throw th;
                                 }
 
-                                if (dispatchConvertColumnPartitionTask(
+                                if (skipRows > 0) {
+                                    // Hardlink split child: ColumnTask has no free slot for the
+                                    // source shift, so convert this partition synchronously.
+                                    cthConvertPartitionHandler(
+                                            existingType, newType, srcFixFd, srcVarFd, dstFixFd, dstVarFd, partitionTimestamp, rowCount, skipRows);
+                                } else if (dispatchConvertColumnPartitionTask(
                                         existingType, newType, srcFixFd, srcVarFd, dstFixFd, dstVarFd, rowCount, partitionTimestamp)
                                 ) {
                                     queueCount++;
@@ -280,11 +296,14 @@ public class ConvertOperatorImpl implements Closeable {
                                     partitionNameTxn);
                             partitionUpdated++;
                         }
-                        if (columnTop != tableWriter.getColumnTop(partitionTimestamp, columnIndex, -1)) {
+                        final long newColumnTop = columnTop > -1
+                                ? logicalColumnTop + tableWriter.getPartitionTopByTimestamp(partitionTimestamp, columnIndex)
+                                : maxRow;
+                        if (newColumnTop != tableWriter.getColumnTop(partitionTimestamp, columnIndex, -1)) {
                             long partTs = tableWriter.getPartitionBy() != PartitionBy.NONE
                                     ? partitionTimestamp
                                     : TxReader.DEFAULT_PARTITION_TIMESTAMP;
-                            columnVersionWriter.upsertColumnTop(partTs, columnIndex, columnTop > -1 ? columnTop : maxRow);
+                            columnVersionWriter.upsertColumnTop(partTs, columnIndex, newColumnTop);
                         }
                     } catch (Throwable th) {
                         LOG.error().$("error converting column [at=").$(tableWriter.getTableToken())
@@ -321,12 +340,26 @@ public class ConvertOperatorImpl implements Closeable {
             long partitionTimestamp,
             long rowCount
     ) {
+        cthConvertPartitionHandler(existingType, newType, srcFixFd, srcVarFd, dstFixFd, dstVarFd, partitionTimestamp, rowCount, 0);
+    }
+
+    private void cthConvertPartitionHandler(
+            int existingType,
+            int newType,
+            long srcFixFd,
+            long srcVarFd,
+            long dstFixFd,
+            long dstVarFd,
+            long partitionTimestamp,
+            long rowCount,
+            long skipRows
+    ) {
         try {
             if (asyncProcessingErrorCount.get() == 0) {
 
                 SymbolTable symbolTable = ColumnType.isSymbol(existingType) ? symbolMapReader.newSymbolTableView() : null;
                 boolean ok = ColumnTypeConverter.convertColumn(
-                        0,
+                        skipRows,
                         rowCount,
                         existingType,
                         srcFixFd,

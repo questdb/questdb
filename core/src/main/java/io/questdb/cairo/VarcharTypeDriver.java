@@ -546,10 +546,11 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         if (rowLo > rowHi) {
             return 0;
         }
-        if (rowLo > 0) {
-            return getDataVectorSizeAt(auxMemAddr, rowHi) - getDataVectorOffset(auxMemAddr, rowLo);
-        }
-        return getDataVectorSizeAt(auxMemAddr, rowHi);
+        // Always subtract rowLo's data offset instead of assuming it is 0. A zero-copy split
+        // suffix child reads through an aux vector based at its own row 0 (a non-zero file row
+        // of the shared donor file), so rowLo's data offset is the donor's absolute byte offset,
+        // not 0. For a normal partition rowLo's offset is 0, so this is unchanged there.
+        return getDataVectorSizeAt(auxMemAddr, rowHi) - getDataVectorOffset(auxMemAddr, rowLo);
     }
 
     @Override

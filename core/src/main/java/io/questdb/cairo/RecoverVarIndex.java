@@ -49,6 +49,7 @@ public class RecoverVarIndex extends RebuildColumnBase {
             CharSequence columnName,
             long partitionNameTxn,
             long partitionSize,
+            long partitionTop,
             long partitionTimestamp,
             int timestampType,
             int partitionBy,
@@ -90,7 +91,14 @@ public class RecoverVarIndex extends RebuildColumnBase {
                 LOG.info().$("writing: ").$(path).$();
 
                 try (MemoryCMARW rwMem = new MemoryCMARWImpl(ff, path.$(), 8 * 1024 * 1024, 0, MemoryTag.MMAP_DEFAULT, 0)) {
-                    long expectedRowCount = partitionSize - columnTop;
+                    // A zero-copy split suffix child shares the donor file: the .i must cover
+                    // the whole shared file, i.e. partitionTop + partitionSize - columnTop rows
+                    // (the shared-file convention; both extra terms are 0 for a contiguous partition).
+                    final long colPartitionTop = partitionTop > 0
+                            && columnVersionReader.getColumnTopPartitionTimestamp(columnWriterIndex) < partitionTimestamp
+                            ? partitionTop
+                            : 0;
+                    long expectedRowCount = colPartitionTop + partitionSize - columnTop;
                     LOG.info().$("data file length: ").$(maxOffset).$(", expected record count: ").$(expectedRowCount).$();
 
                     // index

@@ -1006,7 +1006,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 CharSequence timestampColName = metadata.getColumnMetadata(metadata.getTimestampIndex()).getColumnName();
                 if (partitionSize > -1L) {
                     // read detachedMinTimestamp and detachedMaxTimestamp
-                    readPartitionMinMaxTimestamps(timestamp, detachedPath.trimTo(detachedRootLen), timestampColName, -1L, partitionSize);
+                    readPartitionMinMaxTimestamps(timestamp, detachedPath.trimTo(detachedRootLen), timestampColName, -1L, 0, partitionSize);
                 } else {
                     // read size, detachedMinTimestamp and detachedMaxTimestamp
                     partitionSize = readPartitionSizeMinMaxTimestamps(timestamp, detachedPath.trimTo(detachedRootLen), timestampColName);
@@ -1421,6 +1421,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         assert indexer != null;
                         indexer.getWriter().setCurrentTableTxn(txWriter.getTxn());
                         indexer.configureFollowerAndWriter(path.trimTo(plen), columnName, columnNameTxn, getPrimaryColumn(columnIndex), columnTop, partitionTimestamp, partitionNameTxn);
+                        // configureFollowerAndWriter resets partitionTop; when the last partition is a
+                        // zero-copy split suffix child, re-apply the shift for donor-shared columns so
+                        // subsequent active-partition indexing stores physical row ids.
+                        indexer.setPartitionTop(getPartitionTopByTimestamp(partitionTimestamp, columnIndex));
                         configureCoveringIfNeeded(indexer, columnIndex, partitionTimestamp);
                     }
                 }
@@ -2179,7 +2183,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     long txn = txWriter.getPartitionNameTxn(partitionIndex);
                     setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, activePartitionTs, txn);
                     try {
-                        readPartitionMinMaxTimestamps(activePartitionTs, path, metadata.getColumnName(metadata.getTimestampIndex()), parquetFileSize, activePartitionRows);
+                        readPartitionMinMaxTimestamps(activePartitionTs, path, metadata.getColumnName(metadata.getTimestampIndex()), parquetFileSize, getPartitionTopByTimestamp(activePartitionTs, metadata.getTimestampIndex()), activePartitionRows);
                         maxTimestamp = attachMaxTimestamp;
                     } finally {
                         path.trimTo(pathSize);
@@ -2327,6 +2331,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return txWriter.isPartitionParquetByPartitionTimestamp(partitionTimestamp)
                 ? 0
                 : txWriter.getPartitionTopByTimestamp(partitionTimestamp);
+    }
+
+    // Per-column partition top: the shared-donor-file shift applies only to columns born before the
+    // suffix child (their _cv record is donor-file-relative). A column added at or after the child's
+    // timestamp has local files and a local column top, so its shift is 0.
+    public long getPartitionTopByTimestamp(long partitionTimestamp, int columnIndex) {
+        final long partitionTop = getPartitionTopByTimestamp(partitionTimestamp);
+        return partitionTop > 0
+                && columnVersionWriter.getColumnTopPartitionTimestamp(columnIndex) < partitionTimestamp
+                ? partitionTop
+                : 0;
     }
 
     public long getPartitionO3SplitThreshold() {
@@ -3030,6 +3045,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                         lastOpenPartitionTs,
                                         lastOpenPartitionTxnName
                                 );
+                                // configureFollowerAndWriter resets partitionTop; when the last partition
+                                // is a zero-copy split suffix child, re-apply the shift for donor-shared
+                                // columns so subsequent active-partition indexing stores physical row ids.
+                                indexer.setPartitionTop(getPartitionTopByTimestamp(lastOpenPartitionTs, index));
                                 configureCoveringIfNeeded(indexer, index, lastOpenPartitionTs);
                             }
                         } finally {
@@ -4063,7 +4082,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             } else if (allowPartial && lagMinTimestamp <= commitToTimestamp) {
                 // Find the max row which can be marked as committed in the last timestamp
                 long lagRows = txWriter.getLagRowCount();
-                long timestampMapOffset = txWriter.getTransientRowCount() * Long.BYTES;
+                // the lag physically sits at file_row = transientRowCount + partitionTop of the
+                // (possibly donor-shared) last partition file, see cthAppendWalColumnToLastPartition
+                long timestampMapOffset = (txWriter.getTransientRowCount() + getLastOpenPartitionTopForColumn(metadata.getTimestampIndex())) * Long.BYTES;
                 long timestampMapSize = lagRows * Long.BYTES;
                 long timestampMaAddr = mapAppendColumnBuffer(
                         getPrimaryColumn(metadata.getTimestampIndex()),
@@ -4131,7 +4152,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final int shl = ColumnType.pow2SizeOf(ColumnType.SYMBOL);
             for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
                 if (metadata.getColumnType(i) == ColumnType.SYMBOL && metadata.isColumnIndexed(i)) {
-                    getPrimaryColumn(i).jumpTo(newTransientRowCount << shl);
+                    // on a zero-copy split suffix child the shared donor file holds the child's
+                    // rows at file_row = logical + partitionTop (0 for normal partitions)
+                    getPrimaryColumn(i).jumpTo((newTransientRowCount + getLastOpenPartitionTopForColumn(i)) << shl);
                 }
             }
             // Configure covering on the posting writers BEFORE indexing. A
@@ -4180,7 +4203,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private boolean assertColumnPositionIncludeWalLag() {
         return txWriter.getLagRowCount() == 0
-                || columns.get(getPrimaryColumnIndex(metadata.getTimestampIndex())).getAppendOffset() == (txWriter.getTransientRowCount() + txWriter.getLagRowCount()) * Long.BYTES;
+                || columns.get(getPrimaryColumnIndex(metadata.getTimestampIndex())).getAppendOffset()
+                == (txWriter.getTransientRowCount() + getLastOpenPartitionTopForColumn(metadata.getTimestampIndex()) + txWriter.getLagRowCount()) * Long.BYTES;
     }
 
     private void attachPartitionCheckFilesMatchFixedColumn(
@@ -5459,7 +5483,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             MemoryCR o3srcAuxMem = o3Columns.get(getSecondaryColumnIndex(columnIndex));
             MemoryMA dstDataMem = columns.get(getPrimaryColumnIndex(columnIndex));
             MemoryMA dstAuxMem = columns.get(getSecondaryColumnIndex(columnIndex));
-            long dstRowCount = txWriter.getTransientRowCount() - getColumnTop(columnIndex) + existingLagRows;
+            // A zero-copy split suffix child appends at the true tail of the shared donor file:
+            // file_row = logical + partitionTop - columnTop
+            long dstRowCount = txWriter.getTransientRowCount() + getLastOpenPartitionTopForColumn(columnIndex) - getColumnTop(columnIndex) + existingLagRows;
 
             long dataVectorCopySize;
             long o3srcDataOffset;
@@ -5595,7 +5621,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final int shl = ColumnType.pow2SizeOf(columnType);
             destMem.jumpTo(mergeCount << shl);
             final long srcMapped = mappedMem.addressOf(mappedRowLo << shl) - (mappedRowLo << shl);
-            long lagMemOffset = lagRows > 0 ? (txWriter.getTransientRowCount() - getColumnTop(columnIndex)) << shl : 0;
+            long lagMemOffset = lagRows > 0
+                    ? (txWriter.getTransientRowCount() + getLastOpenPartitionTopForColumn(columnIndex) - getColumnTop(columnIndex)) << shl
+                    : 0;
             long lagAddr = mapAppendColumnBuffer(lagMem, lagMemOffset, lagRows << shl, false);
             try {
                 long srcLag = Math.abs(lagAddr);
@@ -5695,7 +5723,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             final long src1DataSize = columnTypeDriver.getDataVectorSize(srcMappedAuxAddr, mappedRowLo, mappedRowHi - 1);
             assert o3dataMem.size() >= src1DataSize;
-            final long lagAuxOffset = lagRows > 0 ? columnTypeDriver.getAuxVectorOffset(txWriter.getTransientRowCount() - getColumnTop(columnIndex)) : 0;
+            final long lagAuxOffset = lagRows > 0
+                    ? columnTypeDriver.getAuxVectorOffset(txWriter.getTransientRowCount() + getLastOpenPartitionTopForColumn(columnIndex) - getColumnTop(columnIndex))
+                    : 0;
             final long lagAuxSize = columnTypeDriver.getAuxVectorSize(lagRows);
             final long signedLagAuxAddr = lagRows > 0 ? mapAppendColumnBuffer(lagAuxMem, lagAuxOffset, lagAuxSize, false) : 0;
 
@@ -5778,12 +5808,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 // A zero-copy split suffix child stores its rows in the shared donor file at
                 // file_row = logical + partitionTop - columnTop (see setColumnAppendPosition); the
-                // uncommitted tail must be read back from the same physical offset. partitionTop applies
-                // only to columns shared from the donor (born before this child); 0 for normal partitions.
-                final long colPartitionTop = lastOpenPartitionTop > 0
-                        && columnVersionWriter.getColumnTopPartitionTimestamp(columnIndex) < lastOpenPartitionTs
-                        ? lastOpenPartitionTop : 0;
-                final long committedRowCount = committedTransientRowCount + colPartitionTop - columnTop;
+                // uncommitted tail must be read back from the same physical offset.
+                final long committedRowCount = committedTransientRowCount + getLastOpenPartitionTopForColumn(columnIndex) - columnTop;
                 if (ColumnType.isVarSize(columnType)) {
                     final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
                     final MemoryMA colAuxMem = getSecondaryColumn(columnIndex);
@@ -5859,10 +5885,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 MemoryMA srcDataMem = getPrimaryColumn(columnIndex);
                 // this cannot have "top", but on a zero-copy split suffix child the shared donor file
                 // holds the child's rows at file_row = logical + partitionTop (0 for normal partitions)
-                final long tsPartitionTop = lastOpenPartitionTop > 0
-                        && columnVersionWriter.getColumnTopPartitionTimestamp(columnIndex) < lastOpenPartitionTs
-                        ? lastOpenPartitionTop : 0;
-                long srcFixOffset = (committedTransientRowCount + tsPartitionTop) << shl;
+                long srcFixOffset = (committedTransientRowCount + getLastOpenPartitionTopForColumn(columnIndex)) << shl;
                 long srcFixLen = transientRowsAdded << shl;
                 long alignedExtraLen;
                 long address = srcDataMem.map(srcFixOffset, srcFixLen);
@@ -6110,7 +6133,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                         if (!ColumnType.isVarSize(columnType)) {
                             int shl = ColumnType.pow2SizeOf(columnType);
-                            long lagMemOffset = lagRows > 0 ? (txWriter.getTransientRowCount() - getColumnTop(i)) << shl : 0L;
+                            long lagMemOffset = lagRows > 0
+                                    ? (txWriter.getTransientRowCount() + getLastOpenPartitionTopForColumn(i) - getColumnTop(i)) << shl
+                                    : 0L;
                             long lagMapSize = lagRows << shl;
 
                             // Map column buffers for lag rows for deduplication
@@ -6135,7 +6160,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             DedupColumnCommitAddresses.setColAddressValues(addr, o3ColumnVarAuxAddr, o3ColumnVarDataAddr, o3ColumnVarDataSize);
 
                             if (lagRows > 0) {
-                                long roLo = txWriter.getTransientRowCount() - getColumnTop(i);
+                                long roLo = txWriter.getTransientRowCount() + getLastOpenPartitionTopForColumn(i) - getColumnTop(i);
 
                                 long lagAuxOffset = driver.getAuxVectorOffset(roLo);
                                 long lagAuxSize = driver.getAuxVectorSize(lagRows);
@@ -6519,7 +6544,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 newTransientRowCount = txWriter.getPartitionSize(prevIndex);
                 try {
                     setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, prevTimestamp, txWriter.getPartitionNameTxn(prevIndex));
-                    readPartitionMinMaxTimestamps(prevTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), parquetFileSize, newTransientRowCount);
+                    readPartitionMinMaxTimestamps(prevTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), parquetFileSize, getPartitionTopByTimestamp(prevTimestamp, metadata.getTimestampIndex()), newTransientRowCount);
                     nextMaxTimestamp = attachMaxTimestamp;
                 } finally {
                     path.trimTo(pathSize);
@@ -6533,7 +6558,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             txWriter.finishPartitionSizeUpdate(index == 0 ? Long.MAX_VALUE : txWriter.getMinTimestamp(), nextMaxTimestamp);
             txWriter.bumpTruncateVersion();
             columnVersionWriter.removePartition(timestamp);
-            columnVersionWriter.replaceInitialPartitionRecords(txWriter.getLastPartitionTimestamp(), txWriter.getTransientRowCount());
+            columnVersionWriter.replaceInitialPartitionRecords(
+                    txWriter.getLastPartitionTimestamp(),
+                    txWriter.getTransientRowCount(),
+                    getNewLastPartitionTop(txWriter.getLastPartitionTimestamp())
+            );
 
             // No need to truncate before, files to be deleted.
             closeActivePartition(false);
@@ -6842,6 +6871,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return deferredPostingSealPurgeTaskPool;
     }
 
+    // Per-column partition top of the last open partition: a zero-copy split suffix child
+    // stores its rows in the shared donor file at file_row = logical + partitionTop - columnTop.
+    // The shift applies only to columns shared from the donor (born before the child);
+    // 0 for columns added later and for normal partitions.
+    private long getLastOpenPartitionTopForColumn(int columnIndex) {
+        return lastOpenPartitionTop > 0
+                && columnVersionWriter.getColumnTopPartitionTimestamp(columnIndex) < lastOpenPartitionTs
+                ? lastOpenPartitionTop
+                : 0;
+    }
+
+    // Partition top (R2 of a zero-copy split suffix child; 0 otherwise) of a partition that is
+    // about to become the new last partition after removals. Parquet partitions have no top.
+    private long getNewLastPartitionTop(long partitionTimestamp) {
+        return txWriter.isPartitionParquetByPartitionTimestamp(partitionTimestamp)
+                ? 0
+                : txWriter.getPartitionTopByTimestamp(partitionTimestamp);
+    }
+
     private long getO3RowCount0() {
         return (masterRef - o3MasterRef + 1) / 2;
     }
@@ -7108,19 +7156,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         createDirsOrFail(ff, other, configuration.getMkDirMode());
         try {
             final long donorFullSize = txWriter.getPartitionRowCountByTimestamp(donorTs);
+            // When the donor is itself a suffix child (re-split), its LOCAL records (columns born
+            // at/after the donor) and its logical size are donor-local, not shared-file-relative:
+            // shift them by the donor's own partition top so the child's records are uniformly
+            // relative to the shared files it links (matching its composed slot-3 top).
+            final long donorPartitionTop = getPartitionTopByTimestamp(donorTs);
             for (int i = 0; i < columnCount; i++) {
                 final int columnType = metadata.getColumnType(i);
                 if (columnType < 0) {
                     continue; // dropped column
                 }
                 final long donorColumnTop = columnVersionWriter.getColumnTop(donorTs, i);
-                if (donorColumnTop < 0) {
-                    // Column not present in the donor partition: nothing to link, and the child inherits
-                    // the same absent state (no _cv record).
-                    continue;
-                }
                 final CharSequence columnName = metadata.getColumnName(i);
                 final long columnNameTxn = getColumnNameTxn(donorTs, i);
+                if (donorColumnTop < 0) {
+                    // Column not present in the donor partition: nothing to link. Record the donor's
+                    // physical end so the child reads an absent column (effective top == child row
+                    // count) instead of falling back to the ambiguous no-record default.
+                    columnVersionWriter.upsert(childTs, i, columnNameTxn, donorPartitionTop + donorFullSize);
+                    continue;
+                }
                 // Primary .d for every column; .i aux for var-size; .k/.v (+ posting aux) for indexed symbol.
                 linkFile(ff,
                         dFile(path.trimTo(srcDirLen), columnName, columnNameTxn),
@@ -7135,11 +7190,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // evict the child's entries from a shared file. buildSuffixChildBitmapIndexes() creates
                 // fresh independent bitmap indexes after this method returns, and creates empty posting
                 // index files that the posting seal sweep of this commit rebuilds.
-                // The child records the donor's FULL column top unchanged (NOT max(0, T - R2)); the caller
-                // stores R2 in slot 3 and the read path combines them. Record the donor's actual columnNameTxn
-                // (the file just linked), NOT the default, so a column whose txn moved (e.g. after UPDATE)
-                // still resolves to the hardlinked file in the child dir.
-                columnVersionWriter.upsert(childTs, i, columnNameTxn, donorColumnTop);
+                // The child records the donor's FULL column top in shared-file coordinates (NOT
+                // max(0, T - R2)); the caller stores the composed top in slot 3 and the read path
+                // combines them as file_row = logical + partitionTop - columnTop. A donor-LOCAL record
+                // (column born at/after the donor of a re-split) shifts by the donor's own top.
+                // Record the donor's actual columnNameTxn (the file just linked), NOT the default, so
+                // a column whose txn moved (e.g. after UPDATE) still resolves to the hardlinked file.
+                final boolean isDonorSharedRecord = donorPartitionTop > 0
+                        && columnVersionWriter.getColumnTopPartitionTimestamp(i) < donorTs;
+                columnVersionWriter.upsert(childTs, i, columnNameTxn, isDonorSharedRecord ? donorColumnTop : donorPartitionTop + donorColumnTop);
             }
         } catch (Throwable e) {
             // Partial-failure cleanup: remove the half-linked child dir before rethrowing so no orphan
@@ -7199,6 +7258,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
         } finally {
+            if (splitChildReindexer != null) {
+                // BitmapIndexWriter.close() truncates .k/.v to its cached append sizes; release the
+                // writer NOW while those sizes are current. Left open until TableWriter close, the
+                // stale truncation would chop off any index blocks the writer's own indexers append
+                // to the child in the meantime (O3 append into the child-as-last).
+                splitChildReindexer.releaseIndexWriter();
+            }
             path.trimTo(pathSize);
         }
     }
@@ -7304,6 +7370,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // set indexer up to continue functioning as normal
         indexer.getWriter().setCurrentTableTxn(txWriter.getTxn());
         indexer.configureFollowerAndWriter(path.trimTo(plen), columnName, columnNameTxn, getPrimaryColumn(columnIndex), columnTop, lastPartitionTs, lastPartitionNameTxn);
+        // configureFollowerAndWriter resets partitionTop; when the last partition is a zero-copy
+        // split suffix child, the fresh index must store PHYSICAL row ids for donor-shared columns
+        // (the index reader shifts its query window by +partitionTop for them).
+        indexer.setPartitionTop(getPartitionTopByTimestamp(lastPartitionTs, columnIndex));
         configureCoveringIfNeeded(indexer, columnIndex, lastPartitionTs);
         // Tag this seal's chain entry with the txn the upcoming
         // clearTodoAndCommitMeta will assign, so a recovery walk after a
@@ -8398,11 +8468,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                     if (!isParquet
                             && partitionIndexRaw > -1
-                            && txWriter.isPartitionDonorByRawIndex(partitionIndexRaw)
-                            && txWriter.getPartitionTopByRawIndex(partitionIndexRaw) == 0) {
-                        // The fresh-directory rewrite severed a prefix donor's inode sharing (the suffix
-                        // child keeps reading the old files through its own hardlinks): clear the stale
-                        // donor flag so future commits can in-place append to this partition again.
+                            && (txWriter.isPartitionDonorByRawIndex(partitionIndexRaw)
+                            || txWriter.getPartitionTopByRawIndex(partitionIndexRaw) > 0)) {
+                        // The fresh-directory rewrite severed this partition's inode sharing (other split
+                        // relatives keep reading the old files through their own hardlinks). Clear the
+                        // stale donor flag, and for a suffix child also the partition top: the rewrite
+                        // materialized a full private copy addressed from file row 0 with local column tops.
                         txWriter.resetPartitionTop(partitionIndexRaw / LONGS_PER_TX_ATTACHED_PARTITION);
                     }
 
@@ -8438,7 +8509,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 int newLastPartitionIndex = partIndex - 1;
                                 long newLastPartitionTimestamp = txWriter.getPartitionTimestampByIndex(newLastPartitionIndex);
                                 long newLastPartitionSize = txWriter.getPartitionSize(newLastPartitionIndex);
-                                columnVersionWriter.replaceInitialPartitionRecords(newLastPartitionTimestamp, newLastPartitionSize);
+                                columnVersionWriter.replaceInitialPartitionRecords(
+                                        newLastPartitionTimestamp,
+                                        newLastPartitionSize,
+                                        getNewLastPartitionTop(newLastPartitionTimestamp)
+                                );
 
                                 // If a split partition is removed, it may leave the previous partition
                                 // with column top sticking out of the partition size.
@@ -8520,7 +8595,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         long firstPartitionTimestamp = txWriter.getPartitionTimestampByIndex(0);
                         long partitionSize = txWriter.getPartitionSize(0);
                         setPathForNativePartition(path, timestampType, partitionBy, firstPartitionTimestamp, txWriter.getPartitionNameTxn(0));
-                        readPartitionMinMaxTimestamps(firstPartitionTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), -1, partitionSize);
+                        readPartitionMinMaxTimestamps(firstPartitionTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), -1, getPartitionTopByTimestamp(firstPartitionTimestamp, metadata.getTimestampIndex()), partitionSize);
                         txWriter.minTimestamp = attachMinTimestamp;
                     }
 
@@ -8529,7 +8604,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         long lastPartitionTimestamp = txWriter.getPartitionTimestampByIndex(lastPartitionIndex);
                         long partitionSize = txWriter.getPartitionSize(lastPartitionIndex);
                         setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, lastPartitionTimestamp, txWriter.getPartitionNameTxn(lastPartitionIndex));
-                        readPartitionMinMaxTimestamps(lastPartitionTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), -1, partitionSize);
+                        readPartitionMinMaxTimestamps(lastPartitionTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), -1, getPartitionTopByTimestamp(lastPartitionTimestamp, metadata.getTimestampIndex()), partitionSize);
                         txWriter.maxTimestamp = attachMaxTimestamp;
                     }
                 } finally {
@@ -8821,7 +8896,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         final long parquetFileSize = txWriter.getPartitionParquetFileSize(prevIndex);
                         try {
                             setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, prevTimestamp, txWriter.getPartitionNameTxn(prevIndex));
-                            readPartitionMinMaxTimestamps(prevTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), parquetFileSize, prevSize);
+                            readPartitionMinMaxTimestamps(prevTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), parquetFileSize, getPartitionTopByTimestamp(prevTimestamp, metadata.getTimestampIndex()), prevSize);
                             o3MoveUncommittedMaxTimestamp = attachMaxTimestamp;
                         } finally {
                             path.trimTo(pathSize);
@@ -9092,10 +9167,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // A zero-copy split suffix child indexes into the shared donor .k/.v at PHYSICAL row
                         // ids: the indexer shifts the logical range by +partitionTop. Only columns shared from
                         // the donor carry it (a column added after the child is child-local; see reloadColumnAt).
-                        final long colPartitionTop = lastOpenPartitionTop > 0
-                                && columnVersionWriter.getColumnTopPartitionTimestamp(i) < lastOpenPartitionTs
-                                ? lastOpenPartitionTop : 0;
-                        indexer.setPartitionTop(colPartitionTop);
+                        indexer.setPartitionTop(getLastOpenPartitionTopForColumn(i));
                         configureCoveringIfNeeded(indexer, i, lastOpenPartitionTs);
                         // Recover from a crash that left .pk's sealTxn advanced
                         // past what _txn committed. finishO3Commit runs
@@ -9109,7 +9181,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // are cheap no-ops on a clean reopen.
                         if (IndexType.isPosting(metadata.getColumnIndexType(i))) {
                             indexer.mergeTentativeIntoActiveIfAny();
-                            indexer.getWriter().rollbackConditionally(rowCount + colPartitionTop);
+                            indexer.getWriter().rollbackConditionally(rowCount + getLastOpenPartitionTopForColumn(i));
                         }
                     }
                 }
@@ -9680,7 +9752,30 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             final MemoryR oooMem2 = o3Columns.getQuick(colOffset + 1);
                             final MemoryMA mem1 = columns.getQuick(colOffset);
                             final MemoryMA mem2 = columns.getQuick(colOffset + 1);
-                            final long srcDataTop = getColumnTop(i);
+                            // On a zero-copy suffix child the _cv record is donor-file-relative for columns
+                            // born before the child; translate it into the child-logical top and the
+                            // physical base rows of the column's shared file region.
+                            final long srcDataTop;
+                            final long srcDataPhysBaseRows;
+                            final long dstIndexAdjustRows;
+                            if (getPartitionTopByTimestamp(partitionTimestamp) > 0) {
+                                final long columnPartitionTop = getPartitionTopByTimestamp(partitionTimestamp, i);
+                                final long rawColumnTop = getColumnTop(partitionTimestamp, i, columnPartitionTop + srcDataMax);
+                                srcDataTop = Math.min(srcDataMax, Math.max(0, rawColumnTop - columnPartitionTop));
+                                srcDataPhysBaseRows = Math.max(0, columnPartitionTop - rawColumnTop);
+                                // Raw shared-file-relative top: stored index row ids are PHYSICAL (logical + P).
+                                dstIndexAdjustRows = srcDataTop + columnPartitionTop - srcDataPhysBaseRows;
+                                if (srcDataTop == srcDataMax) {
+                                    // Column has no data in the child yet: the first write creates local
+                                    // files; the recorded top stays in shared-file coordinates for
+                                    // gate-true columns (columnPartitionTop is 0 otherwise).
+                                    Unsafe.putLong(partitionUpdateSinkAddr + PARTITION_SINK_COL_TOP_OFFSET + (long) i * Long.BYTES, columnPartitionTop + srcDataMax);
+                                }
+                            } else {
+                                srcDataTop = getColumnTop(i);
+                                srcDataPhysBaseRows = 0;
+                                dstIndexAdjustRows = srcDataTop;
+                            }
                             final long srcOooFixAddr;
                             final long srcOooVarAddr;
                             final MemoryMA dstFixMem;
@@ -9713,6 +9808,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                         minTimestamp,
                                         partitionTimestamp,
                                         srcDataTop,
+                                        srcDataPhysBaseRows,
+                                        dstIndexAdjustRows,
                                         srcDataMax,
                                         indexBlockCapacity,
                                         dstFixMem,
@@ -10084,7 +10181,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         o3TimestampMemCpy.jumpTo(timestampMemorySize);
 
                         MemoryMA timestampColumn = columns.get(getPrimaryColumnIndex(timestampIndex));
-                        final long tsLagOffset = txWriter.getTransientRowCount() << 3;
+                        // the lag physically sits at file_row = transientRowCount + partitionTop of the
+                        // (possibly donor-shared) last partition file, see cthAppendWalColumnToLastPartition
+                        final long tsLagOffset = (txWriter.getTransientRowCount() + getLastOpenPartitionTopForColumn(timestampIndex)) << 3;
                         final long tsLagSize = walLagRowCount << 3;
                         final long mappedTimestampIndexAddr = walTimestampColumn.addressOf(rowLo << 4);
                         timestampAddr = o3TimestampMem.getAddress();
@@ -11584,11 +11683,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private long readMinTimestampNative(Path partitionPath, long partitionTimestamp) {
-        if (ff.exists(dFile(partitionPath, metadata.getColumnName(metadata.getTimestampIndex()), COLUMN_NAME_TXN_NONE))) {
-            // read min timestamp value
+        final int timestampIndex = metadata.getTimestampIndex();
+        if (ff.exists(dFile(partitionPath, metadata.getColumnName(timestampIndex), COLUMN_NAME_TXN_NONE))) {
+            // read min timestamp value; a zero-copy split suffix child stores its logical row 0
+            // at file row partitionTop of the shared donor file
+            final long partitionTop = getPartitionTopByTimestamp(partitionTimestamp, timestampIndex);
             final long fd = openRO(ff, partitionPath.$(), LOG);
             try {
-                return readLongOrFail(ff, fd, 0, tempMem16b, partitionPath.$());
+                return readLongOrFail(ff, fd, partitionTop * ColumnType.sizeOf(timestampType), tempMem16b, partitionPath.$());
             } finally {
                 ff.close(fd);
             }
@@ -11617,11 +11719,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void readNativeMinMaxTimestamps(Path partitionPath, CharSequence columnName, long partitionSize) {
+    private void readNativeMinMaxTimestamps(Path partitionPath, CharSequence columnName, long partitionTop, long partitionSize) {
         final long fd = openRO(ff, dFile(partitionPath, columnName, COLUMN_NAME_TXN_NONE), LOG);
         try {
-            attachMinTimestamp = ff.readNonNegativeLong(fd, 0);
-            attachMaxTimestamp = ff.readNonNegativeLong(fd, (partitionSize - 1) * ColumnType.sizeOf(timestampType));
+            final int tsSize = ColumnType.sizeOf(timestampType);
+            attachMinTimestamp = ff.readNonNegativeLong(fd, partitionTop * tsSize);
+            attachMaxTimestamp = ff.readNonNegativeLong(fd, (partitionTop + partitionSize - 1) * tsSize);
         } finally {
             ff.close(fd);
         }
@@ -11653,7 +11756,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
 
                     // Read min and max timestamp values from the file
-                    readPartitionMinMaxTimestamps(partitionTimestamp, path.trimTo(pathLen), columnName, -1, partitionSize);
+                    readPartitionMinMaxTimestamps(partitionTimestamp, path.trimTo(pathLen), columnName, -1, 0, partitionSize);
                     return partitionSize;
                 } finally {
                     Misc.free(attachTxReader);
@@ -11753,7 +11856,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void readPartitionMinMaxTimestamps(long partitionTimestamp, Path path, CharSequence columnName, long parquetFileSize, long partitionSize) {
+    // partitionTop is the shared-donor-file row shift of a zero-copy split suffix child (0 for a normal
+    // partition and for detached partition dirs, whose files are always materialized standalone).
+    private void readPartitionMinMaxTimestamps(long partitionTimestamp, Path path, CharSequence columnName, long parquetFileSize, long partitionTop, long partitionSize) {
         int partitionLen = path.size();
         try {
             // Parquet partition with a _pm file.
@@ -11776,7 +11881,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 } else {
                     // Native partition
                     path.trimTo(partitionLen);
-                    readNativeMinMaxTimestamps(path, columnName, partitionSize);
+                    readNativeMinMaxTimestamps(path, columnName, partitionTop, partitionSize);
                 }
             }
         } finally {
@@ -11871,7 +11976,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 -1L,
                 partitionTimestamp,
                 partitionBy,
-                partitionSize
+                partitionSize,
+                // an attached partition is always contiguous (no zero-copy split shift)
+                0L
         );
     }
 
@@ -12640,11 +12747,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // configureFollowerAndWriter resets partitionTop; when the last partition is a
                 // zero-copy split suffix child, re-apply the shift for donor-shared columns so
                 // subsequent active-partition indexing stores physical row ids.
-                indexer.setPartitionTop(
-                        lastOpenPartitionTop > 0
-                                && columnVersionWriter.getColumnTopPartitionTimestamp(colIdx) < lastOpenPartitionTs
-                                ? lastOpenPartitionTop : 0
-                );
+                indexer.setPartitionTop(getLastOpenPartitionTopForColumn(colIdx));
                 configureCoveringIfNeeded(indexer, colIdx, lastOpenPartitionTs);
             }
         } finally {
@@ -13313,13 +13416,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             MemoryMA auxMem = getSecondaryColumn(columnIndex);
             int columnType = metadata.getColumnType(columnIndex);
             if (columnType > 0) { // Not deleted
-                // A zero-copy split suffix child appends at the true tail of the shared donor file: file_row =
-                // size + partitionTop - columnTop. partitionTop applies only to columns shared from the donor
-                // (born before this child); a column added after is child-local (offset 0). 0 for normal partitions.
-                final long colPartitionTop = lastOpenPartitionTop > 0
-                        && columnVersionWriter.getColumnTopPartitionTimestamp(columnIndex) < lastOpenPartitionTs
-                        ? lastOpenPartitionTop : 0;
-                final long pos = size + colPartitionTop - getColumnTop(columnIndex);
+                // A zero-copy split suffix child appends at the true tail of the shared donor file:
+                // file_row = size + partitionTop - columnTop
+                final long pos = size + getLastOpenPartitionTopForColumn(columnIndex) - getColumnTop(columnIndex);
                 if (ColumnType.isVarSize(columnType)) {
                     ColumnTypeDriver driver = ColumnType.getDriver(columnType);
                     dataSizeBytes = driver.setAppendPosition(

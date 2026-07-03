@@ -132,7 +132,7 @@ public class ColumnVersionWriter extends ColumnVersionReader {
         }
     }
 
-    public void replaceInitialPartitionRecords(long lastPartitionTimestamp, long transientRowCount) {
+    public void replaceInitialPartitionRecords(long lastPartitionTimestamp, long transientRowCount, long lastPartitionTop) {
         // Remove all default partitions that point beyond the last partition
         // Replace them as if the column was added to the last partition
         for (int i = 0, n = cachedColumnVersionList.size(); i < n; i += BLOCK_SIZE) {
@@ -154,6 +154,19 @@ public class ColumnVersionWriter extends ColumnVersionReader {
                     int recordIndex = getRecordIndex(lastPartitionTimestamp, columnIndex);
                     if (recordIndex < 0) {
                         upsert(lastPartitionTimestamp, columnIndex, columnNameTxn, transientRowCount);
+                    } else if (lastPartitionTop > 0) {
+                        // The last partition is a zero-copy split suffix child: an existing explicit
+                        // record stores the column top in the shared donor file frame (logical top +
+                        // partitionTop). Moving the initial-partition record here reclassifies the column
+                        // as child-local, so read/append no longer add the +partitionTop shift. Convert
+                        // the top back to the child's logical frame; clamp to the partition size so a
+                        // fully-absent column tops out at transientRowCount rather than sticking out
+                        // (which would make setAppendPosition compute a negative append offset).
+                        long fileTop = getColumnTopByIndex(recordIndex);
+                        long logicalTop = Math.min(transientRowCount, Math.max(0, fileTop - lastPartitionTop));
+                        if (logicalTop != fileTop) {
+                            upsert(lastPartitionTimestamp, columnIndex, columnNameTxn, logicalTop);
+                        }
                     }
                 }
             } else {
